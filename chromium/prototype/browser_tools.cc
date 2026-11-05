@@ -1,7 +1,6 @@
 #include "chromium/prototype/browser_tools.h"
 
 #include <set>
-#include <cmath>
 #include <algorithm>
 #include <array>
 #include "base/strings/escape.h"
@@ -204,31 +203,20 @@ BrowserTools& BrowserTools::operator=(const BrowserTools&) = default;
 BrowserTools::BrowserTools(BrowserTools&&) = default;
 BrowserTools& BrowserTools::operator=(BrowserTools&&) = default;
 double BrowserTools::CommandScore(std::string_view id, std::string_view target, base::Time now) const {
-  const auto found = command_usage.find({std::string(id), std::string(target)});
-  if (found == command_usage.end()) return 0;
-  // Weekly half-life combines frequency and recency without permanent favorites.
-  const double weeks = std::max(0.0, (now - found->second.last_used).InSecondsF()) / (7 * 24 * 60 * 60);
-  const double score = found->second.weight * std::exp2(-weeks);
-  return score >= 0.1 ? score : 0;
+  return command_usage.Score(id, target, now.InMillisecondsFSinceUnixEpoch());
 }
 void BrowserTools::RecordCommandUse(std::string id, std::string target, base::Time now) {
-  const double weight = std::min(64.0, CommandScore(id, target, now) + 1);
-  command_usage[{std::move(id), std::move(target)}] = {weight, now};
-  if (command_usage.size() > 256) {
-    const auto oldest = std::min_element(command_usage.begin(), command_usage.end(),
-        [](const auto& a, const auto& b) { return a.second.last_used < b.second.last_used; });
-    command_usage.erase(oldest);
-  }
+  command_usage.Record(std::move(id), std::move(target), now.InMillisecondsFSinceUnixEpoch());
 }
 base::DictValue BrowserTools::ToValue() const {
   base::DictValue dict; base::ListValue engines, keys;
   for (const auto& provider : providers) { base::DictValue entry; entry.Set("name", provider.name); entry.Set("keyword", provider.keyword); entry.Set("url", provider.url); engines.Append(std::move(entry)); }
   for (const auto& shortcut : shortcuts) { base::DictValue entry; entry.Set("id", shortcut.id); entry.Set("chord", FormatShortcut(shortcut.accelerator)); keys.Append(std::move(entry)); }
   base::ListValue usage;
-  for (const auto& [key, value] : command_usage) {
+  for (const auto& [key, value] : command_usage.entries()) {
     base::DictValue entry;
     entry.Set("id", key.first); entry.Set("target", key.second);
-    entry.Set("weight", value.weight); entry.Set("last_used_ms", value.last_used.InMillisecondsFSinceUnixEpoch());
+    entry.Set("weight", value.weight); entry.Set("last_used_ms", value.last_used_ms);
     usage.Append(std::move(entry));
   }
   dict.Set("command_usage", std::move(usage));
@@ -236,15 +224,13 @@ base::DictValue BrowserTools::ToValue() const {
 }
 BrowserTools BrowserTools::FromValue(const base::DictValue& dict) {
   BrowserTools result;
-  if (const auto* usage = dict.FindList("command_usage"); usage && usage->size() <= 256) {
+  if (const auto* usage = dict.FindList("command_usage"); usage && usage->size() <= CommandHistory::kCapacity) {
     for (const auto& item : *usage) {
       const auto* entry = item.GetIfDict(); if (!entry) continue;
       const auto* id = entry->FindString("id"); const auto* target = entry->FindString("target");
       const auto weight = entry->FindDouble("weight"); const auto time = entry->FindDouble("last_used_ms");
-      if (!id || id->empty() || id->size() > 128 || !target || target->size() > 256 ||
-          !weight || !std::isfinite(*weight) || *weight <= 0 || *weight > 64 ||
-          !time || !std::isfinite(*time) || *time <= 0) continue;
-      result.command_usage[{*id, *target}] = {*weight, base::Time::FromMillisecondsSinceUnixEpoch(*time)};
+      if (id && target && weight && time)
+        result.command_usage.Restore(*id, *target, {*weight, *time});
     }
   }
   if (const auto* list = dict.FindList("providers"); list && !list->empty() && list->size() <= 50) {

@@ -1,0 +1,2845 @@
+{
+  "date": "2026-11-05",
+  "baseline_commit": "b18548b",
+  "workloads": {
+    "interaction": {
+      "date": "2026-11-05T19:09:56.054720+00:00",
+      "test": "interaction",
+      "iterations": 40,
+      "tabs": 20,
+      "pins": 1000,
+      "rounds": 6,
+      "binaries": {
+        "before": {
+          "path": "${REPO}/.chromium/src/out/ZitterOptimized/zitter_prototype_ui_lab",
+          "sha256": "ae070d8f956399952f593119a5e65be6ff3b0ffb4dfb3bc938e62ea756f16420",
+          "source": {
+            "path": "${REPO}/.chromium/src/zitter_ui_lab",
+            "files": {
+              "BUILD.gn": "3f32a6f7efa0911325685edd5061d331266597a663dc0b2e61a064b1a1c537c1",
+              "chromium/app/app_shell_mac.h": "5bb30a553ac7b48c279d5b38a8dd3ec1d2a10b74b84f281dd79e560220e63544",
+              "chromium/app/app_shell_mac.mm": "6f55ff12b2de65e8353bf788ab94db45d3149c939b8f72224f83f7702411d8f4",
+              "chromium/app/browser_client.cc": "956013b53038af6295591f5325579d49b2e749a95b341319ee0471270291f22c",
+              "chromium/app/browser_client.h": "700fb7a24a65ca87c659e92bd4b7769e95d72bb54e2ba0446e3aa76f1292d7f2",
+              "chromium/app/compile_ui_lab_metal.py": "a71330b61f044f659898654fec0ec05d61e01ac0cf9aa921c8c9cd4c3b4a21c6",
+              "chromium/app/main.cc": "61dea81d0e263778c386eb6435429a8d90c4daa51f1dd787563facf7ddffa5d1",
+              "chromium/app/performance_probe.cc": "00a6cb4617ff4e796f5cde8af974b1dcb90515736661da8b82fda68eaa4a1703",
+              "chromium/app/performance_probe.h": "1a27b2e83d2502a7bfd22950139bd0a8f5849f50b10b68b42087a991d3e5124c",
+              "chromium/app/runtime.cc": "7ac8f599274efa38289df41cb26d3eb6f65e49e90dd682021775ee80e5961a75",
+              "chromium/app/runtime.h": "c135e0b6242423b603ebb6e3910ab959410c3e6fd9f4b35e37ddf5a348bf0ee6",
+              "chromium/app/ui_lab.cc": "50ba6f90b6d72f19677899144615ed151bcc6cc55319837a33f452df33db655f",
+              "chromium/app/ui_lab.h": "e8c47357c256a7ec59e37611dd31f241ea503ceaaf89b0ecbc5bcbe9bedead97",
+              "chromium/app/ui_lab.metal": "50691d48e507091d7ce7dcc6176723d7091548a664399158ceaf2a5a24672667",
+              "chromium/app/ui_lab_metal.h": "1f8583ec4ec87f0bb7fbdb5618fb9d505cb3fb205b16ff533692f5a9a093015b",
+              "chromium/app/ui_lab_metal.mm": "bdef94729c9919d2cbf3c513d3140a174f42536fbf1f6777ab6ec9306eccd6a2",
+              "chromium/app/ui_lab_scene.rs": "b8bebc1bdb40763842ddcb25fd61dd8651145b33d2afe92938ba2a6874035510",
+              "chromium/prototype/arc_importer.cc": "46a5013894e88a6dc59de19dc876d8f695fac550bac14d977cfd4f6b4b0b5b41",
+              "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+              "chromium/prototype/arc_importer_unittest.cc": "f75f7cb6c1f9f5b46f01091749e458ebb58a0cd4d000b18b72c4ffc03bc536b4",
+              "chromium/prototype/browser_data.h": "5a05024a7337cb3524d3290d737b42b67f5652044d13d326763e579601ef03f3",
+              "chromium/prototype/browser_import_data.cc": "3ebd0f254ed2511d9b1007ffbb4c4dd4728224e05dd678459ab71dfed28ce806",
+              "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+              "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+              "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+              "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+              "chromium/prototype/browser_tools.cc": "1bca9cc9a79f51fcad0cb1401c5ad586679f5f7353324a234b2658d444f992a1",
+              "chromium/prototype/browser_tools.h": "687f818addfcffb761de41afa39f7cfe9cea4aceaa03cd3a3b1fb94896859222",
+              "chromium/prototype/design.rs": "ed292902cbce1cc20299c20df9e0be72ae93c1716da15aaeb184c16ae7cbde6b",
+              "chromium/prototype/design_tokens.rs": "f28092e2ac43aef0d63e182af3b901eafb3862465d8a2e5389208a7e0e68a58f",
+              "chromium/prototype/download_panel.cc": "86c845f84ad75a1daae0c9b2da8c5490b538caf139559d50afacc0f204ed7310",
+              "chromium/prototype/download_panel.h": "d64f949f56a62cf132cfe5029e7d05a9fa56f0cce9f517ce02e6ccce3f23ee9c",
+              "chromium/prototype/editor_control.h": "c9059d7b3082835c0a62cc67e524bab27ccb61fce4070a9510f35cb19ce6d64b",
+              "chromium/prototype/editor_text_layout.h": "6744d27ddd1aa7e73ec03e45f97ada7c1364cfd3c7f88462994bdc1cb0171f3b",
+              "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+              "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+              "chromium/prototype/editor_text_layout_unittest.cc": "1f66cb54b47c0d9376720aec7932e179ff8264fa53f5bf632c7debf427acca3c",
+              "chromium/prototype/extension_tab_events.cc": "2dfda94fd8348cd082ab1888f200d44e2f9657ddf2b68146fd7de9538ccda8e0",
+              "chromium/prototype/extension_tab_events.h": "ea45affe0fb25981354fad0fc2ad39fa35bf3a2b064a76a5c4ac667092c17ece",
+              "chromium/prototype/extensions_bar.cc": "10b731ce49b9488171f2430df7afa42660b41c23c8a96419c623b4807a397420",
+              "chromium/prototype/extensions_bar.h": "dfe9f227a80da2a8a2c8fab9242f8b0bc4f6132553922f5f751d3bb073a693f5",
+              "chromium/prototype/fingerprint_protection.cc": "f9453fca176a1a0ad68403e1a0bd759b91ae23c4dca4aab0856000aa7e8baf4f",
+              "chromium/prototype/fingerprint_protection.h": "3dab683ca7d7f3801e86b384d605b0bffffd29bcfdb9c0df567a4c0e2650ef73",
+              "chromium/prototype/fingerprint_protection_browsertest.cc": "5f2086c28ee66b1b0261170eabffa24e7cadf65a676f096ccc3afb43558785bb",
+              "chromium/prototype/history_panel.cc": "f5ae23cb0da1fd617fe765a4b46472ec1382f3ce9bd09d6f78619339059b7b37",
+              "chromium/prototype/history_panel.h": "5ec705ebdde2c7b138720da47f3e64907e95804803d3a3acc794bd596056c102",
+              "chromium/prototype/i18n.cc": "b7b033ade2bdc76bd066373b7046626fc204cbc5af0ebf3952227e2be6c004b8",
+              "chromium/prototype/i18n.h": "bd604d7e0784f86f72e58029742f05dd855f428f1b06643e0ff7692c07ad4807",
+              "chromium/prototype/i18n.rs": "817d8565db11a520a802b408b8dff179b73be24848a04b1b2c5a295676679c22",
+              "chromium/prototype/i18n_en_native.rs": "037aefc6ae78da1c453f7d965ee5ca9fc3a14a1c584c58ac8c9e7e0513b00974",
+              "chromium/prototype/i18n_en_scene.rs": "8dedcbb014acbbbcbaf83aab43d9a4f0bdba857df3ff4ad8ee13d260c81729e8",
+              "chromium/prototype/i18n_en_shell.rs": "90a2a7713a3d94b875028c0d71099b003f9f85fb4cd94823afa5f7b7757b4c5d",
+              "chromium/prototype/image_link_preview.cc": "c10e21fbaafe72a50d705493d552f801568714a3d09e0f03dd63f4bb96ade81a",
+              "chromium/prototype/image_link_preview.h": "943fc0d28c0f07a482a71e41b9dc8df3a7153a151ace79eff284b6b7387fb114",
+              "chromium/prototype/jump_list_win.cc": "e1cb301ab3ed8ea62175de6c69d62630cc996ffa8a0fa2e74745fd45ed5be1b5",
+              "chromium/prototype/jump_list_win.h": "61d3164fb4c5c02acc62f0cf4d4cea6a754a84041af3dad26c69dfa9554dbaf8",
+              "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+              "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+              "chromium/prototype/page_dialogs.cc": "fc4b57359f55274ca46c8480fbf11514d06b5394bef553b98e94ffa811bf6484",
+              "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+              "chromium/prototype/page_file_access.cc": "92c802dfacb31bf71a7d9928e8c1e2b71814485937853b3443de915b44e1f799",
+              "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+              "chromium/prototype/page_file_access_browsertest.cc": "d96d5727cd31c8a5b15b50660ceb20e84942f9db1568481f463cdc47537af5be",
+              "chromium/prototype/page_media_access.cc": "30ec698c856797b2cef89cb0c036d5bc91d52c80b34cf0cf258e70a848becaf4",
+              "chromium/prototype/page_media_access.h": "1c415ed1b53416a94f0a44362ed4806e60c5e58a97c5ee11cbceffe2324c31d4",
+              "chromium/prototype/page_media_access_browsertest.cc": "390d48439c88bacbbbea71a6cf84a95909b0be6ab30b9a11768c598c57de743e",
+              "chromium/prototype/page_printing.cc": "0dd5b0d36e1333a2df5ccc6b07e0b83be2c4684908aee01b9656c793f03f6a77",
+              "chromium/prototype/page_printing.h": "b457c6fbb3e33cda7dcdd176065581c11eaa638f6d29ffee03725bb33402ad07",
+              "chromium/prototype/page_services.cc": "55f63bcc0ca5f7a2f1eb56bdd33fe5db4dd4adcdca67d17e617cf4d84a33fd5d",
+              "chromium/prototype/page_services.h": "d90a25f1c3abef177a524407d18886bdb7dc98832adb4560dbe1cd90cb6c626e",
+              "chromium/prototype/password_csv_import.cc": "04ff426b3eb38513b3b5116ec734638e65ec6b1845a94608e88f8a11f1d5ed43",
+              "chromium/prototype/password_csv_import.h": "46fa8deb3e4a2cd391c287e8965cf7f5ac67780d8ab104c9bce1dfd400fed153",
+              "chromium/prototype/passwords_panel.cc": "2112a49b9744658438fe72f20b65e8a6c5cab61e2415571c023f50a7415208a0",
+              "chromium/prototype/passwords_panel.h": "132d5cf5d85f0b404dfe3da9ae7e81ed559e9c7993660000f7844fc72b3fe5cd",
+              "chromium/prototype/profile_workspace_browsertest.cc": "8f05ad34b7d41d441c43c4f04a0fa9ad1dc5fc5cbbd8a778bb558b7652ae1fa8",
+              "chromium/prototype/scene_editor.cc": "601c1bcaaba0c517526218a408e59aee90f2e8ae4259a4af7d013dce02024485",
+              "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+              "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+              "chromium/prototype/sidebar_layout.cc": "25fd6621b39172936726bbd8ca2a9042d40138706ebca09f71d53f254df60dee",
+              "chromium/prototype/sidebar_layout.h": "bc237520361af2ec26c96afdae41c6978d88629b72e80bb944843ca0668d367e",
+              "chromium/prototype/sidebar_metal.h": "21c2c8971630c166f9d67dca26ef67418c54928fe8cd76fffaa3cb5c6a2debd8",
+              "chromium/prototype/sidebar_metal.mm": "deaa0117916c872b424a3df75e7eb3389f8c99d71432c1a85abf914192d1ab6b",
+              "chromium/prototype/sidebar_raster.cc": "94d1d590c5df703c46fcb937aa8f1f4a3fe25041790bd07110f11510614b37b7",
+              "chromium/prototype/sidebar_scene.rs": "0900cdb02cab944bf8b8ecaa86f710055d1f001473446118ce91fc90a178d566",
+              "chromium/prototype/sidebar_tree.cc": "4743c51c79c012d5b9bca6277dbfc020716d8b94375ca1514f98226d120610f3",
+              "chromium/prototype/sidebar_tree.h": "d762b63e1a072247e71e2e8ff7105dc58b612ac06a41c7aec287b1106689b72b",
+              "chromium/prototype/site_data.cc": "4890b7a80fa9d6c9c27f95c51843f903860d6ef42f6097eff9d87c99cbbbe92d",
+              "chromium/prototype/site_data.h": "2ea60b60c5f2b734450b98eb8e42fa6d29b5b86eeaf98d2353674de00f5bc259",
+              "chromium/prototype/text_services_skia.cc": "307dd60239679b3e42f1801ec652d04318d88af593e8a99466f7aa34bdda71b4",
+              "chromium/prototype/time_machine_view.cc": "bc63f834324ada87c0ce233113b7217abf53a03116d7ea5aa2ffa2c8066c6f61",
+              "chromium/prototype/time_machine_view.h": "9041cf0cd4a64ca95603eb19d555241da8ee11ca9b6f3fddaaafc3d3913a63d0",
+              "chromium/prototype/timeline.rs": "4bbc1bcacc06dc29270f758af72afa9fe5e6f9b07080e478d8ca7be1382363da",
+              "chromium/prototype/timeline_store.h": "1ef92f671ec13039f84814b4e85f9bcf0cff2808348330002648aa8295ca458e",
+              "chromium/prototype/workspace_browser_settings.cc": "82452c4b3d70a03dcc311b5f69cc1d93e0c8eff3260ae16ed87bafd24cb0fd5b",
+              "chromium/prototype/workspace_commands.cc": "0a97d3b70dbdc75031ba90397417d790c5f5dd72a74e995d9833b552efd55738",
+              "chromium/prototype/workspace_frame_mac.h": "0b91503feef7ab8d70564445ca698c5527674f4036d27da04b29551ce8873716",
+              "chromium/prototype/workspace_frame_mac.mm": "915d05a4f6c3240b13c1d9c43ba1868cd37866c1bab80b48a06d3cb874d5b5eb",
+              "chromium/prototype/workspace_frame_win.cc": "84e69e696e45ea1f0f882e1e7d6b6b61bf6c4efcaf4970f68fdc99b66614f2e3",
+              "chromium/prototype/workspace_frame_win.h": "2ff4f9ec4ad3bd6eb1190561a39677d7bc5f0d23285af66ea736251436a71f11",
+              "chromium/prototype/workspace_keyboard_mac.h": "32ad728fe32e8fbc4333cb4e94bac2be8dacae05d4cab15329446e662e61f523",
+              "chromium/prototype/workspace_keyboard_mac.mm": "2b5ddf59142b895a2f47553db786e7f30c53c026b2a5809f264b065412d31041",
+              "chromium/prototype/workspace_lifecycle.cc": "45acb2a8f1558406dd31e4ae0e6073a7ea01c59dd9e115ce7bd938c1de1753b5",
+              "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+              "chromium/prototype/workspace_preconnect_browsertest.cc": "185d1c9cde2c0aaa165a2eaebb29f3d138e020a6b216f26a5941ecdaf1cfcc80",
+              "chromium/prototype/workspace_shell.cc": "4ff14b351187d28fa83c0c627a0a3d25372a926475836ea1e3e061b51718c810",
+              "chromium/prototype/workspace_shell.h": "a462b21c042950cf59c6bf3b05e811e0575d842168fdbda3f26f6f5794832888",
+              "chromium/prototype/workspace_time_machine.cc": "dca1d41cf22dd71cb71ade10e11e09475a5baa119bb8e25497091a2fbc1c6a37",
+              "chromium/prototype/workspace_window.cc": "59f8c2cb5b137053f7f6093ffbd35aa99c49ab9ea4a3503b9c1ef48c0fb31989",
+              "chromium/prototype/workspace_window.h": "e706bf26c898e1987ae26f3dd7ed76df80d1abb3a070b45351117316ea698c1d",
+              "testdata/arc/StorableSidebar.json": "f9fc357c50257b24c4bf0e76813c8ea12b0c943dd3135c2d16ea9b2627108a85",
+              "testdata/arc/User Data/Local State": "0ba1bf85efcfa2ff77b5f9fd6458f7e8a24c77e8565c9fe4f64b0e0eb3a336cd",
+              "testdata/file_upload_probe.html": "b6323ca855642e73d9b314a4c3426a3df7dbffec4d51105eaa1c24d79c91abf9",
+              "testdata/fingerprint_probe.html": "835a98896526fd868c999d3c3e78c7bc2d53295a4d4a84506fe5c8f124ebec72",
+              "testdata/links_probe.html": "b4ec7aab84e84da1665162b49a124b923522eced26ac4b9caf481dce56da7ec4",
+              "testdata/login_probe.html": "432601e804e292c4c2fba6e040c8892cd9faacdd5350fc9fc2c516e65ace7c8a",
+              "testdata/media_probe.html": "bcf1573760f04ee21fc6a834b6909b2f249ce28be6a3f8d9f89fed1674daf784",
+              "testdata/performance_probe.html": "0f9946d9e45d3b6cdb68446e760d6f53efbc502b61e3b7a7d924bc444006e5e9",
+              "testdata/persistence_probe.html": "d283f05864c9e8f20a2353082f1d85185f74b0b14b66cae64797e4ee5165d20d",
+              "testdata/preferences_probe.html": "431e2d8836fe1a2d321b5dca19a6ce63cebad71812d96778f518bb8560fc1ce4",
+              "testdata/preview_image.svg": "039147419141284f111dcabb318dde1e0ea078411e527d47ef2ed257e1b9ce38",
+              "testdata/sidebar_demo.html": "43002c99ea4f037421aa7e5126cf914983a3b39a8edc33c02e2c96d422aaaa3c",
+              "testdata/start.html": "b9a8761ea8b57ff11c754fe33670e733d330a92330f799987e059b1294f0b218",
+              "testdata/storage_probe.html": "03ba347e883db1a8aa5e842002e46dc0c90be7dbffba05b2118185d93afc1b77",
+              "zitter/application/workspace_controller.cc": "e767da6bd933cc25a8056c484ef01d93787a8d56c278018128a6736657ce3672",
+              "zitter/application/workspace_controller.h": "7fa4ef26d36077b1128f1e483b7c57bbe028c2637b0935d8762c7b591f11ad39",
+              "zitter/core/workspace_model.cc": "7d686944724170d1dd1a0d1c122f1f65696d0fc026545ef386d90185ae23dbad",
+              "zitter/core/workspace_model.h": "d7d51ebf731338235199a59355a06e63ecaee503f25a69d41e9e82fd982b1ea2",
+              "zitter/ports/workspace_runtime.h": "723167f5cc0c84f7cd8e3f8de5668924fc769a553a53114e9044b92f89db362d"
+            },
+            "newer_than_binary": []
+          },
+          "gn_args": "# Experimental production candidate. Adopt only after matching measurements.\n# Requires the mac-arm profile pinned by Chromium's chrome/build/mac-arm.pgo.txt.\nis_debug = false\nis_component_build = false\nuse_thin_lto = true\nthin_lto_enable_optimizations = true\nchrome_pgo_phase = 2\ndcheck_always_on = false\nsymbol_level = 0\nblink_symbol_level = 0\nv8_symbol_level = 0\ntarget_cpu = \"arm64\"\nuse_remoteexec = false\nuse_siso = false\n\nroot_extra_deps = [\"//third_party/zitter_libarchive:rar_reader_tests\",  \"//zitter_ui_lab:zitter_ui_lab\", \"//zitter_optimized:zitter_optimized\", \"//zitter_optimized:zitter_prototype_optimized\" ]\n"
+        },
+        "after": {
+          "path": "${REPO}/.chromium/src/out/ZitterOptimized/zitter_prototype_decoupled",
+          "sha256": "32379aee1bc6aa0f8bfc18cae9afc28613e8682617143040bec00671b11a7298",
+          "source": {
+            "path": "${REPO}/.chromium/src/zitter_decoupled",
+            "files": {
+              "BUILD.gn": "311434837b52f84b4a998e6824c66caed26f49908ecba84343ab1efecfd0c456",
+              "assets/fonts/InstrumentSerif-Italic.ttf": "08939b8bdf534afec24ae0ef5e03f948940cd9a8fe08e7fecbad040e62327385",
+              "assets/fonts/InstrumentSerif-OFL.txt": "129ed7618959716959f2941fdd5b49e0ad6e6c1d78726761786a00253d865521",
+              "assets/fonts/InstrumentSerif-Regular.ttf": "498efd461f6ddfcb7a111bf9a565709d2085d48201d501ead960d93e84ffbb88",
+              "assets/fonts/JetBrainsMono-OFL.txt": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d",
+              "assets/fonts/JetBrainsMono-Variable.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+              "assets/fonts/SchibstedGrotesk-Italic-Variable.ttf": "b49fedb6f3a2ff9b43e13351888641505dc8e5f300941e597eecbc3f52ba357b",
+              "assets/fonts/SchibstedGrotesk-OFL.txt": "3b4f3063b6ac7c1e403e2c4a5e8ef3a58190ff83ed7b15af66511858699139ce",
+              "assets/fonts/SchibstedGrotesk-Variable.ttf": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+              "chromium/app/app_shell_mac.h": "5bb30a553ac7b48c279d5b38a8dd3ec1d2a10b74b84f281dd79e560220e63544",
+              "chromium/app/app_shell_mac.mm": "6f55ff12b2de65e8353bf788ab94db45d3149c939b8f72224f83f7702411d8f4",
+              "chromium/app/browser_client.cc": "956013b53038af6295591f5325579d49b2e749a95b341319ee0471270291f22c",
+              "chromium/app/browser_client.h": "700fb7a24a65ca87c659e92bd4b7769e95d72bb54e2ba0446e3aa76f1292d7f2",
+              "chromium/app/compile_ui_lab_metal.py": "a71330b61f044f659898654fec0ec05d61e01ac0cf9aa921c8c9cd4c3b4a21c6",
+              "chromium/app/main.cc": "4e998a688125e848d3b8d0103128d071f4f337a3ffb38bf4d6baa0814063a6f4",
+              "chromium/app/network_policy.cc": "d3b1d3003eeeff49939588c45002aa4484d8838b1bcd51b762e8963e923aee0d",
+              "chromium/app/network_policy.h": "4fd7518cf7cef3d0d2340d1574cf9f20b814b638eaf6dd68b78881ca7d225ca7",
+              "chromium/app/network_policy_components.inc": "d6a5ccea424e299c0341515a8a7775b7fdded513b9eee240fa72147b6cb9b67b",
+              "chromium/app/network_policy_features.inc": "0bf89b3c481c29dc8061cb726c2e93f6579639bc5efa8dca667bd7e7011f0ae2",
+              "chromium/app/network_policy_unittest.cc": "0963b629bce4e88794a5797a94e9f04c3a1e3161a51d908b5b81c21a9ddd1156",
+              "chromium/app/performance_probe.cc": "00a6cb4617ff4e796f5cde8af974b1dcb90515736661da8b82fda68eaa4a1703",
+              "chromium/app/performance_probe.h": "1a27b2e83d2502a7bfd22950139bd0a8f5849f50b10b68b42087a991d3e5124c",
+              "chromium/app/runtime.cc": "076b079ccb5c9e789cc5ea347922feb5600ba5162c63abe988d65a817c10561f",
+              "chromium/app/runtime.h": "c135e0b6242423b603ebb6e3910ab959410c3e6fd9f4b35e37ddf5a348bf0ee6",
+              "chromium/app/ui_lab.cc": "50ba6f90b6d72f19677899144615ed151bcc6cc55319837a33f452df33db655f",
+              "chromium/app/ui_lab.h": "e8c47357c256a7ec59e37611dd31f241ea503ceaaf89b0ecbc5bcbe9bedead97",
+              "chromium/app/ui_lab.metal": "50691d48e507091d7ce7dcc6176723d7091548a664399158ceaf2a5a24672667",
+              "chromium/app/ui_lab_metal.h": "1f8583ec4ec87f0bb7fbdb5618fb9d505cb3fb205b16ff533692f5a9a093015b",
+              "chromium/app/ui_lab_metal.mm": "bdef94729c9919d2cbf3c513d3140a174f42536fbf1f6777ab6ec9306eccd6a2",
+              "chromium/app/ui_lab_scene.rs": "b8bebc1bdb40763842ddcb25fd61dd8651145b33d2afe92938ba2a6874035510",
+              "chromium/app/updater_win.cc": "c1fc4c97c85d3fd33937772e1225eeaabf8003344cdc54f8b8c95425865ca726",
+              "chromium/app/updater_win.h": "1e1db48e16f89e3bf1376b4b61245545d10ea9da272e8c860ae64fb09fbb5bf1",
+              "chromium/app/updater_win_unittest.cc": "d5210e9869c30f33619e7bcaf1408c7d129f658cd0887a46b451c90372cb1e65",
+              "chromium/app/zitter.ico": "8c8ed7362bf13a27e7f1f9b25b7607b668ab87fceb9696e8b1b06e6e9bc76607",
+              "chromium/app/zitter_exe.rc": "b7e889f60e0ecb0f68d1d8a1dab94b2e669b560695065c2d322d3671731081ca",
+              "chromium/app/zitter_version.h": "ae334894844036f312987c77ce509dc63453fc774206982f06320f3d66adab85",
+              "chromium/installer/setup.manifest": "bc3f7ba02ceb24693e0c238d65686ca5c12413bc6403520c3cb1b0e2af28262a",
+              "chromium/installer/setup.rc": "688288bafcb629f486d3291ecb1d022cafda8b0b273967c2ab79e5db9005379f",
+              "chromium/installer/setup_accessibility.cc": "73decb13dcb9bb0da8c72519417eab46e0a284dd2f7878f4aea8b7a0809412b3",
+              "chromium/installer/setup_accessibility.h": "13c816e29841d177960110ac7724919db434ebd654a43306fcb0b7bb57e3b0ae",
+              "chromium/installer/setup_install.cc": "a26508533105604c7f32a11f86ddf8266b4b1950d16ae98b2d9f08e1c2b2a776",
+              "chromium/installer/setup_install.h": "bb392eb8fc6ee3e34b25acb372c00773b47ba65233d05bb85dedc02ebf9991f3",
+              "chromium/installer/setup_main.cc": "358a79afdd0e3cf9e618c33f138a14c16cc9cdfc501df24c4f512c63f81bcb68",
+              "chromium/installer/setup_resource.h": "8faa27652a66776bf6a97f5390b5382c10cd16b368144cca13361587a03affaa",
+              "chromium/installer/setup_runtime.cc": "bb61da82210e3c55d58d685729e419b1bda917a5803d4165116f5532b27988d6",
+              "chromium/installer/setup_runtime.h": "6b1003c158368897d64addeb82cfe0caa3ac5b031f0e414f572313a608452c3a",
+              "chromium/installer/setup_runtime_test.cc": "f0a770d0a9bc62bcf8d303aa663f84f8fc548014643f108f874ddd5cdb9ac7ca",
+              "chromium/installer/setup_text.h": "e43c71b264a714359e9696b48b1e5f563b1b9484396196c8e85095e9597e2117",
+              "chromium/prototype/arc_importer.cc": "46a5013894e88a6dc59de19dc876d8f695fac550bac14d977cfd4f6b4b0b5b41",
+              "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+              "chromium/prototype/arc_importer_unittest.cc": "f75f7cb6c1f9f5b46f01091749e458ebb58a0cd4d000b18b72c4ffc03bc536b4",
+              "chromium/prototype/browser_data.h": "3dc7f90b17df32d60921c1541f5e21de429a4dae375d93afc1e3339d72c529bf",
+              "chromium/prototype/browser_import_data.cc": "3ebd0f254ed2511d9b1007ffbb4c4dd4728224e05dd678459ab71dfed28ce806",
+              "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+              "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+              "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+              "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+              "chromium/prototype/browser_tools.cc": "583f41f6d2522951315c63d219286f7a36cc83e61ec420012ebc85c45a8ee4f0",
+              "chromium/prototype/browser_tools.h": "629b8fb52957d111ad3f7ae3236ea017963cebe059d093dbc260ceb02aa27b87",
+              "chromium/prototype/design.rs": "ed292902cbce1cc20299c20df9e0be72ae93c1716da15aaeb184c16ae7cbde6b",
+              "chromium/prototype/design_tokens.rs": "f28092e2ac43aef0d63e182af3b901eafb3862465d8a2e5389208a7e0e68a58f",
+              "chromium/prototype/download_panel.cc": "86c845f84ad75a1daae0c9b2da8c5490b538caf139559d50afacc0f204ed7310",
+              "chromium/prototype/download_panel.h": "d64f949f56a62cf132cfe5029e7d05a9fa56f0cce9f517ce02e6ccce3f23ee9c",
+              "chromium/prototype/editor_control.h": "c9059d7b3082835c0a62cc67e524bab27ccb61fce4070a9510f35cb19ce6d64b",
+              "chromium/prototype/editor_text_layout.h": "6744d27ddd1aa7e73ec03e45f97ada7c1364cfd3c7f88462994bdc1cb0171f3b",
+              "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+              "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+              "chromium/prototype/editor_text_layout_unittest.cc": "1f66cb54b47c0d9376720aec7932e179ff8264fa53f5bf632c7debf427acca3c",
+              "chromium/prototype/extension_tab_events.cc": "2dfda94fd8348cd082ab1888f200d44e2f9657ddf2b68146fd7de9538ccda8e0",
+              "chromium/prototype/extension_tab_events.h": "ea45affe0fb25981354fad0fc2ad39fa35bf3a2b064a76a5c4ac667092c17ece",
+              "chromium/prototype/extensions_bar.cc": "10b731ce49b9488171f2430df7afa42660b41c23c8a96419c623b4807a397420",
+              "chromium/prototype/extensions_bar.h": "dfe9f227a80da2a8a2c8fab9242f8b0bc4f6132553922f5f751d3bb073a693f5",
+              "chromium/prototype/fingerprint_protection.cc": "f9453fca176a1a0ad68403e1a0bd759b91ae23c4dca4aab0856000aa7e8baf4f",
+              "chromium/prototype/fingerprint_protection.h": "3dab683ca7d7f3801e86b384d605b0bffffd29bcfdb9c0df567a4c0e2650ef73",
+              "chromium/prototype/fingerprint_protection_browsertest.cc": "9392e17b2704f8cd4a322ab46551f7b84af2d6cacc42cef4541966259afa3253",
+              "chromium/prototype/history_panel.cc": "f5ae23cb0da1fd617fe765a4b46472ec1382f3ce9bd09d6f78619339059b7b37",
+              "chromium/prototype/history_panel.h": "5ec705ebdde2c7b138720da47f3e64907e95804803d3a3acc794bd596056c102",
+              "chromium/prototype/i18n.cc": "b7b033ade2bdc76bd066373b7046626fc204cbc5af0ebf3952227e2be6c004b8",
+              "chromium/prototype/i18n.h": "bd604d7e0784f86f72e58029742f05dd855f428f1b06643e0ff7692c07ad4807",
+              "chromium/prototype/i18n.rs": "817d8565db11a520a802b408b8dff179b73be24848a04b1b2c5a295676679c22",
+              "chromium/prototype/i18n_en_native.rs": "037aefc6ae78da1c453f7d965ee5ca9fc3a14a1c584c58ac8c9e7e0513b00974",
+              "chromium/prototype/i18n_en_scene.rs": "8dedcbb014acbbbcbaf83aab43d9a4f0bdba857df3ff4ad8ee13d260c81729e8",
+              "chromium/prototype/i18n_en_shell.rs": "90a2a7713a3d94b875028c0d71099b003f9f85fb4cd94823afa5f7b7757b4c5d",
+              "chromium/prototype/image_link_preview.cc": "c10e21fbaafe72a50d705493d552f801568714a3d09e0f03dd63f4bb96ade81a",
+              "chromium/prototype/image_link_preview.h": "943fc0d28c0f07a482a71e41b9dc8df3a7153a151ace79eff284b6b7387fb114",
+              "chromium/prototype/jump_list_win.cc": "e1cb301ab3ed8ea62175de6c69d62630cc996ffa8a0fa2e74745fd45ed5be1b5",
+              "chromium/prototype/jump_list_win.h": "61d3164fb4c5c02acc62f0cf4d4cea6a754a84041af3dad26c69dfa9554dbaf8",
+              "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+              "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+              "chromium/prototype/page_dialogs.cc": "fc4b57359f55274ca46c8480fbf11514d06b5394bef553b98e94ffa811bf6484",
+              "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+              "chromium/prototype/page_file_access.cc": "92c802dfacb31bf71a7d9928e8c1e2b71814485937853b3443de915b44e1f799",
+              "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+              "chromium/prototype/page_file_access_browsertest.cc": "ae2bc1b88b2776cdada790643bc67221305529edfeafd1390cf69dabd4b9e394",
+              "chromium/prototype/page_media_access.cc": "30ec698c856797b2cef89cb0c036d5bc91d52c80b34cf0cf258e70a848becaf4",
+              "chromium/prototype/page_media_access.h": "1c415ed1b53416a94f0a44362ed4806e60c5e58a97c5ee11cbceffe2324c31d4",
+              "chromium/prototype/page_media_access_browsertest.cc": "371d592fe1063fa01a837b2cf74ed1bd6445e2ee1a18a85d238cf92509584c03",
+              "chromium/prototype/page_printing.cc": "0dd5b0d36e1333a2df5ccc6b07e0b83be2c4684908aee01b9656c793f03f6a77",
+              "chromium/prototype/page_printing.h": "b457c6fbb3e33cda7dcdd176065581c11eaa638f6d29ffee03725bb33402ad07",
+              "chromium/prototype/page_services.cc": "55f63bcc0ca5f7a2f1eb56bdd33fe5db4dd4adcdca67d17e617cf4d84a33fd5d",
+              "chromium/prototype/page_services.h": "d90a25f1c3abef177a524407d18886bdb7dc98832adb4560dbe1cd90cb6c626e",
+              "chromium/prototype/password_csv_import.cc": "04ff426b3eb38513b3b5116ec734638e65ec6b1845a94608e88f8a11f1d5ed43",
+              "chromium/prototype/password_csv_import.h": "46fa8deb3e4a2cd391c287e8965cf7f5ac67780d8ab104c9bce1dfd400fed153",
+              "chromium/prototype/passwords_panel.cc": "2112a49b9744658438fe72f20b65e8a6c5cab61e2415571c023f50a7415208a0",
+              "chromium/prototype/passwords_panel.h": "132d5cf5d85f0b404dfe3da9ae7e81ed559e9c7993660000f7844fc72b3fe5cd",
+              "chromium/prototype/profile_workspace_browsertest.cc": "fb197e2cb0ccab4bb62ad9593b7db29444942ea572c01f1ca46ebaaa163c0b9e",
+              "chromium/prototype/scene_editor.cc": "601c1bcaaba0c517526218a408e59aee90f2e8ae4259a4af7d013dce02024485",
+              "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+              "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+              "chromium/prototype/sidebar_layout.cc": "25fd6621b39172936726bbd8ca2a9042d40138706ebca09f71d53f254df60dee",
+              "chromium/prototype/sidebar_layout.h": "bc237520361af2ec26c96afdae41c6978d88629b72e80bb944843ca0668d367e",
+              "chromium/prototype/sidebar_metal.h": "21c2c8971630c166f9d67dca26ef67418c54928fe8cd76fffaa3cb5c6a2debd8",
+              "chromium/prototype/sidebar_metal.mm": "deaa0117916c872b424a3df75e7eb3389f8c99d71432c1a85abf914192d1ab6b",
+              "chromium/prototype/sidebar_raster.cc": "94d1d590c5df703c46fcb937aa8f1f4a3fe25041790bd07110f11510614b37b7",
+              "chromium/prototype/sidebar_scene.rs": "0900cdb02cab944bf8b8ecaa86f710055d1f001473446118ce91fc90a178d566",
+              "chromium/prototype/sidebar_tree.cc": "4743c51c79c012d5b9bca6277dbfc020716d8b94375ca1514f98226d120610f3",
+              "chromium/prototype/sidebar_tree.h": "d762b63e1a072247e71e2e8ff7105dc58b612ac06a41c7aec287b1106689b72b",
+              "chromium/prototype/site_data.cc": "4890b7a80fa9d6c9c27f95c51843f903860d6ef42f6097eff9d87c99cbbbe92d",
+              "chromium/prototype/site_data.h": "2ea60b60c5f2b734450b98eb8e42fa6d29b5b86eeaf98d2353674de00f5bc259",
+              "chromium/prototype/text_services_skia.cc": "307dd60239679b3e42f1801ec652d04318d88af593e8a99466f7aa34bdda71b4",
+              "chromium/prototype/time_machine_view.cc": "bc63f834324ada87c0ce233113b7217abf53a03116d7ea5aa2ffa2c8066c6f61",
+              "chromium/prototype/time_machine_view.h": "9041cf0cd4a64ca95603eb19d555241da8ee11ca9b6f3fddaaafc3d3913a63d0",
+              "chromium/prototype/timeline.rs": "4bbc1bcacc06dc29270f758af72afa9fe5e6f9b07080e478d8ca7be1382363da",
+              "chromium/prototype/timeline_store.h": "1ef92f671ec13039f84814b4e85f9bcf0cff2808348330002648aa8295ca458e",
+              "chromium/prototype/workspace_browser_settings.cc": "82452c4b3d70a03dcc311b5f69cc1d93e0c8eff3260ae16ed87bafd24cb0fd5b",
+              "chromium/prototype/workspace_commands.cc": "3fc36788b1dcb6f849dcbed39c50059db85de2ced26403ba2ca3bc3efa25e348",
+              "chromium/prototype/workspace_frame_mac.h": "0b91503feef7ab8d70564445ca698c5527674f4036d27da04b29551ce8873716",
+              "chromium/prototype/workspace_frame_mac.mm": "915d05a4f6c3240b13c1d9c43ba1868cd37866c1bab80b48a06d3cb874d5b5eb",
+              "chromium/prototype/workspace_frame_win.cc": "84e69e696e45ea1f0f882e1e7d6b6b61bf6c4efcaf4970f68fdc99b66614f2e3",
+              "chromium/prototype/workspace_frame_win.h": "2ff4f9ec4ad3bd6eb1190561a39677d7bc5f0d23285af66ea736251436a71f11",
+              "chromium/prototype/workspace_keyboard_mac.h": "32ad728fe32e8fbc4333cb4e94bac2be8dacae05d4cab15329446e662e61f523",
+              "chromium/prototype/workspace_keyboard_mac.mm": "2b5ddf59142b895a2f47553db786e7f30c53c026b2a5809f264b065412d31041",
+              "chromium/prototype/workspace_lifecycle.cc": "45acb2a8f1558406dd31e4ae0e6073a7ea01c59dd9e115ce7bd938c1de1753b5",
+              "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+              "chromium/prototype/workspace_preconnect_browsertest.cc": "185d1c9cde2c0aaa165a2eaebb29f3d138e020a6b216f26a5941ecdaf1cfcc80",
+              "chromium/prototype/workspace_shell.cc": "4ff14b351187d28fa83c0c627a0a3d25372a926475836ea1e3e061b51718c810",
+              "chromium/prototype/workspace_shell.h": "a462b21c042950cf59c6bf3b05e811e0575d842168fdbda3f26f6f5794832888",
+              "chromium/prototype/workspace_time_machine.cc": "dca1d41cf22dd71cb71ade10e11e09475a5baa119bb8e25497091a2fbc1c6a37",
+              "chromium/prototype/workspace_window.cc": "b9fe5b92bced1af37b6e1c0dcfe373a7ad4ee6cf41804d3cf18d27db8b65e36b",
+              "chromium/prototype/workspace_window.h": "e706bf26c898e1987ae26f3dd7ed76df80d1abb3a070b45351117316ea698c1d",
+              "testdata/arc/StorableSidebar.json": "f9fc357c50257b24c4bf0e76813c8ea12b0c943dd3135c2d16ea9b2627108a85",
+              "testdata/arc/User Data/Local State": "0ba1bf85efcfa2ff77b5f9fd6458f7e8a24c77e8565c9fe4f64b0e0eb3a336cd",
+              "testdata/file_upload_probe.html": "b6323ca855642e73d9b314a4c3426a3df7dbffec4d51105eaa1c24d79c91abf9",
+              "testdata/fingerprint_probe.html": "835a98896526fd868c999d3c3e78c7bc2d53295a4d4a84506fe5c8f124ebec72",
+              "testdata/links_probe.html": "b4ec7aab84e84da1665162b49a124b923522eced26ac4b9caf481dce56da7ec4",
+              "testdata/login_probe.html": "432601e804e292c4c2fba6e040c8892cd9faacdd5350fc9fc2c516e65ace7c8a",
+              "testdata/media_probe.html": "bcf1573760f04ee21fc6a834b6909b2f249ce28be6a3f8d9f89fed1674daf784",
+              "testdata/performance_probe.html": "0f9946d9e45d3b6cdb68446e760d6f53efbc502b61e3b7a7d924bc444006e5e9",
+              "testdata/persistence_probe.html": "d283f05864c9e8f20a2353082f1d85185f74b0b14b66cae64797e4ee5165d20d",
+              "testdata/preferences_probe.html": "431e2d8836fe1a2d321b5dca19a6ce63cebad71812d96778f518bb8560fc1ce4",
+              "testdata/preview_image.svg": "039147419141284f111dcabb318dde1e0ea078411e527d47ef2ed257e1b9ce38",
+              "testdata/sidebar_demo.html": "43002c99ea4f037421aa7e5126cf914983a3b39a8edc33c02e2c96d422aaaa3c",
+              "testdata/start.html": "b9a8761ea8b57ff11c754fe33670e733d330a92330f799987e059b1294f0b218",
+              "testdata/storage_probe.html": "03ba347e883db1a8aa5e842002e46dc0c90be7dbffba05b2118185d93afc1b77",
+              "zitter/application/workspace_controller.cc": "e767da6bd933cc25a8056c484ef01d93787a8d56c278018128a6736657ce3672",
+              "zitter/application/workspace_controller.h": "7fa4ef26d36077b1128f1e483b7c57bbe028c2637b0935d8762c7b591f11ad39",
+              "zitter/core/browser_state.h": "e812dc5b7535371102a6e71942dcee934a2c242ee3c2adee87a78f3a275821aa",
+              "zitter/core/command_history.cc": "ebd905c92f0cbd39e0cd135b5cd256ac60816be924f3a4ffcf13bfeed016b654",
+              "zitter/core/command_history.h": "845efb63ca25270588d915cea3308dd90af44ff8c90785cc63561d4fd395d41e",
+              "zitter/core/pin_tree.cc": "d16943bd392583a963a1e6800525e87b883531956b085b11eaa72dad315c0bbe",
+              "zitter/core/pin_tree.h": "09cc8236734974b8db8df69e2df7f23a4692ce11e2034b957189c24972be1db8",
+              "zitter/core/workspace_model.cc": "7d686944724170d1dd1a0d1c122f1f65696d0fc026545ef386d90185ae23dbad",
+              "zitter/core/workspace_model.h": "d7d51ebf731338235199a59355a06e63ecaee503f25a69d41e9e82fd982b1ea2",
+              "zitter/ports/workspace_runtime.h": "723167f5cc0c84f7cd8e3f8de5668924fc769a553a53114e9044b92f89db362d"
+            },
+            "newer_than_binary": []
+          },
+          "gn_args": "# Experimental production candidate. Adopt only after matching measurements.\n# Requires the mac-arm profile pinned by Chromium's chrome/build/mac-arm.pgo.txt.\nis_debug = false\nis_component_build = false\nuse_thin_lto = true\nthin_lto_enable_optimizations = true\nchrome_pgo_phase = 2\ndcheck_always_on = false\nsymbol_level = 0\nblink_symbol_level = 0\nv8_symbol_level = 0\ntarget_cpu = \"arm64\"\nuse_remoteexec = false\nuse_siso = false\n\nroot_extra_deps = [\"//third_party/zitter_libarchive:rar_reader_tests\",  \"//zitter_ui_lab:zitter_ui_lab\", \"//zitter_optimized:zitter_optimized\", \"//zitter_optimized:zitter_prototype_optimized\" ]\n"
+        }
+      },
+      "system": {
+        "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434\n",
+        "hardware": "hw.model: Mac15,7\nhw.ncpu: 12\nhw.memsize: 38654705664\n",
+        "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n"
+      },
+      "limits": [
+        "UI dispatch/drain latency, not monitor presentation or FPS.",
+        "Independent fresh test processes with private fixtures; warm OS caches.",
+        "Other desktop applications remain running; pairing balances order, not all ambient noise.",
+        "Confidence intervals use paired process medians, not pooled correlated trials."
+      ],
+      "comparisons": {
+        "compositor": {
+          "ui_tab_select_ms": {
+            "before": {
+              "n": 6,
+              "median": 16.598,
+              "p95": 16.603,
+              "mean": 16.598083333333335
+            },
+            "after": {
+              "n": 6,
+              "median": 16.598,
+              "p95": 16.609,
+              "mean": 16.599
+            },
+            "change": {
+              "paired_percent": [
+                -0.012049281561599123,
+                0.009037777911680145,
+                0.03613804734083903,
+                -0.015059787355808929,
+                0.0030125018828153216,
+                0.012054001928651914
+              ],
+              "median_percent": 0.006025139897247733,
+              "bootstrap_95_percent": [
+                -0.013554534458704026,
+                0.024096024634745472
+              ],
+              "sign_flip_p": 0.625
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 16.597,
+                "p95": 16.673,
+                "mean": 16.5974875
+              },
+              "after": {
+                "n": 240,
+                "median": 16.598,
+                "p95": 16.68,
+                "mean": 16.632833333333334
+              }
+            }
+          },
+          "ui_folder_toggle_ms": {
+            "before": {
+              "n": 6,
+              "median": 16.6855,
+              "p95": 16.692,
+              "mean": 16.6845
+            },
+            "after": {
+              "n": 6,
+              "median": 16.6855,
+              "p95": 16.691499999999998,
+              "mean": 16.683333333333334
+            },
+            "change": {
+              "paired_percent": [
+                -0.08390015881103441,
+                0.0,
+                0.029978715112277676,
+                -0.0029957161259308585,
+                0.04195510803439717,
+                -0.02695902228612157
+              ],
+              "median_percent": -0.0014978580629654292,
+              "bootstrap_95_percent": [
+                -0.05542959054857799,
+                0.03596691157333742
+              ],
+              "sign_flip_p": 0.8125
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 16.684,
+                "p95": 16.768,
+                "mean": 16.6874625
+              },
+              "after": {
+                "n": 240,
+                "median": 16.687,
+                "p95": 16.76,
+                "mean": 16.683354166666668
+              }
+            }
+          },
+          "ui_palette_open_call_ms": {
+            "before": {
+              "n": 6,
+              "median": 9.3125,
+              "p95": 9.405000000000001,
+              "mean": 9.264916666666666
+            },
+            "after": {
+              "n": 6,
+              "median": 9.253,
+              "p95": 9.3635,
+              "mean": 9.197083333333333
+            },
+            "change": {
+              "paired_percent": [
+                0.8311805009547424,
+                -0.6252021127519658,
+                -0.9861932938856177,
+                -0.4127137267513681,
+                -2.6945624697466863,
+                -0.44125465178097567
+              ],
+              "median_percent": -0.5332283822664707,
+              "bootstrap_95_percent": [
+                -1.840377881816152,
+                0.20923338710168715
+              ],
+              "sign_flip_p": 0.15625
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 9.2815,
+                "p95": 10.036,
+                "mean": 9.383433333333333
+              },
+              "after": {
+                "n": 240,
+                "median": 9.187,
+                "p95": 10.132,
+                "mean": 9.304329166666667
+              }
+            }
+          },
+          "ui_palette_open_idle_ms": {
+            "before": {
+              "n": 6,
+              "median": 15.745249999999999,
+              "p95": 16.16,
+              "mean": 15.812416666666666
+            },
+            "after": {
+              "n": 6,
+              "median": 15.873000000000001,
+              "p95": 15.9535,
+              "mean": 15.844000000000001
+            },
+            "change": {
+              "paired_percent": [
+                -0.06577298922576524,
+                1.0390357748009782,
+                1.6706673067691025,
+                -1.4727722772277185,
+                0.07255062772066889,
+                0.019184652278170233
+              ],
+              "median_percent": 0.04586763999941956,
+              "bootstrap_95_percent": [
+                -0.7692726332267419,
+                1.3548515407850403
+              ],
+              "sign_flip_p": 0.59375
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 15.743,
+                "p95": 23.742,
+                "mean": 17.003858333333334
+              },
+              "after": {
+                "n": 240,
+                "median": 15.836500000000001,
+                "p95": 23.708,
+                "mean": 16.94335
+              }
+            }
+          },
+          "ui_palette_query_ms": {
+            "before": {
+              "n": 6,
+              "median": 83.146,
+              "p95": 83.161,
+              "mean": 83.14341666666667
+            },
+            "after": {
+              "n": 6,
+              "median": 83.147,
+              "p95": 83.16,
+              "mean": 83.141
+            },
+            "change": {
+              "paired_percent": [
+                -0.004211134238929493,
+                -0.023452298625947776,
+                -0.009018650569370124,
+                0.01082368221667629,
+                -0.003608219524076084,
+                0.012027253757018741
+              ],
+              "median_percent": -0.003909676881502788,
+              "bootstrap_95_percent": [
+                -0.01623547459765895,
+                0.011425467986847515
+              ],
+              "sign_flip_p": 0.59375
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 83.147,
+                "p95": 91.489,
+                "mean": 82.451825
+              },
+              "after": {
+                "n": 240,
+                "median": 83.1465,
+                "p95": 91.495,
+                "mean": 82.52478333333333
+              }
+            }
+          },
+          "ui_palette_open_part_ms": {
+            "before": {
+              "n": 6,
+              "median": 41.479,
+              "p95": 41.504000000000005,
+              "mean": 41.480916666666666
+            },
+            "after": {
+              "n": 6,
+              "median": 41.487,
+              "p95": 41.4935,
+              "mean": 41.486583333333336
+            },
+            "change": {
+              "paired_percent": [
+                0.0602998106585817,
+                0.022905088546254504,
+                0.03737326244470651,
+                -0.026503469545124947,
+                -0.03856304455236437,
+                0.02651720605073571
+              ],
+              "median_percent": 0.024711147298495106,
+              "bootstrap_95_percent": [
+                -0.03253325704874466,
+                0.048836536551644105
+              ],
+              "sign_flip_p": 0.5
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 41.4805,
+                "p95": 49.819,
+                "mean": 42.764275
+              },
+              "after": {
+                "n": 240,
+                "median": 41.486,
+                "p95": 49.821,
+                "mean": 42.73104583333333
+              }
+            }
+          },
+          "ui_palette_type_part_ms": {
+            "before": {
+              "n": 6,
+              "median": 16.677,
+              "p95": 16.680500000000002,
+              "mean": 16.67575
+            },
+            "after": {
+              "n": 6,
+              "median": 16.67375,
+              "p95": 16.677,
+              "mean": 16.673333333333332
+            },
+            "change": {
+              "paired_percent": [
+                -0.002999580058782314,
+                0.017994241842611558,
+                -0.011991126566335275,
+                -0.05995024129973325,
+                -0.032977575248838153,
+                0.0029983209402395516
+              ],
+              "median_percent": -0.0074953533125587946,
+              "bootstrap_95_percent": [
+                -0.046463908274285703,
+                0.010496281391425555
+              ],
+              "sign_flip_p": 0.3125
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 16.675,
+                "p95": 16.728,
+                "mean": 16.664945833333334
+              },
+              "after": {
+                "n": 240,
+                "median": 16.673,
+                "p95": 16.717,
+                "mean": 16.665145833333334
+              }
+            }
+          },
+          "ui_palette_close_part_ms": {
+            "before": {
+              "n": 6,
+              "median": 25.05525,
+              "p95": 25.067999999999998,
+              "mean": 25.05525
+            },
+            "after": {
+              "n": 6,
+              "median": 25.05475,
+              "p95": 25.065,
+              "mean": 25.056250000000002
+            },
+            "change": {
+              "paired_percent": [
+                -0.029918621349911412,
+                -0.0418960976777738,
+                -0.009973072703706176,
+                0.04592743465325899,
+                0.03194122814020872,
+                0.02794578517677504
+              ],
+              "median_percent": 0.008986356236534432,
+              "bootstrap_95_percent": [
+                -0.03590735951384261,
+                0.03893433139673386
+              ],
+              "sign_flip_p": 0.8125
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 25.051499999999997,
+                "p95": 25.136,
+                "mean": 23.085241666666665
+              },
+              "after": {
+                "n": 240,
+                "median": 25.055,
+                "p95": 25.139,
+                "mean": 23.191908333333334
+              }
+            }
+          },
+          "ui_iteration_ms": {
+            "before": {
+              "n": 6,
+              "median": 116.663,
+              "p95": 116.67150000000001,
+              "mean": 116.66166666666668
+            },
+            "after": {
+              "n": 6,
+              "median": 116.66075000000001,
+              "p95": 116.676,
+              "mean": 116.65666666666668
+            },
+            "change": {
+              "paired_percent": [
+                -0.0060010887689698755,
+                -0.028286482061656848,
+                0.0017142146968129879,
+                -0.005143040822885858,
+                0.0030001328630513413,
+                0.009000090000887973
+              ],
+              "median_percent": -0.0017144130630364351,
+              "bootstrap_95_percent": [
+                -0.017143785415313362,
+                0.006000111431969657
+              ],
+              "sign_flip_p": 0.5625
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 116.6625,
+                "p95": 125.003,
+                "mean": 115.96935416666666
+              },
+              "after": {
+                "n": 240,
+                "median": 116.6585,
+                "p95": 125.022,
+                "mean": 116.07397083333333
+              }
+            }
+          }
+        },
+        "metal": {
+          "ui_tab_select_ms": {
+            "before": {
+              "n": 6,
+              "median": 16.59525,
+              "p95": 16.607,
+              "mean": 16.594833333333334
+            },
+            "after": {
+              "n": 6,
+              "median": 16.59475,
+              "p95": 16.605,
+              "mean": 16.592083333333335
+            },
+            "change": {
+              "paired_percent": [
+                0.05425445338638202,
+                -0.02110277049228726,
+                -0.08731257903292766,
+                -0.11447507154692671,
+                0.06025911419103025,
+                0.009038594799792854
+              ],
+              "median_percent": -0.006032087846247203,
+              "bootstrap_95_percent": [
+                -0.10089382528992719,
+                0.057256783788706134
+              ],
+              "sign_flip_p": 0.625
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 16.596,
+                "p95": 16.663,
+                "mean": 16.622229166666667
+              },
+              "after": {
+                "n": 240,
+                "median": 16.5965,
+                "p95": 16.668,
+                "mean": 16.6211875
+              }
+            }
+          },
+          "ui_folder_toggle_ms": {
+            "before": {
+              "n": 6,
+              "median": 16.67175,
+              "p95": 16.680999999999997,
+              "mean": 16.672416666666667
+            },
+            "after": {
+              "n": 6,
+              "median": 16.674,
+              "p95": 16.701,
+              "mean": 16.675833333333333
+            },
+            "change": {
+              "paired_percent": [
+                0.1619287513494161,
+                0.008995502248887455,
+                0.029994900866858742,
+                -0.04496133325340157,
+                -0.017996940520115245,
+                -0.015001050073515376
+              ],
+              "median_percent": -0.0030027739123139607,
+              "bootstrap_95_percent": [
+                -0.03147913688675841,
+                0.09596182610813742
+              ],
+              "sign_flip_p": 0.75
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 16.672,
+                "p95": 16.76,
+                "mean": 16.674620833333332
+              },
+              "after": {
+                "n": 240,
+                "median": 16.6715,
+                "p95": 16.744,
+                "mean": 16.668833333333332
+              }
+            }
+          },
+          "ui_palette_open_call_ms": {
+            "before": {
+              "n": 6,
+              "median": 8.9795,
+              "p95": 9.171,
+              "mean": 8.965166666666667
+            },
+            "after": {
+              "n": 6,
+              "median": 9.04225,
+              "p95": 9.4065,
+              "mean": 9.048583333333333
+            },
+            "change": {
+              "paired_percent": [
+                2.123020426899247,
+                -3.154381084840052,
+                3.967946946670353,
+                1.179841564132822,
+                0.28895431250681725,
+                1.2093852755949541
+              ],
+              "median_percent": 1.194613419863888,
+              "bootstrap_95_percent": [
+                -1.4327133861666175,
+                3.0454836867848
+              ],
+              "sign_flip_p": 0.34375
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 8.9795,
+                "p95": 9.778,
+                "mean": 9.053633333333332
+              },
+              "after": {
+                "n": 240,
+                "median": 9.0135,
+                "p95": 10.125,
+                "mean": 9.100279166666667
+              }
+            }
+          },
+          "ui_palette_open_idle_ms": {
+            "before": {
+              "n": 6,
+              "median": 15.907,
+              "p95": 16.1585,
+              "mean": 15.925333333333334
+            },
+            "after": {
+              "n": 6,
+              "median": 15.87575,
+              "p95": 16.185499999999998,
+              "mean": 15.924999999999999
+            },
+            "change": {
+              "paired_percent": [
+                -1.0768326267908468,
+                1.3176838810641467,
+                -0.17947103274559284,
+                -0.21338019329735225,
+                0.37512716174972205,
+                -0.2204516108714194
+              ],
+              "median_percent": -0.19642561302147254,
+              "bootstrap_95_percent": [
+                -0.6486421188311331,
+                0.8464055214069344
+              ],
+              "sign_flip_p": 1.0
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 15.908,
+                "p95": 23.044,
+                "mean": 16.348445833333333
+              },
+              "after": {
+                "n": 240,
+                "median": 15.964500000000001,
+                "p95": 22.955,
+                "mean": 16.5799875
+              }
+            }
+          },
+          "ui_palette_query_ms": {
+            "before": {
+              "n": 6,
+              "median": 83.17275000000001,
+              "p95": 83.18799999999999,
+              "mean": 83.17425
+            },
+            "after": {
+              "n": 6,
+              "median": 83.17750000000001,
+              "p95": 83.1935,
+              "mean": 83.1785
+            },
+            "change": {
+              "paired_percent": [
+                -0.006012252971554499,
+                0.012021614863511054,
+                0.03186436601934073,
+                0.01623259505088015,
+                -0.01502620570272839,
+                -0.008415535077754832
+              ],
+              "median_percent": 0.0030046809459782775,
+              "bootstrap_95_percent": [
+                -0.011720870390241611,
+                0.02404848053511044
+              ],
+              "sign_flip_p": 0.53125
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 83.174,
+                "p95": 91.509,
+                "mean": 84.18137916666666
+              },
+              "after": {
+                "n": 240,
+                "median": 83.177,
+                "p95": 91.501,
+                "mean": 83.83905
+              }
+            }
+          },
+          "ui_palette_open_part_ms": {
+            "before": {
+              "n": 6,
+              "median": 41.4985,
+              "p95": 41.515,
+              "mean": 41.49625
+            },
+            "after": {
+              "n": 6,
+              "median": 41.503249999999994,
+              "p95": 41.5175,
+              "mean": 41.500750000000004
+            },
+            "change": {
+              "paired_percent": [
+                0.0060278728842178,
+                -0.007229786721296705,
+                0.06869290655353577,
+                -0.01566170712608006,
+                -0.007226303745633267,
+                0.02048094067756967
+              ],
+              "median_percent": -0.0005992154307077335,
+              "bootstrap_95_percent": [
+                -0.011445746923688382,
+                0.04458692361555272
+              ],
+              "sign_flip_p": 0.59375
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 41.5015,
+                "p95": 49.784,
+                "mean": 42.05278333333333
+              },
+              "after": {
+                "n": 240,
+                "median": 41.501,
+                "p95": 49.817,
+                "mean": 42.335837500000004
+              }
+            }
+          },
+          "ui_palette_type_part_ms": {
+            "before": {
+              "n": 6,
+              "median": 16.67475,
+              "p95": 16.679,
+              "mean": 16.67375
+            },
+            "after": {
+              "n": 6,
+              "median": 16.674,
+              "p95": 16.678,
+              "mean": 16.67425
+            },
+            "change": {
+              "paired_percent": [
+                0.0329993400131956,
+                0.032997360211162174,
+                -0.041968942982184565,
+                0.00599754100820693,
+                -0.005996641880579023,
+                -0.005995563283156535
+              ],
+              "median_percent": 9.888625251974759e-07,
+              "bootstrap_95_percent": [
+                -0.023982792431381794,
+                0.03299835011217889
+              ],
+              "sign_flip_p": 0.9375
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 16.6755,
+                "p95": 16.726,
+                "mean": 16.704754166666667
+              },
+              "after": {
+                "n": 240,
+                "median": 16.674,
+                "p95": 16.726,
+                "mean": 16.659795833333334
+              }
+            }
+          },
+          "ui_palette_close_part_ms": {
+            "before": {
+              "n": 6,
+              "median": 25.0625,
+              "p95": 25.092,
+              "mean": 25.06941666666667
+            },
+            "after": {
+              "n": 6,
+              "median": 25.076749999999997,
+              "p95": 25.109,
+              "mean": 25.076666666666668
+            },
+            "change": {
+              "paired_percent": [
+                0.023914386496337592,
+                -0.011956001912960534,
+                -0.00997327163203554,
+                0.22352612461582488,
+                -0.02194995410466083,
+                -0.02993056109825698
+              ],
+              "median_percent": -0.010964636772498038,
+              "bootstrap_95_percent": [
+                -0.025940257601458905,
+                0.12372025555608124
+              ],
+              "sign_flip_p": 0.84375
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 25.064,
+                "p95": 33.37,
+                "mean": 25.4858375
+              },
+              "after": {
+                "n": 240,
+                "median": 25.066499999999998,
+                "p95": 25.162,
+                "mean": 24.909004166666666
+              }
+            }
+          },
+          "ui_iteration_ms": {
+            "before": {
+              "n": 6,
+              "median": 116.6685,
+              "p95": 116.678,
+              "mean": 116.66858333333333
+            },
+            "after": {
+              "n": 6,
+              "median": 116.67025000000001,
+              "p95": 116.6925,
+              "mean": 116.67275000000001
+            },
+            "change": {
+              "paired_percent": [
+                0.004285775511081447,
+                -0.00042857020406961155,
+                0.02828745194347615,
+                -0.0008570595999124464,
+                -0.0012856555128837321,
+                -0.008571183680472494
+              ],
+              "median_percent": -0.000642814901991029,
+              "bootstrap_95_percent": [
+                -0.004928419596678113,
+                0.016286613727278798
+              ],
+              "sign_flip_p": 0.75
+            },
+            "pooled": {
+              "before": {
+                "n": 240,
+                "median": 116.668,
+                "p95": 125.012,
+                "mean": 117.70422916666666
+              },
+              "after": {
+                "n": 240,
+                "median": 116.6695,
+                "p95": 125.013,
+                "mean": 117.35814166666667
+              }
+            }
+          }
+        }
+      },
+      "resources": {
+        "compositor": {
+          "browser_cpu_ms_per_iteration": {
+            "before": {
+              "n": 6,
+              "median": 46.598375000000004,
+              "p95": 47.9005,
+              "mean": 46.766708333333334,
+              "process_values": [
+                45.7365,
+                46.54925,
+                46.50075,
+                47.9005,
+                46.6475,
+                47.265750000000004
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 46.881,
+              "p95": 47.20825,
+              "mean": 46.799041666666675,
+              "process_values": [
+                46.054,
+                47.20825,
+                46.88,
+                46.882,
+                46.6625,
+                47.1075
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                0.6941939151443588,
+                1.41570487172189,
+                0.8155782433616698,
+                -2.1262826066533846,
+                0.032156064097765835,
+                -0.33480903190999944
+              ],
+              "median_percent": 0.3631749896210623,
+              "bootstrap_95_percent": [
+                -1.230545819281692,
+                1.11564155754178
+              ],
+              "sign_flip_p": 0.90625
+            }
+          },
+          "browser_footprint_mib": {
+            "before": {
+              "n": 6,
+              "median": 116.78312683105469,
+              "p95": 120.00210571289062,
+              "mean": 117.28317260742188,
+              "process_values": [
+                116.68942260742188,
+                116.83002471923828,
+                116.56437683105469,
+                120.00210571289062,
+                116.87687683105469,
+                116.7362289428711
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 116.92378616333008,
+              "p95": 119.83018493652344,
+              "mean": 117.13995107014973,
+              "process_values": [
+                116.34567260742188,
+                119.83018493652344,
+                118.43937683105469,
+                116.75189971923828,
+                117.09567260742188,
+                114.37689971923828
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                -0.2945853979897328,
+                2.567970198153291,
+                1.6085531883532234,
+                -2.7084574677619266,
+                0.18720193617378644,
+                -2.0210771283244333
+              ],
+              "median_percent": -0.05369173090797319,
+              "bootstrap_95_percent": [
+                -2.36476729804318,
+                2.088261693253257
+              ],
+              "sign_flip_p": 0.8125
+            }
+          }
+        },
+        "metal": {
+          "browser_cpu_ms_per_iteration": {
+            "before": {
+              "n": 6,
+              "median": 43.5745,
+              "p95": 44.0615,
+              "mean": 43.59204166666667,
+              "process_values": [
+                43.194,
+                43.6435,
+                43.5055,
+                43.31325,
+                44.0615,
+                43.834500000000006
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 43.802625,
+              "p95": 44.117000000000004,
+              "mean": 43.661375,
+              "process_values": [
+                43.13275,
+                43.066250000000004,
+                44.117000000000004,
+                43.76275,
+                44.047000000000004,
+                43.8425
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                -0.1418021021438176,
+                -1.3226482752299873,
+                1.4055694107641736,
+                1.0377886674401093,
+                -0.03290854827910916,
+                0.018250464816516043
+              ],
+              "median_percent": -0.0073290417312965594,
+              "bootstrap_95_percent": [
+                -0.7322251886869025,
+                1.2216790391021415
+              ],
+              "sign_flip_p": 0.84375
+            }
+          },
+          "browser_footprint_mib": {
+            "before": {
+              "n": 6,
+              "median": 263.68172454833984,
+              "p95": 266.9240493774414,
+              "mean": 263.5411071777344,
+              "process_values": [
+                263.47074127197266,
+                261.67382049560547,
+                264.8146286010742,
+                266.9240493774414,
+                263.89270782470703,
+                260.47069549560547
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 263.1112632751465,
+              "p95": 265.15819549560547,
+              "mean": 263.19204966227215,
+              "process_values": [
+                262.3143997192383,
+                262.1583786010742,
+                263.0643997192383,
+                263.1581268310547,
+                265.15819549560547,
+                263.2987976074219
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                -0.43888803255793807,
+                0.18517637895567596,
+                -0.6609260564953701,
+                -1.4108592145106957,
+                0.4795462827790864,
+                1.0857659463131997
+              ],
+              "median_percent": -0.12685582680113106,
+              "bootstrap_95_percent": [
+                -1.035892635503033,
+                0.782656114546143
+              ],
+              "sign_flip_p": 0.71875
+            }
+          }
+        }
+      },
+      "raw_report": "build/product-boundary-performance/20261105T190956051872Z/report.json",
+      "raw_report_sha256": "91d4ac9acf2d5b265de73a0094d94438aa5e8563a2fdb74fa9c6fbe381559835",
+      "measured_samples": 8640,
+      "processes": 24
+    },
+    "boundary": {
+      "date": "2026-11-05T19:23:22.952375+00:00",
+      "test": "boundary",
+      "iterations": 20,
+      "tabs": 20,
+      "pins": 1000,
+      "rounds": 6,
+      "binaries": {
+        "before": {
+          "path": "${REPO}/.chromium/src/out/ZitterOptimized/zitter_prototype_perf_before",
+          "sha256": "8eea40faae6ef86d159cff07d57242774b3f4d0b8030da972cc28598af0c4394",
+          "source": {
+            "path": "${REPO}/.chromium/src/zitter_perf_before",
+            "files": {
+              "BUILD.gn": "c6bf65a2eb7dbc653a108a843b57a2c95eef6d0b9bcf6bdc4e881ef29c51edd5",
+              "assets/fonts/InstrumentSerif-Italic.ttf": "08939b8bdf534afec24ae0ef5e03f948940cd9a8fe08e7fecbad040e62327385",
+              "assets/fonts/InstrumentSerif-OFL.txt": "129ed7618959716959f2941fdd5b49e0ad6e6c1d78726761786a00253d865521",
+              "assets/fonts/InstrumentSerif-Regular.ttf": "498efd461f6ddfcb7a111bf9a565709d2085d48201d501ead960d93e84ffbb88",
+              "assets/fonts/JetBrainsMono-OFL.txt": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d",
+              "assets/fonts/JetBrainsMono-Variable.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+              "assets/fonts/SchibstedGrotesk-Italic-Variable.ttf": "b49fedb6f3a2ff9b43e13351888641505dc8e5f300941e597eecbc3f52ba357b",
+              "assets/fonts/SchibstedGrotesk-OFL.txt": "3b4f3063b6ac7c1e403e2c4a5e8ef3a58190ff83ed7b15af66511858699139ce",
+              "assets/fonts/SchibstedGrotesk-Variable.ttf": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+              "chromium/app/app_shell_mac.h": "5bb30a553ac7b48c279d5b38a8dd3ec1d2a10b74b84f281dd79e560220e63544",
+              "chromium/app/app_shell_mac.mm": "6f55ff12b2de65e8353bf788ab94db45d3149c939b8f72224f83f7702411d8f4",
+              "chromium/app/browser_client.cc": "956013b53038af6295591f5325579d49b2e749a95b341319ee0471270291f22c",
+              "chromium/app/browser_client.h": "700fb7a24a65ca87c659e92bd4b7769e95d72bb54e2ba0446e3aa76f1292d7f2",
+              "chromium/app/compile_ui_lab_metal.py": "a71330b61f044f659898654fec0ec05d61e01ac0cf9aa921c8c9cd4c3b4a21c6",
+              "chromium/app/main.cc": "4e998a688125e848d3b8d0103128d071f4f337a3ffb38bf4d6baa0814063a6f4",
+              "chromium/app/network_policy.cc": "d3b1d3003eeeff49939588c45002aa4484d8838b1bcd51b762e8963e923aee0d",
+              "chromium/app/network_policy.h": "4fd7518cf7cef3d0d2340d1574cf9f20b814b638eaf6dd68b78881ca7d225ca7",
+              "chromium/app/network_policy_components.inc": "d6a5ccea424e299c0341515a8a7775b7fdded513b9eee240fa72147b6cb9b67b",
+              "chromium/app/network_policy_features.inc": "0bf89b3c481c29dc8061cb726c2e93f6579639bc5efa8dca667bd7e7011f0ae2",
+              "chromium/app/network_policy_unittest.cc": "0963b629bce4e88794a5797a94e9f04c3a1e3161a51d908b5b81c21a9ddd1156",
+              "chromium/app/performance_probe.cc": "00a6cb4617ff4e796f5cde8af974b1dcb90515736661da8b82fda68eaa4a1703",
+              "chromium/app/performance_probe.h": "1a27b2e83d2502a7bfd22950139bd0a8f5849f50b10b68b42087a991d3e5124c",
+              "chromium/app/runtime.cc": "076b079ccb5c9e789cc5ea347922feb5600ba5162c63abe988d65a817c10561f",
+              "chromium/app/runtime.h": "c135e0b6242423b603ebb6e3910ab959410c3e6fd9f4b35e37ddf5a348bf0ee6",
+              "chromium/app/ui_lab.cc": "50ba6f90b6d72f19677899144615ed151bcc6cc55319837a33f452df33db655f",
+              "chromium/app/ui_lab.h": "e8c47357c256a7ec59e37611dd31f241ea503ceaaf89b0ecbc5bcbe9bedead97",
+              "chromium/app/ui_lab.metal": "50691d48e507091d7ce7dcc6176723d7091548a664399158ceaf2a5a24672667",
+              "chromium/app/ui_lab_metal.h": "1f8583ec4ec87f0bb7fbdb5618fb9d505cb3fb205b16ff533692f5a9a093015b",
+              "chromium/app/ui_lab_metal.mm": "bdef94729c9919d2cbf3c513d3140a174f42536fbf1f6777ab6ec9306eccd6a2",
+              "chromium/app/ui_lab_scene.rs": "b8bebc1bdb40763842ddcb25fd61dd8651145b33d2afe92938ba2a6874035510",
+              "chromium/app/updater_win.cc": "c1fc4c97c85d3fd33937772e1225eeaabf8003344cdc54f8b8c95425865ca726",
+              "chromium/app/updater_win.h": "1e1db48e16f89e3bf1376b4b61245545d10ea9da272e8c860ae64fb09fbb5bf1",
+              "chromium/app/updater_win_unittest.cc": "d5210e9869c30f33619e7bcaf1408c7d129f658cd0887a46b451c90372cb1e65",
+              "chromium/app/zitter.ico": "8c8ed7362bf13a27e7f1f9b25b7607b668ab87fceb9696e8b1b06e6e9bc76607",
+              "chromium/app/zitter_exe.rc": "b7e889f60e0ecb0f68d1d8a1dab94b2e669b560695065c2d322d3671731081ca",
+              "chromium/app/zitter_version.h": "ae334894844036f312987c77ce509dc63453fc774206982f06320f3d66adab85",
+              "chromium/installer/setup.manifest": "bc3f7ba02ceb24693e0c238d65686ca5c12413bc6403520c3cb1b0e2af28262a",
+              "chromium/installer/setup.rc": "688288bafcb629f486d3291ecb1d022cafda8b0b273967c2ab79e5db9005379f",
+              "chromium/installer/setup_accessibility.cc": "73decb13dcb9bb0da8c72519417eab46e0a284dd2f7878f4aea8b7a0809412b3",
+              "chromium/installer/setup_accessibility.h": "13c816e29841d177960110ac7724919db434ebd654a43306fcb0b7bb57e3b0ae",
+              "chromium/installer/setup_install.cc": "a26508533105604c7f32a11f86ddf8266b4b1950d16ae98b2d9f08e1c2b2a776",
+              "chromium/installer/setup_install.h": "bb392eb8fc6ee3e34b25acb372c00773b47ba65233d05bb85dedc02ebf9991f3",
+              "chromium/installer/setup_main.cc": "358a79afdd0e3cf9e618c33f138a14c16cc9cdfc501df24c4f512c63f81bcb68",
+              "chromium/installer/setup_resource.h": "8faa27652a66776bf6a97f5390b5382c10cd16b368144cca13361587a03affaa",
+              "chromium/installer/setup_runtime.cc": "bb61da82210e3c55d58d685729e419b1bda917a5803d4165116f5532b27988d6",
+              "chromium/installer/setup_runtime.h": "6b1003c158368897d64addeb82cfe0caa3ac5b031f0e414f572313a608452c3a",
+              "chromium/installer/setup_runtime_test.cc": "f0a770d0a9bc62bcf8d303aa663f84f8fc548014643f108f874ddd5cdb9ac7ca",
+              "chromium/installer/setup_text.h": "e43c71b264a714359e9696b48b1e5f563b1b9484396196c8e85095e9597e2117",
+              "chromium/prototype/arc_importer.cc": "46a5013894e88a6dc59de19dc876d8f695fac550bac14d977cfd4f6b4b0b5b41",
+              "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+              "chromium/prototype/arc_importer_unittest.cc": "f75f7cb6c1f9f5b46f01091749e458ebb58a0cd4d000b18b72c4ffc03bc536b4",
+              "chromium/prototype/browser_data.h": "5a05024a7337cb3524d3290d737b42b67f5652044d13d326763e579601ef03f3",
+              "chromium/prototype/browser_import_data.cc": "3ebd0f254ed2511d9b1007ffbb4c4dd4728224e05dd678459ab71dfed28ce806",
+              "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+              "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+              "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+              "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+              "chromium/prototype/browser_tools.cc": "1bca9cc9a79f51fcad0cb1401c5ad586679f5f7353324a234b2658d444f992a1",
+              "chromium/prototype/browser_tools.h": "687f818addfcffb761de41afa39f7cfe9cea4aceaa03cd3a3b1fb94896859222",
+              "chromium/prototype/design.rs": "ed292902cbce1cc20299c20df9e0be72ae93c1716da15aaeb184c16ae7cbde6b",
+              "chromium/prototype/design_tokens.rs": "f28092e2ac43aef0d63e182af3b901eafb3862465d8a2e5389208a7e0e68a58f",
+              "chromium/prototype/download_panel.cc": "86c845f84ad75a1daae0c9b2da8c5490b538caf139559d50afacc0f204ed7310",
+              "chromium/prototype/download_panel.h": "d64f949f56a62cf132cfe5029e7d05a9fa56f0cce9f517ce02e6ccce3f23ee9c",
+              "chromium/prototype/editor_control.h": "c9059d7b3082835c0a62cc67e524bab27ccb61fce4070a9510f35cb19ce6d64b",
+              "chromium/prototype/editor_text_layout.h": "6744d27ddd1aa7e73ec03e45f97ada7c1364cfd3c7f88462994bdc1cb0171f3b",
+              "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+              "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+              "chromium/prototype/editor_text_layout_unittest.cc": "1f66cb54b47c0d9376720aec7932e179ff8264fa53f5bf632c7debf427acca3c",
+              "chromium/prototype/extension_tab_events.cc": "2dfda94fd8348cd082ab1888f200d44e2f9657ddf2b68146fd7de9538ccda8e0",
+              "chromium/prototype/extension_tab_events.h": "ea45affe0fb25981354fad0fc2ad39fa35bf3a2b064a76a5c4ac667092c17ece",
+              "chromium/prototype/extensions_bar.cc": "10b731ce49b9488171f2430df7afa42660b41c23c8a96419c623b4807a397420",
+              "chromium/prototype/extensions_bar.h": "dfe9f227a80da2a8a2c8fab9242f8b0bc4f6132553922f5f751d3bb073a693f5",
+              "chromium/prototype/fingerprint_protection.cc": "f9453fca176a1a0ad68403e1a0bd759b91ae23c4dca4aab0856000aa7e8baf4f",
+              "chromium/prototype/fingerprint_protection.h": "3dab683ca7d7f3801e86b384d605b0bffffd29bcfdb9c0df567a4c0e2650ef73",
+              "chromium/prototype/fingerprint_protection_browsertest.cc": "702b94727d44d06e6f8eea99b6c0c772d57cade8f25e4e5116fe06a61b7e4509",
+              "chromium/prototype/history_panel.cc": "f5ae23cb0da1fd617fe765a4b46472ec1382f3ce9bd09d6f78619339059b7b37",
+              "chromium/prototype/history_panel.h": "5ec705ebdde2c7b138720da47f3e64907e95804803d3a3acc794bd596056c102",
+              "chromium/prototype/i18n.cc": "b7b033ade2bdc76bd066373b7046626fc204cbc5af0ebf3952227e2be6c004b8",
+              "chromium/prototype/i18n.h": "bd604d7e0784f86f72e58029742f05dd855f428f1b06643e0ff7692c07ad4807",
+              "chromium/prototype/i18n.rs": "817d8565db11a520a802b408b8dff179b73be24848a04b1b2c5a295676679c22",
+              "chromium/prototype/i18n_en_native.rs": "037aefc6ae78da1c453f7d965ee5ca9fc3a14a1c584c58ac8c9e7e0513b00974",
+              "chromium/prototype/i18n_en_scene.rs": "8dedcbb014acbbbcbaf83aab43d9a4f0bdba857df3ff4ad8ee13d260c81729e8",
+              "chromium/prototype/i18n_en_shell.rs": "90a2a7713a3d94b875028c0d71099b003f9f85fb4cd94823afa5f7b7757b4c5d",
+              "chromium/prototype/image_link_preview.cc": "c10e21fbaafe72a50d705493d552f801568714a3d09e0f03dd63f4bb96ade81a",
+              "chromium/prototype/image_link_preview.h": "943fc0d28c0f07a482a71e41b9dc8df3a7153a151ace79eff284b6b7387fb114",
+              "chromium/prototype/jump_list_win.cc": "e1cb301ab3ed8ea62175de6c69d62630cc996ffa8a0fa2e74745fd45ed5be1b5",
+              "chromium/prototype/jump_list_win.h": "61d3164fb4c5c02acc62f0cf4d4cea6a754a84041af3dad26c69dfa9554dbaf8",
+              "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+              "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+              "chromium/prototype/page_dialogs.cc": "fc4b57359f55274ca46c8480fbf11514d06b5394bef553b98e94ffa811bf6484",
+              "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+              "chromium/prototype/page_file_access.cc": "92c802dfacb31bf71a7d9928e8c1e2b71814485937853b3443de915b44e1f799",
+              "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+              "chromium/prototype/page_file_access_browsertest.cc": "5476aebc94a103f54cf7b3b9ea7047b59672c9c134493dc8c981d008bfc785d4",
+              "chromium/prototype/page_media_access.cc": "30ec698c856797b2cef89cb0c036d5bc91d52c80b34cf0cf258e70a848becaf4",
+              "chromium/prototype/page_media_access.h": "1c415ed1b53416a94f0a44362ed4806e60c5e58a97c5ee11cbceffe2324c31d4",
+              "chromium/prototype/page_media_access_browsertest.cc": "801155c05301ea50ed830ddc1126a930b21a542cb74af1bf8f2d35ca39739f2d",
+              "chromium/prototype/page_printing.cc": "0dd5b0d36e1333a2df5ccc6b07e0b83be2c4684908aee01b9656c793f03f6a77",
+              "chromium/prototype/page_printing.h": "b457c6fbb3e33cda7dcdd176065581c11eaa638f6d29ffee03725bb33402ad07",
+              "chromium/prototype/page_services.cc": "55f63bcc0ca5f7a2f1eb56bdd33fe5db4dd4adcdca67d17e617cf4d84a33fd5d",
+              "chromium/prototype/page_services.h": "d90a25f1c3abef177a524407d18886bdb7dc98832adb4560dbe1cd90cb6c626e",
+              "chromium/prototype/password_csv_import.cc": "04ff426b3eb38513b3b5116ec734638e65ec6b1845a94608e88f8a11f1d5ed43",
+              "chromium/prototype/password_csv_import.h": "46fa8deb3e4a2cd391c287e8965cf7f5ac67780d8ab104c9bce1dfd400fed153",
+              "chromium/prototype/passwords_panel.cc": "2112a49b9744658438fe72f20b65e8a6c5cab61e2415571c023f50a7415208a0",
+              "chromium/prototype/passwords_panel.h": "132d5cf5d85f0b404dfe3da9ae7e81ed559e9c7993660000f7844fc72b3fe5cd",
+              "chromium/prototype/profile_workspace_browsertest.cc": "3360a8aadc5b98bc6d2effb90efc2ffc6c39d8289b333a776d8f01a377384407",
+              "chromium/prototype/scene_editor.cc": "601c1bcaaba0c517526218a408e59aee90f2e8ae4259a4af7d013dce02024485",
+              "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+              "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+              "chromium/prototype/sidebar_layout.cc": "25fd6621b39172936726bbd8ca2a9042d40138706ebca09f71d53f254df60dee",
+              "chromium/prototype/sidebar_layout.h": "bc237520361af2ec26c96afdae41c6978d88629b72e80bb944843ca0668d367e",
+              "chromium/prototype/sidebar_metal.h": "21c2c8971630c166f9d67dca26ef67418c54928fe8cd76fffaa3cb5c6a2debd8",
+              "chromium/prototype/sidebar_metal.mm": "deaa0117916c872b424a3df75e7eb3389f8c99d71432c1a85abf914192d1ab6b",
+              "chromium/prototype/sidebar_raster.cc": "94d1d590c5df703c46fcb937aa8f1f4a3fe25041790bd07110f11510614b37b7",
+              "chromium/prototype/sidebar_scene.rs": "0900cdb02cab944bf8b8ecaa86f710055d1f001473446118ce91fc90a178d566",
+              "chromium/prototype/sidebar_tree.cc": "4743c51c79c012d5b9bca6277dbfc020716d8b94375ca1514f98226d120610f3",
+              "chromium/prototype/sidebar_tree.h": "d762b63e1a072247e71e2e8ff7105dc58b612ac06a41c7aec287b1106689b72b",
+              "chromium/prototype/site_data.cc": "4890b7a80fa9d6c9c27f95c51843f903860d6ef42f6097eff9d87c99cbbbe92d",
+              "chromium/prototype/site_data.h": "2ea60b60c5f2b734450b98eb8e42fa6d29b5b86eeaf98d2353674de00f5bc259",
+              "chromium/prototype/text_services_skia.cc": "307dd60239679b3e42f1801ec652d04318d88af593e8a99466f7aa34bdda71b4",
+              "chromium/prototype/time_machine_view.cc": "bc63f834324ada87c0ce233113b7217abf53a03116d7ea5aa2ffa2c8066c6f61",
+              "chromium/prototype/time_machine_view.h": "9041cf0cd4a64ca95603eb19d555241da8ee11ca9b6f3fddaaafc3d3913a63d0",
+              "chromium/prototype/timeline.rs": "4bbc1bcacc06dc29270f758af72afa9fe5e6f9b07080e478d8ca7be1382363da",
+              "chromium/prototype/timeline_store.h": "1ef92f671ec13039f84814b4e85f9bcf0cff2808348330002648aa8295ca458e",
+              "chromium/prototype/workspace_browser_settings.cc": "82452c4b3d70a03dcc311b5f69cc1d93e0c8eff3260ae16ed87bafd24cb0fd5b",
+              "chromium/prototype/workspace_commands.cc": "0a97d3b70dbdc75031ba90397417d790c5f5dd72a74e995d9833b552efd55738",
+              "chromium/prototype/workspace_frame_mac.h": "0b91503feef7ab8d70564445ca698c5527674f4036d27da04b29551ce8873716",
+              "chromium/prototype/workspace_frame_mac.mm": "915d05a4f6c3240b13c1d9c43ba1868cd37866c1bab80b48a06d3cb874d5b5eb",
+              "chromium/prototype/workspace_frame_win.cc": "84e69e696e45ea1f0f882e1e7d6b6b61bf6c4efcaf4970f68fdc99b66614f2e3",
+              "chromium/prototype/workspace_frame_win.h": "2ff4f9ec4ad3bd6eb1190561a39677d7bc5f0d23285af66ea736251436a71f11",
+              "chromium/prototype/workspace_keyboard_mac.h": "32ad728fe32e8fbc4333cb4e94bac2be8dacae05d4cab15329446e662e61f523",
+              "chromium/prototype/workspace_keyboard_mac.mm": "2b5ddf59142b895a2f47553db786e7f30c53c026b2a5809f264b065412d31041",
+              "chromium/prototype/workspace_lifecycle.cc": "45acb2a8f1558406dd31e4ae0e6073a7ea01c59dd9e115ce7bd938c1de1753b5",
+              "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+              "chromium/prototype/workspace_preconnect_browsertest.cc": "185d1c9cde2c0aaa165a2eaebb29f3d138e020a6b216f26a5941ecdaf1cfcc80",
+              "chromium/prototype/workspace_shell.cc": "4ff14b351187d28fa83c0c627a0a3d25372a926475836ea1e3e061b51718c810",
+              "chromium/prototype/workspace_shell.h": "a462b21c042950cf59c6bf3b05e811e0575d842168fdbda3f26f6f5794832888",
+              "chromium/prototype/workspace_time_machine.cc": "dca1d41cf22dd71cb71ade10e11e09475a5baa119bb8e25497091a2fbc1c6a37",
+              "chromium/prototype/workspace_window.cc": "59f8c2cb5b137053f7f6093ffbd35aa99c49ab9ea4a3503b9c1ef48c0fb31989",
+              "chromium/prototype/workspace_window.h": "e706bf26c898e1987ae26f3dd7ed76df80d1abb3a070b45351117316ea698c1d",
+              "testdata/arc/StorableSidebar.json": "f9fc357c50257b24c4bf0e76813c8ea12b0c943dd3135c2d16ea9b2627108a85",
+              "testdata/arc/User Data/Local State": "0ba1bf85efcfa2ff77b5f9fd6458f7e8a24c77e8565c9fe4f64b0e0eb3a336cd",
+              "testdata/file_upload_probe.html": "b6323ca855642e73d9b314a4c3426a3df7dbffec4d51105eaa1c24d79c91abf9",
+              "testdata/fingerprint_probe.html": "835a98896526fd868c999d3c3e78c7bc2d53295a4d4a84506fe5c8f124ebec72",
+              "testdata/links_probe.html": "b4ec7aab84e84da1665162b49a124b923522eced26ac4b9caf481dce56da7ec4",
+              "testdata/login_probe.html": "432601e804e292c4c2fba6e040c8892cd9faacdd5350fc9fc2c516e65ace7c8a",
+              "testdata/media_probe.html": "bcf1573760f04ee21fc6a834b6909b2f249ce28be6a3f8d9f89fed1674daf784",
+              "testdata/performance_probe.html": "0f9946d9e45d3b6cdb68446e760d6f53efbc502b61e3b7a7d924bc444006e5e9",
+              "testdata/persistence_probe.html": "d283f05864c9e8f20a2353082f1d85185f74b0b14b66cae64797e4ee5165d20d",
+              "testdata/preferences_probe.html": "431e2d8836fe1a2d321b5dca19a6ce63cebad71812d96778f518bb8560fc1ce4",
+              "testdata/preview_image.svg": "039147419141284f111dcabb318dde1e0ea078411e527d47ef2ed257e1b9ce38",
+              "testdata/sidebar_demo.html": "43002c99ea4f037421aa7e5126cf914983a3b39a8edc33c02e2c96d422aaaa3c",
+              "testdata/start.html": "b9a8761ea8b57ff11c754fe33670e733d330a92330f799987e059b1294f0b218",
+              "testdata/storage_probe.html": "03ba347e883db1a8aa5e842002e46dc0c90be7dbffba05b2118185d93afc1b77",
+              "zitter/application/workspace_controller.cc": "e767da6bd933cc25a8056c484ef01d93787a8d56c278018128a6736657ce3672",
+              "zitter/application/workspace_controller.h": "7fa4ef26d36077b1128f1e483b7c57bbe028c2637b0935d8762c7b591f11ad39",
+              "zitter/core/workspace_model.cc": "7d686944724170d1dd1a0d1c122f1f65696d0fc026545ef386d90185ae23dbad",
+              "zitter/core/workspace_model.h": "d7d51ebf731338235199a59355a06e63ecaee503f25a69d41e9e82fd982b1ea2",
+              "zitter/ports/workspace_runtime.h": "723167f5cc0c84f7cd8e3f8de5668924fc769a553a53114e9044b92f89db362d"
+            },
+            "newer_than_binary": []
+          },
+          "gn_args": "# Experimental production candidate. Adopt only after matching measurements.\n# Requires the mac-arm profile pinned by Chromium's chrome/build/mac-arm.pgo.txt.\nis_debug = false\nis_component_build = false\nuse_thin_lto = true\nthin_lto_enable_optimizations = true\nchrome_pgo_phase = 2\ndcheck_always_on = false\nsymbol_level = 0\nblink_symbol_level = 0\nv8_symbol_level = 0\ntarget_cpu = \"arm64\"\nuse_remoteexec = false\nuse_siso = false\n\nroot_extra_deps = [\"//third_party/zitter_libarchive:rar_reader_tests\",  \"//zitter_ui_lab:zitter_ui_lab\", \"//zitter_optimized:zitter_optimized\", \"//zitter_optimized:zitter_prototype_optimized\" ]\n"
+        },
+        "after": {
+          "path": "${REPO}/.chromium/src/out/ZitterOptimized/zitter_prototype_perf_after",
+          "sha256": "631e8b0655863924bb2069bd7622c4d274edbe08d9abc4f597a9d9d655af7c67",
+          "source": {
+            "path": "${REPO}/.chromium/src/zitter_perf_after",
+            "files": {
+              "BUILD.gn": "88cf37b6edbe2fc875170646a8d8e8015730661f0b6468fc511c61f7938d8f14",
+              "assets/fonts/InstrumentSerif-Italic.ttf": "08939b8bdf534afec24ae0ef5e03f948940cd9a8fe08e7fecbad040e62327385",
+              "assets/fonts/InstrumentSerif-OFL.txt": "129ed7618959716959f2941fdd5b49e0ad6e6c1d78726761786a00253d865521",
+              "assets/fonts/InstrumentSerif-Regular.ttf": "498efd461f6ddfcb7a111bf9a565709d2085d48201d501ead960d93e84ffbb88",
+              "assets/fonts/JetBrainsMono-OFL.txt": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d",
+              "assets/fonts/JetBrainsMono-Variable.ttf": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+              "assets/fonts/SchibstedGrotesk-Italic-Variable.ttf": "b49fedb6f3a2ff9b43e13351888641505dc8e5f300941e597eecbc3f52ba357b",
+              "assets/fonts/SchibstedGrotesk-OFL.txt": "3b4f3063b6ac7c1e403e2c4a5e8ef3a58190ff83ed7b15af66511858699139ce",
+              "assets/fonts/SchibstedGrotesk-Variable.ttf": "6ceeadf6be8e1fd7687011c7fa38ed0edd1abe967a0b73d97caec183552e823d",
+              "chromium/app/app_shell_mac.h": "5bb30a553ac7b48c279d5b38a8dd3ec1d2a10b74b84f281dd79e560220e63544",
+              "chromium/app/app_shell_mac.mm": "6f55ff12b2de65e8353bf788ab94db45d3149c939b8f72224f83f7702411d8f4",
+              "chromium/app/browser_client.cc": "956013b53038af6295591f5325579d49b2e749a95b341319ee0471270291f22c",
+              "chromium/app/browser_client.h": "700fb7a24a65ca87c659e92bd4b7769e95d72bb54e2ba0446e3aa76f1292d7f2",
+              "chromium/app/compile_ui_lab_metal.py": "a71330b61f044f659898654fec0ec05d61e01ac0cf9aa921c8c9cd4c3b4a21c6",
+              "chromium/app/main.cc": "4e998a688125e848d3b8d0103128d071f4f337a3ffb38bf4d6baa0814063a6f4",
+              "chromium/app/network_policy.cc": "d3b1d3003eeeff49939588c45002aa4484d8838b1bcd51b762e8963e923aee0d",
+              "chromium/app/network_policy.h": "4fd7518cf7cef3d0d2340d1574cf9f20b814b638eaf6dd68b78881ca7d225ca7",
+              "chromium/app/network_policy_components.inc": "d6a5ccea424e299c0341515a8a7775b7fdded513b9eee240fa72147b6cb9b67b",
+              "chromium/app/network_policy_features.inc": "0bf89b3c481c29dc8061cb726c2e93f6579639bc5efa8dca667bd7e7011f0ae2",
+              "chromium/app/network_policy_unittest.cc": "0963b629bce4e88794a5797a94e9f04c3a1e3161a51d908b5b81c21a9ddd1156",
+              "chromium/app/performance_probe.cc": "00a6cb4617ff4e796f5cde8af974b1dcb90515736661da8b82fda68eaa4a1703",
+              "chromium/app/performance_probe.h": "1a27b2e83d2502a7bfd22950139bd0a8f5849f50b10b68b42087a991d3e5124c",
+              "chromium/app/runtime.cc": "076b079ccb5c9e789cc5ea347922feb5600ba5162c63abe988d65a817c10561f",
+              "chromium/app/runtime.h": "c135e0b6242423b603ebb6e3910ab959410c3e6fd9f4b35e37ddf5a348bf0ee6",
+              "chromium/app/ui_lab.cc": "50ba6f90b6d72f19677899144615ed151bcc6cc55319837a33f452df33db655f",
+              "chromium/app/ui_lab.h": "e8c47357c256a7ec59e37611dd31f241ea503ceaaf89b0ecbc5bcbe9bedead97",
+              "chromium/app/ui_lab.metal": "50691d48e507091d7ce7dcc6176723d7091548a664399158ceaf2a5a24672667",
+              "chromium/app/ui_lab_metal.h": "1f8583ec4ec87f0bb7fbdb5618fb9d505cb3fb205b16ff533692f5a9a093015b",
+              "chromium/app/ui_lab_metal.mm": "bdef94729c9919d2cbf3c513d3140a174f42536fbf1f6777ab6ec9306eccd6a2",
+              "chromium/app/ui_lab_scene.rs": "b8bebc1bdb40763842ddcb25fd61dd8651145b33d2afe92938ba2a6874035510",
+              "chromium/app/updater_win.cc": "c1fc4c97c85d3fd33937772e1225eeaabf8003344cdc54f8b8c95425865ca726",
+              "chromium/app/updater_win.h": "1e1db48e16f89e3bf1376b4b61245545d10ea9da272e8c860ae64fb09fbb5bf1",
+              "chromium/app/updater_win_unittest.cc": "d5210e9869c30f33619e7bcaf1408c7d129f658cd0887a46b451c90372cb1e65",
+              "chromium/app/zitter.ico": "8c8ed7362bf13a27e7f1f9b25b7607b668ab87fceb9696e8b1b06e6e9bc76607",
+              "chromium/app/zitter_exe.rc": "b7e889f60e0ecb0f68d1d8a1dab94b2e669b560695065c2d322d3671731081ca",
+              "chromium/app/zitter_version.h": "ae334894844036f312987c77ce509dc63453fc774206982f06320f3d66adab85",
+              "chromium/installer/setup.manifest": "bc3f7ba02ceb24693e0c238d65686ca5c12413bc6403520c3cb1b0e2af28262a",
+              "chromium/installer/setup.rc": "688288bafcb629f486d3291ecb1d022cafda8b0b273967c2ab79e5db9005379f",
+              "chromium/installer/setup_accessibility.cc": "73decb13dcb9bb0da8c72519417eab46e0a284dd2f7878f4aea8b7a0809412b3",
+              "chromium/installer/setup_accessibility.h": "13c816e29841d177960110ac7724919db434ebd654a43306fcb0b7bb57e3b0ae",
+              "chromium/installer/setup_install.cc": "a26508533105604c7f32a11f86ddf8266b4b1950d16ae98b2d9f08e1c2b2a776",
+              "chromium/installer/setup_install.h": "bb392eb8fc6ee3e34b25acb372c00773b47ba65233d05bb85dedc02ebf9991f3",
+              "chromium/installer/setup_main.cc": "358a79afdd0e3cf9e618c33f138a14c16cc9cdfc501df24c4f512c63f81bcb68",
+              "chromium/installer/setup_resource.h": "8faa27652a66776bf6a97f5390b5382c10cd16b368144cca13361587a03affaa",
+              "chromium/installer/setup_runtime.cc": "bb61da82210e3c55d58d685729e419b1bda917a5803d4165116f5532b27988d6",
+              "chromium/installer/setup_runtime.h": "6b1003c158368897d64addeb82cfe0caa3ac5b031f0e414f572313a608452c3a",
+              "chromium/installer/setup_runtime_test.cc": "f0a770d0a9bc62bcf8d303aa663f84f8fc548014643f108f874ddd5cdb9ac7ca",
+              "chromium/installer/setup_text.h": "e43c71b264a714359e9696b48b1e5f563b1b9484396196c8e85095e9597e2117",
+              "chromium/prototype/arc_importer.cc": "46a5013894e88a6dc59de19dc876d8f695fac550bac14d977cfd4f6b4b0b5b41",
+              "chromium/prototype/arc_importer.h": "b5cb4ccc4871c9ad7af3e578763bc3d8347fc9adc394c05624f1653b342ea2fc",
+              "chromium/prototype/arc_importer_unittest.cc": "f75f7cb6c1f9f5b46f01091749e458ebb58a0cd4d000b18b72c4ffc03bc536b4",
+              "chromium/prototype/browser_data.h": "3dc7f90b17df32d60921c1541f5e21de429a4dae375d93afc1e3339d72c529bf",
+              "chromium/prototype/browser_import_data.cc": "3ebd0f254ed2511d9b1007ffbb4c4dd4728224e05dd678459ab71dfed28ce806",
+              "chromium/prototype/browser_import_data.h": "35039b3013e0754f88be9f021428160eacbbe65de8f61eef2983a65ca0291b7b",
+              "chromium/prototype/browser_import_key_mac.mm": "65d0b914b43a7268a54d309f021a5a6c7ead871dbe68c0fb2581005456af1bd1",
+              "chromium/prototype/browser_preferences.cc": "34fafbb418688d581d581599e57d68a3d572c6fbfa311f1a8525c67340a77c48",
+              "chromium/prototype/browser_preferences.h": "63a931a276df3c05f49e098c6977d99b14112ad20f4df4dc9ab8a513c96f6f68",
+              "chromium/prototype/browser_tools.cc": "583f41f6d2522951315c63d219286f7a36cc83e61ec420012ebc85c45a8ee4f0",
+              "chromium/prototype/browser_tools.h": "629b8fb52957d111ad3f7ae3236ea017963cebe059d093dbc260ceb02aa27b87",
+              "chromium/prototype/design.rs": "ed292902cbce1cc20299c20df9e0be72ae93c1716da15aaeb184c16ae7cbde6b",
+              "chromium/prototype/design_tokens.rs": "f28092e2ac43aef0d63e182af3b901eafb3862465d8a2e5389208a7e0e68a58f",
+              "chromium/prototype/download_panel.cc": "86c845f84ad75a1daae0c9b2da8c5490b538caf139559d50afacc0f204ed7310",
+              "chromium/prototype/download_panel.h": "d64f949f56a62cf132cfe5029e7d05a9fa56f0cce9f517ce02e6ccce3f23ee9c",
+              "chromium/prototype/editor_control.h": "c9059d7b3082835c0a62cc67e524bab27ccb61fce4070a9510f35cb19ce6d64b",
+              "chromium/prototype/editor_text_layout.h": "6744d27ddd1aa7e73ec03e45f97ada7c1364cfd3c7f88462994bdc1cb0171f3b",
+              "chromium/prototype/editor_text_layout_mac.inc": "13f2fddef229486fb25f42fb275cc0d7256bebe6d9599356822ff4b11db81984",
+              "chromium/prototype/editor_text_layout_test.mm": "a0bc7f9d485717b6a303b31952ad35ae8d3b3b021b016cb2b0ee8fc890726844",
+              "chromium/prototype/editor_text_layout_unittest.cc": "1f66cb54b47c0d9376720aec7932e179ff8264fa53f5bf632c7debf427acca3c",
+              "chromium/prototype/extension_tab_events.cc": "2dfda94fd8348cd082ab1888f200d44e2f9657ddf2b68146fd7de9538ccda8e0",
+              "chromium/prototype/extension_tab_events.h": "ea45affe0fb25981354fad0fc2ad39fa35bf3a2b064a76a5c4ac667092c17ece",
+              "chromium/prototype/extensions_bar.cc": "10b731ce49b9488171f2430df7afa42660b41c23c8a96419c623b4807a397420",
+              "chromium/prototype/extensions_bar.h": "dfe9f227a80da2a8a2c8fab9242f8b0bc4f6132553922f5f751d3bb073a693f5",
+              "chromium/prototype/fingerprint_protection.cc": "f9453fca176a1a0ad68403e1a0bd759b91ae23c4dca4aab0856000aa7e8baf4f",
+              "chromium/prototype/fingerprint_protection.h": "3dab683ca7d7f3801e86b384d605b0bffffd29bcfdb9c0df567a4c0e2650ef73",
+              "chromium/prototype/fingerprint_protection_browsertest.cc": "d61a1a8616a8962338020c042110fd2df3c315574cb0676e1d0a3a6219220560",
+              "chromium/prototype/history_panel.cc": "f5ae23cb0da1fd617fe765a4b46472ec1382f3ce9bd09d6f78619339059b7b37",
+              "chromium/prototype/history_panel.h": "5ec705ebdde2c7b138720da47f3e64907e95804803d3a3acc794bd596056c102",
+              "chromium/prototype/i18n.cc": "b7b033ade2bdc76bd066373b7046626fc204cbc5af0ebf3952227e2be6c004b8",
+              "chromium/prototype/i18n.h": "bd604d7e0784f86f72e58029742f05dd855f428f1b06643e0ff7692c07ad4807",
+              "chromium/prototype/i18n.rs": "817d8565db11a520a802b408b8dff179b73be24848a04b1b2c5a295676679c22",
+              "chromium/prototype/i18n_en_native.rs": "037aefc6ae78da1c453f7d965ee5ca9fc3a14a1c584c58ac8c9e7e0513b00974",
+              "chromium/prototype/i18n_en_scene.rs": "8dedcbb014acbbbcbaf83aab43d9a4f0bdba857df3ff4ad8ee13d260c81729e8",
+              "chromium/prototype/i18n_en_shell.rs": "90a2a7713a3d94b875028c0d71099b003f9f85fb4cd94823afa5f7b7757b4c5d",
+              "chromium/prototype/image_link_preview.cc": "c10e21fbaafe72a50d705493d552f801568714a3d09e0f03dd63f4bb96ade81a",
+              "chromium/prototype/image_link_preview.h": "943fc0d28c0f07a482a71e41b9dc8df3a7153a151ace79eff284b6b7387fb114",
+              "chromium/prototype/jump_list_win.cc": "e1cb301ab3ed8ea62175de6c69d62630cc996ffa8a0fa2e74745fd45ed5be1b5",
+              "chromium/prototype/jump_list_win.h": "61d3164fb4c5c02acc62f0cf4d4cea6a754a84041af3dad26c69dfa9554dbaf8",
+              "chromium/prototype/link_navigation.cc": "464f61fdd785d5cc3fc8d5551d8dce767f237a7338080d87e101a6a380855f13",
+              "chromium/prototype/link_navigation.h": "77c3df9a92f9038e7794c8c482f916114c84008bb3ddc02dd31a38ba073e9ff8",
+              "chromium/prototype/page_dialogs.cc": "fc4b57359f55274ca46c8480fbf11514d06b5394bef553b98e94ffa811bf6484",
+              "chromium/prototype/page_dialogs.h": "25127bc2396ade18c6dab4c3604fe48c74fdd90e5b3c7f0d50f136faab079157",
+              "chromium/prototype/page_file_access.cc": "92c802dfacb31bf71a7d9928e8c1e2b71814485937853b3443de915b44e1f799",
+              "chromium/prototype/page_file_access.h": "313f54266ef5051c52b654632273a1b7f84c8c09e53930bbecdee3b747d27888",
+              "chromium/prototype/page_file_access_browsertest.cc": "ad667fa50aa1b60ab4a680267aa19b2776100b3a1ad415680e76a339933923bf",
+              "chromium/prototype/page_media_access.cc": "30ec698c856797b2cef89cb0c036d5bc91d52c80b34cf0cf258e70a848becaf4",
+              "chromium/prototype/page_media_access.h": "1c415ed1b53416a94f0a44362ed4806e60c5e58a97c5ee11cbceffe2324c31d4",
+              "chromium/prototype/page_media_access_browsertest.cc": "cade75d669500fb4ddb9a06ceaa0e796e5bca9a39b2ad206357b2eccd510c1a9",
+              "chromium/prototype/page_printing.cc": "0dd5b0d36e1333a2df5ccc6b07e0b83be2c4684908aee01b9656c793f03f6a77",
+              "chromium/prototype/page_printing.h": "b457c6fbb3e33cda7dcdd176065581c11eaa638f6d29ffee03725bb33402ad07",
+              "chromium/prototype/page_services.cc": "55f63bcc0ca5f7a2f1eb56bdd33fe5db4dd4adcdca67d17e617cf4d84a33fd5d",
+              "chromium/prototype/page_services.h": "d90a25f1c3abef177a524407d18886bdb7dc98832adb4560dbe1cd90cb6c626e",
+              "chromium/prototype/password_csv_import.cc": "04ff426b3eb38513b3b5116ec734638e65ec6b1845a94608e88f8a11f1d5ed43",
+              "chromium/prototype/password_csv_import.h": "46fa8deb3e4a2cd391c287e8965cf7f5ac67780d8ab104c9bce1dfd400fed153",
+              "chromium/prototype/passwords_panel.cc": "2112a49b9744658438fe72f20b65e8a6c5cab61e2415571c023f50a7415208a0",
+              "chromium/prototype/passwords_panel.h": "132d5cf5d85f0b404dfe3da9ae7e81ed559e9c7993660000f7844fc72b3fe5cd",
+              "chromium/prototype/profile_workspace_browsertest.cc": "5cbc8063e6c090d150c8a0661b9b9741996405f0c2b972949054378612163a4b",
+              "chromium/prototype/scene_editor.cc": "601c1bcaaba0c517526218a408e59aee90f2e8ae4259a4af7d013dce02024485",
+              "chromium/prototype/sidebar.metal": "844a08c8a905931a313126a2d3c96f22e25228da1fc149ec6c12e88fc9755cc5",
+              "chromium/prototype/sidebar_editor.rs": "963e52ae3fb70efd48e1d15ca059095ed02812fbaea3ddd1266d39188134c6de",
+              "chromium/prototype/sidebar_layout.cc": "25fd6621b39172936726bbd8ca2a9042d40138706ebca09f71d53f254df60dee",
+              "chromium/prototype/sidebar_layout.h": "bc237520361af2ec26c96afdae41c6978d88629b72e80bb944843ca0668d367e",
+              "chromium/prototype/sidebar_metal.h": "21c2c8971630c166f9d67dca26ef67418c54928fe8cd76fffaa3cb5c6a2debd8",
+              "chromium/prototype/sidebar_metal.mm": "deaa0117916c872b424a3df75e7eb3389f8c99d71432c1a85abf914192d1ab6b",
+              "chromium/prototype/sidebar_raster.cc": "94d1d590c5df703c46fcb937aa8f1f4a3fe25041790bd07110f11510614b37b7",
+              "chromium/prototype/sidebar_scene.rs": "0900cdb02cab944bf8b8ecaa86f710055d1f001473446118ce91fc90a178d566",
+              "chromium/prototype/sidebar_tree.cc": "4743c51c79c012d5b9bca6277dbfc020716d8b94375ca1514f98226d120610f3",
+              "chromium/prototype/sidebar_tree.h": "d762b63e1a072247e71e2e8ff7105dc58b612ac06a41c7aec287b1106689b72b",
+              "chromium/prototype/site_data.cc": "4890b7a80fa9d6c9c27f95c51843f903860d6ef42f6097eff9d87c99cbbbe92d",
+              "chromium/prototype/site_data.h": "2ea60b60c5f2b734450b98eb8e42fa6d29b5b86eeaf98d2353674de00f5bc259",
+              "chromium/prototype/text_services_skia.cc": "307dd60239679b3e42f1801ec652d04318d88af593e8a99466f7aa34bdda71b4",
+              "chromium/prototype/time_machine_view.cc": "bc63f834324ada87c0ce233113b7217abf53a03116d7ea5aa2ffa2c8066c6f61",
+              "chromium/prototype/time_machine_view.h": "9041cf0cd4a64ca95603eb19d555241da8ee11ca9b6f3fddaaafc3d3913a63d0",
+              "chromium/prototype/timeline.rs": "4bbc1bcacc06dc29270f758af72afa9fe5e6f9b07080e478d8ca7be1382363da",
+              "chromium/prototype/timeline_store.h": "1ef92f671ec13039f84814b4e85f9bcf0cff2808348330002648aa8295ca458e",
+              "chromium/prototype/workspace_browser_settings.cc": "82452c4b3d70a03dcc311b5f69cc1d93e0c8eff3260ae16ed87bafd24cb0fd5b",
+              "chromium/prototype/workspace_commands.cc": "3fc36788b1dcb6f849dcbed39c50059db85de2ced26403ba2ca3bc3efa25e348",
+              "chromium/prototype/workspace_frame_mac.h": "0b91503feef7ab8d70564445ca698c5527674f4036d27da04b29551ce8873716",
+              "chromium/prototype/workspace_frame_mac.mm": "915d05a4f6c3240b13c1d9c43ba1868cd37866c1bab80b48a06d3cb874d5b5eb",
+              "chromium/prototype/workspace_frame_win.cc": "84e69e696e45ea1f0f882e1e7d6b6b61bf6c4efcaf4970f68fdc99b66614f2e3",
+              "chromium/prototype/workspace_frame_win.h": "2ff4f9ec4ad3bd6eb1190561a39677d7bc5f0d23285af66ea736251436a71f11",
+              "chromium/prototype/workspace_keyboard_mac.h": "32ad728fe32e8fbc4333cb4e94bac2be8dacae05d4cab15329446e662e61f523",
+              "chromium/prototype/workspace_keyboard_mac.mm": "2b5ddf59142b895a2f47553db786e7f30c53c026b2a5809f264b065412d31041",
+              "chromium/prototype/workspace_lifecycle.cc": "45acb2a8f1558406dd31e4ae0e6073a7ea01c59dd9e115ce7bd938c1de1753b5",
+              "chromium/prototype/workspace_preconnect.cc": "4b049f91fa11fb4ae523051a37a573c505ef0f1197935afaa6cdd22fa38e664c",
+              "chromium/prototype/workspace_preconnect_browsertest.cc": "185d1c9cde2c0aaa165a2eaebb29f3d138e020a6b216f26a5941ecdaf1cfcc80",
+              "chromium/prototype/workspace_shell.cc": "4ff14b351187d28fa83c0c627a0a3d25372a926475836ea1e3e061b51718c810",
+              "chromium/prototype/workspace_shell.h": "a462b21c042950cf59c6bf3b05e811e0575d842168fdbda3f26f6f5794832888",
+              "chromium/prototype/workspace_time_machine.cc": "dca1d41cf22dd71cb71ade10e11e09475a5baa119bb8e25497091a2fbc1c6a37",
+              "chromium/prototype/workspace_window.cc": "b9fe5b92bced1af37b6e1c0dcfe373a7ad4ee6cf41804d3cf18d27db8b65e36b",
+              "chromium/prototype/workspace_window.h": "e706bf26c898e1987ae26f3dd7ed76df80d1abb3a070b45351117316ea698c1d",
+              "testdata/arc/StorableSidebar.json": "f9fc357c50257b24c4bf0e76813c8ea12b0c943dd3135c2d16ea9b2627108a85",
+              "testdata/arc/User Data/Local State": "0ba1bf85efcfa2ff77b5f9fd6458f7e8a24c77e8565c9fe4f64b0e0eb3a336cd",
+              "testdata/file_upload_probe.html": "b6323ca855642e73d9b314a4c3426a3df7dbffec4d51105eaa1c24d79c91abf9",
+              "testdata/fingerprint_probe.html": "835a98896526fd868c999d3c3e78c7bc2d53295a4d4a84506fe5c8f124ebec72",
+              "testdata/links_probe.html": "b4ec7aab84e84da1665162b49a124b923522eced26ac4b9caf481dce56da7ec4",
+              "testdata/login_probe.html": "432601e804e292c4c2fba6e040c8892cd9faacdd5350fc9fc2c516e65ace7c8a",
+              "testdata/media_probe.html": "bcf1573760f04ee21fc6a834b6909b2f249ce28be6a3f8d9f89fed1674daf784",
+              "testdata/performance_probe.html": "0f9946d9e45d3b6cdb68446e760d6f53efbc502b61e3b7a7d924bc444006e5e9",
+              "testdata/persistence_probe.html": "d283f05864c9e8f20a2353082f1d85185f74b0b14b66cae64797e4ee5165d20d",
+              "testdata/preferences_probe.html": "431e2d8836fe1a2d321b5dca19a6ce63cebad71812d96778f518bb8560fc1ce4",
+              "testdata/preview_image.svg": "039147419141284f111dcabb318dde1e0ea078411e527d47ef2ed257e1b9ce38",
+              "testdata/sidebar_demo.html": "43002c99ea4f037421aa7e5126cf914983a3b39a8edc33c02e2c96d422aaaa3c",
+              "testdata/start.html": "b9a8761ea8b57ff11c754fe33670e733d330a92330f799987e059b1294f0b218",
+              "testdata/storage_probe.html": "03ba347e883db1a8aa5e842002e46dc0c90be7dbffba05b2118185d93afc1b77",
+              "zitter/application/workspace_controller.cc": "e767da6bd933cc25a8056c484ef01d93787a8d56c278018128a6736657ce3672",
+              "zitter/application/workspace_controller.h": "7fa4ef26d36077b1128f1e483b7c57bbe028c2637b0935d8762c7b591f11ad39",
+              "zitter/core/browser_state.h": "e812dc5b7535371102a6e71942dcee934a2c242ee3c2adee87a78f3a275821aa",
+              "zitter/core/command_history.cc": "ebd905c92f0cbd39e0cd135b5cd256ac60816be924f3a4ffcf13bfeed016b654",
+              "zitter/core/command_history.h": "845efb63ca25270588d915cea3308dd90af44ff8c90785cc63561d4fd395d41e",
+              "zitter/core/pin_tree.cc": "d16943bd392583a963a1e6800525e87b883531956b085b11eaa72dad315c0bbe",
+              "zitter/core/pin_tree.h": "09cc8236734974b8db8df69e2df7f23a4692ce11e2034b957189c24972be1db8",
+              "zitter/core/workspace_model.cc": "7d686944724170d1dd1a0d1c122f1f65696d0fc026545ef386d90185ae23dbad",
+              "zitter/core/workspace_model.h": "d7d51ebf731338235199a59355a06e63ecaee503f25a69d41e9e82fd982b1ea2",
+              "zitter/ports/workspace_runtime.h": "723167f5cc0c84f7cd8e3f8de5668924fc769a553a53114e9044b92f89db362d"
+            },
+            "newer_than_binary": []
+          },
+          "gn_args": "# Experimental production candidate. Adopt only after matching measurements.\n# Requires the mac-arm profile pinned by Chromium's chrome/build/mac-arm.pgo.txt.\nis_debug = false\nis_component_build = false\nuse_thin_lto = true\nthin_lto_enable_optimizations = true\nchrome_pgo_phase = 2\ndcheck_always_on = false\nsymbol_level = 0\nblink_symbol_level = 0\nv8_symbol_level = 0\ntarget_cpu = \"arm64\"\nuse_remoteexec = false\nuse_siso = false\n\nroot_extra_deps = [\"//third_party/zitter_libarchive:rar_reader_tests\",  \"//zitter_ui_lab:zitter_ui_lab\", \"//zitter_optimized:zitter_optimized\", \"//zitter_optimized:zitter_prototype_optimized\" ]\n"
+        }
+      },
+      "system": {
+        "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434\n",
+        "hardware": "hw.model: Mac15,7\nhw.ncpu: 12\nhw.memsize: 38654705664\n",
+        "thermal": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n"
+      },
+      "limits": [
+        "UI dispatch/drain latency, not monitor presentation or FPS.",
+        "Independent fresh test processes with private fixtures; warm OS caches.",
+        "Other desktop applications remain running; pairing balances order, not all ambient noise.",
+        "Confidence intervals use paired process medians, not pooled correlated trials."
+      ],
+      "comparisons": {
+        "compositor": {
+          "command_catalogue_per_call_ms": {
+            "before": {
+              "n": 6,
+              "median": 0.07851,
+              "p95": 0.078955,
+              "mean": 0.0785725
+            },
+            "after": {
+              "n": 6,
+              "median": 0.06289499999999999,
+              "p95": 0.067605,
+              "mean": 0.0635775
+            },
+            "change": {
+              "paired_percent": [
+                -20.122574055158317,
+                -19.982215447154495,
+                -13.950232291732956,
+                -20.062060667468806,
+                -19.95411382321076,
+                -20.434838051517456
+              ],
+              "median_percent": -20.02213805731165,
+              "bootstrap_95_percent": [
+                -20.278706053337885,
+                -16.95217305747186
+              ],
+              "sign_flip_p": 0.03125
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 0.07861499999999999,
+                "p95": 0.07994,
+                "mean": 0.07837266666666666
+              },
+              "after": {
+                "n": 120,
+                "median": 0.06303500000000001,
+                "p95": 0.06809,
+                "mean": 0.06352716666666666
+              }
+            }
+          },
+          "pin_restore_dispatch_ms": {
+            "before": {
+              "n": 6,
+              "median": 324.886,
+              "p95": 326.259,
+              "mean": 324.81891666666667
+            },
+            "after": {
+              "n": 6,
+              "median": 324.996,
+              "p95": 327.0005,
+              "mean": 325.43825
+            },
+            "change": {
+              "paired_percent": [
+                -0.25945644411341506,
+                0.8167065667955997,
+                0.6603276851119055,
+                -0.21059783652996877,
+                -0.19907141033018716,
+                0.3405858633665826
+              ],
+              "median_percent": 0.07075722651819771,
+              "bootstrap_95_percent": [
+                -0.23502714032169192,
+                0.7385171259537526
+              ],
+              "sign_flip_p": 0.40625
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 324.972,
+                "p95": 330.884,
+                "mean": 325.6931416666667
+              },
+              "after": {
+                "n": 120,
+                "median": 325.2825,
+                "p95": 329.03,
+                "mean": 325.70889999999997
+              }
+            }
+          },
+          "pin_restore_settled_ms": {
+            "before": {
+              "n": 6,
+              "median": 458.79224999999997,
+              "p95": 458.84799999999996,
+              "mean": 458.7951666666667
+            },
+            "after": {
+              "n": 6,
+              "median": 460.3395,
+              "p95": 468.07550000000003,
+              "mean": 461.62375
+            },
+            "change": {
+              "paired_percent": [
+                0.3384563079712688,
+                0.33773769148277566,
+                2.0192410382488646,
+                0.33438036093025314,
+                0.3428744562889552,
+                0.3263974332846864
+              ],
+              "median_percent": 0.33809699972702223,
+              "bootstrap_95_percent": [
+                0.33038889710746977,
+                1.1810577472689099
+              ],
+              "sign_flip_p": 0.03125
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 458.7955,
+                "p95": 466.985,
+                "mean": 459.08706666666666
+              },
+              "after": {
+                "n": 120,
+                "median": 460.3445,
+                "p95": 468.217,
+                "mean": 460.0172333333333
+              }
+            }
+          },
+          "pin_move_dispatch_ms": {
+            "before": {
+              "n": 6,
+              "median": 144.41875,
+              "p95": 145.43349999999998,
+              "mean": 144.4740833333333
+            },
+            "after": {
+              "n": 6,
+              "median": 144.92875,
+              "p95": 145.81650000000002,
+              "mean": 144.94558333333333
+            },
+            "change": {
+              "paired_percent": [
+                -0.20490464714111312,
+                0.16702152990342167,
+                0.7813471932322402,
+                0.468353109015629,
+                0.2389846793130701,
+                0.5118517643953879
+              ],
+              "median_percent": 0.35366889416434955,
+              "bootstrap_95_percent": [
+                -0.018941558618845722,
+                0.6465994788138141
+              ],
+              "sign_flip_p": 0.09375
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 144.6695,
+                "p95": 146.697,
+                "mean": 144.71553333333335
+              },
+              "after": {
+                "n": 120,
+                "median": 145.05349999999999,
+                "p95": 147.674,
+                "mean": 145.31818333333334
+              }
+            }
+          },
+          "pin_move_settled_ms": {
+            "before": {
+              "n": 6,
+              "median": 274.99924999999996,
+              "p95": 275.035,
+              "mean": 275.00441666666666
+            },
+            "after": {
+              "n": 6,
+              "median": 275.01075,
+              "p95": 283.3315,
+              "mean": 276.3931666666667
+            },
+            "change": {
+              "paired_percent": [
+                -0.01981565982511757,
+                0.00981877094441419,
+                3.03225900295645,
+                -0.0010908376906204609,
+                0.007091128271241587,
+                0.00181814545527903
+              ],
+              "median_percent": 0.004454636863260308,
+              "bootstrap_95_percent": [
+                -0.010453248757869016,
+                1.521038886950432
+              ],
+              "sign_flip_p": 0.5625
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 275.003,
+                "p95": 283.352,
+                "mean": 277.35875833333336
+              },
+              "after": {
+                "n": 120,
+                "median": 275.017,
+                "p95": 283.389,
+                "mean": 278.4635166666667
+              }
+            }
+          },
+          "pin_delete_dispatch_ms": {
+            "before": {
+              "n": 6,
+              "median": 11.93225,
+              "p95": 12.1655,
+              "mean": 11.934
+            },
+            "after": {
+              "n": 6,
+              "median": 11.5095,
+              "p95": 11.863,
+              "mean": 11.595583333333332
+            },
+            "change": {
+              "paired_percent": [
+                -3.172906991081348,
+                -3.6580766813325005,
+                -0.5782769024471945,
+                -4.599081011715034,
+                -3.429868437644479,
+                -1.5129310344827673
+              ],
+              "median_percent": -3.3013877143629133,
+              "bootstrap_95_percent": [
+                -4.128578846523768,
+                -1.045603968464981
+              ],
+              "sign_flip_p": 0.03125
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 11.9785,
+                "p95": 12.492,
+                "mean": 11.979633333333334
+              },
+              "after": {
+                "n": 120,
+                "median": 11.591000000000001,
+                "p95": 12.304,
+                "mean": 11.678833333333333
+              }
+            }
+          },
+          "pin_delete_settled_ms": {
+            "before": {
+              "n": 6,
+              "median": 41.6525,
+              "p95": 41.671499999999995,
+              "mean": 41.654583333333335
+            },
+            "after": {
+              "n": 6,
+              "median": 41.65575,
+              "p95": 41.664,
+              "mean": 41.650666666666666
+            },
+            "change": {
+              "paired_percent": [
+                0.032414132561808806,
+                -0.010799524820892525,
+                -0.02159749469059502,
+                -0.01680410020044043,
+                -0.01320718470849691,
+                -0.026417858472338462
+              ],
+              "median_percent": -0.01500564245446867,
+              "bootstrap_95_percent": [
+                -0.02400767658146674,
+                0.01080730387045814
+              ],
+              "sign_flip_p": 0.34375
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 41.655,
+                "p95": 41.713,
+                "mean": 41.510283333333334
+              },
+              "after": {
+                "n": 120,
+                "median": 41.653,
+                "p95": 41.713,
+                "mean": 40.822625
+              }
+            }
+          }
+        },
+        "metal": {
+          "command_catalogue_per_call_ms": {
+            "before": {
+              "n": 6,
+              "median": 0.07997,
+              "p95": 0.080525,
+              "mean": 0.07997916666666667
+            },
+            "after": {
+              "n": 6,
+              "median": 0.06415499999999999,
+              "p95": 0.06888,
+              "mean": 0.06479666666666667
+            },
+            "change": {
+              "paired_percent": [
+                -19.7880959800561,
+                -19.937907482148397,
+                -13.64092276830492,
+                -21.102519331504098,
+                -19.658334380103014,
+                -19.748664781652536
+              ],
+              "median_percent": -19.768380380854317,
+              "bootstrap_95_percent": [
+                -20.520213406826247,
+                -16.649628574203966
+              ],
+              "sign_flip_p": 0.03125
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 0.08002999999999999,
+                "p95": 0.08234,
+                "mean": 0.08005816666666667
+              },
+              "after": {
+                "n": 120,
+                "median": 0.06421,
+                "p95": 0.06941,
+                "mean": 0.06469025
+              }
+            }
+          },
+          "pin_restore_dispatch_ms": {
+            "before": {
+              "n": 6,
+              "median": 324.23225,
+              "p95": 326.9495,
+              "mean": 324.67025
+            },
+            "after": {
+              "n": 6,
+              "median": 324.5565,
+              "p95": 326.246,
+              "mean": 324.62899999999996
+            },
+            "change": {
+              "paired_percent": [
+                0.33626499284165057,
+                0.06074904339481435,
+                0.6876161200920716,
+                -0.025471610732030747,
+                -1.125250229775554,
+                -0.0007725360349652988
+              ],
+              "median_percent": 0.029988253679924526,
+              "bootstrap_95_percent": [
+                -0.5753609202537924,
+                0.5119405564668611
+              ],
+              "sign_flip_p": 0.90625
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 324.5455,
+                "p95": 328.264,
+                "mean": 324.87087499999996
+              },
+              "after": {
+                "n": 120,
+                "median": 324.8845,
+                "p95": 329.216,
+                "mean": 325.25439166666666
+              }
+            }
+          },
+          "pin_restore_settled_ms": {
+            "before": {
+              "n": 6,
+              "median": 350.35725,
+              "p95": 358.6345,
+              "mean": 351.7163333333333
+            },
+            "after": {
+              "n": 6,
+              "median": 351.98199999999997,
+              "p95": 359.61749999999995,
+              "mean": 353.2680833333333
+            },
+            "change": {
+              "paired_percent": [
+                0.4718852859145084,
+                0.5514695385529178,
+                2.6343728505908937,
+                0.4814066837459219,
+                -1.8746105017782622,
+                0.4372071254487686
+              ],
+              "median_percent": 0.47664598483021514,
+              "bootstrap_95_percent": [
+                -0.7187016881647468,
+                1.5929211945719057
+              ],
+              "sign_flip_p": 0.5
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 350.385,
+                "p95": 358.743,
+                "mean": 352.8718666666667
+              },
+              "after": {
+                "n": 120,
+                "median": 351.975,
+                "p95": 360.318,
+                "mean": 353.65076666666664
+              }
+            }
+          },
+          "pin_move_dispatch_ms": {
+            "before": {
+              "n": 6,
+              "median": 144.48775,
+              "p95": 145.3655,
+              "mean": 144.5325
+            },
+            "after": {
+              "n": 6,
+              "median": 144.7375,
+              "p95": 145.929,
+              "mean": 144.756
+            },
+            "change": {
+              "paired_percent": [
+                -0.01242261744547335,
+                0.6306265925131616,
+                0.8176098446333047,
+                0.560889355620553,
+                -1.1825364340231959,
+                0.1242624088857891
+              ],
+              "median_percent": 0.34257588225317104,
+              "bootstrap_95_percent": [
+                -0.5974795257343346,
+                0.7241182185732331
+              ],
+              "sign_flip_p": 0.59375
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 144.49849999999998,
+                "p95": 146.675,
+                "mean": 144.612675
+              },
+              "after": {
+                "n": 120,
+                "median": 144.577,
+                "p95": 148.154,
+                "mean": 144.91681666666668
+              }
+            }
+          },
+          "pin_move_settled_ms": {
+            "before": {
+              "n": 6,
+              "median": 174.99775,
+              "p95": 175.001,
+              "mean": 174.99333333333334
+            },
+            "after": {
+              "n": 6,
+              "median": 174.9955,
+              "p95": 175.00099999999998,
+              "mean": 174.99308333333332
+            },
+            "change": {
+              "paired_percent": [
+                -0.008571502041454515,
+                0.001428648983803349,
+                0.0014285959187843034,
+                0.013430528448443724,
+                -0.009999942857474853,
+                0.0014285836735794533
+              ],
+              "median_percent": 0.0014285897961818783,
+              "bootstrap_95_percent": [
+                -0.009285722449464684,
+                0.007429588716123536
+              ],
+              "sign_flip_p": 1.0
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 174.998,
+                "p95": 175.056,
+                "mean": 174.856575
+              },
+              "after": {
+                "n": 120,
+                "median": 174.994,
+                "p95": 175.062,
+                "mean": 175.20028333333332
+              }
+            }
+          },
+          "pin_delete_dispatch_ms": {
+            "before": {
+              "n": 6,
+              "median": 11.857,
+              "p95": 11.9255,
+              "mean": 11.84175
+            },
+            "after": {
+              "n": 6,
+              "median": 11.629000000000001,
+              "p95": 11.9305,
+              "mean": 11.673333333333334
+            },
+            "change": {
+              "paired_percent": [
+                -1.1633357480717477,
+                -2.042445891994138,
+                1.277589134125634,
+                -2.435956563666075,
+                -2.402086576080087,
+                -1.737329331698867
+              ],
+              "median_percent": -1.8898876118465024,
+              "bootstrap_95_percent": [
+                -2.419021569873081,
+                0.057126693026943176
+              ],
+              "sign_flip_p": 0.09375
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 11.82,
+                "p95": 12.529,
+                "mean": 11.878008333333334
+              },
+              "after": {
+                "n": 120,
+                "median": 11.635000000000002,
+                "p95": 12.379,
+                "mean": 11.735816666666667
+              }
+            }
+          },
+          "pin_delete_settled_ms": {
+            "before": {
+              "n": 6,
+              "median": 41.65575,
+              "p95": 41.663,
+              "mean": 41.655750000000005
+            },
+            "after": {
+              "n": 6,
+              "median": 41.6455,
+              "p95": 41.661,
+              "mean": 41.644
+            },
+            "change": {
+              "paired_percent": [
+                -0.008403462226447278,
+                -0.0204017953579827,
+                0.020406938359029958,
+                -0.08881634220696544,
+                -0.04320380193457707,
+                -0.02881325409688218
+              ],
+              "median_percent": -0.02460752472743244,
+              "bootstrap_95_percent": [
+                -0.06601007207077125,
+                0.00600173806629134
+              ],
+              "sign_flip_p": 0.125
+            },
+            "pooled": {
+              "before": {
+                "n": 120,
+                "median": 41.657,
+                "p95": 41.708,
+                "mean": 40.75691666666667
+              },
+              "after": {
+                "n": 120,
+                "median": 41.646,
+                "p95": 41.709,
+                "mean": 40.33729166666667
+              }
+            }
+          }
+        }
+      },
+      "resources": {
+        "compositor": {
+          "browser_cpu_ms_per_iteration": {
+            "before": {
+              "n": 6,
+              "median": 730.0725,
+              "p95": 731.63,
+              "mean": 729.5991666666667,
+              "process_values": [
+                731.63,
+                730.075,
+                730.0699999999999,
+                731.1,
+                727.17,
+                727.55
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 728.41,
+              "p95": 742.505,
+              "mean": 730.1075,
+              "process_values": [
+                728.7149999999999,
+                730.655,
+                742.505,
+                725.525,
+                728.105,
+                725.14
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                -0.3984254336208304,
+                0.07944389275074126,
+                1.7032613311052547,
+                -0.7625495828204154,
+                0.12858066201852925,
+                -0.33124871142876655
+              ],
+              "median_percent": -0.12590240933901264,
+              "bootstrap_95_percent": [
+                -0.5804875082206229,
+                0.915920996561892
+              ],
+              "sign_flip_p": 0.90625
+            }
+          },
+          "browser_footprint_mib": {
+            "before": {
+              "n": 6,
+              "median": 100.6033935546875,
+              "p95": 102.29888916015625,
+              "mean": 100.95241292317708,
+              "process_values": [
+                100.3612060546875,
+                100.1893539428711,
+                100.5330810546875,
+                100.6737060546875,
+                102.29888916015625,
+                101.65824127197266
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 100.2674560546875,
+              "p95": 102.97071838378906,
+              "mean": 100.64509836832683,
+              "process_values": [
+                99.97062683105469,
+                100.2987060546875,
+                102.97071838378906,
+                99.9706039428711,
+                100.2362060546875,
+                100.4237289428711
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                -0.38917350536817885,
+                0.10914544062112785,
+                2.4247116506610933,
+                -0.6983969691494951,
+                -2.0163299156058967,
+                -1.2143750606493309
+              ],
+              "median_percent": -0.543785237258837,
+              "bootstrap_95_percent": [
+                -1.6153524881276138,
+                1.2669285456411106
+              ],
+              "sign_flip_p": 0.65625
+            }
+          }
+        },
+        "metal": {
+          "browser_cpu_ms_per_iteration": {
+            "before": {
+              "n": 6,
+              "median": 519.0825,
+              "p95": 521.005,
+              "mean": 518.83,
+              "process_values": [
+                519.9,
+                520.99,
+                518.265,
+                516.3,
+                521.005,
+                516.52
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 518.1425,
+              "p95": 521.51,
+              "mean": 518.02,
+              "process_values": [
+                519.46,
+                521.51,
+                520.65,
+                516.825,
+                514.05,
+                515.625
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                -0.08463165993458643,
+                0.09980997715886009,
+                0.4601892854041889,
+                0.10168506682164402,
+                -1.334920010364593,
+                -0.17327499419189651
+              ],
+              "median_percent": 0.007589158612136826,
+              "bootstrap_95_percent": [
+                -0.7540975022782448,
+                0.28093717611291646
+              ],
+              "sign_flip_p": 0.75
+            }
+          },
+          "browser_footprint_mib": {
+            "before": {
+              "n": 6,
+              "median": 221.17380905151367,
+              "p95": 222.45513916015625,
+              "mean": 221.24151738484701,
+              "process_values": [
+                222.20513916015625,
+                220.3456039428711,
+                221.98638916015625,
+                220.3612289428711,
+                222.45513916015625,
+                220.0956039428711
+              ]
+            },
+            "after": {
+              "n": 6,
+              "median": 220.3768653869629,
+              "p95": 223.47078704833984,
+              "mean": 220.67900975545248,
+              "process_values": [
+                222.18953704833984,
+                217.6112289428711,
+                223.47078704833984,
+                220.4237289428711,
+                220.3300018310547,
+                220.04877471923828
+              ]
+            },
+            "change": {
+              "paired_percent": [
+                -0.00702149008585673,
+                -1.2409482880851752,
+                0.6686886947436355,
+                0.028362521074987157,
+                -0.9553105120990613,
+                -0.021276764639499568
+              ],
+              "median_percent": -0.014149127362678149,
+              "bootstrap_95_percent": [
+                -1.0981294000921182,
+                0.3485256079093113
+              ],
+              "sign_flip_p": 0.40625
+            }
+          }
+        }
+      },
+      "raw_report": "build/product-boundary-performance/20261105T192322951861Z/report.json",
+      "raw_report_sha256": "e51744c05f29998f83aa00d26f75e9e52e8150336bb79202e669f5d7a3714e3e",
+      "measured_samples": 3360,
+      "processes": 24
+    }
+  },
+  "profiles": [
+    {
+      "test": "interaction",
+      "backend": "compositor",
+      "folder": "build/product-boundary-profiles/20261105T193129556338Z",
+      "sample_sha256": "b4666c5c71d9d6531f97f5be518ffccbfe2fb80f1f23c69655c189a66eb029ce",
+      "main_thread_samples": 685,
+      "groups": {
+        "idle_drain": {
+          "samples": 537,
+          "percent": 78.39416058394161
+        },
+        "occlusion_updates": {
+          "samples": 78,
+          "percent": 11.386861313868613
+        },
+        "windowserver_sync": {
+          "samples": 69,
+          "percent": 10.072992700729927
+        },
+        "kernel_wait": {
+          "samples": 388,
+          "percent": 56.64233576642336
+        },
+        "update_shell": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "rebuild_tabs": {
+          "samples": 28,
+          "percent": 4.087591240875913
+        },
+        "native_graph_adapter": {
+          "samples": 1,
+          "percent": 0.145985401459854
+        },
+        "rust_graph": {
+          "samples": 2,
+          "percent": 0.291970802919708
+        },
+        "layout": {
+          "samples": 25,
+          "percent": 3.64963503649635
+        },
+        "view_bounds": {
+          "samples": 26,
+          "percent": 3.795620437956204
+        },
+        "view_hierarchy": {
+          "samples": 3,
+          "percent": 0.43795620437956206
+        },
+        "paint": {
+          "samples": 86,
+          "percent": 12.554744525547445
+        },
+        "text_layout": {
+          "samples": 85,
+          "percent": 12.408759124087592
+        },
+        "configuration_serialization": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "commands": {
+          "samples": 1,
+          "percent": 0.145985401459854
+        },
+        "pin_tree": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "drawable_acquisition": {
+          "samples": 0,
+          "percent": 0.0
+        }
+      }
+    },
+    {
+      "test": "interaction",
+      "backend": "metal",
+      "folder": "build/product-boundary-profiles/20261105T193158950875Z",
+      "sample_sha256": "cee35f4651e01e5e60af522805c5cc576c3fae5e52393b23bba8d0a80e8fc9d9",
+      "main_thread_samples": 4609,
+      "groups": {
+        "idle_drain": {
+          "samples": 3602,
+          "percent": 78.15144282924712
+        },
+        "occlusion_updates": {
+          "samples": 585,
+          "percent": 12.692558038620092
+        },
+        "windowserver_sync": {
+          "samples": 554,
+          "percent": 12.019960945975265
+        },
+        "kernel_wait": {
+          "samples": 2940,
+          "percent": 63.78824039921892
+        },
+        "update_shell": {
+          "samples": 5,
+          "percent": 0.10848340203948796
+        },
+        "rebuild_tabs": {
+          "samples": 229,
+          "percent": 4.968539813408548
+        },
+        "native_graph_adapter": {
+          "samples": 3,
+          "percent": 0.06509004122369277
+        },
+        "rust_graph": {
+          "samples": 8,
+          "percent": 0.17357344326318075
+        },
+        "layout": {
+          "samples": 170,
+          "percent": 3.688435669342591
+        },
+        "view_bounds": {
+          "samples": 240,
+          "percent": 5.207203297895422
+        },
+        "view_hierarchy": {
+          "samples": 54,
+          "percent": 1.17162074202647
+        },
+        "paint": {
+          "samples": 72,
+          "percent": 1.5621609893686266
+        },
+        "text_layout": {
+          "samples": 91,
+          "percent": 1.974397917118681
+        },
+        "configuration_serialization": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "commands": {
+          "samples": 4,
+          "percent": 0.08678672163159037
+        },
+        "pin_tree": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "drawable_acquisition": {
+          "samples": 39,
+          "percent": 0.8461705359080061
+        }
+      }
+    },
+    {
+      "test": "boundary",
+      "backend": "compositor",
+      "folder": "build/product-boundary-profiles/20261105T193223603413Z",
+      "sample_sha256": "ed4037b3b0d65b14dd262c811f52c24f6bd49d74fe431edc9bcaa006cb99cbab",
+      "main_thread_samples": 5883,
+      "groups": {
+        "idle_drain": {
+          "samples": 299,
+          "percent": 5.082440931497535
+        },
+        "occlusion_updates": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "windowserver_sync": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "kernel_wait": {
+          "samples": 338,
+          "percent": 5.745368009518953
+        },
+        "update_shell": {
+          "samples": 3636,
+          "percent": 61.80520142784294
+        },
+        "rebuild_tabs": {
+          "samples": 3585,
+          "percent": 60.938296787353394
+        },
+        "native_graph_adapter": {
+          "samples": 71,
+          "percent": 1.2068672446030937
+        },
+        "rust_graph": {
+          "samples": 67,
+          "percent": 1.1388747237803842
+        },
+        "layout": {
+          "samples": 2091,
+          "percent": 35.543090260071395
+        },
+        "view_bounds": {
+          "samples": 2082,
+          "percent": 35.3901070882203
+        },
+        "view_hierarchy": {
+          "samples": 1266,
+          "percent": 21.519632840387555
+        },
+        "paint": {
+          "samples": 1729,
+          "percent": 29.389767125616185
+        },
+        "text_layout": {
+          "samples": 1620,
+          "percent": 27.536970933197345
+        },
+        "configuration_serialization": {
+          "samples": 47,
+          "percent": 0.7989121196668366
+        },
+        "commands": {
+          "samples": 40,
+          "percent": 0.679925208227095
+        },
+        "pin_tree": {
+          "samples": 1,
+          "percent": 0.016998130205677375
+        },
+        "drawable_acquisition": {
+          "samples": 0,
+          "percent": 0.0
+        }
+      }
+    },
+    {
+      "test": "boundary",
+      "backend": "metal",
+      "folder": "build/product-boundary-profiles/20261105T193252790410Z",
+      "sample_sha256": "537e30c9e07dac03d658f86b6bbd79780b1a8c2afcd3fbb50ffb3a024d838a84",
+      "main_thread_samples": 5957,
+      "groups": {
+        "idle_drain": {
+          "samples": 429,
+          "percent": 7.2016115494376365
+        },
+        "occlusion_updates": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "windowserver_sync": {
+          "samples": 0,
+          "percent": 0.0
+        },
+        "kernel_wait": {
+          "samples": 464,
+          "percent": 7.789155615242571
+        },
+        "update_shell": {
+          "samples": 5151,
+          "percent": 86.46969951317777
+        },
+        "rebuild_tabs": {
+          "samples": 5089,
+          "percent": 85.42890716803761
+        },
+        "native_graph_adapter": {
+          "samples": 107,
+          "percent": 1.7962061440322312
+        },
+        "rust_graph": {
+          "samples": 105,
+          "percent": 1.762632197414806
+        },
+        "layout": {
+          "samples": 2973,
+          "percent": 49.90767164680208
+        },
+        "view_bounds": {
+          "samples": 2958,
+          "percent": 49.65586704717139
+        },
+        "view_hierarchy": {
+          "samples": 1783,
+          "percent": 29.93117340943428
+        },
+        "paint": {
+          "samples": 6,
+          "percent": 0.10072183985227463
+        },
+        "text_layout": {
+          "samples": 12,
+          "percent": 0.20144367970454927
+        },
+        "configuration_serialization": {
+          "samples": 66,
+          "percent": 1.107940238375021
+        },
+        "commands": {
+          "samples": 65,
+          "percent": 1.0911532650663085
+        },
+        "pin_tree": {
+          "samples": 5,
+          "percent": 0.08393486654356219
+        },
+        "drawable_acquisition": {
+          "samples": 0,
+          "percent": 0.0
+        }
+      }
+    }
+  ],
+  "source_comparison": {
+    "base_commit": "b18548b",
+    "different_shared_files": [
+      "BUILD.gn",
+      "chromium/prototype/browser_data.h",
+      "chromium/prototype/browser_tools.cc",
+      "chromium/prototype/browser_tools.h",
+      "chromium/prototype/workspace_commands.cc",
+      "chromium/prototype/workspace_window.cc"
+    ],
+    "added_files": [
+      "zitter/core/browser_state.h",
+      "zitter/core/command_history.cc",
+      "zitter/core/command_history.h",
+      "zitter/core/pin_tree.cc",
+      "zitter/core/pin_tree.h"
+    ],
+    "common_test_sha256": "5bf68ffd7bcc1b534b9fc0b23cfa8d24fbfa4ea5aaf6c0e165f9c51c5aa5aa13"
+  },
+  "chip": "Apple M3 Pro"
+}

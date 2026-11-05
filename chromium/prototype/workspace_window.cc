@@ -3,6 +3,7 @@
 #include "ui/views/background.h"
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
+#include "zitter/core/pin_tree.h"
 #include "chromium/prototype/assistant_panel.h"
 #include "ui/views/view_tracker.h"
 #include "chromium/prototype/timeline_store.h"
@@ -3273,16 +3274,20 @@ void WorkspaceWindow::OpenPinnedItem(std::string id) {
   }
 }
 
+namespace {
+std::vector<PinNode> PinNodes(const std::vector<PinnedItem>& items) {
+  std::vector<PinNode> nodes;
+  nodes.reserve(items.size());
+  for (const auto& item : items) nodes.push_back({item.id, item.parent_id, item.folder});
+  return nodes;
+}
+}  // namespace
+
 bool WorkspaceWindow::InsertPin(std::string workspace, PinnedItem item, std::string before) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace)) return false;
   auto& items = pins_[workspace];
-  // The parent must be a reachable folder that is not the item itself or one of its descendants.
-  for (std::string ancestor = item.parent_id; !ancestor.empty();) {
-    if (ancestor == item.id) return false;
-    auto it = std::find_if(items.begin(), items.end(), [&](const auto& other) { return other.id == ancestor && other.folder; });
-    if (it == items.end()) return false;
-    ancestor = it->parent_id;
-  }
+  const auto nodes = PinNodes(items);
+  if (!PinTree(nodes).CanPlace(item.id, item.parent_id)) return false;
   auto previous = items;
   std::erase_if(items, [&](const auto& other) { return other.id == item.id; });
   // Siblings keep vector order; an empty `before` appends after the last one.
@@ -3387,19 +3392,9 @@ bool WorkspaceWindow::CreatePinnedFolder(std::string workspace, std::string pare
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace) ||
       name.empty() || name.size() > 256 || !base::IsStringUTF8(name)) return false;
   auto& items = pins_[workspace];
-  if (!parent.empty() && std::none_of(items.begin(), items.end(), [&](const auto& item) {
-        return item.id == parent && item.folder;
-      })) return false;
-  // Match the renderer's nesting bound; do not create an invisible descendant.
-  std::string ancestor = parent;
-  size_t depth = 0;
-  while (!ancestor.empty()) {
-    if (++depth > 64) return false;
-    auto it = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == ancestor && item.folder; });
-    if (it == items.end()) return false;
-    ancestor = it->parent_id;
-  }
   const auto id = "folder-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+  const auto nodes = PinNodes(items);
+  if (!PinTree(nodes).CanPlace(id, parent)) return false;
   items.push_back({id, parent, name, GURL(), true});
   profiles_busy_ = true;
   UpdateShell();
@@ -3433,11 +3428,10 @@ bool WorkspaceWindow::RemovePinnedFolder(std::string workspace, std::string id, 
   auto previous = items;
   std::set<std::string> removed{id};
   if (contents) {
-    bool changed;
-    do {
-      changed = false;
-      for (const auto& item : items) if (removed.contains(item.parent_id)) changed |= removed.insert(item.id).second;
-    } while (changed);
+    const auto nodes = PinNodes(items);
+    const auto subtree = PinTree(nodes).Subtree(id);
+    if (subtree.empty()) return false;  // Ambiguous IDs must not cause a partial deletion.
+    for (const auto index : subtree) removed.insert(items[index].id);
   } else {
     const auto parent = folder->parent_id;
     for (auto& item : items) if (item.parent_id == id) item.parent_id = parent;
@@ -3448,6 +3442,8 @@ bool WorkspaceWindow::RemovePinnedFolder(std::string workspace, std::string id, 
 }
 bool WorkspaceWindow::RestorePins(std::string workspace, std::vector<PinnedItem> items) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace)) return false;
+  const auto nodes = PinNodes(items);
+  if (!PinTree(nodes).IsValid()) return false;
   auto previous = std::exchange(pins_[workspace], std::move(items));
   SaveFolderEdit(std::move(workspace), std::move(previous), {});
   return true;

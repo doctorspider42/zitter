@@ -1,11 +1,11 @@
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_BROWSER_TOOLS_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_BROWSER_TOOLS_H_
-#include <map>
 #include <optional>
 #include <string_view>
 #include <utility>
 #include <string>
 #include <vector>
+#include "zitter/core/command_history.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "ui/base/accelerators/accelerator.h"
@@ -28,10 +28,6 @@ std::string FormatShortcut(const ui::Accelerator& accelerator);
 std::string DisplayShortcut(const ui::Accelerator& accelerator);
 bool ValidShortcut(const ui::Accelerator& accelerator);
 GURL SearchDestination(const SearchProvider& provider, std::string query);
-struct CommandUsage {
-  double weight = 0;
-  base::Time last_used;
-};
 struct BrowserTools {
   BrowserTools();
   BrowserTools(const BrowserTools&);
@@ -42,7 +38,7 @@ struct BrowserTools {
   std::vector<SearchProvider> providers;
   std::vector<Shortcut> shortcuts;
   std::string default_keyword;
-  std::map<std::pair<std::string, std::string>, CommandUsage> command_usage;
+  CommandHistory command_usage;
   void RecordCommandUse(std::string id, std::string target, base::Time now);
   double CommandScore(std::string_view id, std::string_view target, base::Time now) const;
   base::DictValue ToValue() const;

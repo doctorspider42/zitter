@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(zitter_core
+  zitter/core/command_history.cc
+  zitter/core/pin_tree.cc
   zitter/core/workspace_model.cc
   zitter/application/workspace_controller.cc)
 target_include_directories(zitter_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -17,3 +19,7 @@ enable_testing()
 add_executable(workspace_tests tests/workspace_tests.cc)
 target_link_libraries(workspace_tests PRIVATE zitter_core)
 add_test(NAME workspace_contract COMMAND workspace_tests)
+
+add_executable(product_logic_tests tests/product_logic_tests.cc)
+target_link_libraries(product_logic_tests PRIVATE zitter_core)
+add_test(NAME product_logic_contract COMMAND product_logic_tests)

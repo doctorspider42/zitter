@@ -2,11 +2,11 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_BROWSER_DATA_H_
 
 #include <array>
-#include <map>
 #include <string>
 #include <optional>
 #include <vector>
 
+#include "zitter/core/browser_state.h"
 #include "url/gurl.h"
 #include "base/files/file_path.h"
 #include "base/time/time.h"
@@ -15,12 +15,8 @@ class Profile;
 
 namespace zitter::prototype {
 std::u16string BrowsingProfileName(Profile* profile);
-struct BrowserPreference {
-  int value = 0;
-  bool editable = false;
-  std::string text = {};
-};
-using BrowserPreferences = std::map<std::string, BrowserPreference>;
+using ::zitter::BrowserPreference;
+using ::zitter::BrowserPreferences;
 
 inline constexpr std::array<const char*, 9> kSitePreferenceKeys = {
     "javascript", "images", "popups", "sound", "notifications", "location", "camera", "microphone", "clipboard"};
@@ -28,35 +24,11 @@ inline constexpr std::array<const char*, 9> kSitePreferenceKeys = {
 inline constexpr std::array<const char16_t*, 9> kSitePreferenceNames = {
     u"JavaScript", u"Obrazy", u"Wyskakujące okna", u"Dźwięk", u"Powiadomienia", u"Lokalizacja", u"Kamera", u"Mikrofon", u"Schowek"};
 
-struct SitePreferenceRule {
-  std::string key;
-  std::string primary;
-  std::string secondary;
-  int setting = 0;
-  bool editable = false;
-};
-struct BrowsingDataSelection {
-  int period = 0;  // Hour, day, week, all time, four weeks.
-  bool history = false;
-  bool cookies = false;
-  bool cache = true;
-  // The Clear browsing data dialog's advanced kinds (design: Wyczyść dane).
-  bool downloads = false;
-  bool passwords = false;
-  bool form_data = false;
-  bool site_settings = false;
-  // Time Machine's timeline; unset follows `history` (the settings row).
-  std::optional<bool> time_machine;
-};
+using ::zitter::SitePreferenceRule;
+using ::zitter::BrowsingDataSelection;
 
 // The site panel (design: Zitter dostępy stron, W1/W2).
-struct SitePermissionState {
-  std::string key;      // Chromium's name for it ("notifications", "local-network-access").
-  int setting = 0;      // 1 allow, 2 block, 3 ask.
-  bool can_ask = true;  // Sound, images and JavaScript only allow or block.
-  bool today = false;   // Changed since midnight.
-  bool editable = true; // False under policy or an extension.
-};
+using ::zitter::SitePermissionState;
 struct SiteSummary {
   GURL url;
   std::u16string host;
@@ -79,12 +51,7 @@ struct SiteDataFacts {
   int visits = -1;
   base::Time first_visit;
 };
-struct SiteClearChoice {
-  bool cookies = true;
-  bool cache = true;
-  bool history = false;
-  bool permissions = false;
-};
+using ::zitter::SiteClearChoice;
 
 struct PaletteResult {
   std::u16string title;
@@ -100,20 +67,9 @@ struct PaletteResult {
   bool operator==(const PaletteResult&) const = default;
 };
 
-struct LinkRule {
-  std::string host;
-  std::string workspace_id;
-  bool operator==(const LinkRule&) const = default;
-};
+using ::zitter::LinkRule;
 
-struct ProfileInfo {
-  std::string id;
-  std::string name;
-  // Zitter-owned basename only; never an Arc profile directory.
-  std::string directory;
-  std::string source_id;
-  bool operator==(const ProfileInfo&) const = default;
-};
+using ::zitter::ProfileInfo;
 
 struct PinnedItem {
   std::string id;
@@ -132,14 +88,8 @@ struct ImportedSpace {
   std::u16string emoji;
 };
 
-enum class ImportBrowser { kArc, kChrome, kEdge, kBrave };
-struct BrowserImportOptions {
-  ImportBrowser browser = ImportBrowser::kArc;
-  bool separate_profiles = true;
-  bool bookmarks = true;
-  bool history = false;
-  bool cookies = false;
-};
+using ::zitter::ImportBrowser;
+using ::zitter::BrowserImportOptions;
 
 struct ImportSourceProfile {
   base::FilePath directory;

@@ -76,10 +76,19 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
     bind(std::string(entry.id), base::UTF8ToUTF16(std::string(entry.title)), base::UTF8ToUTF16(std::string(entry.detail)), std::string(entry.target));
   const auto now = base::Time::Now();
   const auto& tools = shell_->browser_tools();
-  std::stable_sort(results.begin(), results.end(), [&](const auto& a, const auto& b) {
-    return tools.CommandScore(a.command_id, a.target_workspace_id, now) >
-           tools.CommandScore(b.command_id, b.target_workspace_id, now);
+  // Score each candidate once, rather than repeating lookups and decay in
+  // every sort comparison on the UI sequence. Equal scores retain catalogue order.
+  std::vector<std::pair<double, PaletteResult>> ranked;
+  ranked.reserve(results.size());
+  for (auto& result : results) {
+    const double score = tools.CommandScore(result.command_id, result.target_workspace_id, now);
+    ranked.emplace_back(score, std::move(result));
+  }
+  std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
+    return a.first > b.first;
   });
+  results.clear();
+  for (auto& entry : ranked) results.push_back(std::move(entry.second));
   if (!only && query.empty() && results.size() > 6) results.resize(6);
   return results;
 }

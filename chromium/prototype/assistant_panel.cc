@@ -1290,7 +1290,14 @@ void AssistantPanel::StartTurn(Session& session) {
     auto env = base::Environment::Create();
     auto node_path = env->GetVar("ZITTER_NODE_PATH");
     base::FilePath node = node_path ? base::FilePath::FromUTF8Unsafe(*node_path) : base::FilePath(FILE_PATH_LITERAL("node"));
-    const auto script = exe.AppendASCII("assistant").AppendASCII("server.mjs");
+    auto runtime = exe.AppendASCII("assistant");
+#if BUILDFLAG(IS_MAC)
+    // Signed app bundles keep scripts in Resources; unbundled tests use DIR_EXE.
+    if (exe.BaseName().value() == "MacOS" &&
+        exe.DirName().BaseName().value() == "Contents")
+      runtime = exe.DirName().AppendASCII("Resources").AppendASCII("assistant");
+#endif
+    const auto script = runtime.AppendASCII("server.mjs");
     port_ = 49152 + static_cast<int>(base::RandGenerator(16384)); token_ = base::ToLowerASCII(base::HexEncode(base::RandBytesAsVector(24)));
     base::CommandLine command(node); command.AppendArgPath(script); command.AppendArg(base::NumberToString(port_)); command.AppendArg(token_);
     base::LaunchOptions options;

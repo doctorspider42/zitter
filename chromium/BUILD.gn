@@ -101,6 +101,11 @@ source_set("core") {
   sources = [
     "zitter/application/workspace_controller.cc",
     "zitter/application/workspace_controller.h",
+    "zitter/core/browser_state.h",
+    "zitter/core/command_history.cc",
+    "zitter/core/command_history.h",
+    "zitter/core/pin_tree.cc",
+    "zitter/core/pin_tree.h",
     "zitter/core/workspace_model.cc",
     "zitter/core/workspace_model.h",
     "zitter/ports/workspace_runtime.h",
@@ -420,7 +425,7 @@ test("arc_importer_unittests") {
     "chromium/prototype/browser_data.h",
   ]
   include_dirs = [ "." ]
-  deps = [ "//base", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest", "//url" ]
+  deps = [ ":core", "//base", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest", "//url" ]
 }
 if (!is_mac) {
   # macOS keeps the CoreText harness: tools/check_editor_text_layout.py.
