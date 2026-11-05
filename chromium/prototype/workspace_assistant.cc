@@ -38,6 +38,7 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "ui/events/event.h"
+#include "ui/events/keycodes/dom/dom_code.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "base/files/important_file_writer.h"
 #include "base/json/json_reader.h"
