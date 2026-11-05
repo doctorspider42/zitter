@@ -116,14 +116,29 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // Adds a finished exchange to the selected session, as a real turn would.
   void SeedExchangeForTesting(std::string prompt, std::string answer);
   size_t sessions_for_testing() const { return sessions_.size(); }
+  bool asking_for_testing() const { return selected().asking; }
+  void AnswerForTesting(std::string answer) { AnswerQuestion(selected(), std::move(answer)); }
+  // Runs a model's tool request as if the runtime had sent it.
+  void RunActionsForTesting(base::ListValue actions);
   bool sessions_loaded_for_testing() const { return loaded_; }
   void NewSessionForTesting() { NewSession(); }
   void DeleteSessionForTesting(size_t index) { DeleteSession(sessions_[index]->key); }
   void SaveNowForTesting() { SaveSessions(); }
  private:
   // kind: 0 answer, 1 the user's message, 2 a step (state 1) or an issue (state 2),
-  // 3 a note, 4 a hidden trace of a tool call (saved, for inspection).
-  struct Message { int kind = 0; std::string text; std::vector<AssistantChip> chips; int state = 0; };
+  // 3 a note, 4 a hidden trace of a tool call (saved, for inspection),
+  // 5 a question to the user with one-click options (state 1: several may be picked).
+  struct Message {
+    Message();
+    Message(const Message&);
+    Message& operator=(const Message&);
+    Message(Message&&);
+    Message& operator=(Message&&);
+    ~Message();
+    int kind = 0; std::string text; std::vector<AssistantChip> chips; int state = 0;
+    std::vector<std::string> options;
+    std::string answer;  // Once answered: the choice, or the user's own words.
+  };
   struct Session {
     Session();
     ~Session();
@@ -146,6 +161,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     base::Time updated;
     // Waiting for the model, with its answer so far; a browser tool is running.
     bool thinking = false, tool_running = false;
+    // A question of the model waits for the user's answer (ask_user).
+    bool asking = false;
+    std::vector<bool> picks;
     std::string partial;
   };
   // Has the user written anything here yet?
@@ -187,6 +205,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void SessionsLoaded(std::optional<base::DictValue> saved);
   // The answer being written, polled from the runtime while the model works.
   void PollProgress();
+  // Answers the pending question and lets the turn go on.
+  void AnswerQuestion(Session& session, std::string answer);
+  Message* PendingQuestion(Session& session);
   void ShowPartial();
   void Send(bool background);
   void StartTurn(Session& session);

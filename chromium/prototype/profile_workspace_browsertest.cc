@@ -928,6 +928,37 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSessionsAreSavedAndEm
   EXPECT_FALSE(panel->ContainsForTesting("Solaris i Eden."));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAsksWithOneClickAnswersAndSeesCanvases) {
+  window_->ShowAssistant();
+  auto* panel=window_->assistant();
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
+  panel->SeedExchangeForTesting("Kup to","Sprawdzam koszyk.");
+  // A question waits in the conversation; a click answers it and the turn goes on.
+  panel->RunActionsForTesting(base::ListValue().Append(base::DictValue().Set("tool","ask_user").Set("args",base::DictValue()
+      .Set("question","Złożyć zamówienie za 129 zł?").Set("options",base::ListValue().Append("Tak").Append("Nie")))));
+  EXPECT_TRUE(panel->asking_for_testing());
+  window_->widget()->LayoutRootViewIfNecessary();
+  panel->AnswerForTesting("Nie");
+  EXPECT_FALSE(panel->asking_for_testing());
+  // Typed words answer a question too.
+  panel->RunActionsForTesting(base::ListValue().Append(base::DictValue().Set("tool","ask_user").Set("args",base::DictValue()
+      .Set("question","Czego szukać?"))));
+  EXPECT_TRUE(panel->asking_for_testing());
+  panel->TypeForTesting(u"Tylko książek z 2026");
+  EXPECT_TRUE(panel->KeyForTesting(ui::VKEY_RETURN));
+  EXPECT_FALSE(panel->asking_for_testing());
+  panel->Stop();
+  // A page that draws its content on a canvas comes with a screenshot.
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html")));
+  ASSERT_TRUE(content::ExecJs(window_->contents("work"),R"(
+    document.body.innerHTML='<canvas id="c" width="900" height="700" style="width:900px;height:700px"></canvas>';
+    const g=c.getContext('2d');g.fillStyle='#4a3';g.fillRect(0,0,900,700);)"));
+  base::test::TestFuture<base::Value> read;
+  window_->AssistantTool("read_page",base::DictValue().Set("tab","@current"),{true,true,false,false,false},read.GetCallback());
+  ASSERT_TRUE(read.Get().GetDict().FindBool("canvas").value_or(false));
+  EXPECT_TRUE(read.Get().GetDict().FindString("image"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMentionsInsertRemovableChips) {
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
   window_->ShowAssistant(); auto* panel=window_->assistant();

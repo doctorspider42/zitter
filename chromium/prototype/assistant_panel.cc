@@ -176,6 +176,12 @@ class AssistantMenuPresses final : public ui::EventObserver {
   base::RepeatingClosure pressed_;
 };
 
+AssistantPanel::Message::Message() = default;
+AssistantPanel::Message::Message(const Message&) = default;
+AssistantPanel::Message& AssistantPanel::Message::operator=(const Message&) = default;
+AssistantPanel::Message::Message(Message&&) = default;
+AssistantPanel::Message& AssistantPanel::Message::operator=(Message&&) = default;
+AssistantPanel::Message::~Message() = default;
 AssistantPanel::Session::Session() = default;
 AssistantPanel::Session::~Session() = default;
 
@@ -279,7 +285,7 @@ void AssistantPanel::Collapse() {
   // A running task keeps working while the panel is hidden.
   if(pinned_||resize_start_width_||menu_!=Menu::kNone)return;
   // The consent prompt sits beside the panel: reaching it must not slide the panel away.
-  if(!sessions_.empty()&&selected().confirmation&&!selected().background)return;
+  if(!sessions_.empty()&&(selected().confirmation||selected().asking)&&!selected().background)return;
   // Keep a keyboard-authored draft visible until the user finishes editing it.
   if((!prompt_->GetText().empty()||!chips_.empty())&&GetFocusManager()&&GetFocusManager()->GetFocusedView()&&prompt_->Contains(GetFocusManager()->GetFocusedView()))return;
   hide_timer_.Stop();SetVisible(false);window_->shell()->LayoutAssistant(false);
@@ -404,7 +410,10 @@ void AssistantPanel::SaveSessions() {
       base::ListValue chips;
       for (const auto& chip : m.chips)
         chips.Append(base::DictValue().Set("kind", chip.kind).Set("ref", chip.ref).Set("title", chip.title).Set("color", static_cast<double>(chip.color)));
-      messages.Append(base::DictValue().Set("kind", m.kind).Set("text", m.text).Set("chips", std::move(chips)).Set("state", m.state));
+      base::ListValue options;
+      for (const auto& option : m.options) options.Append(option);
+      messages.Append(base::DictValue().Set("kind", m.kind).Set("text", m.text).Set("chips", std::move(chips)).Set("state", m.state)
+          .Set("options", std::move(options)).Set("answer", m.answer));
     }
     list.Append(base::DictValue().Set("key", s->key).Set("title", s->title).Set("provider", s->provider).Set("model", s->model)
         .Set("profile", s->profile).Set("permissions", s->permissions.ToValue()).Set("confirm_background", s->confirm_background)
@@ -442,7 +451,11 @@ void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
     if (const auto* messages = entry->FindList("messages")) for (const auto& value : *messages) {
       const auto* m = value.GetIfDict();
       if (!m || !m->FindString("text")) continue;
-      Message message; message.kind = std::clamp(m->FindInt("kind").value_or(3), 0, 4); message.text = *m->FindString("text");
+      Message message; message.kind = std::clamp(m->FindInt("kind").value_or(3), 0, 5); message.text = *m->FindString("text");
+      if (const auto* options = m->FindList("options")) for (const auto& option : *options) if (option.is_string()) message.options.push_back(option.GetString());
+      if (const auto* answer = m->FindString("answer")) message.answer = *answer;
+      // A question left open when Zitter closed can no longer be answered.
+      if (message.kind == 5 && message.answer.empty()) message.answer = "—";
       message.state = m->FindInt("state").value_or(message.kind == 2 ? 1 : 0);
       if (const auto* chips = m->FindList("chips")) for (const auto& c : *chips) {
         const auto* chip = c.GetIfDict();
@@ -451,7 +464,7 @@ void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
         message.chips.push_back({*chip->FindString("kind"), ref ? *ref : std::string(), base::UTF8ToUTF16(title ? *title : std::string()),
                                  static_cast<uint32_t>(chip->FindDouble("color").value_or(0))});
       }
-      if (message.kind != 4) s->transcript += std::string("\n\n") + (message.kind == 0 ? "Assistant: " : message.kind == 1 ? "You: " : "") + message.text;
+      if (message.kind != 4 && message.kind != 5) s->transcript += std::string("\n\n") + (message.kind == 0 ? "Assistant: " : message.kind == 1 ? "You: " : "") + message.text;
       s->messages.push_back(std::move(message));
     }
     if (Started(*s)) restored.push_back(std::move(s));
@@ -484,6 +497,7 @@ void AssistantPanel::StopSession(Session& session) {
   session.busy = false; session.queue.clear(); session.results.clear(); session.confirmation.reset();
   session.request.reset(); session.page_control = false; session.auto_confirm = false;
   session.thinking = false; session.tool_running = false; session.partial.clear();
+  session.asking = false; session.picks.clear();
   if (was_busy) session.status = T(u"Zatrzymane");
   if (!send_) return;
   UpdateControls(); UpdatePageControl(); RenderBackground();
@@ -947,6 +961,16 @@ bool AssistantPanel::PromptKey(const ui::KeyEvent& key) {
     if (busy()) { Stop(); return true; }
     return false;
   }
+  if (!sessions_.empty() && selected().asking && prompt_->GetText().empty() && code >= ui::VKEY_1 && code <= ui::VKEY_8 && !key.IsControlDown() && !key.IsAltDown()) {
+    auto& session = selected();
+    const size_t index = code - ui::VKEY_1;
+    auto* question = PendingQuestion(session);
+    if (question && index < question->options.size()) {
+      if (question->state == 1) { session.picks[index] = !session.picks[index]; RenderConversation(); }
+      else AnswerQuestion(session, question->options[index]);
+      return true;
+    }
+  }
   if (code == ui::VKEY_RETURN && !key.IsShiftDown()) { Send(key.IsAltDown()); return true; }
   if (code == ui::VKEY_BACK && prompt_->GetText().empty() && !chips_.empty()) { RemoveChip(chips_.size() - 1); return true; }
   return false;
@@ -1077,6 +1101,13 @@ void AssistantPanel::Append(Session& session, std::string text, std::vector<Assi
 }
 void AssistantPanel::Send(bool background) {
   auto& session = selected();
+  if (session.asking) {
+    const auto text = std::u16string(base::TrimWhitespace(prompt_->GetText(), base::TRIM_ALL));
+    if (text.empty()) return;
+    prompt_->SetText(u"");
+    AnswerQuestion(session, base::UTF16ToUTF8(text));
+    return;
+  }
   if (session.busy || window_->AssistantProfileId().empty()) return;
   const auto text = std::u16string(base::TrimWhitespace(prompt_->GetText(), base::TRIM_ALL));
   if (text.empty() && chips_.empty()) return;
@@ -1287,6 +1318,32 @@ void AssistantPanel::RunNext(Session& session) {
     StopSession(session); Append(session, "Invalid browser tool request."); return;
   }
   const auto tool = *action.GetDict().FindString("tool");
+  if (tool == "ask_user") {
+    // Shown in the conversation; the turn waits for a click or typed words.
+    const auto& args = *action.GetDict().FindDict("args");
+    const auto* question = args.FindString("question");
+    Message message; message.kind = 5;
+    message.text = question ? question->substr(0, 1000) : std::string();
+    if (const auto* options = args.FindList("options"))
+      for (const auto& option : *options) if (option.is_string() && !option.GetString().empty() && message.options.size() < 8) message.options.push_back(option.GetString().substr(0, 200));
+    message.state = args.FindBool("multiple").value_or(false) && message.options.size() > 1 ? 1 : 0;
+    if (message.text.empty()) {
+      session.results.Append(base::DictValue().Set("tool", tool).Set("result", base::DictValue().Set("error", "A question is required")));
+      ++session.index; RunNext(session); return;
+    }
+    session.picks.assign(message.options.size(), false);
+    session.messages.push_back(std::move(message));
+    session.updated = base::Time::Now(); ScheduleSave();
+    session.asking = true; session.status = T(u"Czeka na Twoją odpowiedź");
+    UpdateControls(); UpdatePageControl(); RenderBackground();
+    if (&session == &selected()) {
+      RenderConversation();
+      if (GetWidget()) GetWidget()->LayoutRootViewIfNecessary();
+      viewport_->ScrollTo(viewport_->maximum());
+      prompt_->RequestFocus();
+    }
+    return;
+  }
   Append(session, "Tool: " + tool);
   session.status = ToolStatus(tool);
   if (PageTool(tool)) {
@@ -1351,6 +1408,28 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
     Append(*session, "Issue: " + base::UTF16ToUTF8(TF(u"Nie udało się ({}): {}", {base::UTF8ToUTF16(*session->queue[session->index].GetDict().FindString("tool")), base::UTF8ToUTF16(*error)})));
   session->results.Append(base::DictValue().Set("tool", *session->queue[session->index].GetDict().FindString("tool")).Set("result", std::move(value)));
   ++session->index; RunNext(*session);
+}
+AssistantPanel::Message* AssistantPanel::PendingQuestion(Session& session) {
+  for (auto it = session.messages.rbegin(); it != session.messages.rend(); ++it)
+    if (it->kind == 5) return it->answer.empty() ? &*it : nullptr;
+  return nullptr;
+}
+void AssistantPanel::AnswerQuestion(Session& session, std::string answer) {
+  auto* question = PendingQuestion(session);
+  if (!session.asking || !question || answer.empty()) return;
+  question->answer = answer;
+  session.asking = false; session.picks.clear();
+  Append(session, "Trace: " + base::WriteJson(base::DictValue().Set("tool", "ask_user").Set("question", question->text).Set("answer", answer)).value_or("{}"));
+  session.results.Append(base::DictValue().Set("tool", "ask_user").Set("result", base::DictValue().Set("answer", answer)));
+  ++session.index;
+  RenderConversation(); UpdateControls();
+  RunNext(session);
+}
+void AssistantPanel::RunActionsForTesting(base::ListValue actions) {
+  auto& session = selected();
+  session.busy = true; ++session.epoch;
+  session.queue = std::move(actions); session.results.clear(); session.index = 0;
+  RunNext(session);
 }
 void AssistantPanel::Consent(Session& session, bool allow) {
   if (!session.confirmation || !session.busy) return;
@@ -1507,6 +1586,45 @@ void AssistantPanel::RenderConversation() {
   } else for(size_t i=0;i<messages.size();++i) {
     const auto& message=messages[i];
     if(message.kind==4)continue;
+    if(message.kind==5) {
+      // The model's question: one click answers; several may be picked when allowed.
+      auto* card=conversation_->AddChildView(CreateAssistantSurface(3));
+      SetSidebarPanelLayout(card,true,gfx::Insets(12),6);
+      const bool open=message.answer.empty()&&session.asking;
+      card->AddChildView(CreateAssistantActivity(open?T(u"Asystent pyta"):T(u"Asystent zapytał"),open?3:1));
+      card->AddChildView(CreateAssistantMarkdown(base::UTF8ToUTF16(message.text),base::BindRepeating([](const GURL&){})));
+      const auto weak=weak_factory_.GetWeakPtr();
+      for(size_t o=0;o<message.options.size();++o){
+        AssistantRow row;row.title=base::UTF8ToUTF16(message.options[o]);
+        row.mark={std::nullopt,base::NumberToString16(o+1),SK_ColorTRANSPARENT};
+        if(message.state==1&&open)row.toggle=o<session.picks.size()&&session.picks[o];
+        const bool chosen=!message.answer.empty()&&(message.answer==message.options[o]||
+            (message.state==1&&std::ranges::contains(base::SplitString(message.answer,"\n",base::TRIM_WHITESPACE,base::SPLIT_WANT_NONEMPTY),message.options[o])));
+        row.checked=chosen;row.disabled=!open&&!chosen;
+        card->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self,std::string key,size_t o){
+          if(!self)return;
+          for(auto& s:self->sessions_)if(s->key==key&&s->asking){
+            auto* question=self->PendingQuestion(*s);
+            if(!question||o>=question->options.size())return;
+            if(question->state==1){s->picks[o]=!s->picks[o];self->RenderConversation();}
+            else self->AnswerQuestion(*s,question->options[o]);
+          }},weak,session.key,o)),std::move(row)));
+      }
+      if(open&&message.state==1){
+        card->AddChildView(CreateAssistantPill(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self,std::string key){
+          if(!self)return;
+          for(auto& s:self->sessions_)if(s->key==key&&s->asking){
+            auto* question=self->PendingQuestion(*s);
+            std::string answer;
+            for(size_t i=0;question&&i<question->options.size();++i)if(s->picks[i])answer+=(answer.empty()?"":"\n")+question->options[i];
+            if(!answer.empty())self->AnswerQuestion(*s,answer);
+          }},weak,session.key)),T(u"Wyślij odpowiedź"),0));
+      }
+      if(open)card->AddChildView(CreateAssistantNote(message.options.empty()?T(u"Odpowiedz w polu poniżej."):T(u"Kliknij odpowiedź, naciśnij jej numer albo napisz własną poniżej.")));
+      else if(!message.answer.empty()&&message.answer!="—"&&!std::ranges::contains(message.options,message.answer)&&message.state!=1)
+        card->AddChildView(CreateAssistantPlainText(TF(u"Twoja odpowiedź: {}",{base::UTF8ToUTF16(message.answer)})));
+      continue;
+    }
     if(message.kind==2) {
       // The step in progress turns; finished steps get a check, failures a warning.
       size_t last=messages.size();
@@ -1537,6 +1655,7 @@ void AssistantPanel::RenderConversation() {
   if(session.busy&&!messages.empty()) {
     if(session.background){
       conversation_->AddChildView(CreateAssistantActivity(T(u"Pracuję w tle. Postęp i prośby o zgodę są wyżej, w sekcji W tle."),0));
+    }else if(session.asking){
     }else if(session.confirmation){
       conversation_->AddChildView(CreateAssistantActivity(T(u"Czeka na Twoją zgodę"),3));
     }else if(session.thinking&&!session.partial.empty()){
@@ -1563,7 +1682,9 @@ void AssistantPanel::UpdateControls() {
   const bool idle = !session.busy;
   send_->SetVisible(idle); stop_->SetVisible(!idle); send_->SetEnabled(idle && !session.provider.empty());
   stop_->SetEnabled(!idle);
-  prompt_->SetEnabled(idle);
+  prompt_->SetEnabled(idle || session.asking);
+  if (session.asking) { send_->SetVisible(true); send_->SetEnabled(true); stop_->SetVisible(false); }
+  prompt_->SetPlaceholderText(session.asking ? T(u"Wybierz odpowiedź albo napisz własną…") : T(u"Zapytaj Zittera… @ wstawia kartę albo narzędzie"));
   const bool research = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });
   const bool background = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; });
   UpdateAssistantButton(research_chip_, T(u"Deep research"), research);

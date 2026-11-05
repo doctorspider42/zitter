@@ -239,6 +239,25 @@ Codex through the SDK's item updates. The panel polls the runtime's `/progress`
 for it four times a second. While a consent prompt is waiting, an unpinned panel
 stays open, so reaching the prompt does not slide the panel away.
 
+The model can ask the user with `ask_user`: a question in the conversation with up
+to eight answers picked with one click (or several, then **Send answer**), or by
+pressing the answer's number while the field is empty. The user may also type
+their own answer in the field. The turn waits for the answer, and an unpinned
+panel stays open meanwhile. The model must use it before completing a purchase,
+payment, booking, sent message, deletion, publication or account change; native
+click consent covers only one click, not such an approval. It also uses it to
+choose between alternatives or to get details only the user knows. A question
+left open when Zitter closes cannot be answered after a restart.
+
+The model starts from what the user sees: a question about "this" or without a
+clear subject is taken to be about the current tab, and a request to find
+something opens it for the user. A general question is simply answered.
+
+Pages that draw their content on a canvas (Google Docs, Sheets, Slides, maps, or
+canvases covering a quarter of the viewport) report `canvas: true` from
+`read_page`, which then attaches their screenshot, so the model reads the
+content it could not get as text.
+
 Each tool call is also saved with the conversation as a hidden trace entry: the
 tool, its arguments and the gist of its result (errors, outcome fields and sizes,
 never screenshots or whole pages). It is not shown in the panel; it is there to

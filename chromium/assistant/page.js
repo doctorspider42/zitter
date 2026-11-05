@@ -80,6 +80,17 @@
     }
     return best;
   };
+  // The page shows its content as pixels: a known canvas editor, or canvases
+  // covering a quarter of the viewport.
+  const canvasContent = () => {
+    if (document.querySelector('.kix-appview-editor, .waffle-canvas, #docs-editor canvas, .punch-viewer-content')) return true;
+    let area = 0;
+    for (const c of document.querySelectorAll('canvas')) {
+      const r = c.getBoundingClientRect();
+      area += Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+    }
+    return area > innerWidth * innerHeight / 4;
+  };
   if (args.tool === 'editor_point') return editorPoint() ?? {};
   if (args.tool === 'focus_editor') {
     // Natively requested when a click did not give an editor the keyboard: an
@@ -152,7 +163,7 @@
     return { url: location.href, title: document.title, text: text.slice(0, 24000), elements,
              more_elements: Math.max(0, candidates.length - elements.length),
              scroll: { y: Math.round(scrollY), height: document.documentElement.scrollHeight, viewport: innerHeight },
-             editor: !!editorPoint() };
+             editor: !!editorPoint(), canvas: canvasContent() };
   }
   if (args.tool === 'focus_info') {
     // Natively requested before keyboard input: where would typing land?

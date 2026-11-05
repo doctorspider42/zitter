@@ -470,6 +470,26 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
         }, page->GetWeakPtr(), std::move(text), confirmed, std::move(done)));
     return;
   }
+  if (tool == "read_page") {
+    // Content drawn on a canvas (Google Docs, Sheets, maps) is not in the text:
+    // such pages come with a screenshot, so the model sees what the user sees.
+    PageOp(page, std::move(args), base::BindOnce(
+        [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, base::Value value) {
+          if (!page || !value.is_dict() || !value.GetDict().FindBool("canvas").value_or(false)) { std::move(done).Run(std::move(value)); return; }
+          Capture(page, base::BindOnce([](base::Value read, base::OnceCallback<void(base::Value)> done, base::Value shot) {
+            if (const auto* image = shot.GetIfDict(); image && image->FindString("image")) {
+              auto& result = read.GetDict();
+              result.Set("image", *image->FindString("image"));
+              result.Set("width", image->FindInt("width").value_or(0));
+              result.Set("height", image->FindInt("height").value_or(0));
+              result.Set("css_per_pixel", image->FindDouble("css_per_pixel").value_or(1));
+              result.Set("detail", "The page draws its content on a canvas; its screenshot is attached.");
+            }
+            std::move(done).Run(std::move(read));
+          }, std::move(value), std::move(done)));
+        }, page->GetWeakPtr(), std::move(done)));
+    return;
+  }
   PageOp(page, std::move(args), std::move(done));
 }
 BackendProbe ProbeBackends() {
