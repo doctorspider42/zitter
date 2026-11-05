@@ -7983,10 +7983,12 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
   auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){
     if(!shell||!shell->callbacks_.write_ad_blocking)return;shell->callbacks_.write_ad_blocking.Run(std::move(command));shell->RefreshAdBlockingPreferences();};
   auto heading=[&](std::u16string title){AddPreferenceCopy(ad_blocking_list_,std::move(title),kInk,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);};
-  auto removable=[&](std::u16string label,std::u16string detail,std::u16string remove_name,base::DictValue command){
+  auto removable=[&](std::u16string label,std::u16string detail,std::u16string remove_name,base::DictValue command,bool code=false){
     auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
     auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
-    AddPreferenceCopy(labels,std::move(label),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),true);
+    auto* copy=AddPreferenceCopy(labels,std::move(label),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),true);
+    // A filter rule is code: the `url` style (mono), like addresses.
+    if(auto* text=views::AsViewClass<PreferenceCopy>(copy);text&&code)text->SetTextStyle(8);
     if(!detail.empty())AddPreferenceCopy(labels,std::move(detail),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
     auto* remove=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const base::DictValue& c,const ui::Event&){write(shell,c.Clone());},write,weak,std::move(command)),T(u"Usuń"));
     remove->GetViewAccessibility().SetName(std::move(remove_name));
@@ -8025,7 +8027,9 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
     const auto& rule=(*rules)[i].GetString();
     // A comment says where the rules under it came from.
     if(rule.starts_with("!")){note=base::UTF8ToUTF16(std::string(base::TrimWhitespaceASCII(rule.substr(1),base::TRIM_ALL)));continue;}
-    removable(base::UTF8ToUTF16(rule),note,TF(u"Usuń regułę {}",{base::UTF8ToUTF16(rule)}),base::DictValue().Set("command","rule_remove").Set("rule",rule));
+    // The note heads its batch: shown under the batch's first rule only.
+    removable(base::UTF8ToUTF16(rule),std::exchange(note,std::u16string()),TF(u"Usuń regułę {}",{base::UTF8ToUTF16(rule)}),
+              base::DictValue().Set("command","rule_remove").Set("rule",rule),true);
     ++shown;
   }
   if(!shown)AddPreferenceCopy(ad_blocking_list_,T(u"Brak. Dodaj regułę poniżej albo poproś asystenta o zablokowanie reklam na stronie."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);

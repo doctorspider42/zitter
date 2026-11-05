@@ -610,7 +610,8 @@ class ShieldButton final : public views::Button {
     else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
     StrokeIcon(canvas, count_ < 0 ? kShieldOffIcon : kShieldIcon, gfx::RectF(box.CenterPoint().x() - 8, box.CenterPoint().y() - 8, 16, 16), ink);
     if (count_ <= 0) return;
-    // The extension badge's pill, in the accent: Zitter's own count.
+    // The extension badge (design: Extensions): neutral, so it never competes
+    // with the space accent.
     const auto text = count_ > 99 ? std::u16string(u"99+") : base::NumberToString16(count_);
     const auto font = DesignFont(3, 9, 600);
     const float width = std::max(14, gfx::GetStringWidth(text, font) + 6);
@@ -618,8 +619,8 @@ class ShieldButton final : public views::Button {
     auto ring = pill;
     ring.Outset(1.5f);
     FillRound(canvas, ring, 7.5f, p.bg_void);
-    FillRound(canvas, pill, 6, p.accent);
-    canvas->DrawStringRectWithFlags(text, font, p.on_accent, gfx::ToEnclosingRect(pill), gfx::Canvas::TEXT_ALIGN_CENTER);
+    FillRound(canvas, pill, 6, p.ink);
+    canvas->DrawStringRectWithFlags(text, font, p.bg_raised, gfx::ToEnclosingRect(pill), gfx::Canvas::TEXT_ALIGN_CENTER);
   }
  private:
   base::RepeatingCallback<sidebar::DesignPalette()> palette_;
@@ -642,6 +643,10 @@ class ShieldCard final : public views::View {
     count_ = count; site_ = std::move(site);
     GetViewAccessibility().SetName(count_ < 0 ? T(u"Blokowanie wyłączone na tej stronie")
                                               : TF(u"Zablokowano na tej stronie: {}", {base::NumberToString16(count_)}));
+    // As tall as the detail needs: one line or two, no empty band above the rows.
+    int w = kMenuWidth - 8 - 16, h = 0;
+    gfx::Canvas::SizeStringInt(Detail(), DesignFont(2, 12, 400), &w, &h, 0, gfx::Canvas::MULTI_LINE);
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, 48 + h + 8));
     SchedulePaint();
   }
   void OnPaint(gfx::Canvas* canvas) override {
@@ -654,11 +659,14 @@ class ShieldCard final : public views::View {
                                     label, palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
     canvas->DrawStringRectWithFlags(count_ < 0 ? u"—" : base::NumberToString16(count_), DesignFont(2, 13, 600), palette_.ink,
                                     gfx::Rect(x, 23, right - x, 18), gfx::Canvas::NO_SUBPIXEL_RENDERING);
-    canvas->DrawStringRectWithFlags(site_.empty() ? T(u"Reklamy i elementy śledzące z list EasyList i EasyPrivacy.")
-                                                  : TF(u"{} · listy EasyList i EasyPrivacy oraz Twoje reguły.", {site_}),
-                                    label, palette_.ink_muted, gfx::Rect(8, 48, width() - 16, 32), gfx::Canvas::MULTI_LINE);
+    canvas->DrawStringRectWithFlags(Detail(), label, palette_.ink_muted, gfx::Rect(8, 48, width() - 16, height() - 48 - 8),
+                                    gfx::Canvas::MULTI_LINE);
   }
  private:
+  std::u16string Detail() const {
+    return site_.empty() ? T(u"Reklamy i elementy śledzące z list EasyList i EasyPrivacy.")
+                         : TF(u"{} · listy EasyList i EasyPrivacy oraz Twoje reguły.", {site_});
+  }
   sidebar::DesignPalette palette_;
   int count_ = 0;
   std::u16string site_;
@@ -1116,6 +1124,8 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
     site_row_->SetText(count < 0 ? T(u"Włącz blokowanie na tej stronie") : T(u"Wyłącz blokowanie na tej stronie"), {}, false, 16);
     site_row_->SetEnabled(url.SchemeIsHTTPOrHTTPS());
     site_row_->SchedulePaint();
+    // Another site's detail may take another number of lines.
+    if (GetWidget() && !GetWidget()->IsClosed()) SizeToContents();
   }
  private:
   raw_ptr<ExtensionsBar> bar_;

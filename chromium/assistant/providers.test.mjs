@@ -123,6 +123,8 @@ test('screenshots reach every provider as images, never as transcript text', asy
       const line = JSON.parse(input);
       assert.doesNotMatch(line.message.content[0].text, /aW1hZ2U=/);
       assert.deepEqual(line.message.content[1].source, { type: 'base64', media_type: 'image/jpeg', data: 'aW1hZ2U=' });
+      // After the images, a reminder that browser tools go in actions, not native calls.
+      assert.match(line.message.content.at(-1).text, /actions/);
       return `{"type":"system"}\n${JSON.stringify({ type: 'result', structured_output: response })}\n`;
     } });
   assert.equal((await claude.complete('Policy', messages, signal)).answer, 'Ready');

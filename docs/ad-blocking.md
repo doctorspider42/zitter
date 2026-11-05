@@ -124,8 +124,9 @@ ignored: their resources are uBO's GPL code.
 The shield is the first button of the extensions bar, before the fingerprint
 button, whenever ad blocking is on for the profile. It follows the fingerprint
 button's 28 px IconButton: muted ink, `bg_hover` on hover, `accent_soft` while
-its panel is open. A small accent pill at its bottom right counts what was
-blocked on the page: requests plus hidden elements (99+ at most). On a site
+its panel is open. The extension badge at its bottom right (neutral `ink` with
+`bg-raised` text, design: Extensions) counts what was blocked on the page:
+requests plus hidden elements (99+ at most). On a site
 where blocking is off it is drawn crossed out.
 
 Its panel (the fingerprint panel's 296 px bubble):
@@ -155,8 +156,10 @@ preference catalogue in `sidebar_scene.rs`:
   attribution, and **Aktualizuj teraz**;
 - **Witryny bez blokowania**: the allow list, each with a remove button;
 - **Twoje reguły**: the profile's own rules (pref `zitter.ad_blocking_rules`, a
-  list of strings), each with a remove button, and a field to add a rule. A rule
-  the engine cannot parse is refused with a message.
+  list of strings), each in the `url` style (mono, it is code) with a remove
+  button, and a field to add a rule. A batch's note ("Asystent: site, date")
+  shows under its first rule only. A rule the engine cannot parse is refused
+  with a message.
 
 ### List updates
 
@@ -211,6 +214,16 @@ and action permissions). It:
    the new cosmetic rules at once and returns
    `{saved, hidden_now, network_rules}`; on no: removes the preview and returns
    `skipped`.
+
+The tool's description tells the model never to pin an element by its position
+(`:nth-of-type` chains): on a front page that slot holds an article on the next
+visit. An ad without a stable class, id or attribute is left, and the model says
+so.
+
+With the Claude CLI backend, a screenshot switches the request to `stream-json`
+input, where the model tends to call browser tools natively; the CLI refuses
+("No such tool") and the turn could end without saving anything. A note after
+the images (`IMAGE_NOTE` in `providers.mjs`) steers it back to `actions`.
 
 Why native consent instead of `ask_user`: `ask_user` runs through the model,
 which could skip it or misreport the answer. Saving rules changes the user's

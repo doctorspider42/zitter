@@ -7,6 +7,12 @@ import { AssistantError } from './errors.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
+// With an image attached the CLI takes stream-json input, and there the model
+// tends to call browser tools natively; the CLI refuses ("No such tool") and the
+// turn ends without them. This note after the images steers it back to actions.
+export const IMAGE_NOTE = 'The images are the screenshots the transcript above names. You have no tools here: ' +
+  'request every browser tool only in the "actions" of your structured answer.';
+
 export const schema = {
   type: 'object', additionalProperties: false, required: ['answer', 'actions'],
   properties: {
@@ -216,7 +222,8 @@ export class Provider {
           '--no-session-persistence',
           '--setting-sources', '', '--disable-slash-commands',
         ], images.length ? JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: input },
-            ...images.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }))] } }) + '\n' : input, signal, cwd, onData);
+            ...images.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } })),
+            { type: 'text', text: IMAGE_NOTE }] } }) + '\n' : input, signal, cwd, onData);
         const result = streaming
           ? output.split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).find(line => line?.type === 'result') ?? { is_error: true }
           : JSON.parse(output);
