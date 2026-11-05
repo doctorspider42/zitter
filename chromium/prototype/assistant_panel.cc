@@ -5,6 +5,7 @@
 #include <windows.h>
 #endif
 #include <algorithm>
+#include "base/functional/callback_helpers.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/editor_control.h"
@@ -116,6 +117,9 @@ std::u16string ToolStatus(const std::string& tool) {
   if (tool == "wait") return T(u"Czekam na stronę…");
   if (tool == "dialog") return T(u"Odpowiadam na okno strony…");
   if (tool == "navigate" || tool == "open_tab") return T(u"Otwieram stronę…");
+  if (tool == "adblock_inspect") return T(u"Szukam reklam na stronie…");
+  if (tool == "adblock_add_rules") return T(u"Przygotowuję reguły blokowania…");
+  if (tool == "adblock_diagnose") return T(u"Sprawdzam, jak strona wykrywa blokowanie…");
   return T(u"Pracuję w przeglądarce…");
 }
 // Runs after the current click has finished: the work may rebuild the clicked view.
@@ -125,7 +129,7 @@ base::RepeatingClosure Later(base::RepeatingClosure work) {
 bool PageTool(const std::string& tool) {
   return tool == "read_page" || tool == "click" || tool == "type" || tool == "scroll" || tool == "navigate" ||
          tool == "insert_text" || tool == "press_key" || tool == "select" || tool == "mouse" || tool == "screenshot" ||
-         tool == "wait" || tool == "dialog";
+         tool == "wait" || tool == "dialog" || tool == "adblock_inspect" || tool == "adblock_add_rules" || tool == "adblock_diagnose";
 }
 }
 AssistantTask::AssistantTask() = default;
@@ -1137,6 +1141,12 @@ void AssistantPanel::ToggleTool(const std::string& kind) {
 }
 
 // Turns -------------------------------------------------------------------
+void AssistantPanel::Ask(std::u16string text) {
+  auto& session = selected();
+  if (session.busy || session.asking) return;
+  prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size())); PromptChanged();
+  Send(false);
+}
 void AssistantPanel::SendForTesting(std::string text, bool background) {
   prompt_->SetText(base::UTF8ToUTF16(text)); Send(background);
 }
@@ -1577,6 +1587,8 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
     const auto* label = value.GetDict().FindString("label");
     session->confirm_label = base::UTF8ToUTF16(label ? label->substr(0, 120) : "Click");
     session->confirm_key = value.GetDict().FindBool("key").value_or(false);
+    const auto* prompt = value.GetDict().FindString("prompt");
+    session->confirm_prompt = prompt ? base::UTF8ToUTF16(prompt->substr(0, 300)) : std::u16string();
     session->status = T(u"Czeka na zgodę");
     session->needed_user = true;
     if (session == &selected()) RenderConversation();
@@ -1599,7 +1611,7 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
               self->Consent(*session, choice != 0);
             }, self, key, epoch, choice));
           };
-          auto bubble = CreateAssistantConsentBubble(session->confirm_key ? TF(u"Nacisnąć {}?", {session->confirm_label}) : TF(u"Kliknąć „{}”?", {session->confirm_label}), session->status == T(u"Czeka na zgodę") && !session->title.empty() ? session->title : T(u"Asystent prosi o zgodę"),
+          auto bubble = CreateAssistantConsentBubble(!session->confirm_prompt.empty() ? session->confirm_prompt : session->confirm_key ? TF(u"Nacisnąć {}?", {session->confirm_label}) : TF(u"Kliknąć „{}”?", {session->confirm_label}), session->status == T(u"Czeka na zgodę") && !session->title.empty() ? session->title : T(u"Asystent prosi o zgodę"),
               base::BindRepeating(act, self, key, epoch, 1), base::BindRepeating(act, self, key, epoch, 0), base::BindRepeating(act, self, key, epoch, 2));
           auto* allow = AssistantConsentAllowButton(bubble.get());
           self->window_->shell()->SetAssistantConsent(std::move(bubble), anchor);
@@ -1684,6 +1696,10 @@ void AssistantPanel::Consent(Session& session, bool allow) {
   UpdatePageControl(); RenderBackground();
   if (!allow) {
     if (!pinned_) WatchPointer();
+    // Declined rules leave nothing outlined on the page.
+    if (*action.FindString("tool") == "adblock_add_rules")
+      window_->AssistantTool("adblock_clear_preview", action.FindDict("args")->Clone(), session.permissions, base::DoNothing(),
+                             false, session.background ? session.key : std::string());
     session.results.Append(base::DictValue().Set("tool", *action.FindString("tool")).Set("result",
         base::DictValue().Set("skipped", true).Set("detail", "The user declined this click. Do not retry it; continue another way or ask.")));
     ++session.index; RunNext(session); return;
@@ -2026,7 +2042,7 @@ void AssistantPanel::RenderBackground() {
       SetSidebarPanelLayout(card, true, gfx::Insets(8), 8);
       card->AddChildView(CreateAssistantTaskRow(mark, title, T(u"Czeka na zgodę"), 1, {}, {}));
       card->AddChildView(CreateAssistantElementPreview(s->confirm_label));
-      card->AddChildView(CreateAssistantNote(s->confirm_key ? TF(u"Nacisnąć {}?", {s->confirm_label}) : TF(u"Kliknąć „{}”?", {s->confirm_label})));
+      card->AddChildView(CreateAssistantNote(!s->confirm_prompt.empty() ? s->confirm_prompt : s->confirm_key ? TF(u"Nacisnąć {}?", {s->confirm_label}) : TF(u"Kliknąć „{}”?", {s->confirm_label})));
       auto* actions = card->AddChildView(std::make_unique<views::View>());
       actions->AddChildView(CreateAssistantPill(later(weak, s->key, 1), T(u"Zezwól"), 0));
       actions->AddChildView(CreateAssistantPill(later(weak, s->key, 0), T(u"Pomiń"), 1));

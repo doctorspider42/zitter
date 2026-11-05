@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import content_blocking_fixture
 import editor_service_fixture
 import fingerprint_protection_fixture
 from pathlib import Path
@@ -254,6 +255,7 @@ class OverlayTests(unittest.TestCase):
             checkout = Path(directory)
             editor_service_fixture.seed(checkout)
             fingerprint_protection_fixture.seed(checkout)
+            content_blocking_fixture.seed(checkout)
             seed_extension_tabs(checkout)
             seed_extensions_logo(checkout)
             build = checkout / "chrome/test/BUILD.gn"

@@ -21,6 +21,7 @@
 #include "chrome/browser/extensions/extension_view_host.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/views/extensions/extension_view_views.h"
+#include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
@@ -29,7 +30,9 @@
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/eye_dropper.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -96,6 +99,9 @@ constexpr char kStoreIcon[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
 constexpr char kFingerprintIcon[] = "M4.2 4.2a5.5 5.5 0 0 1 7.6 0M3 11.5V9.5a5 5 0 0 1 10 0v1M5.5 13.5V9.5a2.5 2.5 0 0 1 5 0V12M8 9v5";
 constexpr char kTurnIcon[] = "M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3";
 constexpr char kShieldOffIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM2.5 2.5l11 11";
+// Ad blocking: a shield with a bar across, the assistant's spark.
+constexpr char kShieldIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM5.5 7.5h5";
+constexpr char kSparkIcon[] = "M8 2.5l1.3 3.7 3.7 1.3-3.7 1.3L8 12.5l-1.3-3.7L3 7.5l3.7-1.3z";
 
 // The subset of SVG path data the design icons use: M L H V A Z, absolute or
 // relative, with implicit repeats.
@@ -631,6 +637,100 @@ class FingerprintCard final : public views::View {
 BEGIN_METADATA(FingerprintCard)
 END_METADATA
 
+// Ad blocking in the bar, first: the fingerprint button's IconButton with the
+// page's blocked count in a small pill, crossed out where the site is allowed.
+class ShieldButton final : public views::Button {
+  METADATA_HEADER(ShieldButton, views::Button)
+ public:
+  ShieldButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette)
+      : views::Button(std::move(callback)), palette_(std::move(palette)) {
+    SetPreferredSize(gfx::Size(kButton, kButton));
+    GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kDialog);
+    SetCount(0);
+  }
+  void SetOpen(bool open) { if (open_ != open) { open_ = open; SchedulePaint(); } }
+  // -1: off on this site.
+  void SetCount(int count) {
+    count_ = count;
+    const auto name = count < 0 ? T(u"Blokowanie reklam wyłączone na tej stronie")
+                                : TF(u"Blokowanie reklam: {} zablokowanych na tej stronie", {base::NumberToString16(count)});
+    GetViewAccessibility().SetName(name);
+    SetTooltipText(name);
+    SchedulePaint();
+  }
+  int count() const { return count_; }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = palette_.Run();
+    const gfx::RectF box(GetLocalBounds());
+    SkColor ink = p.ink_muted;
+    if (open_) { FillRound(canvas, box, 8, p.accent_soft); ink = p.accent_ink; }
+    else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
+    StrokeIcon(canvas, count_ < 0 ? kShieldOffIcon : kShieldIcon, gfx::RectF(box.CenterPoint().x() - 8, box.CenterPoint().y() - 8, 16, 16), ink);
+    if (count_ <= 0) return;
+    // The extension badge (design: Extensions): neutral, so it never competes
+    // with the space accent.
+    const auto text = count_ > 99 ? std::u16string(u"99+") : base::NumberToString16(count_);
+    const auto font = DesignFont(3, 9, 600);
+    const float width = std::max(14, gfx::GetStringWidth(text, font) + 6);
+    const gfx::RectF pill(this->width() - width, height() - 1 - 12, width, 12);
+    auto ring = pill;
+    ring.Outset(1.5f);
+    FillRound(canvas, ring, 7.5f, p.bg_void);
+    FillRound(canvas, pill, 6, p.ink);
+    canvas->DrawStringRectWithFlags(text, font, p.bg_raised, gfx::ToEnclosingRect(pill), gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+ private:
+  base::RepeatingCallback<sidebar::DesignPalette()> palette_;
+  bool open_ = false;
+  int count_ = 0;
+};
+BEGIN_METADATA(ShieldButton)
+END_METADATA
+
+// The shield panel's first block, built like the fingerprint card: a tile,
+// what was blocked here in `url`, and the site.
+class ShieldCard final : public views::View {
+  METADATA_HEADER(ShieldCard, views::View)
+ public:
+  explicit ShieldCard(const sidebar::DesignPalette& palette) : palette_(palette) {
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, 88));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
+  }
+  void Set(int count, std::u16string site) {
+    count_ = count; site_ = std::move(site);
+    GetViewAccessibility().SetName(count_ < 0 ? T(u"Blokowanie wyłączone na tej stronie")
+                                              : TF(u"Zablokowano na tej stronie: {}", {base::NumberToString16(count_)}));
+    // As tall as the detail needs: one line or two, no empty band above the rows.
+    int w = kMenuWidth - 8 - 16, h = 0;
+    gfx::Canvas::SizeStringInt(Detail(), DesignFont(2, 12, 400), &w, &h, 0, gfx::Canvas::MULTI_LINE);
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, 48 + h + 8));
+    SchedulePaint();
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const gfx::RectF tile(8, 8, 32, 32);
+    FillRound(canvas, tile, 6, count_ < 0 ? palette_.bg_hover : palette_.accent_soft);
+    StrokeIcon(canvas, count_ < 0 ? kShieldOffIcon : kShieldIcon, gfx::RectF(16, 16, 16, 16), count_ < 0 ? palette_.ink_muted : palette_.accent_ink);
+    const auto label = DesignFont(2, 12, 400);
+    const int x = 52, right = width() - 8;
+    canvas->DrawStringRectWithFlags(count_ < 0 ? T(u"Blokowanie wyłączone na tej stronie") : T(u"Zablokowano na tej stronie"),
+                                    label, palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
+    canvas->DrawStringRectWithFlags(count_ < 0 ? u"—" : base::NumberToString16(count_), DesignFont(2, 13, 600), palette_.ink,
+                                    gfx::Rect(x, 23, right - x, 18), gfx::Canvas::NO_SUBPIXEL_RENDERING);
+    canvas->DrawStringRectWithFlags(Detail(), label, palette_.ink_muted, gfx::Rect(8, 48, width() - 16, height() - 48 - 8),
+                                    gfx::Canvas::MULTI_LINE);
+  }
+ private:
+  std::u16string Detail() const {
+    return site_.empty() ? T(u"Reklamy i elementy śledzące z list EasyList i EasyPrivacy.")
+                         : TF(u"{} · listy EasyList i EasyPrivacy oraz Twoje reguły.", {site_});
+  }
+  sidebar::DesignPalette palette_;
+  int count_ = 0;
+  std::u16string site_;
+};
+BEGIN_METADATA(ShieldCard)
+END_METADATA
+
 // A menu row: an extension (icon, name, site access, pin and more) or a
 // footer command (icon, label).
 class MenuRow final : public views::Button {
@@ -1034,6 +1134,69 @@ class ExtensionsBar::FingerprintPanel final : public views::BubbleDialogDelegate
   size_t step_ = 0;
 };
 
+// Ad blocking under the shield: what was blocked here, the site switch, the
+// assistant for what the lists miss, and Preferences. The bar owns it.
+class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
+ public:
+  ShieldPanel(ExtensionsBar* bar, views::View* anchor)
+      : views::BubbleDialogDelegate(anchor, views::BubbleBorder::TOP_RIGHT), bar_(bar), palette_(bar->palette()) {
+    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+    set_margins(gfx::Insets(4));
+    set_corner_radius(12);
+    set_fixed_width(kMenuWidth);
+    SetBackgroundColor(palette_.bg_raised);
+    SetShowCloseButton(false);
+    SetAccessibleWindowRole(ax::mojom::Role::kDialog);
+    SetTitle(T(u"Blokowanie reklam"));
+    SetShowTitle(false);
+    auto body = std::make_unique<views::View>();
+    body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
+    body->AddChildView(std::make_unique<MenuHeader>(palette_, T(u"Blokowanie reklam")));
+    card_ = body->AddChildView(std::make_unique<ShieldCard>(palette_));
+    body->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+    auto weak = bar_->weak_factory_.GetWeakPtr();
+    auto add_row = [&](const char* glyph, void (ExtensionsBar::*command)()) {
+      auto* row = body->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+          [](base::WeakPtr<ExtensionsBar> bar, void (ExtensionsBar::*command)()) { if (bar) (bar.get()->*command)(); },
+          weak, command), palette_, kFooterHeight));
+      row->SetGlyph(glyph);
+      row->Init();
+      return row;
+    };
+    site_row_ = add_row(kShieldOffIcon, &ExtensionsBar::ToggleSiteBlocking);
+    if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run() && bar_->callbacks_.block_with_assistant)
+      assistant_row_ = add_row(kSparkIcon, &ExtensionsBar::BlockWithAssistant);
+    auto* settings = add_row(kGearIcon, &ExtensionsBar::OpenAdBlockingSettings);
+    settings->SetText(T(u"Ustawienia blokowania"), {}, false, 16);
+    settings->SetRing(true);
+    SetContentsView(std::move(body));
+    Refresh();
+  }
+  void Refresh() {
+    const int count = bar_->ShieldCount();
+    const GURL url = bar_->page() ? bar_->page()->GetLastCommittedURL() : GURL();
+    card_->Set(count, base::UTF8ToUTF16(ContentBlocking::SiteKey(url)));
+    site_row_->SetGlyph(count < 0 ? kShieldIcon : kShieldOffIcon);
+    site_row_->SetText(count < 0 ? T(u"Włącz blokowanie na tej stronie") : T(u"Wyłącz blokowanie na tej stronie"), {}, false, 16);
+    site_row_->SetEnabled(url.SchemeIsHTTPOrHTTPS());
+    site_row_->SchedulePaint();
+    if (assistant_row_) {
+      const bool stale = count >= 0 && !ContentBlocking::StaleRules(bar_->profile(), url).empty();
+      assistant_row_->SetText(stale ? T(u"Napraw niedziałające reguły z asystentem") : T(u"Zablokuj więcej z asystentem"), {}, false, 16);
+      assistant_row_->SchedulePaint();
+    }
+    // Another site's detail may take another number of lines.
+    if (GetWidget() && !GetWidget()->IsClosed()) SizeToContents();
+  }
+ private:
+  raw_ptr<ExtensionsBar> bar_;
+  sidebar::DesignPalette palette_;
+  raw_ptr<ShieldCard> card_ = nullptr;
+  raw_ptr<MenuRow> site_row_ = nullptr;
+  raw_ptr<MenuRow> assistant_row_ = nullptr;
+};
+
 ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbacks)) {
   auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
@@ -1046,6 +1209,8 @@ ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbac
 ExtensionsBar::~ExtensionsBar() {
   // Bubbles report closing through weak pointers; this bar is going away.
   weak_factory_.InvalidateWeakPtrs();
+  shield_widget_.reset();
+  shield_panel_.reset();
   fingerprint_widget_.reset();
   fingerprint_panel_.reset();
   context_menu_.reset();
@@ -1066,6 +1231,7 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
   const bool page_changed = page != page_.get();
   if (page_changed) ClosePopup();
   page_ = page ? page->GetWeakPtr() : nullptr;
+  if (page_changed) ObservePageCount();
   if (profile_changed) {
     CloseMenus();
     model_observation_.Reset();
@@ -1076,6 +1242,7 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
     return;
   }
   RefreshButtons();
+  RefreshShield();
   if (fingerprint_panel_) fingerprint_panel_->Refresh();
 }
 
@@ -1102,16 +1269,25 @@ void ExtensionsBar::Rebuild() {
   puzzle_ = nullptr;
   fingerprint_button_ = nullptr;
   assistant_button_ = nullptr;
+  shield_button_ = nullptr;
   auto* model = profile_ ? ToolbarActionsModel::Get(profile_) : nullptr;
   SetVisible(model != nullptr);
   const bool protection = model && profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
   if (!protection && fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  const bool blocking = model && profile_->GetPrefs()->GetBoolean(kAdBlockingPref);
+  if (!blocking && shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
   if (!model) { PreferredSizeChanged(); return; }
   auto palette = base::BindRepeating(&ExtensionsBar::palette, base::Unretained(this));
   if (assistant_state_.enabled && callbacks_.toggle_assistant) {
     auto button = std::make_unique<AssistantButton>(callbacks_.toggle_assistant, palette);
     button->SetState(assistant_state_);
     assistant_button_ = AddChildView(std::move(button));
+  }
+  if (blocking) {
+    shield_button_ = AddChildView(std::make_unique<ShieldButton>(
+        base::BindRepeating(&ExtensionsBar::ToggleShieldPanel, base::Unretained(this)), palette));
+    if (shield_widget_) static_cast<ShieldButton*>(shield_button_.get())->SetOpen(true);
+    static_cast<ShieldButton*>(shield_button_.get())->SetCount(ShieldCount());
   }
   if (protection) {
     fingerprint_button_ = AddChildView(std::make_unique<FingerprintButton>(
@@ -1128,7 +1304,7 @@ void ExtensionsBar::Rebuild() {
     if (id == popup_id_) buttons_.back()->SetPopupOpen(true);
     ++shown;
   }
-  if (!buttons_.empty() || fingerprint_button_ || assistant_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
+  if (!buttons_.empty() || fingerprint_button_ || shield_button_ || assistant_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
   puzzle_ = AddChildView(std::make_unique<PuzzleButton>(
       base::BindRepeating(&ExtensionsBar::ToggleMenu, base::Unretained(this)), palette));
   if (menu_widget_) static_cast<PuzzleButton*>(puzzle_.get())->SetOpen(true);
@@ -1311,9 +1487,13 @@ void ExtensionsBar::OnToolbarActionsModelShutdown() {
 void ExtensionsBar::ObserveFingerprintProtection() {
   fingerprint_pref_.Reset();
   fingerprint_key_ = {};
+  blocking_changed_ = {};
   if (!profile_) return;
   fingerprint_pref_.Init(profile_->GetPrefs());
   fingerprint_pref_.Add(kFingerprintProtectionPref, base::BindRepeating(&ExtensionsBar::Rebuild, base::Unretained(this)));
+  // Ad blocking shares the registrar: its switch adds or removes the shield.
+  fingerprint_pref_.Add(kAdBlockingPref, base::BindRepeating(&ExtensionsBar::Rebuild, base::Unretained(this)));
+  blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating(&ExtensionsBar::RefreshShield, base::Unretained(this)));
   fingerprint_key_ = FingerprintProtection::ObserveSessionKey(profile_, base::BindRepeating(
       [](ExtensionsBar* bar) { if (bar->fingerprint_panel_) bar->fingerprint_panel_->Refresh(); }, base::Unretained(this)));
 }
@@ -1354,6 +1534,74 @@ void ExtensionsBar::TurnOffFingerprintProtection() {
 void ExtensionsBar::OpenPrivacySettings() {
   if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
   if (callbacks_.open_privacy_settings) callbacks_.open_privacy_settings.Run();
+}
+
+void ExtensionsBar::ObservePageCount() {
+  page_count_ = {};
+  counted_page_ = reinterpret_cast<uintptr_t>(page_.get());
+  if (!page_) return;
+  ContentBlockingTabHelper::CreateForWebContents(page_.get());
+  page_count_ = ContentBlockingTabHelper::FromWebContents(page_.get())->ObserveCount(
+      base::BindRepeating(&ExtensionsBar::RefreshShield, base::Unretained(this)));
+  RefreshShield();
+}
+int ExtensionsBar::ShieldCount() const {
+  if (!profile_ || !page_) return 0;
+  const GURL url = page_->GetLastCommittedURL();
+  if (url.SchemeIsHTTPOrHTTPS() && ContentBlocking::SiteAllowed(profile_, url)) return -1;
+  auto* helper = ContentBlockingTabHelper::FromWebContents(page_.get());
+  return helper ? helper->blocked() : 0;
+}
+void ExtensionsBar::RefreshShield() {
+  if (reinterpret_cast<uintptr_t>(page_.get()) != counted_page_) { ObservePageCount(); return; }
+  if (auto* button = views::AsViewClass<ShieldButton>(shield_button_.get())) button->SetCount(ShieldCount());
+  if (shield_panel_) shield_panel_->Refresh();
+}
+void ExtensionsBar::ToggleShieldPanel() {
+  if (shield_widget_) { if (!shield_widget_->IsClosed()) shield_widget_->Close(); return; }
+  if (!profile_ || !shield_button_ || !GetWidget()) return;
+  CloseMenus();
+  ClosePopup();
+  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  shield_panel_ = std::make_unique<ShieldPanel>(this, shield_button_);
+  // Never delete a widget on its own closing stack.
+  shield_widget_ = views::BubbleDialogDelegate::CreateBubble(shield_panel_.get(), base::BindOnce(
+      [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+            base::BindOnce(&ExtensionsBar::DestroyShieldPanel, bar));
+      }, weak_factory_.GetWeakPtr()));
+  static_cast<ShieldButton*>(shield_button_.get())->SetOpen(true);
+  shield_widget_->Show();
+}
+void ExtensionsBar::DestroyShieldPanel() {
+  shield_widget_.reset();
+  shield_panel_.reset();
+  if (shield_button_) static_cast<ShieldButton*>(shield_button_.get())->SetOpen(false);
+}
+void ExtensionsBar::ToggleSiteBlocking() {
+  if (!profile_ || !page_) return;
+  const GURL url = page_->GetLastCommittedURL();
+  if (!url.SchemeIsHTTPOrHTTPS()) return;
+  ContentBlocking::SetSiteAllowed(profile_, ContentBlocking::SiteKey(url), !ContentBlocking::SiteAllowed(profile_, url));
+  // What already loaded or was hidden changes only with a fresh load.
+  page_->GetController().Reload(content::ReloadType::NORMAL, true);
+  RefreshShield();
+}
+void ExtensionsBar::BlockWithAssistant() {
+  if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
+  if (callbacks_.block_with_assistant) callbacks_.block_with_assistant.Run();
+}
+void ExtensionsBar::OpenAdBlockingSettings() {
+  if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
+  if (callbacks_.open_ad_blocking_settings) callbacks_.open_ad_blocking_settings.Run();
+}
+int ExtensionsBar::shield_count_for_testing() const {
+  return shield_button_ ? static_cast<const ShieldButton*>(shield_button_.get())->count() : 0;
+}
+void ExtensionsBar::RunShieldCommandForTesting(int command) {
+  if (command == 0) ToggleSiteBlocking();
+  if (command == 1) BlockWithAssistant();
+  if (command == 2) OpenAdBlockingSettings();
 }
 
 std::u16string ExtensionsBar::fingerprint_code_for_testing() const {

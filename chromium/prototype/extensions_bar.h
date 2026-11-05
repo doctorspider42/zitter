@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_EXTENSIONS_BAR_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_EXTENSIONS_BAR_H_
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -42,6 +43,12 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     base::RepeatingCallback<SkColor()> workspace_color;
     // Preferences, Privacy: where fingerprint protection is set.
     base::RepeatingClosure open_privacy_settings;
+    // Preferences, Ad blocking.
+    base::RepeatingClosure open_ad_blocking_settings;
+    // The assistant, asked to block what the lists miss on the page; shown
+    // only while `assistant_available` says so.
+    base::RepeatingClosure block_with_assistant;
+    base::RepeatingCallback<bool()> assistant_available;
     // The assistant button: shows or hides the assistant panel.
     base::RepeatingClosure toggle_assistant;
   };
@@ -67,6 +74,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   // The fingerprint protection panel, under its button (shown while the
   // profile's protection is on).
   void ToggleFingerprintPanel();
+  // The ad blocking panel under the shield (shown while the profile blocks ads).
+  void ToggleShieldPanel();
 
   Profile* profile() const { return profile_; }
   content::WebContents* page() const { return page_.get(); }
@@ -107,17 +116,25 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   // Runs a panel command as its row would: 0 new fingerprint, 1 turn off,
   // 2 privacy settings.
   void RunFingerprintCommandForTesting(int command);
+  views::View* shield_button_for_testing() const { return shield_button_; }
+  views::Widget* shield_panel_for_testing() const { return shield_widget_.get(); }
+  // What the shield shows: the page's blocked count, -1 when off on its site.
+  int shield_count_for_testing() const;
+  // Runs a shield panel row: 0 the site switch, 1 the assistant, 2 settings.
+  void RunShieldCommandForTesting(int command);
 
   class ActionButton;
   class Menu;
   class Popup;
   class FingerprintPanel;
+  class ShieldPanel;
 
  private:
   friend class ActionButton;
   friend class Menu;
   friend class Popup;
   friend class FingerprintPanel;
+  friend class ShieldPanel;
   friend class ExtensionsContextMenu;
   sidebar::DesignPalette palette() const;
   void DestroyMenu();
@@ -142,6 +159,14 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void NewFingerprint();
   void TurnOffFingerprintProtection();
   void OpenPrivacySettings();
+  void ObservePageCount();
+  void RefreshShield();
+  void DestroyShieldPanel();
+  void ToggleSiteBlocking();
+  void BlockWithAssistant();
+  void OpenAdBlockingSettings();
+  // -1 when blocking is off for the page's site.
+  int ShieldCount() const;
 
   Callbacks callbacks_;
   raw_ptr<Profile> profile_ = nullptr;
@@ -157,6 +182,13 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   base::CallbackListSubscription fingerprint_key_;
   std::unique_ptr<FingerprintPanel> fingerprint_panel_;
   std::unique_ptr<views::Widget> fingerprint_widget_;
+  raw_ptr<views::View> shield_button_ = nullptr;
+  base::CallbackListSubscription blocking_changed_;
+  base::CallbackListSubscription page_count_;
+  // Compared only, never used: the page the count subscription is for.
+  uintptr_t counted_page_ = 0;
+  std::unique_ptr<ShieldPanel> shield_panel_;
+  std::unique_ptr<views::Widget> shield_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.
   std::unique_ptr<Menu> menu_;
   std::unique_ptr<views::Widget> menu_widget_;

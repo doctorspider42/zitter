@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 
+import content_blocking_patch as content_blocking
 import editor_service_patch as editor_services
 import fingerprint_protection_patch as fingerprint_protection
 
@@ -998,6 +999,8 @@ def install(checkout, dry_run=False):
                     write(path, text)
             editor_services.apply(editor_patch)
             fingerprint_protection.apply(fingerprint_patch)
+            # browser_prefs.cc carries both patches: plan this one after the first.
+            content_blocking.apply(content_blocking.prepare(checkout))
         except Exception:
             if destination.exists():
                 shutil.rmtree(destination)

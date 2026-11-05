@@ -1,0 +1,47 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Anti-adblock probe</title>
+<!-- Ad blocking fixture (content_blocking_browsertest.cc): a page that detects
+     blocking the usual ways and walls itself off, and an ad painted into a
+     canvas. -->
+<script>
+  window.detected = [];
+  window.baitLoaded = false;
+  const wall = () => {
+    if (document.getElementById('wall')) return;
+    const e = document.createElement('div');
+    e.id = 'wall';
+    e.textContent = 'Please disable your ad blocker to read this article.';
+    e.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#000;color:#fff';
+    document.body.append(e);
+    document.body.style.overflow = 'hidden';
+  };
+  // A bait request: the ad script must load.
+  const bait = document.createElement('script');
+  bait.src = `http://ads.test:${location.port}/adblock_ad.js`;
+  bait.onerror = () => { detected.push('script'); wall(); };
+  bait.onload = () => { window.baitLoaded = true; };
+  document.head.append(bait);
+  window.addEventListener('load', () => {
+    // A bait element is measured; a global the ad code would set is read.
+    const box = document.createElement('div');
+    box.className = 'adsbox pub_300x250';
+    box.textContent = ' ';
+    document.body.append(box);
+    setTimeout(() => {
+      window.baitHeight = box.offsetHeight;
+      if (!window.canRunAds) { detected.push('global'); wall(); }
+    }, 50);
+    // An ad painted into a canvas.
+    const image = new Image();
+    image.onload = () => {
+      const context = document.getElementById('board').getContext('2d');
+      context.drawImage(image, 0, 0, 300, 250);
+      // Test browsers cannot read pixels back; a skipped image gives no pattern either.
+      window.painted = context.createPattern(image, 'repeat') ? 255 : 0;
+    };
+    image.src = '/adblock_banner.png';
+  });
+</script>
+<h1 id="story">The article behind the wall</h1>
+<canvas id="board" width="300" height="250"></canvas>

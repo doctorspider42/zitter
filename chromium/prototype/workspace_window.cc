@@ -15,6 +15,8 @@
 #include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "chromium/prototype/ad_blocking_rules_panel.h"
+#include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
 #include "chrome/browser/printing/print_view_manager.h"
@@ -167,7 +169,10 @@ constexpr BooleanPreference kBooleanPreferences[] = {
     {"save_passwords", password_manager::prefs::kCredentialsEnableService},
     {"auto_signin", password_manager::prefs::kCredentialsEnableAutosignin},
     {"fingerprint_protection", kFingerprintProtectionPref},
+    {"ad_blocking", kAdBlockingPref},
 };
+// One switch for the two lists that hide blocking from pages (Settings).
+constexpr const char* kStealthLists[] = {"zitter", "antiadblock"};
 struct ContentPreference {
   const char* key;
   ContentSettingsType type;
@@ -691,6 +696,9 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.write_preference = base::BindRepeating(&WorkspaceWindow::WritePreference, base::Unretained(this));
   callbacks.read_assistant = base::BindRepeating(&WorkspaceWindow::AssistantSettingsForShell, base::Unretained(this));
   callbacks.write_assistant = base::BindRepeating(&WorkspaceWindow::WriteAssistantSettings, base::Unretained(this));
+  callbacks.read_ad_blocking = base::BindRepeating(&WorkspaceWindow::ReadAdBlocking, base::Unretained(this));
+  callbacks.write_ad_blocking = base::BindRepeating(&WorkspaceWindow::WriteAdBlocking, base::Unretained(this));
+  callbacks.open_ad_blocking_rules = base::BindRepeating(&WorkspaceWindow::OpenAdBlockingRules, base::Unretained(this));
   callbacks.operation_pending = base::BindRepeating(&WorkspaceWindow::lifecycle_pending, base::Unretained(this));
   callbacks.timeline = base::BindRepeating([](WorkspaceWindow* window) { return &window->timeline(); }, base::Unretained(this));
   callbacks.timeline_now = base::BindRepeating(&WorkspaceWindow::Now, base::Unretained(this));
@@ -758,6 +766,25 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.toggle_assistant = base::BindRepeating([](WorkspaceWindow* window) {
     window->ToggleAssistantFromBar();
   }, base::Unretained(this));
+  extension_callbacks.open_ad_blocking_settings = base::BindRepeating([](WorkspaceWindow* window) {
+    window->shell_->OpenAdBlockingSettings();
+  }, base::Unretained(this));
+  extension_callbacks.assistant_available = base::BindRepeating([](WorkspaceWindow* window) {
+    return window->assistant_settings_.enabled;
+  }, base::Unretained(this));
+  extension_callbacks.block_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
+    // Rules that stopped working come first: the assistant replaces them.
+    auto* bar = window->extensions_bar_.get();
+    const auto stale = bar && bar->page() ? ContentBlocking::StaleRules(bar->profile(), bar->page()->GetLastCommittedURL())
+                                          : std::vector<std::string>();
+    if (stale.empty()) { window->AskAssistant(T(u"Zablokuj reklamy na tej stronie, których nie blokują listy filtrów.")); return; }
+    window->AskAssistant(TF(u"Moje reguły blokowania na tej stronie od kilku wizyt nic nie ukrywają, reklamy pewnie się zmieniły. Znajdź te reklamy ponownie i zapisz nowe reguły, zastępując nimi stare (replaces): {}",
+                            {base::UTF8ToUTF16(base::JoinString(stale, "\n"))}));
+  }, base::Unretained(this));
+  ad_blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating([](WorkspaceWindow* window) {
+    if (window->shell_) window->shell_->RefreshAdBlockingPreferences();
+    if (window->ad_blocking_rules_panel_) window->ad_blocking_rules_panel_->Refresh();
+  }, base::Unretained(this)));
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
@@ -930,6 +957,7 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
       window->StartPrint(page);
   }, weak_factory_.GetWeakPtr()));
   FingerprintProtection::Attach(page);
+  ContentBlockingTabHelper::Attach(page);
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
   // Design: Prośba o dostęp — under the address pill, folding into its icon.
@@ -1244,6 +1272,8 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   AppendChromiumPreferences(profile, g_browser_process->local_state(), result);
   for (const auto& entry : kBooleanPreferences)
     read(entry.key, entry.pref, service->GetBoolean(entry.pref));
+  result["ad_blocking_stealth"] = {std::ranges::all_of(kStealthLists, [&](const char* id) { return ContentBlocking::ListEnabled(profile, id); }),
+                                   service->GetBoolean(kAdBlockingPref)};
   read("download_directory", prefs::kDownloadDefaultDirectory, 0);
   read("preconnect", prefs::kNetworkPredictionOptions,
        prefetch::GetPreloadPagesState(*service) != prefetch::PreloadPagesState::kNoPreloading);
@@ -1350,6 +1380,11 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   for (const auto& entry : kBooleanPreferences) if (key == entry.key) {
     if (value != 0 && value != 1) return false;
     service->SetBoolean(entry.pref, value != 0);
+    return true;
+  }
+  if (key == "ad_blocking_stealth") {
+    if (value != 0 && value != 1) return false;
+    for (const char* id : kStealthLists) ContentBlocking::SetListEnabled(profile, id, value != 0);
     return true;
   }
   if (key == "third_party_cookies") {
@@ -2415,6 +2450,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   }
   if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
   if (id == "fingerprint") { shell_->CloseOverlays(true); extensions_bar_->ToggleFingerprintPanel(); return extensions_bar_->fingerprint_panel_for_testing() != nullptr; }
+  if (id == "shield") { shell_->CloseOverlays(true); extensions_bar_->ToggleShieldPanel(); return extensions_bar_->shield_panel_for_testing() != nullptr; }
   if (id == "history") { ShowHistory(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {

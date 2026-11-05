@@ -119,6 +119,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   bool pinned() const { return pinned_; }
   bool busy() const;
   void SetPinned(bool pinned);
+  // Sends `text` as the user would, in the selected session; a session that
+  // is busy or waiting for an answer keeps its work and only shows.
+  void Ask(std::u16string text);
   void SendForTesting(std::string text, bool background = false);
   void ConfigureForTesting(std::string provider, std::string model, AssistantPermissions permissions);
   bool ContainsForTesting(std::string_view text) const;
@@ -190,6 +193,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     std::optional<base::DictValue> confirmation;
     std::u16string confirm_label, status;
     bool confirm_key = false;  // The pending consent is a key press, not a click.
+    // The tool's own question, when the consent is not for a click or key
+    // (adblock_add_rules: "Zablokować reklamy na example.com?…").
+    std::u16string confirm_prompt;
     std::string target;  // The tab its page actions use.
     base::Time updated;
     // The scheduled task this conversation runs, and whether it needed the user.

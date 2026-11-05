@@ -38,6 +38,7 @@ An independent, open-source browser built on Chromium, with its own interface an
 | **Time Machine** | Save workspace layouts, recover closed tabs and restore snapshots. Sleep spaces until you need them. |
 | **Bring your Arc along** | On macOS, import Arc spaces, favorites, nested pins and emoji. Chrome, Edge and Brave imports are supported too. |
 | **Optional AI assistant** | A pinnable right panel with per-session models, explicit browser-data grants, tab mentions, browser actions and parallel web research. Supports Codex SDK, Claude CLI, OpenAI API and local Ollama. See [setup and privacy](docs/ai-assistant.md). |
+| **Built-in ad blocking** | EasyList and EasyPrivacy through Brave's adblock-rust, with no extension: blocked requests never leave the browser, a toolbar shield counts them and switches a site off, and the assistant writes rules for sites the lists miss, with a preview and your consent. See [design and licenses](docs/ad-blocking.md). |
 
 Ctrl+T and Ctrl+K share the Command Center. When text is entered, the first result
 always opens the typed address or searches in a new tab; existing tabs and pins

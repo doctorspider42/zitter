@@ -165,6 +165,175 @@
              scroll: { y: Math.round(scrollY), height: document.documentElement.scrollHeight, viewport: innerHeight },
              editor: !!editorPoint(), canvas: canvasContent() };
   }
+  if (args.tool === 'adblock_inspect') {
+    // Ad candidates and third-party requests for writing blocking rules
+    // (docs/ad-blocking.md). Selectors avoid tokens that look generated.
+    const words = /(^|[^a-z])(ads?|adv|advert\w*|adslot|adunit|adbox|adsense|adsbygoogle|banners?|sponsor\w*|promo\w*|dfp|gpt|doubleclick|taboola|outbrain|teads|criteo|affiliate|commercial|reklam\w*|partner-?content|native-?ad)([^a-z]|$)/i;
+    const randomish = token => /\d{4,}|[0-9a-f]{8,}|^[a-z0-9]{14,}$|^_|__/i.test(token) || token.length > 40;
+    const css = token => CSS.escape(token);
+    const site = location.hostname.split('.').slice(-2).join('.');
+    const thirdParty = url => { try { const h = new URL(url, location.href).hostname; return !!h && h !== site && !h.endsWith('.' + site); } catch { return false; } };
+    const blocking = globalThis.__zitterBlocking;
+    const zitterHides = e => !!blocking && (blocking.marked?.has(e) ||
+      Object.values(blocking.selectors).some(list => list.some(s => { try { return e.matches(s); } catch { return false; } })));
+    // Ads carry a visible label, often required by law; it survives the
+    // generated class names that change with every deploy.
+    const labels = /^(reklama|reklamy|autopromocja|promocja|materiał (sponsorowany|promocyjny|partnera|reklamowy)|mat\. ?(sponsorowany|promocyjny|partnera)|artykuł sponsorowany|treść sponsorowana|sponsorowane|sponsorowany|partner|współpraca reklamowa|we współpracy z .{2,30}|advertisement|advertising|advert|ads?|sponsored|sponsored content|promoted|paid content|paid partnership|partner content|anzeige|werbung|publicité|pubblicità|publicidad)\s*[:·|]?$/i;
+    const escape = text => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    const stable = e => {
+      const tag = e.tagName.toLowerCase();
+      if (e.id && !randomish(e.id)) return `${tag}#${css(e.id)}`;
+      const classes = Array.from(e.classList).filter(c => !randomish(c)).slice(0, 3);
+      if (classes.length) return tag + classes.map(c => '.' + css(c)).join('');
+      for (const name of e.getAttributeNames())
+        if (/^(data-ad|data-google|data-testid|aria-label|data-slot|data-type|name)/i.test(name)) {
+          const value = e.getAttribute(name);
+          if (value && value.length < 60 && !randomish(value)) return `${tag}[${name}="${value.replace(/["\\]/g, '\\$&')}"]`;
+        }
+      if (tag === 'iframe' && e.src) { try { return `iframe[src*="${new URL(e.src).hostname}"]`; } catch {} }
+      return null;
+    };
+    const unique = e => {
+      const path = [];
+      for (let n = e; n && n.nodeType === 1 && n !== document.documentElement; n = n.parentElement) {
+        if (n.id && !randomish(n.id)) { path.unshift('#' + css(n.id)); break; }
+        let index = 1;
+        for (let s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === n.tagName) index++;
+        path.unshift(`${n.tagName.toLowerCase()}:nth-of-type(${index})`);
+        if (path.length > 8) break;
+      }
+      return path.join(' > ');
+    };
+    const count = selector => { try { return blocking?.query ? blocking.query(selector).length : document.querySelectorAll(selector).length; } catch { return 0; } };
+    const sizes = ['300x250', '728x90', '160x600', '320x50', '300x600', '970x250', '970x90', '336x280', '468x60', '320x100'];
+    const candidates = [], seen = new Set();
+    const consider = (e, reason, extra = {}) => {
+      if (candidates.length >= 80 || seen.has(e)) return;
+      for (const s of seen) if (s.contains(e)) return;
+      seen.add(e);
+      const r = e.getBoundingClientRect(), hiddenByZitter = zitterHides(e);
+      if (!hiddenByZitter && (r.width < 20 || r.height < 15)) return;
+      const selector = stable(e);
+      const item = { selector: selector ?? unique(e), unique: unique(e), reason, tag: e.tagName.toLowerCase(),
+        size: `${Math.round(r.width)}x${Math.round(r.height)}`, x: Math.round(r.x), y: Math.round(r.y + scrollY),
+        text: (e.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 80), hidden_by_zitter: hiddenByZitter };
+      item.matches = count(item.selector);
+      const source = e.src || e.querySelector?.('iframe[src],img[src]')?.src;
+      if (source) item.source = String(source).split('?')[0].slice(0, 200);
+      Object.assign(item, extra);
+      if (item.rule_hint) item.rule_hint_matches = count(item.rule_hint.slice(item.rule_hint.indexOf('##') + 2));
+      candidates.push(item);
+    };
+    // From a label up to the box it labels: the first ancestor big enough to
+    // be an ad that holds more than the label (media, a link, or height). It
+    // never climbs into page furniture: navigation, forms, or much more text
+    // than an ad carries (an ad slot that has not loaded is small).
+    const hints = new Set();
+    const labelled = (label, text, viaPseudo) => {
+      const tag = label.tagName.toLowerCase(), r0 = label.getBoundingClientRect();
+      const own = (label.textContent ?? '').replace(/\s+/g, ' ').trim(), area = e => { const r = e.getBoundingClientRect(); return r.width * r.height; };
+      let box = label, steps = 0, k = 0;
+      for (let n = label.parentElement; n && n !== document.body && n !== document.documentElement && k < 8; n = n.parentElement) {
+        const r = n.getBoundingClientRect();
+        k++;
+        // A layer holding nothing but the label is the ad itself (a page
+        // wallpaper), however big: hiding it hides no content.
+        if ((n.textContent ?? '').replace(/\s+/g, ' ').trim() === own && !n.matches('main,header,nav,form')) {
+          if (area(n) >= area(box)) { box = n; steps = k; }
+          continue;
+        }
+        if (r.width * r.height > innerWidth * innerHeight * 0.7) break;
+        if (n.matches('main,article:has(article),header,nav,form') || n.querySelector('nav,form,input,h1,[role=navigation],[role=search]')) break;
+        if ((n.textContent ?? '').replace(/\s+/g, ' ').length > text.length + 300) break;
+        box = n; steps = k;
+        if (r.width >= 100 && r.height >= 50 && (n.querySelector('img,iframe,picture,video,canvas,svg,a[href]') || r.height >= Math.max(3 * r0.height, 60))) break;
+      }
+      const anchor = viaPseudo ? `${tag}:matches-css-${viaPseudo}(content: /${escape(text)}/i)` : `${tag}:has-text(/^\\s*${escape(text)}\\s*$/i)`;
+      // One candidate per rule: its match count says how many boxes it covers.
+      // A box of nothing but the label says so, which keeps menu items that
+      // merely read "Reklama" out of the rule.
+      const pure = steps && (box.textContent ?? '').replace(/\s+/g, ' ').trim() === own;
+      const hint = `${site}##${anchor}${steps ? `:upward(${steps})` : ''}${pure ? `:not(:min-text-length(${own.length + 1}))` : ''}`;
+      if (hints.has(hint)) return;
+      hints.add(hint);
+      consider(box, `labelled "${text}"`, { label: text, rule_hint: hint });
+    };
+    const started = performance.now();
+    const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(), texts = 0; node && texts < 60000 && performance.now() - started < 800; node = walker.nextNode(), texts++) {
+      const text = node.nodeValue.trim();
+      if (text.length < 2 || text.length > 40 || !labels.test(text)) continue;
+      const label = node.parentElement;
+      if (!label || label.closest('[data-private],[data-sensitive]') || label.closest('nav,header > nav,footer')) continue;
+      if (label.textContent.trim() !== text) continue;
+      labelled(label, text.replace(/\s*[:·|]$/, ''), null);
+    }
+    let scanned = 0;
+    for (const e of document.body?.querySelectorAll('*') ?? []) {
+      if (++scanned > 30000 || (scanned % 500 === 0 && performance.now() - started > 2500)) break;
+      if (e.closest('[data-private],[data-sensitive]')) continue;
+      const tag = e.tagName;
+      if (tag === 'IFRAME' && e.src && thirdParty(e.src)) { consider(e, 'third-party iframe'); continue; }
+      if (tag === 'INS' && e.classList.contains('adsbygoogle')) { consider(e, 'ad slot'); continue; }
+      const names = [e.id, typeof e.className === 'string' ? e.className : '', e.getAttribute('aria-label') ?? '',
+                     ...e.getAttributeNames().filter(n => n.startsWith('data-'))].join(' ');
+      if (words.test(names)) { consider(e, 'ad-like name'); continue; }
+      const r = e.getBoundingClientRect();
+      const standard = sizes.includes(`${Math.round(r.width)}x${Math.round(r.height)}`);
+      if (standard && e.querySelector('iframe,img,a[href]')) { consider(e, 'standard ad size'); continue; }
+      // HTML5 creatives draw into a canvas or play a video of an ad size.
+      if (standard && (tag === 'CANVAS' || tag === 'VIDEO')) { consider(e, `${tag.toLowerCase()} of an ad size`); continue; }
+      const s = getComputedStyle(e);
+      if ((s.position === 'fixed' || s.position === 'sticky') && Number(s.zIndex) > 100 && r.width * r.height > innerWidth * innerHeight * 0.2) {
+        consider(e, 'overlay over the page'); continue;
+      }
+      // A banner is an image link with no words; every teaser has a headline.
+      // Portals route all links through generated redirects, so the size is
+      // the anchor: Zitter's :min-size().
+      const media = tag === 'A' ? [...e.querySelectorAll('img,picture,video,canvas')].map(m => m.getBoundingClientRect()) : [];
+      const wide = Math.max(r.width, ...media.map(m => m.width)), tall = Math.max(r.height, ...media.map(m => m.height));
+      if (media.length && wide >= 300 && tall >= 90 && !/\p{L}/u.test(e.textContent ?? '') && !e.querySelector('svg') && !e.closest('nav,footer')) {
+        const hint = `${site}##a[href]:has(img,picture,video,canvas):not(:has-text(/\\p{L}/u)):min-size(300, 90)`;
+        if (!hints.has(hint)) { hints.add(hint); consider(e, 'image link with no text (a banner)', { rule_hint: hint }); }
+        else consider(e, 'image link with no text (a banner)');
+        continue;
+      }
+      // Portals link to their sister sites everywhere: only ad sizes and billboards.
+      if (tag === 'A' && e.href && thirdParty(e.href) && (standard || (r.width >= 700 && r.height >= 90)) && e.querySelector('img,picture,video,canvas')) {
+        consider(e, 'big image linking to another site'); continue;
+      }
+      // Labels drawn by CSS (`content: "REKLAMA"`) have no text node.
+      if (r.height > 0 && r.height < 60 && !e.firstElementChild) for (const side of ['before', 'after']) {
+        const content = getComputedStyle(e, '::' + side).content;
+        if (!content || content === 'none' || content === 'normal') continue;
+        const text = content.replace(/^["']|["']$/g, '').trim();
+        if (labels.test(text)) { labelled(e, text, side); break; }
+      }
+    }
+    const requests = [], hosts = {};
+    for (const entry of performance.getEntriesByType('resource')) {
+      if (!thirdParty(entry.name)) continue;
+      let host = '';
+      try { host = new URL(entry.name).hostname; } catch { continue; }
+      hosts[host] = (hosts[host] ?? 0) + 1;
+      if (requests.length < 150) requests.push({ url: entry.name.split('?')[0].slice(0, 200), type: entry.initiatorType });
+    }
+    return { url: location.href.split('?')[0], title: document.title, candidates, third_party_hosts: hosts, requests,
+             scanned_elements: scanned,
+             note: 'Candidates are guesses: keep only what the user would call an ad, never the content they came for. ' +
+                   'A candidate with a label comes with rule_hint, a procedural rule anchored on that label, and how many elements it matches.' };
+  }
+  if (args.tool === 'probe_log') {
+    // adblock_diagnose: the probe in the page's own world answers an event
+    // only Zitter knows the name of (content_blocking_probe.js).
+    let data = null;
+    const take = event => { data = event.detail; };
+    document.addEventListener(`zitter-probe-${args.nonce}-log`, take);
+    document.dispatchEvent(new CustomEvent(`zitter-probe-${args.nonce}`));
+    document.removeEventListener(`zitter-probe-${args.nonce}-log`, take);
+    if (typeof data !== 'string') return { error: 'The probe did not run on this load' };
+    try { return JSON.parse(data); } catch { return { error: 'The probe log could not be read' }; }
+  }
   if (args.tool === 'focus_info') {
     // Natively requested before keyboard input: where would typing land?
     let e = document.activeElement, opaque = false;
