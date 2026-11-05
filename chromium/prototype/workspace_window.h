@@ -129,6 +129,12 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowHistory();
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
   void ShowAssistant(bool hover = false);
+  // Creates the panel hidden, so its scheduled tasks run.
+  void EnsureAssistant();
+  // The panel's state changed: the toolbar button follows it.
+  void AssistantStateChanged();
+  // The toolbar button: shows or hides the panel.
+  void ToggleAssistantFromBar();
   // Opens the assistant and sends `prompt` (the shield's "block more").
   void AskAssistant(std::u16string prompt);
   // Settings → Blokowanie reklam, for the active profile.

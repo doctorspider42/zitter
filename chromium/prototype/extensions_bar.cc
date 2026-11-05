@@ -468,6 +468,63 @@ END_METADATA
 
 namespace {
 // The puzzle at the end of the bar; it opens the extensions menu.
+// The assistant: its spark, an accent tile while the panel is open, a turning
+// arc while it works and a count of results not seen yet.
+constexpr char kAssistantIcon[] = "M8 1.8v3M8 11.2v3M1.8 8h3M11.2 8h3M3.6 3.6l2 2M10.4 10.4l2 2M12.4 3.6l-2 2M5.6 10.4l-2 2";
+class AssistantButton final : public views::Button {
+  METADATA_HEADER(AssistantButton, views::Button)
+ public:
+  AssistantButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette)
+      : views::Button(std::move(callback)), palette_(std::move(palette)) {
+    SetPreferredSize(gfx::Size(kButton, kButton));
+    GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kDialog);
+    SetState(ExtensionsBar::AssistantState());
+  }
+  void SetState(ExtensionsBar::AssistantState state) {
+    state_ = state;
+    const auto name = state.unread ? TF(u"Asystent · nowe wyniki: {}", {base::NumberToString16(state.unread)})
+                    : state.working ? T(u"Asystent pracuje") : T(u"Asystent");
+    GetViewAccessibility().SetName(name); SetTooltipText(name);
+    timer_.Stop();
+    if (state.working && !gfx::Animation::PrefersReducedMotion())
+      timer_.Start(FROM_HERE, base::Milliseconds(33), base::BindRepeating(&AssistantButton::SchedulePaint, base::Unretained(this)));
+    SchedulePaint();
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = palette_.Run();
+    const gfx::RectF box(GetLocalBounds());
+    SkColor ink = p.ink_muted;
+    if (state_.open || state_.working) { FillRound(canvas, box, 8, p.accent_soft); ink = p.accent_ink; }
+    else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
+    else if (state_.unread) ink = p.ink;
+    StrokeIcon(canvas, kAssistantIcon, gfx::RectF(box.CenterPoint().x() - 8, box.CenterPoint().y() - 8, 16, 16), ink);
+    if (state_.working) {
+      const double t = timer_.IsRunning() ? base::TimeTicks::Now().since_origin().InSecondsF() : 0.2;
+      SkPathBuilder arc; arc.addArc(SkRect::MakeXYWH(box.x() + 4, box.y() + 4, box.width() - 8, box.height() - 8), std::fmod(t * 360.0, 360.0), 100);
+      cc::PaintFlags flags; flags.setAntiAlias(true); flags.setStyle(cc::PaintFlags::kStroke_Style); flags.setStrokeWidth(2);
+      flags.setStrokeCap(cc::PaintFlags::kRound_Cap); flags.setColor(p.accent);
+      canvas->DrawPath(arc.detach(), flags);
+    }
+    if (state_.unread) {
+      const auto text = state_.unread > 9 ? std::u16string(u"9+") : base::NumberToString16(state_.unread);
+      const auto font = DesignFont(2, 9, 700);
+      const float w = std::max(14.f, gfx::GetStringWidth(text, font) + 6.f);
+      const gfx::RectF badge(box.right() - w - 2, box.y() + 2, w, 14);
+      cc::PaintFlags ring; ring.setAntiAlias(true); ring.setColor(p.bg_base);
+      canvas->DrawRoundRect(gfx::RectF(badge.x() - 2, badge.y() - 2, badge.width() + 4, badge.height() + 4), 9, ring);
+      cc::PaintFlags fill; fill.setAntiAlias(true); fill.setColor(p.accent);
+      canvas->DrawRoundRect(badge, 7, fill);
+      canvas->DrawStringRectWithFlags(text, font, p.on_accent, gfx::ToEnclosingRect(badge), gfx::Canvas::TEXT_ALIGN_CENTER);
+    }
+  }
+ private:
+  base::RepeatingCallback<sidebar::DesignPalette()> palette_;
+  ExtensionsBar::AssistantState state_;
+  base::RepeatingTimer timer_;
+};
+BEGIN_METADATA(AssistantButton)
+END_METADATA
+
 class PuzzleButton final : public views::Button {
   METADATA_HEADER(PuzzleButton, views::Button)
  public:
@@ -1198,12 +1255,20 @@ int ExtensionsBar::tab_id() const {
   return page_ ? sessions::SessionTabHelper::IdForTab(page_.get()).id() : -1;
 }
 
+void ExtensionsBar::SetAssistantState(AssistantState state) {
+  if (state == assistant_state_) return;
+  const bool shown = state.enabled != assistant_state_.enabled;
+  assistant_state_ = state;
+  if (shown) { Rebuild(); return; }
+  if (auto* button = views::AsViewClass<AssistantButton>(assistant_button_.get())) button->SetState(state);
+}
 void ExtensionsBar::Rebuild() {
   RemoveAllChildViews();
   buttons_.clear();
   divider_ = nullptr;
   puzzle_ = nullptr;
   fingerprint_button_ = nullptr;
+  assistant_button_ = nullptr;
   shield_button_ = nullptr;
   auto* model = profile_ ? ToolbarActionsModel::Get(profile_) : nullptr;
   SetVisible(model != nullptr);
@@ -1213,6 +1278,11 @@ void ExtensionsBar::Rebuild() {
   if (!blocking && shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
   if (!model) { PreferredSizeChanged(); return; }
   auto palette = base::BindRepeating(&ExtensionsBar::palette, base::Unretained(this));
+  if (assistant_state_.enabled && callbacks_.toggle_assistant) {
+    auto button = std::make_unique<AssistantButton>(callbacks_.toggle_assistant, palette);
+    button->SetState(assistant_state_);
+    assistant_button_ = AddChildView(std::move(button));
+  }
   if (blocking) {
     shield_button_ = AddChildView(std::make_unique<ShieldButton>(
         base::BindRepeating(&ExtensionsBar::ToggleShieldPanel, base::Unretained(this)), palette));
@@ -1234,7 +1304,7 @@ void ExtensionsBar::Rebuild() {
     if (id == popup_id_) buttons_.back()->SetPopupOpen(true);
     ++shown;
   }
-  if (!buttons_.empty() || fingerprint_button_ || shield_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
+  if (!buttons_.empty() || fingerprint_button_ || shield_button_ || assistant_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
   puzzle_ = AddChildView(std::make_unique<PuzzleButton>(
       base::BindRepeating(&ExtensionsBar::ToggleMenu, base::Unretained(this)), palette));
   if (menu_widget_) static_cast<PuzzleButton*>(puzzle_.get())->SetOpen(true);

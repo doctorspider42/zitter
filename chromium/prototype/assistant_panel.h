@@ -67,9 +67,33 @@ struct AssistantChip {
   uint32_t color = 0;
   bool operator==(const AssistantChip&) const = default;
 };
+// A scheduled task: an instruction the assistant runs by itself, on a schedule,
+// with its own model and access.
+struct AssistantTask {
+  AssistantTask();
+  AssistantTask(const AssistantTask&);
+  AssistantTask& operator=(const AssistantTask&);
+  AssistantTask(AssistantTask&&);
+  AssistantTask& operator=(AssistantTask&&);
+  ~AssistantTask();
+  std::string id, name, instruction, provider, model, profile;
+  AssistantPermissions permissions;
+  int kind = 0;         // 0 every day, 1 on chosen weekdays, 2 every hour, 3 once
+  int days = 0;         // kind 1: bit 0 Monday … bit 6 Sunday
+  int minute = 8 * 60;  // local time of day (kind 2: minutes past the hour)
+  bool active = true;
+  base::Time last_run, next_run;
+  int last_state = 0;   // 0 never ran, 1 done, 2 needed the user, 3 failed
+  base::DictValue ToValue() const;
+  static std::optional<AssistantTask> FromValue(const base::DictValue& value);
+};
+// The first run strictly after `after`; a null time when none is left.
+base::Time AssistantTaskNextRun(const AssistantTask& task, base::Time after);
+// "Codziennie · 8:00", "Pn, Pt · 18:00", "Co godzinę", "Raz · 18:00".
+std::u16string AssistantTaskSchedule(const AssistantTask& task);
 class AssistantPanel final : public views::View, public views::ResizeAreaDelegate, public views::TextfieldController {
  public:
-  enum class Menu { kNone, kSessions, kAccess, kModel, kMention };
+  enum class Menu { kNone, kSessions, kAccess, kModel, kMention, kTasks, kTaskEditor };
   explicit AssistantPanel(WorkspaceWindow* window);
   ~AssistantPanel() override;
   // `from_edge`: shown by hovering the window edge, so it hides again even if
@@ -119,6 +143,15 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // Adds a finished exchange to the selected session, as a real turn would.
   void SeedExchangeForTesting(std::string prompt, std::string answer);
   size_t sessions_for_testing() const { return sessions_.size(); }
+  // For the toolbar button: any conversation or task working, results not seen yet.
+  bool working() const;
+  int unread() const { return unread_; }
+  const std::vector<AssistantTask>& tasks() const { return tasks_; }
+  void AddTaskForTesting(AssistantTask task);
+  void RunTaskForTesting(const std::string& id) { RunTask(id); }
+  void CheckTasksForTesting(base::Time now) { CheckTasks(now); }
+  void OpenTaskEditorForTesting(const std::string& id) { OpenTaskEditor(id); }
+  bool SaveDraftForTesting(std::string instruction);
   bool asking_for_testing() const { return selected().asking; }
   void AnswerForTesting(std::string answer) { AnswerQuestion(selected(), std::move(answer)); }
   // Runs a model's tool request as if the runtime had sent it.
@@ -165,6 +198,10 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     std::u16string confirm_prompt;
     std::string target;  // The tab its page actions use.
     base::Time updated;
+    // The scheduled task this conversation runs, and whether it needed the user.
+    std::string task_id;
+    bool needed_user = false;
+    std::optional<AssistantTask> proposal;  // schedule_task waiting for an answer
     // Waiting for the model, with its answer so far; a browser tool is running.
     bool thinking = false, tool_running = false;
     // A question of the model waits for the user's answer (ask_user).
@@ -211,6 +248,17 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void SessionsLoaded(std::optional<base::DictValue> saved);
   // The answer being written, polled from the runtime while the model works.
   void PollProgress();
+  // Scheduled tasks.
+  void BuildTasksMenu(views::View* body);
+  void BuildTaskEditor(views::View* body);
+  void OpenTaskEditor(const std::string& id);
+  void CaptureDraft();
+  bool SaveDraft();
+  void RunTask(const std::string& id);
+  void CheckTasks(base::Time now);
+  void TaskFinished(Session& session, bool ok);
+  AssistantTask* FindTask(const std::string& id);
+  void NotifyBar();
   // Answers the pending question and lets the turn go on.
   void AnswerQuestion(Session& session, std::string answer);
   Message* PendingQuestion(Session& session);
@@ -234,7 +282,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<PanelViewport> viewport_ = nullptr;
   raw_ptr<views::View> header_ = nullptr, conversation_ = nullptr, background_ = nullptr;
-  raw_ptr<views::View> subtitle_ = nullptr, sessions_action_ = nullptr, access_action_ = nullptr, pin_action_ = nullptr;
+  raw_ptr<views::View> subtitle_ = nullptr, sessions_action_ = nullptr, tasks_action_ = nullptr, access_action_ = nullptr, pin_action_ = nullptr;
   raw_ptr<views::View> composer_ = nullptr, chips_view_ = nullptr, tools_ = nullptr;
   raw_ptr<views::View> research_chip_ = nullptr, background_chip_ = nullptr, model_chip_ = nullptr, send_ = nullptr, stop_ = nullptr;
   raw_ptr<views::Textarea> prompt_ = nullptr;
@@ -269,6 +317,12 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // A second press of "delete all" within the open history confirms it.
   bool confirm_clear_ = false;
   base::RepeatingTimer progress_timer_;
+  std::vector<AssistantTask> tasks_;
+  std::optional<AssistantTask> draft_;  // the task in the editor
+  raw_ptr<views::Textarea> draft_instruction_ = nullptr;
+  raw_ptr<views::Textfield> draft_time_ = nullptr;
+  base::RepeatingTimer task_timer_;
+  int unread_ = 0;
   std::unique_ptr<network::SimpleURLLoader> progress_loader_;
   raw_ptr<views::View> live_answer_ = nullptr;
   bool pinned_ = false;

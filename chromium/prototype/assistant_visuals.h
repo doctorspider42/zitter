@@ -13,7 +13,7 @@ namespace views { class View; class Background; class Textarea; }
 namespace views { class ResizeAreaDelegate; }
 namespace zitter::prototype {
 enum class AssistantGlyph { kSpark, kPlus, kHistory, kPin, kClose, kArrow, kStop, kAt, kSearch, kShield, kPage, kChevron, kRevoke,
-                            kLayers, kCheck, kGear, kCopy, kTrash, kLock, kEye, kExpand, kGlobe };
+                            kLayers, kCheck, kGear, kCopy, kTrash, kLock, kEye, kExpand, kGlobe, kCalendar, kRepeat, kBack };
 std::unique_ptr<views::Background> CreateAssistantBackground();
 std::unique_ptr<views::View> CreateAssistantIdentity();
 std::unique_ptr<views::View> CreateAssistantIcon(base::RepeatingClosure action, AssistantGlyph glyph, std::u16string name, bool primary = false);
@@ -31,6 +31,15 @@ std::unique_ptr<views::View> CreateAssistantMarkdown(std::u16string text, base::
 // A step of the conversation: 0 running (a spinner, the text breathing),
 // 1 done (a check), 2 failed (a warning), 3 waiting for the user (a pulsing dot).
 std::unique_ptr<views::View> CreateAssistantActivity(std::u16string text, int state);
+// A scheduled task in the tasks view: what it does, when, with which model and
+// access, how its last run went; a switch pauses it, Run starts it now.
+struct AssistantTaskCard {
+  std::u16string name, instruction, schedule, model, access, status;
+  int state = 0;  // 0 never ran, 1 done, 2 needed the user, 3 failed, 4 paused
+  bool active = true;
+};
+std::unique_ptr<views::View> CreateAssistantTaskCard(AssistantTaskCard card, base::RepeatingClosure open, base::RepeatingClosure toggle,
+                                                     base::RepeatingClosure run, base::RepeatingClosure remove);
 // The user's own message: selectable plain text.
 std::unique_ptr<views::View> CreateAssistantPlainText(std::u16string text);
 // The composer field: multiline, unframed, growing up to six lines, then scrolling.

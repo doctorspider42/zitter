@@ -92,6 +92,13 @@ void Glyph(gfx::Canvas* canvas, AssistantGlyph glyph, float x, float y, SkColor 
       SkPathBuilder p; p.moveTo(5.5f,7);p.lineTo(5.5f,5.5f);p.cubicTo(5.5f,2.2f,10.5f,2.2f,10.5f,5.5f);p.lineTo(10.5f,7);canvas->DrawPath(p.detach(),f);break; }
     case AssistantGlyph::kEye: { SkPathBuilder p; p.moveTo(1.8f,8);p.quadTo(8,1.6f,14.2f,8);p.quadTo(8,14.4f,1.8f,8);p.close();canvas->DrawPath(p.detach(),f);canvas->DrawCircle(gfx::PointF(8,8),2,f);break; }
     case AssistantGlyph::kExpand: line(9.5f,3,13,3);line(13,3,13,6.5f);line(13,3,8,8);line(11,9.5f,11,12);line(11,12.5f,4,12.5f);line(3.5f,12,3.5f,5);line(4,4.5f,6.5f,4.5f);break;
+    case AssistantGlyph::kCalendar: Round(canvas,gfx::RectF(2.5f,3.5f,11,10),2,color,1.5f);line(2.5f,6.5f,13.5f,6.5f);line(5.5f,2,5.5f,5);line(10.5f,2,10.5f,5);
+      line(8,8.5f,8,10.5f);line(8,10.5f,9.3f,11.3f);break;
+    case AssistantGlyph::kRepeat: { SkPathBuilder p; p.moveTo(12.5f,6);p.quadTo(10.5f,2.6f,6.8f,3.1f);p.quadTo(4.6f,3.5f,3.6f,5);canvas->DrawPath(p.detach(),f);
+      line(3.5f,2.5f,3.5f,5);line(3.5f,5,6,5);
+      SkPathBuilder q; q.moveTo(3.5f,10);q.quadTo(5.5f,13.4f,9.2f,12.9f);q.quadTo(11.4f,12.5f,12.4f,11);canvas->DrawPath(q.detach(),f);
+      line(12.5f,13.5f,12.5f,11);line(12.5f,11,10,11);break; }
+    case AssistantGlyph::kBack: line(10,3.5f,5.5f,8);line(5.5f,8,10,12.5f);break;
     case AssistantGlyph::kGlobe: { canvas->DrawCircle(gfx::PointF(8,8),5.5f,f);line(2.5f,8,13.5f,8);
       SkPathBuilder p; p.addOval(SkRect::MakeXYWH(5.4f,2.5f,5.2f,11));canvas->DrawPath(p.detach(),f);break; }
   }
@@ -509,6 +516,81 @@ class Pill final : public views::Button {
 };
 BEGIN_METADATA(Pill)
 END_METADATA
+// A switch as a button of its own (role switch), for rows that do more than toggle.
+class Switch final : public views::Button {
+  METADATA_HEADER(Switch,views::Button)
+ public:
+  Switch(base::RepeatingClosure action,bool on,std::u16string name):Button(base::BindRepeating(std::move(action))),on_(on){
+    SetFocusBehavior(FocusBehavior::ALWAYS);SetInstallFocusRingOnFocus(true);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);GetViewAccessibility().SetName(name);
+    GetViewAccessibility().SetCheckedState(on?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);SetTooltipText(name);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {36,20};}
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);const gfx::RectF track(0,height()/2.f-10,36,20);
+    if(on_)Round(canvas,track,10,c.accent);
+    else{Round(canvas,track,10,SkColorSetA(c.ink,c.dark?20:14));auto edge=track;edge.Inset(.5f);Round(canvas,edge,10,c.strong,1);}
+    cc::PaintFlags knob;knob.setAntiAlias(true);knob.setColor(on_?c.on_accent:c.muted);
+    canvas->DrawCircle(gfx::PointF(on_?track.right()-10:track.x()+10,track.CenterPoint().y()),7,knob);
+  }
+ private:bool on_;
+};
+BEGIN_METADATA(Switch)
+END_METADATA
+class TaskCard final : public views::Button {
+  METADATA_HEADER(TaskCard,views::Button)
+ public:
+  TaskCard(AssistantTaskCard card,base::RepeatingClosure open,base::RepeatingClosure toggle,base::RepeatingClosure run,base::RepeatingClosure remove)
+      :Button(base::BindRepeating(std::move(open))),card_(std::move(card)){
+    SetFocusBehavior(FocusBehavior::ALWAYS);SetInstallFocusRingOnFocus(true);
+    GetViewAccessibility().SetName(card_.name);GetViewAccessibility().SetDescription(card_.schedule+u" · "+card_.status);
+    switch_=AddChildView(std::make_unique<Switch>(std::move(toggle),card_.active,card_.active?TF(u"Wstrzymaj: {}",{card_.name}):TF(u"Wznów: {}",{card_.name})));
+    run_=AddChildView(std::make_unique<Pill>(std::move(run),T(u"Uruchom"),1,std::nullopt,std::u16string()));
+    run_->GetViewAccessibility().SetName(TF(u"Uruchom teraz: {}",{card_.name}));
+    remove_=AddChildView(std::make_unique<Action>(std::move(remove),AssistantGlyph::kTrash,TF(u"Usuń zadanie: {}",{card_.name}),false,false));
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& b) const override {return {b.width().is_bounded()?b.width().value():400,112};}
+  void Layout(PassKey) override {
+    switch_->SetBounds(width()-48,16,36,20);
+    remove_->SetBounds(width()-38,78,28,28);
+    const int pw=run_->GetPreferredSize().width();
+    run_->SetBounds(width()-38-6-pw,78,pw,28);
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);const bool hover=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+    auto rect=gfx::RectF(GetLocalBounds());rect.Inset(.5f);
+    Round(canvas,rect,10,hover?c.raised:c.bg);Round(canvas,rect,10,c.line,1);
+    const bool on=card_.active;
+    const SkColor ink=on?c.ink:SkColorSetA(c.ink,170),muted=c.muted;
+    Round(canvas,gfx::RectF(12,12,28,28),8,on?SkColorSetA(c.accent,c.dark?40:28):SkColorSetA(c.ink,c.dark?16:10));
+    Glyph(canvas,AssistantGlyph::kHistory,18,18,on?c.accent:muted);
+    const int x=50,right=width()-56;
+    canvas->DrawStringRectWithFlags(card_.name,Type(13,600),ink,gfx::Rect(x,10,std::max(0,right-x),18),gfx::Canvas::TEXT_ALIGN_LEFT);
+    canvas->DrawStringRectWithFlags(card_.instruction,Type(12),muted,gfx::Rect(x,28,std::max(0,right-x),16),gfx::Canvas::TEXT_ALIGN_LEFT);
+    // Chips: schedule, model, access.
+    int cx=x;
+    auto chip=[&](const std::u16string& text,const gfx::FontList& font,SkColor color,bool glyph){
+      if(text.empty())return;
+      const int w=std::min(std::max(0,width()-12-cx),gfx::GetStringWidth(text,font)+(glyph?32:16));
+      if(w<24)return;
+      Round(canvas,gfx::RectF(cx,52,w,22),11,SkColorSetA(c.ink,c.dark?14:9));
+      if(glyph){canvas->Save();canvas->Translate(gfx::Vector2d(cx+6,55));canvas->Scale(.75f,.75f);Glyph(canvas,AssistantGlyph::kRepeat,0,0,muted);canvas->Restore();}
+      canvas->DrawStringRectWithFlags(text,font,color,gfx::Rect(cx+(glyph?24:8),52,w-(glyph?28:16),22),gfx::Canvas::TEXT_ALIGN_LEFT);
+      cx+=w+6;
+    };
+    chip(card_.schedule,Type(12),ink,true);chip(card_.model,Mono(11),ink,false);chip(card_.access,Type(12),muted,false);
+    // Last run and the next one.
+    const SkColor dot=card_.state==1?c.ok:card_.state==2?c.warn:card_.state==3?c.danger:c.strong;
+    cc::PaintFlags d;d.setAntiAlias(true);d.setColor(dot);canvas->DrawCircle(gfx::PointF(x+3,92),3,d);
+    const int status_right=run_->x()-8;
+    canvas->DrawStringRectWithFlags(card_.status,Type(12),card_.state==2?c.warn:card_.state==3?c.danger:muted,
+        gfx::Rect(x+12,84,std::max(0,status_right-x-12),16),gfx::Canvas::TEXT_ALIGN_LEFT);
+  }
+ private:
+  AssistantTaskCard card_;raw_ptr<views::View> switch_=nullptr,run_=nullptr,remove_=nullptr;
+};
+BEGIN_METADATA(TaskCard)
+END_METADATA
 class Link final : public views::Button {
   METADATA_HEADER(Link,views::Button)
  public:
@@ -873,6 +955,9 @@ std::unique_ptr<views::View> CreateAssistantPlainText(std::u16string text){
 std::unique_ptr<views::View> CreateAssistantEyebrow(std::u16string text,std::u16string trailing){return std::make_unique<Eyebrow>(std::move(text),std::move(trailing));}
 std::unique_ptr<views::View> CreateAssistantMenuRow(base::RepeatingClosure action,AssistantRow row){return std::make_unique<MenuRow>(std::move(action),std::move(row));}
 void SetAssistantMenuRowActive(views::View* row,bool active){if(auto* r=views::AsViewClass<MenuRow>(row))r->SetActive(active);}
+std::unique_ptr<views::View> CreateAssistantTaskCard(AssistantTaskCard card,base::RepeatingClosure open,base::RepeatingClosure toggle,base::RepeatingClosure run,base::RepeatingClosure remove){
+  return std::make_unique<TaskCard>(std::move(card),std::move(open),std::move(toggle),std::move(run),std::move(remove));
+}
 std::unique_ptr<views::View> CreateAssistantActivity(std::u16string text,int state){return std::make_unique<Activity>(std::move(text),state);}
 std::unique_ptr<views::View> CreateAssistantNote(std::u16string text,std::optional<AssistantGlyph> glyph,bool tinted){return std::make_unique<Note>(std::move(text),glyph,tinted);}
 std::unique_ptr<views::View> CreateAssistantFooter(std::u16string text,std::u16string keys){return std::make_unique<Footer>(std::move(text),std::move(keys));}

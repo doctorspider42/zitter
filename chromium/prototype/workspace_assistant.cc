@@ -16,6 +16,7 @@
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/ad_blocking_rules_panel.h"
 #include "chromium/prototype/content_blocking.h"
+#include "chromium/prototype/extensions_bar.h"
 #include "content_blocking_probe_script.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "components/download/public/common/download_item.h"
@@ -1077,6 +1078,26 @@ void WorkspaceWindow::SaveAssistantSessions(base::DictValue sessions) {
   config_runner_->PostTask(FROM_HERE, base::BindOnce([](base::FilePath path, std::string json) {
     base::ImportantFileWriter::WriteFileAtomically(path, json);
   }, assistant_sessions_path(), std::move(json)));
+}
+void WorkspaceWindow::EnsureAssistant() {
+  if (assistant_ || !assistant_settings_.enabled) return;
+  auto panel = std::make_unique<AssistantPanel>(this);
+  assistant_ = panel.get();
+  shell_->SetAssistantView(panel.release());
+}
+void WorkspaceWindow::AssistantStateChanged() {
+  if (!extensions_bar_) return;
+  ExtensionsBar::AssistantState state;
+  state.enabled = assistant_settings_.enabled;
+  state.open = assistant_ && assistant_->GetVisible();
+  state.working = assistant_ && assistant_->working();
+  state.unread = assistant_ ? assistant_->unread() : 0;
+  extensions_bar_->SetAssistantState(state);
+}
+void WorkspaceWindow::ToggleAssistantFromBar() {
+  if (assistant_ && assistant_->GetVisible()) { assistant_->Collapse(); if (assistant_->GetVisible() && !assistant_->pinned()) { assistant_->SetVisible(false); shell_->LayoutAssistant(false); } }
+  else ShowAssistant();
+  AssistantStateChanged();
 }
 std::string WorkspaceWindow::AssistantTargetFor(views::View* view) {
   for (const auto& [key, target] : assistant_targets_) if (target->view() == view) return key;
