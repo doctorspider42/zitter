@@ -330,7 +330,12 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, ScriptletsRedirectsAndC
   // Unknown scriptlets and redirect bodies are refused.
   EXPECT_NE("", ContentBlocking::RuleError("block.test##+js(no-such-scriptlet)"));
   EXPECT_NE("", ContentBlocking::RuleError("||ads.test^$redirect=nothing.js,domain=block.test"));
-  // check: the rules act in this tab only and it reloads with them; nothing is saved.
+  // A trial is the whole engine: an exception on trial lifts the list's block.
+  const auto excepted = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue().Append("@@||ads.test^$script,domain=block.test")).Set("check", true));
+  EXPECT_TRUE(excepted.GetDict().FindBool("checked").value_or(false)) << excepted;
+  EXPECT_EQ(true, content::EvalJs(page(), "window.baitLoaded && !detected.includes('script')"))
+      << content::EvalJs(page(), "JSON.stringify({baitLoaded, detected, url: location.href})").ExtractString() << " blocked: " << ContentBlockingTabHelper::FromWebContents(page())->blocked_requests();
+    // check: the rules act in this tab only and it reloads with them; nothing is saved.
   const auto rules = base::ListValue()
       .Append("block.test##+js(set-constant, canRunAds, true)")
       .Append("||ads.test^$script,redirect=noop.js,domain=block.test")

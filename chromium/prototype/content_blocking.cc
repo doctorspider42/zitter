@@ -539,9 +539,10 @@ class BlockingFactory final : public network::mojom::URLLoaderFactory {
     if (auto* frame = content::RenderFrameHost::FromID(frame_))
       if (auto* contents = content::WebContents::FromRenderFrameHost(frame)) helper = ContentBlockingTabHelper::FromWebContents(contents);
     std::string redirect;
-    const bool blocked = state_ && request.destination != network::mojom::RequestDestination::kDocument &&
-        ((helper && helper->has_trial() && helper->TrialBlocks(request.url, page_, RequestType(request), &redirect)) ||
-         ContentBlocking::Get().Check(profile_, request.url, page_, RequestType(request), &redirect) == ContentBlocking::Verdict::kBlock);
+    const bool document = request.destination == network::mojom::RequestDestination::kDocument;
+    const bool blocked = state_ && !document &&
+        (helper && helper->has_trial() ? helper->TrialBlocks(request.url, page_, RequestType(request), &redirect)
+                                       : ContentBlocking::Get().Check(profile_, request.url, page_, RequestType(request), &redirect) == ContentBlocking::Verdict::kBlock);
     if (blocked) {
       if (redirect.empty() || !Serve(redirect, request, std::move(loader), std::move(client)))
         if (client) mojo::Remote<network::mojom::URLLoaderClient>(std::move(client))->OnComplete(
@@ -610,22 +611,34 @@ void ContentBlockingTabHelper::ApplyPageScripts() {
   auto add = [&](const std::string& host, const std::string& script) {
     if (ContentBlocking::EnabledFor(profile, GURL("https://" + host + "/"))) next.push_back(host + "\n" + script);
   };
-  for (const auto& [host, script] : ContentBlocking::Get().PageScripts(profile)) add(host, script);
   if (trial_) for (const auto& script : trial_->engine->page_scripts()) add(std::string(script.host), std::string(script.script));
+  else for (const auto& [host, script] : ContentBlocking::Get().PageScripts(profile)) add(host, script);
   if (!probe_.empty()) next.push_back("*\n" + probe_);
   auto& scripts = GetWebContents().GetMutableRendererPrefs()->zitter_page_scripts;
   if (scripts == next) return;
   scripts = std::move(next);
   GetWebContents().SyncRendererPrefs();
 }
-bool ContentBlockingTabHelper::SetTrial(const std::vector<std::string>& rules, std::string* error) {
+void ContentBlockingTabHelper::SetTrial(std::vector<std::string> rules, base::OnceCallback<void(std::string)> done) {
   for (const auto& rule : rules)
-    if (auto problem = ContentBlocking::RuleError(rule); !problem.empty()) { if (error) *error = rule + ": " + problem; return false; }
-  rust::Vec<rust::String> lists;
-  lists.push_back(rust::String(base::JoinString(rules, "\n")));
-  trial_ = std::make_unique<Trial>(Trial{adblock::new_engine(lists), ContentBlocking::RegistrableDomain(GetWebContents().GetLastCommittedURL())});
-  ApplyPageScripts();
-  return true;
+    if (auto problem = ContentBlocking::RuleError(rule); !problem.empty()) { std::move(done).Run(rule + ": " + problem); return; }
+  // The whole engine, so an exception on trial (@@) can lift a list's block.
+  auto& blocking = ContentBlocking::Get();
+  std::vector<std::string> own = ContentBlocking::Rules(profile());
+  own.insert(own.end(), rules.begin(), rules.end());
+  base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE, {base::TaskPriority::USER_BLOCKING},
+      base::BindOnce([](std::shared_ptr<const std::vector<std::string>> texts, std::vector<std::string> rules) {
+        rust::Vec<rust::String> lists;
+        if (texts) for (const auto& text : *texts) lists.push_back(rust::String(text));
+        lists.push_back(rust::String(base::JoinString(rules, "\n")));
+        return adblock::new_engine(lists);
+      }, blocking.texts_, std::move(own)),
+      base::BindOnce([](base::WeakPtr<ContentBlockingTabHelper> self, base::OnceCallback<void(std::string)> done, rust::Box<adblock::Engine> engine) {
+        if (!self) { std::move(done).Run("The tab closed"); return; }
+        self->trial_ = std::make_unique<Trial>(Trial{std::move(engine), ContentBlocking::RegistrableDomain(self->GetWebContents().GetLastCommittedURL())});
+        self->ApplyPageScripts();
+        std::move(done).Run(std::string());
+      }, weak_factory_.GetWeakPtr(), std::move(done)));
 }
 void ContentBlockingTabHelper::ClearTrial() {
   if (!trial_) return;

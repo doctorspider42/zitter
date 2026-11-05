@@ -531,6 +531,7 @@ pub static EN: &[(&str, &str)] = &[
     // Ad blocking (docs/ad-blocking.md).
     ("Przygotowuję reguły blokowania…", "Preparing blocking rules…"),
     ("Sprawdzam, jak strona wykrywa blokowanie…", "Checking how the page detects blocking…"),
+    ("Zmienić blokowanie na {}? Ukryte elementy: {}, reguły sieciowe: {}, skrypty: {}, wyjątki (przepuszczają): {}.", "Change blocking on {}? Hidden elements: {}, network rules: {}, scripts: {}, exceptions (let through): {}."),
     ("Szukam reklam na stronie…", "Looking for ads on the page…"),
     ("Reguła jest za długa.", "The rule is too long."),
     ("Tej reguły nie da się użyć: {}", "This rule cannot be used: {}"),

@@ -120,6 +120,7 @@ class ContentBlocking final {
 
  private:
   friend class base::NoDestructor<ContentBlocking>;
+  friend class ContentBlockingTabHelper;
   ContentBlocking();
   ~ContentBlocking();
   ProfileState* StateFor(Profile* profile, bool build);
@@ -159,13 +160,14 @@ class ContentBlockingTabHelper final : public content::WebContentsObserver,
   void RecordBlocked(const GURL& url);
   // Applies the current rules to every frame again (rules or switch changed).
   void Reapply();
-  // Rules on trial (adblock_add_rules check): their scriptlets and network
-  // rules act in this tab only, on its next load, until cleared or saved.
-  // False and `error` when they do not build.
-  bool SetTrial(const std::vector<std::string>& rules, std::string* error);
+  // Rules on trial (adblock_add_rules check): an engine of the lists, the
+  // profile's own rules and these, built in the background, takes the
+  // profile's place in this tab (requests and scriptlets) from its next load
+  // until cleared or saved. `done` gets an error, or an empty string.
+  void SetTrial(std::vector<std::string> rules, base::OnceCallback<void(std::string)> done);
   void ClearTrial();
   bool has_trial() const { return trial_ != nullptr; }
-  // The trial's network verdict, as ContentBlocking::Check gives it.
+  // The trial's network verdict; it replaces ContentBlocking::Check here.
   bool TrialBlocks(const GURL& url, const GURL& page, const std::string& type, std::string* redirect);
   // A main-world script for every frame of this tab, from its next load
   // (adblock_diagnose's probe); empty removes it.

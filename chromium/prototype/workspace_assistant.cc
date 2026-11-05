@@ -427,6 +427,7 @@ void AdblockInspect(content::WebContents* page, base::OnceCallback<void(base::Va
 void SaveAdblockRules(content::WebContents* page, std::vector<std::string> rules, std::vector<std::string> replaces, const std::string& site,
                       int network, base::OnceCallback<void(base::Value)> done);
 void TryAdblockRules(content::WebContents* page, std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done);
+void ReloadAndTry(content::WebContents* page, std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done);
 // Reloads `page`, waits until it has loaded and then `linger` more, for
 // detectors and late ads, then runs `then`.
 void ReloadAndWait(content::WebContents* page, base::TimeDelta linger, base::OnceCallback<void(base::WeakPtr<content::WebContents>)> then) {
@@ -550,7 +551,18 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
         for (const auto& rule : rules) if (rule.find('#') == std::string::npos) ++network;
         if (check) { TryAdblockRules(page.get(), std::move(rules), std::move(done)); return; }
         if (!confirmed) {
-          const auto prompt = !replaces.empty()
+          // Exceptions let something through: the question says so.
+          int exceptions = 0, scriptlets = 0;
+          for (const auto& rule : rules) {
+            if (rule.starts_with("@@") || rule.find("#@#") != std::string::npos) ++exceptions;
+            else if (rule.find("#+js(") != std::string::npos) ++scriptlets;
+          }
+          network -= std::min(network, exceptions);
+          const auto prompt = exceptions || scriptlets
+              ? TF(u"Zmienić blokowanie na {}? Ukryte elementy: {}, reguły sieciowe: {}, skrypty: {}, wyjątki (przepuszczają): {}.",
+                   {base::UTF8ToUTF16(site), base::NumberToString16(count), base::NumberToString16(network), base::NumberToString16(scriptlets),
+                    base::NumberToString16(exceptions)})
+              : !replaces.empty()
               ? TF(u"Zablokować reklamy na {}? Ukryte elementy: {}, reguły sieciowe: {}, zastąpione stare reguły: {}.",
                    {base::UTF8ToUTF16(site), base::NumberToString16(count), base::NumberToString16(network), base::NumberToString16(replaces.size())})
               : network ? TF(u"Zablokować reklamy na {}? Ukryte elementy: {}, reguły sieciowe: {}.",
@@ -569,8 +581,14 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
 void TryAdblockRules(content::WebContents* page, std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done) {
   auto* helper = ContentBlockingTabHelper::FromWebContents(page);
   helper->Preview({}, base::DoNothing());
-  std::string error;
-  if (!helper->SetTrial(rules, &error)) { std::move(done).Run(Error("The rules could not be tried: " + error)); return; }
+  helper->SetTrial(rules, base::BindOnce(
+      [](base::WeakPtr<content::WebContents> page, std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done, std::string error) {
+        if (!page) { std::move(done).Run(Error("The page closed")); return; }
+        if (!error.empty()) { std::move(done).Run(Error("The rules could not be tried: " + error)); return; }
+        ReloadAndTry(page.get(), std::move(rules), std::move(done));
+      }, page->GetWeakPtr(), rules, std::move(done)));
+}
+void ReloadAndTry(content::WebContents* page, std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done) {
   ReloadAndWait(page, base::Seconds(4), base::BindOnce(
       [](std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done, base::WeakPtr<content::WebContents> page) {
         auto* helper = page ? ContentBlockingTabHelper::FromWebContents(page.get()) : nullptr;

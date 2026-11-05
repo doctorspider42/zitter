@@ -331,6 +331,9 @@ The model may add `screenshot` to see the page as the user does.
    dashed accent outline and a tint, via `content_blocking.js`) and asks for **native
    consent**, the same consent bubble as an assistant click: "Ukryć 4 elementy
    na example.com?" with **Zezwól** / **Pomiń**;
+   With scriptlets or exceptions among the rules the question says what
+   each kind does: "Zmienić blokowanie na example.com? Ukryte elementy: 0,
+   reguły sieciowe: 0, skrypty: 0, wyjątki (przepuszczają): 1.";
 5. on yes: appends the rules to the profile's own list (deduplicated, with a
    `! Asystent: example.com, 2026-11-05` comment in the UI language, "Assistant:"
    in English), rebuilds the engine, applies
@@ -353,8 +356,12 @@ on the next visit.
 **`adblock_add_rules` with `check: true`** saves nothing and asks nothing.
 It validates the rules the same way, then puts them on trial in this tab only:
 
-- a small engine of just those rules supplies the tab's page scripts and
-  answers its requests first;
+- an engine of the lists, the profile's own rules and the tried ones, built
+  in the background, takes the profile engine's place in this tab, for its
+  page scripts and its requests. It is the whole engine, so an exception on
+  trial (`@@||host/file.js^$domain=site`) can lift a list's block; a first
+  version that held only the tried rules could not, which the live test on
+  detectadblock.com caught;
 - the tab reloads;
 - the hiding rules apply after the load.
 
