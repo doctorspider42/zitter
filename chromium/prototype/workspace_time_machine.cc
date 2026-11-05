@@ -293,7 +293,7 @@ bool WorkspaceWindow::RestoreLayout(std::string workspace_id, base::DictValue en
 void WorkspaceWindow::RecordClosedTab(const Host& host, size_t index) {
   const GURL url = TabUrl(host, host.tabs[index]);
   if (!url.SchemeIsHTTPOrHTTPS() || !host.profile || host.profile->IsOffTheRecord()) return;
-  closed_tabs_.push_back({host.workspace_id, host.profile_id, url, TabTitle(host, host.tabs[index])});
+  closed_tabs_.push_back({host.workspace_id, host.profile_id, url, TabTitle(host, host.tabs[index]), base::Time::Now()});
   if (closed_tabs_.size() > 50) closed_tabs_.erase(closed_tabs_.begin());
 }
 bool WorkspaceWindow::ReopenClosedTab() {
@@ -318,6 +318,21 @@ bool WorkspaceWindow::ReopenClosedTab() {
     auto* view = CreatePage(host.profile); host.tabs.push_back(view);
     host.deferred_urls[view] = url;
     if (!title.empty()) host.deferred_titles[view] = title;
+    SelectTab(host.tabs.size() - 1); SaveSession(); return true;
+  }
+  return false;
+}
+bool WorkspaceWindow::ReopenClosedTabAt(size_t newest) {
+  if (!configuration_ready_ || profiles_busy_ || configuration_invalid_ || newest >= closed_tabs_.size()) return false;
+  const size_t index = closed_tabs_.size() - 1 - newest;
+  const auto tab = closed_tabs_[index];
+  // It comes back in its own space, which comes to the front.
+  if (tab.workspace_id != active_id() && !Select(tab.workspace_id)) return false;
+  for (auto& host : hosts_) if (host.workspace_id == tab.workspace_id && !host.sleeping && host.profile_id == tab.profile_id) {
+    closed_tabs_.erase(closed_tabs_.begin() + index);
+    auto* view = CreatePage(host.profile); host.tabs.push_back(view);
+    host.deferred_urls[view] = tab.url;
+    if (!tab.title.empty()) host.deferred_titles[view] = tab.title;
     SelectTab(host.tabs.size() - 1); SaveSession(); return true;
   }
   return false;

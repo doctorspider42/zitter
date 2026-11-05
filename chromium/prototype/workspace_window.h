@@ -54,6 +54,8 @@ namespace zitter::prototype {
 struct TimelineStore;
 
 class DownloadPanel;
+class HistoryPanel;
+class PasswordsPanel;
 class ExtensionsBar;
 struct BrowsingImportData;
 
@@ -157,6 +159,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void AssistantElementBounds(std::string tab, std::string element, base::OnceCallback<void(std::optional<gfx::Rect>)> done);
   content::WebContents* assistant_background_for_testing(const std::string& key) const;
   AssistantPanel* assistant() const { return assistant_; }
+  void ShowSitePanel();
   DownloadPanel* downloads() const { return downloads_.get(); }
   void EnsureDownloads();
   void DownloadCompleted(std::string guid, std::u16string name);
@@ -240,6 +243,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // the state before is recorded first and offered as undo.
   bool RestoreTimeline(int64_t t_ms, int64_t quantum_ms);
   bool ReopenClosedTab();
+  // `newest` counts from this run's most recently closed tab (History, Ostatnio zamknięte).
+  bool ReopenClosedTabAt(size_t newest);
+  HistoryPanel* history_panel() const { return history_panel_.get(); }
+  PasswordsPanel* passwords_panel() const { return passwords_panel_.get(); }
   // Closes every tab of the active workspace but the selected one and pinned
   // pages; the toast's undo puts them back in their places.
   bool CloseOtherTabs();
@@ -485,7 +492,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool timeline_settings_known_ = false;
   int timeline_days_ = 30;
   // Recently closed tabs of this run (Cmd+Shift+T), kept even with the timeline off.
-  struct ClosedTab { std::string workspace_id, profile_id; GURL url; std::u16string title; };
+  struct ClosedTab { std::string workspace_id, profile_id; GURL url; std::u16string title; base::Time closed_at; };
   std::vector<ClosedTab> closed_tabs_;
   std::set<int> consumed_keys_;
   base::OneShotTimer session_timer_;
@@ -500,6 +507,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::unique_ptr<views::WidgetDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
   std::unique_ptr<DownloadPanel> downloads_;
+  std::unique_ptr<HistoryPanel> history_panel_;
+  std::unique_ptr<PasswordsPanel> passwords_panel_;
   raw_ptr<ExtensionsBar> extensions_bar_ = nullptr;  // Owned by the window root.
   std::unique_ptr<base::AutoReset<bool>> extension_install_ui_;
   // Extensions see the window's tabs through ExtensionTabUtil::EmbedderTabs.

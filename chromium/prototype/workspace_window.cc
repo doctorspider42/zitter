@@ -10,6 +10,9 @@
 #include "chromium/prototype/i18n.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
+#include "chromium/prototype/history_panel.h"
+#include "chromium/prototype/site_data.h"
+#include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "chromium/prototype/fingerprint_protection.h"
@@ -94,6 +97,7 @@
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/reload_type.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -678,6 +682,10 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.restore_workspace = base::BindRepeating(&WorkspaceWindow::RestoreRemovedWorkspace, base::Unretained(this));
   callbacks.create_folder = base::BindRepeating(&WorkspaceWindow::CreatePinnedFolder, base::Unretained(this));
   callbacks.clear_browsing_data = base::BindRepeating(&WorkspaceWindow::RequestClearBrowsingData, base::Unretained(this));
+  callbacks.clear_browsing_data_now = base::BindRepeating([](WorkspaceWindow* window, BrowsingDataSelection selection) {
+    if (window->model_.active()) window->ClearBrowsingData(window->model_.active()->profile_id, selection);
+  }, base::Unretained(this));
+  callbacks.site_panel = base::BindRepeating(&WorkspaceWindow::ShowSitePanel, base::Unretained(this));
   callbacks.system_settings = base::BindRepeating(&WorkspaceWindow::OpenSystemSettings, base::Unretained(this));
   callbacks.read_preferences = base::BindRepeating(&WorkspaceWindow::ReadPreferences, base::Unretained(this));
   callbacks.write_preference = base::BindRepeating(&WorkspaceWindow::WritePreference, base::Unretained(this));
@@ -901,6 +909,18 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
   PageServices::FromWebContents(page)->SetManagePasswords(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
     if (window) window->ShowPasswords();
   }, weak_factory_.GetWeakPtr()));
+  // Design: Monit o zapisanie hasła — under the address pill, folding into its key.
+  PageServices::FromWebContents(page)->SetPasswordAnchor(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+    return window ? window->shell_->password_anchor_in_screen() : gfx::Rect();
+  }, weak_factory_.GetWeakPtr()));
+  PageServices::FromWebContents(page)->SetPasswordPendingCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page, bool pending, bool folded) {
+    if (!window) return;
+    // Gone or saved: nothing to reopen, and the page may be closing.
+    if (!pending) { window->shell_->SetPasswordOffer(false, false, u"", {}); return; }
+    window->shell_->SetPasswordOffer(pending, folded, base::UTF8ToUTF16(page->GetLastCommittedURL().host()), base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page) {
+      if (window && PageServices::FromWebContents(page)) PageServices::FromWebContents(page)->ReopenPassword();
+    }, window, page));
+  }, weak_factory_.GetWeakPtr(), page));
   AttachPagePrinting(page, base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page) {
     // Only the page on screen opens the sheet.
     if (window && page == (window->peek_contents() ? window->peek_contents() : window->contents(window->active_id())))
@@ -909,6 +929,17 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
   FingerprintProtection::Attach(page);
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
+  // Design: Prośba o dostęp — under the address pill, folding into its icon.
+  PageMediaAccess::FromWebContents(page)->SetPromptAnchor(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+    return window ? window->shell_->password_anchor_in_screen() : gfx::Rect();
+  }, weak_factory_.GetWeakPtr()));
+  PageMediaAccess::FromWebContents(page)->SetPromptCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page, const PermissionOffer& offer) {
+    if (!window) return;
+    if (!offer.pending) { window->shell_->SetPermissionOffer(false, false, 0, u"", {}); return; }
+    window->shell_->SetPermissionOffer(true, offer.folded, offer.kind, offer.site, base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* page) {
+      if (window && PageMediaAccess::FromWebContents(page)) PageMediaAccess::FromWebContents(page)->ReopenPrompt();
+    }, window, page));
+  }, weak_factory_.GetWeakPtr(), page));
   LinkNavigation::Attach(page, base::BindRepeating(
       [](base::WeakPtr<WorkspaceWindow> window, std::string source_hint, content::NavigationHandle& navigation) {
         return window && window->RouteNavigation(navigation, source_hint);
@@ -1400,35 +1431,104 @@ void WorkspaceWindow::ShowDownloads() {
   EnsureDownloads();
   downloads_->Show(Profile::FromBrowserContext(page->GetBrowserContext()), widget_.get(), anchor);
 }
-// History is Chromium's own page: the space on screen shows its existing
-// chrome://history tab, or opens one in its profile.
+// Design: Historia — Zitter's own window over the active profile's history,
+// with the tabs closed in this run beside it.
+// Design: Zitter dostępy stron — the page on screen, its permissions and data.
+void WorkspaceWindow::ShowSitePanel() {
+  auto* page = peek_contents() ? peek_contents() : contents(active_id());
+  if (!page || !page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) return;
+  auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
+  const GURL url = page->GetLastCommittedURL();
+  auto weak_page = page->GetWeakPtr();
+  auto alive = [](base::WeakPtr<content::WebContents> page, const GURL& url) {
+    return page && page->GetLastCommittedURL().host() == url.host();
+  };
+  WorkspaceShell::SiteHandlers handlers;
+  handlers.read = base::BindRepeating([](base::WeakPtr<content::WebContents> page, GURL url) {
+    return page ? ReadSitePermissions(Profile::FromBrowserContext(page->GetBrowserContext()), url) : SiteSummary();
+  }, weak_page, url);
+  handlers.set_permission = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, std::string key, int setting) {
+    return alive(page, url) && WriteSitePermission(Profile::FromBrowserContext(page->GetBrowserContext()), url, key, setting);
+  }, alive, weak_page, url);
+  handlers.reset_permissions = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url) {
+    if (alive(page, url)) ResetSitePermissions(Profile::FromBrowserContext(page->GetBrowserContext()), url);
+  }, alive, weak_page, url);
+  handlers.measure = base::BindRepeating([](base::WeakPtr<content::WebContents> page, GURL url, base::RepeatingCallback<void(const SiteDataFacts&)> done) {
+    if (page) MeasureSiteData(Profile::FromBrowserContext(page->GetBrowserContext()), url, std::move(done));
+  }, weak_page, url);
+  // Cleared, then reloaded so the page starts without what was removed.
+  handlers.clear = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, SiteClearChoice choice) {
+    if (!alive(page, url)) return;
+    ClearSiteData(Profile::FromBrowserContext(page->GetBrowserContext()), url, choice, base::BindOnce([](base::WeakPtr<content::WebContents> page) {
+      if (page) page->GetController().Reload(content::ReloadType::NORMAL, true);
+    }, page));
+  }, alive, weak_page, url);
+  handlers.delete_cookie = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, SiteCookie cookie) {
+    if (alive(page, url)) DeleteSiteCookie(Profile::FromBrowserContext(page->GetBrowserContext()), std::move(cookie), base::DoNothing());
+  }, alive, weak_page, url);
+  shell_->ShowSitePanel(ReadSitePermissions(profile, url), std::move(handlers));
+}
+
 void WorkspaceWindow::ShowHistory() {
   if (!model_.active()) return;
+  auto* profile = ProfileFor(model_.active()->profile_id);
+  if (!profile) return;
   shell_->CloseOverlays(true);
-  for (const auto& host : hosts_) {
-    if (host.workspace_id != active_id()) continue;
-    for (size_t i = 0; i < host.tabs.size(); ++i) {
-      const GURL url = TabUrl(host, host.tabs[i]);
-      if (url.SchemeIs("chrome") && url.host() == "history") { SelectTab(i); return; }
-    }
+  if (!history_panel_) {
+    history_panel_ = std::make_unique<HistoryPanel>();
+    history_panel_->SetOpenCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, GURL url, HistoryPanel::Open where) {
+      if (!window || !window->model_.active()) return;
+      if (where == HistoryPanel::Open::kNewTab) { window->OpenProfileTab(window->ProfileFor(window->model_.active()->profile_id), url, true); return; }
+      if (window->OpenPeek(url) && where == HistoryPanel::Open::kSplit) window->PromotePeek(true);
+    }, weak_factory_.GetWeakPtr()));
+    history_panel_->SetClosedSource(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+      std::vector<HistoryPanel::Closed> closed;
+      if (!window) return closed;
+      for (auto tab = window->closed_tabs_.rbegin(); tab != window->closed_tabs_.rend(); ++tab) {
+        std::u16string space;
+        for (const auto& workspace : window->model_.workspaces()) if (workspace.id == tab->workspace_id) space = base::UTF8ToUTF16(workspace.name);
+        closed.push_back({tab->title, tab->url, space, tab->closed_at});
+      }
+      return closed;
+    }, weak_factory_.GetWeakPtr()));
+    history_panel_->SetReopenCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, size_t newest) {
+      if (window) window->ReopenClosedTabAt(newest);
+    }, weak_factory_.GetWeakPtr()));
+    history_panel_->SetConfirmCallback(base::BindRepeating([](WorkspaceWindow* window, views::Widget* parent, std::u16string title, std::u16string detail,
+                                                              std::u16string warning, std::u16string action, base::OnceCallback<void(bool)> answer) {
+      window->shell_->ConfirmDanger(parent, std::move(title), std::move(detail), std::move(warning), std::move(action), std::move(answer));
+    }, base::Unretained(this)));
+    history_panel_->SetClearDataCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+      if (!window || !window->model_.active() || !window->history_panel_) return;
+      auto* profile = window->ProfileFor(window->model_.active()->profile_id);
+      window->shell_->ShowClearDataDialog(window->history_panel_->widget(), profile ? BrowsingProfileName(profile) : std::u16string());
+    }, weak_factory_.GetWeakPtr()));
+    history_panel_->SetTimeMachineCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+      if (window) window->RunShortcut("timeline");
+    }, weak_factory_.GetWeakPtr()));
   }
-  OpenProfileTab(ProfileFor(model_.active()->profile_id), GURL("chrome://history"), true);
+  history_panel_->Show(profile, widget_.get());
 }
-// Chrome's password manager, like History: the space on screen shows its
-// existing tab, or opens one in its profile (its passwords).
+// Design: Menedżer haseł — Zitter's own window over the active profile's
+// password store.
 void WorkspaceWindow::ShowPasswords() {
   if (!model_.active()) return;
+  auto* profile = ProfileFor(model_.active()->profile_id);
+  if (!profile) return;
   shell_->CloseOverlays(true);
   ClosePeek();
-  const GURL manager(chrome::kChromeUIPasswordManagerURL);
-  for (const auto& host : hosts_) {
-    if (host.workspace_id != active_id()) continue;
-    for (size_t i = 0; i < host.tabs.size(); ++i) {
-      const GURL url = TabUrl(host, host.tabs[i]);
-      if (url.SchemeIs("chrome") && url.host() == manager.host()) { SelectTab(i); return; }
-    }
+  if (!passwords_panel_) {
+    passwords_panel_ = std::make_unique<PasswordsPanel>();
+    passwords_panel_->SetOpenCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, GURL url) {
+      if (window && window->model_.active() && url.SchemeIsHTTPOrHTTPS()) window->OpenProfileTab(window->ProfileFor(window->model_.active()->profile_id), url, true);
+    }, weak_factory_.GetWeakPtr()));
+    passwords_panel_->SetConfirmCallback(base::BindRepeating([](WorkspaceWindow* window, views::Widget* parent, std::u16string title, std::u16string detail,
+                                                                std::u16string warning, std::u16string action, base::OnceCallback<void(bool)> answer) {
+      window->shell_->ConfirmDanger(parent, std::move(title), std::move(detail), std::move(warning), std::move(action), std::move(answer));
+    }, base::Unretained(this)));
+    passwords_panel_->SetImportCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) { if (window) window->shell_->OpenImport(); }, weak_factory_.GetWeakPtr()));
   }
-  OpenProfileTab(ProfileFor(model_.active()->profile_id), manager, true);
+  passwords_panel_->Show(profile, widget_.get());
 }
 std::string WorkspaceWindow::WorkspaceForUrl(const GURL& url) const {
   if (!url.SchemeIsHTTPOrHTTPS()) return {};
@@ -2280,6 +2380,29 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "passwords") { ShowPasswords(); return true; }
   if (id == "import") { shell_->OpenImport(); return true; }
   if (id == "quit") { RequestClose(); return true; }
+  // Development (--zitter-open-panel=site / permission): the page's origin with
+  // two sample rules, then its panel; or a notification request from it.
+  if (id == "site_demo" || id == "permission_demo") {
+    auto* page = contents(active_id());
+    if (!page) return false;
+    // A real site, so the panel has cookies and history to show.
+    const GURL origin("https://example.com/");
+    if (page->GetLastCommittedURL() != origin || page->GetController().GetLastCommittedEntry()->GetPageType() == content::PAGE_TYPE_ERROR) { Navigate(origin); return true; }
+    auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
+    if (id == "permission_demo") {
+      ResetSitePermissions(profile, origin);
+      page->GetPrimaryMainFrame()->ExecuteJavaScriptWithUserGestureForTests(u"Notification.requestPermission()", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+      return true;
+    }
+    WriteSitePermission(profile, origin, "notifications", 1);
+    WriteSitePermission(profile, origin, "geolocation", 2);
+    WriteSitePermission(profile, origin, "local-network-access", 1);
+    WriteSitePermission(profile, origin, "sound", 1);
+    // A cookie for the data page.
+    page->GetPrimaryMainFrame()->ExecuteJavaScriptForTests(u"document.cookie='session=demo; max-age=3600'; document.cookie='prefs=dark; max-age=8640000'", base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
+    ShowSitePanel();
+    return true;
+  }
   // Development (--zitter-open-panel=extension-popup): the first pinned action.
   if (id == "extension_popup") {
     const auto actions = extensions_bar_->visible_actions_for_testing();

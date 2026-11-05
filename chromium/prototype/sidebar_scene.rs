@@ -1233,8 +1233,11 @@ fn palette_result_detail(kind:ffi::PaletteResultKind,label:&str)->String{
     use ffi::PaletteResultKind as K;
     match kind{K::Tab=>tf("Karta · {}",&[label]),K::Pin=>tf("Przypięta · {}",&[label]),K::Workspace=>t("Przełącz workspace").into(),K::History=>tf("Historia · {}",&[label]),_=>String::new()}
 }
-fn password_prompt_copy(update:bool,origin:&str,username:&str,profile:&str)->ffi::PasswordPromptCopy{
-    ffi::PasswordPromptCopy{title:if update{t("Zaktualizować hasło?")}else{t("Zapisać hasło?")}.into(),lines:vec![origin.into(),tf("Użytkownik: {}",&[username]),tf("Profil: {}",&[profile]),t("Hasło będzie chronione w magazynie tego profilu.").into()],accept:if update{t("Zaktualizuj")}else{t("Zapisz hasło")}.into(),cancel:t("Nie teraz").into()}
+// The quiet save offer (design: Monit o zapisanie hasła): the site without its
+// scheme and the login; the profile shows in the window already.
+fn password_prompt_copy(update:bool,origin:&str,username:&str,_profile:&str)->ffi::PasswordPromptCopy{
+    let site=origin.split_once("://").map_or(origin,|(_,rest)|rest).trim_end_matches('/');
+    ffi::PasswordPromptCopy{title:if update{t("Zaktualizować hasło?")}else{t("Zapisać hasło?")}.into(),lines:vec![site.into(),tf("Użytkownik: {}",&[username])],accept:if update{t("Zaktualizuj")}else{t("Zapisz")}.into(),cancel:t("Nie teraz").into()}
 }
 // Browsing-data removal: confirmation copy and outcome wording/tone.
 fn clear_periods()->[&'static str;4]{[t("Ostatnia godzina"),t("Ostatnie 24 godziny"),t("Ostatnie 7 dni"),t("Cały okres")]}
@@ -2921,6 +2924,13 @@ fn strip_layout(width: i32, height: i32, spacing: i32, children: &[ffi::ColumnCh
     ffi::ColumnLayout {width:if width<0 {natural} else {width},height,children:rects}
 }
 
+// `a` over `b` at `t` (0..1), channel by channel; alpha from `b`.
+fn mix_argb(a: u32, b: u32, t: f32) -> u32 {
+    let ch = |c: u32, s: u32| (c >> s) & 0xff;
+    let m = |s: u32| ((ch(a, s) as f32 * t + ch(b, s) as f32 * (1.0 - t)).round() as u32) << s;
+    (b & 0xff000000) | m(16) | m(8) | m(0)
+}
+
 fn address_layout(width: i32, height: i32, host_width: i32) -> ffi::RowLayout {
     let width = width.max(0); let height = height.max(0);
     let available = (width - 46).max(0);
@@ -3166,12 +3176,14 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     }
     if i.kind == 21 {
         if !(i.width>0.0&&i.height>0.0){return;}
-        emit(i.x,i.y,i.width,i.height,6.0,i.fill,"",0.0,false);
-        if i.hovered {emit(i.x,i.y,i.width,i.height,6.0,i.detail_ink,"",0.0,false);}
+        // glyph 1: a site permission's chip — a `radius-pill` select (design W1).
+        let r=if i.glyph==1 {i.height/2.0} else {6.0};
+        emit(i.x,i.y,i.width,i.height,r,i.fill,"",0.0,false);
+        if i.hovered {emit(i.x,i.y,i.width,i.height,r,i.detail_ink,"",0.0,false);}
         let g=select_layout(i.width as i32,i.height as i32,0,0,i.tile);
         if !i.title.is_empty()&&g.label.width>0 {emit(i.x+g.label.x as f32,i.y,g.label.width as f32,i.height,0.0,i.ink,&i.title,i.font_size,i.active);}
         if g.arrow.width>0 {emit(i.x+g.arrow.x as f32,i.y,g.arrow.width as f32,i.height,0.0,i.ink,"▾",i.font_size,false);}
-        emit(i.x,i.y,i.width,i.height,6.0,i.badge,"",0.0,false);if let Some(p)=out.last_mut(){p.stroke=if i.focused{2.0}else{1.0};}for p in out[first_primitive..].iter_mut(){if p.text=="▾"{p.center=true;}}
+        emit(i.x,i.y,i.width,i.height,r,i.badge,"",0.0,false);if let Some(p)=out.last_mut(){p.stroke=if i.focused{2.0}else{1.0};}for p in out[first_primitive..].iter_mut(){if p.text=="▾"{p.center=true;}}
         return;
     }
     if i.kind == 20 {
@@ -3372,11 +3384,22 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         // Editing (glyph 1, ⌘L): a 2 px `accent` ring and ↵ at the end.
         let editing = i.glyph == 1;
         let inset = if editing {1.0} else {0.5};
-        let rings = [(i.x + inset, if editing {2.0} else {1.0}), (i.x + if i.active {14.0} else {12.0}, 1.5)];
+        let rings = [(i.x + inset, if editing {2.0} else {1.0}), (if i.glyph == 2 || i.glyph == 3 {f32::NAN} else {i.x + if i.active {14.0} else {12.0}}, 1.5)];
         emit(i.x + inset, i.y + inset, i.width - 2.0 * inset, i.height - 2.0 * inset,
             pill - inset, if i.edge >> 24 != 0 {i.edge} else {(i.ink & 0x00ffffff) | 0x0d000000}, "", 0.0, false);
         if editing {emit(i.x + i.width - 30.0, i.y, 18.0, i.height, 0.0, i.detail_ink, "↵", i.detail_font_size, false);}
-        if i.active {
+        // A web page leads with its site controls (glyph 2; 3 while their panel
+        // is open, on an `accent-soft` disc): two sliders with hollow knobs.
+        let site = i.glyph == 2 || i.glyph == 3;
+        if site {
+            let disc = if i.glyph == 3 {mix_argb(i.badge, i.fill, 0.22)} else {i.fill};
+            if i.glyph == 3 {emit(i.x + 5.0, cy - 12.0, 24.0, 24.0, 12.0, disc, "", 0.0, false);}
+            for (dy, knob) in [(-3.0_f32, 14.0_f32), (3.0, 20.0)] {
+                emit(i.x + 11.0, cy + dy - 0.8, 12.0, 1.6, 0.8, i.badge, "", 0.0, false);
+                emit(i.x + knob - 2.6, cy + dy - 2.6, 5.2, 5.2, 2.6, i.badge, "", 0.0, false);
+                emit(i.x + knob - 1.2, cy + dy - 1.2, 2.4, 2.4, 1.2, disc, "", 0.0, false);
+            }
+        } else if i.active {
             emit(i.x + 14.0, cy - 7.0, 8.0, 10.0, 4.0, i.badge, "", 0.0, false);
             emit(i.x + 12.0, cy - 1.0, 12.0, 8.0, 1.5, i.badge, "", 0.0, false);
         } else {
@@ -3715,6 +3738,18 @@ mod tests {
             assert_eq!(g.close.width, 0);
         }
     }
+    #[test] fn address_site_controls_draw_sliders_and_an_open_disc() {
+        let pill = |glyph: u32, badge: u32| { let mut item = row(240.0); item.kind = 4; item.active = true; item.glyph = glyph;
+            item.title = "calendar.app".into(); item.title_width = 80.0; item.fill = 0xff1e1b28; item.badge = badge; item };
+        let closed = pill(2, 0xffaaa5bb); let top = closed.y;
+        let ops = layout(&[closed]);
+        // Two bars and two knobs; no lock, so only the outline is stroked.
+        assert_eq!(ops.iter().filter(|p| p.text.is_empty() && p.color == 0xffaaa5bb && p.y > top).count(), 4);
+        assert_eq!(ops.iter().filter(|p| p.stroke > 0.0).count(), 1);
+        let open = layout(&[pill(3, 0xff9a92ff)]);
+        assert!(open.iter().any(|p| p.width == 24.0 && p.height == 24.0 && p.color != 0xff1e1b28));
+        assert_eq!(mix_argb(0xffffffff, 0xff000000, 0.5), 0xff808080);
+    }
     #[test] fn address_keeps_secure_and_search_icons_and_tail_elision() {
         for secure in [false, true] {
             let mut item = row(240.0); item.kind = 4; item.active = secure;
@@ -3989,8 +4024,8 @@ mod tests {
     }
     #[test] fn palette_result_details_and_password_prompt_copy() {
         use ffi::PaletteResultKind as K;assert_eq!(palette_result_detail(K::Tab,"Praca"),"Karta · Praca");assert_eq!(palette_result_detail(K::Pin,"Dom / Projekt"),"Przypięta · Dom / Projekt");assert_eq!(palette_result_detail(K::Workspace,"x"),"Przełącz workspace");assert_eq!(palette_result_detail(K::History,"a.test"),"Historia · a.test");assert!(palette_result_detail(K{repr:9},"x").is_empty());
-        let c=password_prompt_copy(true,"https://a.test","jan","Praca");assert_eq!((c.title.as_str(),c.accept.as_str(),c.cancel.as_str()),("Zaktualizować hasło?","Zaktualizuj","Nie teraz"));assert_eq!(c.lines,vec!["https://a.test","Użytkownik: jan","Profil: Praca","Hasło będzie chronione w magazynie tego profilu."]);
-        let c=password_prompt_copy(false,"o","","p");assert_eq!((c.title.as_str(),c.accept.as_str()),("Zapisać hasło?","Zapisz hasło"));assert_eq!(c.lines[1],"Użytkownik: ");
+        let c=password_prompt_copy(true,"https://a.test","jan","Praca");assert_eq!((c.title.as_str(),c.accept.as_str(),c.cancel.as_str()),("Zaktualizować hasło?","Zaktualizuj","Nie teraz"));assert_eq!(c.lines,vec!["a.test","Użytkownik: jan"]);
+        let c=password_prompt_copy(false,"o","","p");assert_eq!((c.title.as_str(),c.accept.as_str()),("Zapisać hasło?","Zapisz"));assert_eq!(c.lines[1],"Użytkownik: ");
     }
     #[test] fn profile_status_events_have_distinct_copy_and_unknown_is_empty() {
         use ffi::ProfileStatusEvent as E;let all=[E::DuplicateName,E::Creating,E::CreateFailed,E::Created,E::CreateNotSaved,E::Renamed,E::RenameFailed,E::Deleting,E::Deleted,E::DeleteNotSaved,E::LoadFailed];let copies=all.iter().map(|e|profile_status_copy(*e)).collect::<std::collections::BTreeSet<_>>();assert_eq!(copies.len(),all.len());assert!(copies.iter().all(|c|!c.is_empty()));
