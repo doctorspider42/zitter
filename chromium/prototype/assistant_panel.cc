@@ -99,6 +99,7 @@ std::u16string ToolStatus(const std::string& tool) {
   if (tool == "navigate" || tool == "open_tab") return T(u"Otwieram stronę…");
   if (tool == "adblock_inspect") return T(u"Szukam reklam na stronie…");
   if (tool == "adblock_add_rules") return T(u"Przygotowuję reguły blokowania…");
+  if (tool == "adblock_diagnose") return T(u"Sprawdzam, jak strona wykrywa blokowanie…");
   return T(u"Pracuję w przeglądarce…");
 }
 // Runs after the current click has finished: the work may rebuild the clicked view.
@@ -108,7 +109,7 @@ base::RepeatingClosure Later(base::RepeatingClosure work) {
 bool PageTool(const std::string& tool) {
   return tool == "read_page" || tool == "click" || tool == "type" || tool == "scroll" || tool == "navigate" ||
          tool == "insert_text" || tool == "press_key" || tool == "select" || tool == "mouse" || tool == "screenshot" ||
-         tool == "wait" || tool == "dialog" || tool == "adblock_inspect" || tool == "adblock_add_rules";
+         tool == "wait" || tool == "dialog" || tool == "adblock_inspect" || tool == "adblock_add_rules" || tool == "adblock_diagnose";
 }
 }
 base::DictValue AssistantPermissions::ToValue() const {

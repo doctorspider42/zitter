@@ -94,7 +94,13 @@ frame and worker URLLoaderFactory of a regular web profile with a small proxy
    `network::mojom::RequestDestination`: script, image, stylesheet, sub_frame,
    font, media, xmlhttprequest, ping, other);
 3. fails a match with `net::ERR_BLOCKED_BY_CLIENT` before any byte leaves the
-   machine, and counts it for the tab.
+   machine, and counts it for the tab. A `$redirect=` (or `$redirect-rule=`)
+   rule instead answers with a 200 response carrying one of Zitter's own
+   bodies (see "Scriptlets and redirect bodies"), so a detector that watches
+   for failed bait loads sees a success. The response allows any origin and
+   is basic, CORS or opaque the way a real one would be;
+4. checks a tab's rules on trial (`adblock_add_rules` with `check`) before the
+   profile's engine.
 
 Known limit: a request allowed at start that redirects to a blocked URL is not
 re-checked (no `FollowRedirect` interception). Lists rarely depend on it.
@@ -147,8 +153,67 @@ code):
 adblock-rust is built without its `css-validation` feature, so it keeps a
 procedural selector as one string in `hide_selectors`, and rules with an action
 come back as JSON in `procedural_actions`; the bridge passes both on. This also
-makes the lists' own `#?#` and action rules work. Scriptlets (`+js()`) are
-still refused: their resources are uBO's GPL code.
+makes the lists' own `#?#` and action rules work.
+
+`:mask(x, y, width, height)` is Zitter's own action: an opaque box in the
+page's background color over that region of the element (CSS pixels, or
+percents of its box), placed in document coordinates and following scrolling
+and resizing. It takes no clicks. It is meant for an ad painted at a fixed
+spot inside a canvas or video.
+
+### Scriptlets and redirect bodies
+
+uBO's scriptlets and redirect resources are GPL-3.0, and so are AdGuard's, so
+Zitter ships its own in `chromium/prototype/adblock_resources.js` (Apache-2.0).
+They are written from the public descriptions of uBO's names and arguments,
+so rules people know work:
+
+| Scriptlet (aliases) | What it does |
+| --- | --- |
+| `set-constant` (`set`) | pins a global or a path under one (`a.b.c`, also created later) to `true`, `false`, `null`, `undefined`, `noopFunc`, `trueFunc`, `falseFunc`, `emptyArr`, `emptyObj`, `''` or a number |
+| `abort-on-property-read` / `-write` (`aopr`, `aopw`) | a script that reads or assigns the path stops with an error the page never sees |
+| `abort-current-script` (`acs`) | the same, only for the running script whose source or URL matches a needle |
+| `prevent-setTimeout`, `prevent-setInterval` (`nostif`, `nosiif`) | timers whose code (and delay) match run nothing |
+| `prevent-addEventListener` (`aeld`) | matching listeners are never added |
+| `prevent-fetch`, `prevent-xhr` (`no-fetch-if`, `no-xhr-if`) | matching requests resolve with an empty 200 |
+| `json-prune` | deletes paths (`a.b`, `[]` for array items, `*` for any key) from `JSON.parse` and `Response.json`, optionally only when other paths exist |
+| `remove-attr`, `remove-class` (`ra`, `rc`) | keep removing attributes or classes as the page sets them |
+| `set-cookie`, `set-local-storage-item`, `set-session-storage-item` | the site's own "notice dismissed" flag, from a safe set of values |
+| `no-window-open-if` (`nowoif`), `noeval-if` | no matching pop-unders, no matching `eval` |
+| `zitter-skip-draw` | Zitter's own: images whose URL (or natural size `WxH`) matches are not painted into a 2D canvas, and WebGL gets a transparent pixel; sources are followed through `<img>`, `<video>`, `ImageBitmap` and fetched blobs |
+
+Needles are literal text or `/regex/`; `!` negates. Every wrapped native is
+masked by a shared helper, so `fetch.toString()` still reads
+`function fetch() { [native code] }`.
+
+Redirect bodies: `noop.js`, `noop.txt`, `noop.json`, `noop.html`, `noop.css`,
+`1x1.gif`, `2x2.png`, and stand-ins for Google Publisher Tags
+(`googletagservices_gpt.js`: `googletag` with a working `cmd` queue and empty
+slots, because many pages wait on it before they render), Google Analytics
+(`google-analytics_analytics.js`) and AdSense (`googlesyndication_adsbygoogle.js`).
+
+How they run:
+
+- adblock-rust gets the file's sections through `Engine::use_resources` and
+  assembles each host's script from the `+js()` rules that name it
+  (`url_cosmetic_resources().injected_script`), including the helpers it
+  needs. The bridge wraps it in one closure, so nothing becomes a page global.
+- `check_rule` refuses a scriptlet or redirect body Zitter does not ship and
+  lists the ones it has.
+- **Main world at document start.** `tools/content_blocking_patch.py` adds
+  `RendererPreferences::zitter_page_scripts`, a list of `host\nscript` entries,
+  and calls `chrome/renderer/zitter_page_scripts.cc` (kept in
+  `chromium/renderer/`) from `ChromeContentRendererClient::RunScriptsAtDocumentStart`.
+  For every frame, before any page script, it runs the scripts whose host is
+  the frame's host or a parent domain of it. It uses the inherited origin for
+  `about:blank` and `srcdoc` frames, which ad code uses to fetch clean natives.
+- `ContentBlockingTabHelper` fills that list per tab: the profile's page
+  scripts for hosts where blocking is on, a trial's, and the diagnosis
+  probe. It syncs the renderer preferences only when the list changes.
+
+Main-world code is visible to the page in principle (it shares the page's
+objects); the wrappers keep their native look, and the helpers live in a
+closure.
 
 ### Per-site switch and the toolbar shield
 
@@ -285,6 +350,41 @@ when they carry their own label. Anti-adblock walls are removed with
 its position (`:nth-of-type` chains): on a front page that slot holds an article
 on the next visit.
 
+**`adblock_add_rules` with `check: true`** saves nothing and asks nothing.
+It validates the rules the same way, then puts them on trial in this tab only:
+
+- a small engine of just those rules supplies the tab's page scripts and
+  answers its requests first;
+- the tab reloads;
+- the hiding rules apply after the load.
+
+The model then looks (screenshot, `read_page`) and calls again without `check`
+to save, with consent. Leaving the site, or saving, ends the trial. The tool's
+description tells the model to always try scriptlet and redirect rules first.
+
+**`adblock_diagnose {tab}`** (page and action permissions) is for
+anti-adblock walls, ads that come back, and ads painted into a canvas. It
+sets a probe (`content_blocking_probe.js`) as the tab's main-world script for
+one reload, waits for the load and six seconds more, and reads the probe's log
+through a `CustomEvent` whose name is a random nonce only the isolated world
+knows. The log holds:
+
+- `bait_reads`: who measures elements named like ads (`offsetHeight`,
+  `getComputedStyle`, `getBoundingClientRect`);
+- `failed_loads` and `error_listeners`: which loads failed (blocked bait) and
+  who listens for that;
+- `globals`: reads and writes of detector globals (`canRunAds`,
+  `isAdBlockActive`, `googletag`…);
+- `walls` and `scroll_locks`: big or fixed elements whose text asks to turn
+  blocking off, the script that inserted them, and `overflow: hidden` on
+  `<html>`/`<body>`;
+- `canvas`: every image drawn into a 2D or WebGL canvas, with its source,
+  size and draw count.
+
+Each entry names its script (`by`, from the call stack), so the model can
+write `abort-current-script`, `set-constant`, `$redirect` or `zitter-skip-draw`
+rules. Then it tries them with `check`. The probe is removed after the one load.
+
 With the Claude CLI backend, a screenshot switches the request to `stream-json`
 input, where the model tends to call browser tools natively; the CLI refuses
 ("No such tool") and the turn could end without saving anything. A note after
@@ -364,6 +464,17 @@ reguły**.
     it appears; three missed loads make a rule stale and one hit clears it;
     `replaces` swaps the stale rule for a new one and refuses rules that were
     never saved.
+  - `ScriptletsRedirectsAndCanvasBeatAnAntiAdblockWall`
+    (`testdata/adblock_wall.html`): the page walls itself off because its bait
+    script is blocked and `canRunAds` is missing, and it paints an ad into a
+    canvas. `adblock_diagnose` names the failed load, the global, the bait
+    element, the wall and the canvas draw, and leaves no probe behind. Unknown
+    scriptlets and bodies are refused. `check` with `set-constant`, a `noop.js`
+    redirect and `zitter-skip-draw` reloads the tab without the wall, with the
+    bait loaded and the canvas empty, saving nothing; saved, the same holds on
+    a fresh load through the profile's engine, and `toString` stays native and
+    no helper becomes a global. A `:mask()` covers half the canvas; the site
+    switch removes the scripts.
 
 ## Known limits
 
@@ -375,13 +486,16 @@ reguły**.
   unfiltered.
 - Generic hiding sees classes and IDs at commit, DOMContentLoaded, load and 3 s
   later; elements added after that only get the site's and complex generic rules.
-- Scriptlets and `$redirect` resources are not supported (uBO's resources are
-  GPL). Procedural operators that need them or their engine
-  (`:watch-attr()`, `:others()`, `:shadow()`, `:matches-prop()`) are refused.
+- Scriptlets and redirect bodies are Zitter's own set (above); rules naming
+  uBO-only ones (`trusted-*`, `href-sanitizer`, …) are refused, as are the
+  procedural operators `:watch-attr()`, `:others()`, `:shadow()` and
+  `:matches-prop()`.
+- Scriptlets reach a new frame through renderer preferences: a page that
+  opens right after rules change may load once without them.
 - Procedural rules are re-run on DOM changes, not on scroll or style changes
   alone.
-- Ads drawn into a `<canvas>` and anti-adblock scripts that do more than show a
-  wall are not handled yet; see
+- Server-side gating (content only after an ad impression) and ads stitched
+  into a video stream cannot be fixed in the page; see
   [ad-blocking-canvas-and-anti-adblock.md](ad-blocking-canvas-and-anti-adblock.md).
 
 ## Status
@@ -391,4 +505,7 @@ Implemented as planned above, in `chromium/prototype/adblock.rs` (engine bridge)
 tab counts), `extensions_bar.cc` (shield), `sidebar_scene.rs` and
 `workspace_shell.cc` (Settings), `workspace_assistant.cc`, `page.js` and
 `engine.mjs` (assistant tools). Procedural rules, label anchors and stale-rule
-repair were added afterwards in the same files.
+repair were added afterwards in the same files. Then came scriptlets, redirect
+bodies, the main-world hook, `:mask()`, `zitter-skip-draw`, `adblock_diagnose`
+and `check`, in `adblock_resources.js`, `content_blocking_probe.js`,
+`chromium/renderer/zitter_page_scripts.cc` and `tools/content_blocking_patch.py`.

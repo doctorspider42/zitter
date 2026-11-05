@@ -530,6 +530,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Rozmowy są zapisane na tym komputerze. Usuń te, których nie potrzebujesz.", "Conversations are saved on this computer. Delete the ones you no longer need."),
     // Ad blocking (docs/ad-blocking.md).
     ("Przygotowuję reguły blokowania…", "Preparing blocking rules…"),
+    ("Sprawdzam, jak strona wykrywa blokowanie…", "Checking how the page detects blocking…"),
     ("Szukam reklam na stronie…", "Looking for ads on the page…"),
     ("Reguła jest za długa.", "The rule is too long."),
     ("Tej reguły nie da się użyć: {}", "This rule cannot be used: {}"),

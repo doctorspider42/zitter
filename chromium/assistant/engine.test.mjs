@@ -190,6 +190,9 @@ test('ad blocking tools are documented for the model and leave the runtime as br
   assert.match(SYSTEM, /Never pin an element by its position/);
   assert.match(SYSTEM, /:has-text\(/);
   assert.match(SYSTEM, /replaces lists this site's saved rules/);
+  assert.ok(SYSTEM.includes('adblock_diagnose {tab:string}'));
+  assert.match(SYSTEM, /zitter-skip-draw/);
+  assert.match(SYSTEM, /With check:\ntrue nothing is saved/);
   assert.match(HELP, /Ad blocking is built in/);
   const engine = new Engine({ providerFactory: () => ({ async complete() {
     return { answer: 'Checking', actions: [action('adblock_inspect', { tab: '@current' }),

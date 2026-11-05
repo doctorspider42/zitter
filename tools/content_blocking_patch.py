@@ -4,7 +4,11 @@
 
 Installs the vendored adblock-rust crates (third_party/rust) as
 //third_party/rust/zitter_vendor, where Chromium's crates are visible to them,
-and registers the per-profile prefs. Unchanged files keep their mtimes.
+registers the per-profile prefs, and adds the renderer hook that runs the
+scriptlets in the page's own world at document start: a
+RendererPreferences field the browser fills per tab, read by
+chrome/renderer/zitter_page_scripts.cc (kept in chromium/renderer/).
+Unchanged files keep their mtimes.
 """
 from pathlib import Path
 import os
@@ -30,7 +34,43 @@ EDITS = [
     ('chrome/browser/prefs/browser_prefs.cc',
      f'  registry->RegisterListPref("{RULES}");\n',
      f'  registry->RegisterDictionaryPref("{RULE_MISSES}");\n'),
+    # Scriptlets: the browser's per-tab list of "host\nscript" entries...
+    ('third_party/blink/public/common/renderer_preferences/renderer_preferences.h',
+     '  std::string accept_languages;\n',
+     '  // Zitter: ad blocking scripts for the page\'s own world, "host\\nscript".\n'
+     '  std::vector<std::string> zitter_page_scripts;\n'),
+    ('third_party/blink/public/mojom/renderer_preferences.mojom',
+     '  string accept_languages;\n',
+     '\n  // Zitter: ad blocking scripts for the page\'s own world, "host\\nscript".\n'
+     '  array<string> zitter_page_scripts;\n'),
+    ('third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h',
+     '  static const std::string& accept_languages(\n'
+     '      const ::blink::RendererPreferences& data) {\n'
+     '    return data.accept_languages;\n  }\n',
+     '\n  static const std::vector<std::string>& zitter_page_scripts(\n'
+     '      const ::blink::RendererPreferences& data) {\n'
+     '    return data.zitter_page_scripts;\n  }\n'),
+    ('third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc',
+     '  if (!data.ReadAcceptLanguages(&out->accept_languages))\n    return false;\n',
+     '  if (!data.ReadZitterPageScripts(&out->zitter_page_scripts))\n    return false;\n'),
+    # ...run by the renderer at document start, before any page script.
+    ('chrome/renderer/chrome_content_renderer_client.cc',
+     '#include "chrome/renderer/chrome_content_renderer_client.h"\n',
+     '// Zitter: ad blocking scriptlets in the page\'s own world.\n'
+     '#include "chrome/renderer/zitter_page_scripts.h"\n'),
+    ('chrome/renderer/chrome_content_renderer_client.cc',
+     'void ChromeContentRendererClient::RunScriptsAtDocumentStart(\n'
+     '    content::RenderFrame* render_frame) {\n',
+     '  // Zitter: ad blocking scriptlets (docs/ad-blocking.md).\n'
+     '  zitter::RunPageScripts(render_frame);\n'),
+    ('chrome/renderer/BUILD.gn',
+     '    "chrome_content_renderer_client.h",\n',
+     '    "zitter_page_scripts.cc",\n    "zitter_page_scripts.h",\n'),
 ]
+# Zitter's own renderer sources: chromium/renderer/<name> -> chrome/renderer/<name>.
+OWNED = ['zitter_page_scripts.h', 'zitter_page_scripts.cc']
+OWNED_MARKER = b'Copyright 2026 Zitter contributors'
+
 # (path, old, new): Chromium marks aho-corasick "safe" (unsafe code forbidden),
 # yet its sources use `unsafe impl`, so nothing that needs it builds. regex
 # (and so adblock-rust) needs it through regex-automata.
@@ -78,6 +118,12 @@ def prepare(checkout):
         for path in vendor.rglob('*'):
             if path.is_file() and path.relative_to(vendor).as_posix() not in wanted:
                 plan[path] = (path.read_bytes(), None)
+    for name in OWNED:
+        target = _inside(root, root / 'chrome/renderer' / name)
+        old = target.read_bytes() if target.exists() else None
+        if old is not None and OWNED_MARKER not in old:
+            raise ValueError(f'Refusing to replace an unowned file: {target}')
+        plan[target] = (old, (ROOT / 'chromium/renderer' / name).read_bytes())
     for path, anchor, addition in EDITS:
         target = _inside(root, root / path)
         # Several edits of one file build on each other.

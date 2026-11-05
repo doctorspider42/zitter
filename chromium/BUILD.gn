@@ -26,6 +26,8 @@ rust_static_library("sidebar_scene") {
 rust_static_library("content_blocking_engine") {
   crate_root = "chromium/prototype/adblock.rs"
   sources = [ crate_root ]
+  # Zitter's scriptlets and redirect bodies, compiled in with include_str!.
+  inputs = [ "chromium/prototype/adblock_resources.js" ]
   cxx_bindings = [ crate_root ]
   allow_unsafe = true
   build_native_rust_unit_tests = true
@@ -193,6 +195,7 @@ source_set("shell") {
   public_deps = [
     ":assistant_page_script",
     ":content_blocking_engine",
+    ":content_blocking_probe_script",
     ":content_blocking_script",
     ":core",
     ":sidebar_scene",
@@ -311,6 +314,13 @@ action("assistant_page_script") {
   sources = [ "chromium/assistant/page.js" ]
   outputs = [ "$target_gen_dir/assistant_page_script.h" ]
   args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir) ]
+}
+
+action("content_blocking_probe_script") {
+  script = "chromium/assistant/embed.py"
+  sources = [ "chromium/prototype/content_blocking_probe.js" ]
+  outputs = [ "$target_gen_dir/content_blocking_probe_script.h" ]
+  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingProbeScript" ]
 }
 
 action("content_blocking_script") {

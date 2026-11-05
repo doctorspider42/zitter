@@ -30,6 +30,11 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/isolated_world_ids.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "mojo/public/cpp/system/data_pipe.h"
+#include "net/base/data_url.h"
+#include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
+#include "url/origin.h"
 #include "content_blocking_script.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
@@ -163,6 +168,9 @@ struct ContentBlocking::ProfileState final : base::SupportsUserData::Data {
   std::set<std::string> allowed;
   std::optional<rust::Box<adblock::Engine>> engine;
   uint64_t generation = 0, built = 0;
+  // page_scripts() of `engine`, for the generation it was built from.
+  std::vector<std::pair<std::string, std::string>> scripts;
+  uint64_t scripts_built = 0;
   base::WeakPtrFactory<ProfileState> weak_factory{this};
 };
 
@@ -407,7 +415,10 @@ void ContentBlocking::RemoveRule(Profile* profile, const std::string& rule) {
 std::string ContentBlocking::HidingSelector(const std::string& rule) {
   for (const char* separator : {"##", "#?#"}) {
     const auto at = rule.find(separator);
-    if (at != std::string::npos && !rule.starts_with("!")) return rule.substr(at + std::char_traits<char>::length(separator));
+    if (at == std::string::npos || rule.starts_with("!")) continue;
+    // Scriptlets (`##+js(`) run in the page's own world, not as selectors.
+    auto selector = rule.substr(at + std::char_traits<char>::length(separator));
+    return selector.starts_with("+js(") ? std::string() : selector;
   }
   return std::string();
 }
@@ -435,11 +446,24 @@ std::vector<std::string> ContentBlocking::StaleRules(Profile* profile, const GUR
   return stale;
 }
 
-ContentBlocking::Verdict ContentBlocking::Check(Profile* profile, const GURL& url, const GURL& page, const std::string& type) {
+ContentBlocking::Verdict ContentBlocking::Check(Profile* profile, const GURL& url, const GURL& page, const std::string& type,
+                                                std::string* redirect) {
   auto* state = StateFor(profile, true);
   if (!state || !state->enabled || state->Allowed(page)) return Verdict::kOff;
   if (!state->engine || !url.SchemeIsHTTPOrHTTPS()) return Verdict::kAllow;
-  return (*state->engine)->check_request(url.spec(), page.spec(), type) == 1 ? Verdict::kBlock : Verdict::kAllow;
+  const auto check = (*state->engine)->check_request(url.spec(), page.spec(), type);
+  if (redirect) *redirect = std::string(check.redirect);
+  return check.verdict == 1 ? Verdict::kBlock : Verdict::kAllow;
+}
+std::vector<std::pair<std::string, std::string>> ContentBlocking::PageScripts(Profile* profile) {
+  auto* state = StateFor(profile, true);
+  if (!state || !state->engine) return {};
+  if (state->scripts_built != state->built) {
+    state->scripts.clear();
+    for (const auto& script : (*state->engine)->page_scripts()) state->scripts.emplace_back(std::string(script.host), std::string(script.script));
+    state->scripts_built = state->built;
+  }
+  return state->scripts;
 }
 ContentBlocking::Cosmetic ContentBlocking::CosmeticFor(Profile* profile, const GURL& url) {
   auto* state = StateFor(profile, true);
@@ -455,8 +479,45 @@ std::vector<std::string> ContentBlocking::GenericSelectors(Profile* profile, con
 }
 
 namespace {
+// The loader of a request Zitter answered itself: nothing left to do.
+class ServedLoader final : public network::mojom::URLLoader {
+ public:
+  void FollowRedirect(network::HttpRequestHeadersUpdateParams, const std::optional<GURL>&) override {}
+  void SetPriority(net::RequestPriority, int32_t) override {}
+};
+// `$redirect=`: a 200 response with the body of a resource Zitter ships
+// (adblock_resources.js), so bait requests look like they loaded.
+bool Serve(const std::string& data_url, const network::ResourceRequest& request,
+           mojo::PendingReceiver<network::mojom::URLLoader> loader, mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
+  std::string mime, charset, body;
+  if (!net::DataURL::Parse(GURL(data_url), &mime, &charset, &body)) return false;
+  mojo::ScopedDataPipeProducerHandle producer;
+  mojo::ScopedDataPipeConsumerHandle consumer;
+  if (mojo::CreateDataPipe(std::max<size_t>(body.size(), 1), producer, consumer) != MOJO_RESULT_OK) return false;
+  if (!body.empty() && producer->WriteAllData(base::as_byte_span(body)) != MOJO_RESULT_OK) return false;
+  producer.reset();
+  auto head = network::mojom::URLResponseHead::New();
+  head->mime_type = mime;
+  head->charset = charset;
+  head->content_length = static_cast<int64_t>(body.size());
+  head->headers = net::HttpResponseHeaders::TryToCreate("HTTP/1.1 200 OK\r\n\r\n");
+  head->headers->SetHeader("Content-Type", mime);
+  head->headers->SetHeader("Access-Control-Allow-Origin", "*");
+  const bool same_origin = request.request_initiator && request.request_initiator->IsSameOriginWith(request.url);
+  head->response_type = same_origin ? network::mojom::FetchResponseType::kBasic
+                        : request.mode == network::mojom::RequestMode::kNoCors ? network::mojom::FetchResponseType::kOpaque
+                                                                              : network::mojom::FetchResponseType::kCors;
+  mojo::MakeSelfOwnedReceiver(std::make_unique<ServedLoader>(), std::move(loader));
+  mojo::Remote<network::mojom::URLLoaderClient> remote(std::move(client));
+  remote->OnReceiveResponse(std::move(head), std::move(consumer), std::nullopt);
+  network::URLLoaderCompletionStatus status(net::OK);
+  status.decoded_body_length = base::ByteSize(body.size());
+  remote->OnComplete(status);
+  return true;
+}
 // A frame's or worker's URLLoaderFactory in front of the real one: a blocked
-// request fails with ERR_BLOCKED_BY_CLIENT before it leaves the browser.
+// request fails with ERR_BLOCKED_BY_CLIENT before it leaves the browser, or
+// gets a neutral body when a `$redirect=` rule names one.
 class BlockingFactory final : public network::mojom::URLLoaderFactory {
  public:
   BlockingFactory(Profile* profile, base::WeakPtr<ContentBlocking::ProfileState> state, GURL page,
@@ -474,13 +535,18 @@ class BlockingFactory final : public network::mojom::URLLoaderFactory {
     // Never the page itself: a blocked top-level document would show only an
     // error. The state lives on the original profile, which `profile_` is, and
     // goes with it.
-    if (state_ && request.destination != network::mojom::RequestDestination::kDocument &&
-        ContentBlocking::Get().Check(profile_, request.url, page_, RequestType(request)) == ContentBlocking::Verdict::kBlock) {
-      mojo::Remote<network::mojom::URLLoaderClient>(std::move(client))->OnComplete(
-          network::URLLoaderCompletionStatus(net::ERR_BLOCKED_BY_CLIENT));
-      if (auto* frame = content::RenderFrameHost::FromID(frame_))
-        if (auto* contents = content::WebContents::FromRenderFrameHost(frame))
-          if (auto* helper = ContentBlockingTabHelper::FromWebContents(contents)) helper->RecordBlocked(request.url);
+    ContentBlockingTabHelper* helper = nullptr;
+    if (auto* frame = content::RenderFrameHost::FromID(frame_))
+      if (auto* contents = content::WebContents::FromRenderFrameHost(frame)) helper = ContentBlockingTabHelper::FromWebContents(contents);
+    std::string redirect;
+    const bool blocked = state_ && request.destination != network::mojom::RequestDestination::kDocument &&
+        ((helper && helper->has_trial() && helper->TrialBlocks(request.url, page_, RequestType(request), &redirect)) ||
+         ContentBlocking::Get().Check(profile_, request.url, page_, RequestType(request), &redirect) == ContentBlocking::Verdict::kBlock);
+    if (blocked) {
+      if (redirect.empty() || !Serve(redirect, request, std::move(loader), std::move(client)))
+        if (client) mojo::Remote<network::mojom::URLLoaderClient>(std::move(client))->OnComplete(
+            network::URLLoaderCompletionStatus(net::ERR_BLOCKED_BY_CLIENT));
+      if (helper) helper->RecordBlocked(request.url);
       return;
     }
     target_->CreateLoaderAndStart(std::move(loader), request_id, options, request, std::move(client), traffic_annotation);
@@ -526,11 +592,57 @@ void ContentBlocking::WillCreateURLLoaderFactory(content::BrowserContext* contex
 // Tabs ----------------------------------------------------------------------
 WEB_CONTENTS_USER_DATA_KEY_IMPL(ContentBlockingTabHelper);
 
+// A small engine of the rules on trial and the site they are for.
+struct ContentBlockingTabHelper::Trial {
+  rust::Box<adblock::Engine> engine;
+  std::string site;
+};
+
 ContentBlockingTabHelper::ContentBlockingTabHelper(content::WebContents* contents)
     : content::WebContentsObserver(contents), content::WebContentsUserData<ContentBlockingTabHelper>(*contents) {
   rules_changed_ = ContentBlocking::Get().Observe(base::BindRepeating(&ContentBlockingTabHelper::Reapply, base::Unretained(this)));
+  ApplyPageScripts();
 }
 ContentBlockingTabHelper::~ContentBlockingTabHelper() = default;
+void ContentBlockingTabHelper::ApplyPageScripts() {
+  auto* profile = this->profile();
+  std::vector<std::string> next;
+  auto add = [&](const std::string& host, const std::string& script) {
+    if (ContentBlocking::EnabledFor(profile, GURL("https://" + host + "/"))) next.push_back(host + "\n" + script);
+  };
+  for (const auto& [host, script] : ContentBlocking::Get().PageScripts(profile)) add(host, script);
+  if (trial_) for (const auto& script : trial_->engine->page_scripts()) add(std::string(script.host), std::string(script.script));
+  if (!probe_.empty()) next.push_back("*\n" + probe_);
+  auto& scripts = GetWebContents().GetMutableRendererPrefs()->zitter_page_scripts;
+  if (scripts == next) return;
+  scripts = std::move(next);
+  GetWebContents().SyncRendererPrefs();
+}
+bool ContentBlockingTabHelper::SetTrial(const std::vector<std::string>& rules, std::string* error) {
+  for (const auto& rule : rules)
+    if (auto problem = ContentBlocking::RuleError(rule); !problem.empty()) { if (error) *error = rule + ": " + problem; return false; }
+  rust::Vec<rust::String> lists;
+  lists.push_back(rust::String(base::JoinString(rules, "\n")));
+  trial_ = std::make_unique<Trial>(Trial{adblock::new_engine(lists), ContentBlocking::RegistrableDomain(GetWebContents().GetLastCommittedURL())});
+  ApplyPageScripts();
+  return true;
+}
+void ContentBlockingTabHelper::ClearTrial() {
+  if (!trial_) return;
+  trial_.reset();
+  ApplyPageScripts();
+}
+bool ContentBlockingTabHelper::TrialBlocks(const GURL& url, const GURL& page, const std::string& type, std::string* redirect) {
+  if (!trial_ || !url.SchemeIsHTTPOrHTTPS() || !ContentBlocking::EnabledFor(profile(), page)) return false;
+  const auto check = trial_->engine->check_request(url.spec(), page.spec(), type);
+  if (check.verdict != 1) return false;
+  if (redirect) *redirect = std::string(check.redirect);
+  return true;
+}
+void ContentBlockingTabHelper::SetProbe(std::string script) {
+  probe_ = std::move(script);
+  ApplyPageScripts();
+}
 void ContentBlockingTabHelper::Attach(content::WebContents* contents) {
   CreateForWebContents(contents);
 }
@@ -554,6 +666,8 @@ void ContentBlockingTabHelper::ReadyToCommitNavigation(content::NavigationHandle
   // The count belongs to the page: a new document starts at zero, before its
   // first subresource can be blocked.
   if (!navigation->IsInPrimaryMainFrame() || navigation->IsSameDocument()) return;
+  // A trial is for its site: leaving it ends the trial.
+  if (trial_ && ContentBlocking::RegistrableDomain(navigation->GetURL()) != trial_->site) ClearTrial();
   rescan_.Stop();
   health_.Stop();
   blocked_requests_ = 0;
@@ -648,6 +762,7 @@ void ContentBlockingTabHelper::Scan(content::RenderFrameHost* frame, bool reset)
       }, weak_factory_.GetWeakPtr(), frame->GetGlobalId(), cosmetic.exceptions));
 }
 void ContentBlockingTabHelper::Reapply() {
+  ApplyPageScripts();
   GetWebContents().GetPrimaryMainFrame()->ForEachRenderFrameHost([this](content::RenderFrameHost* frame) {
     if (!frame->IsRenderFrameLive() || !frame->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) return;
     Style(frame);

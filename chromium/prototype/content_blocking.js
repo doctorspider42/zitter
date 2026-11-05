@@ -19,8 +19,8 @@
   // and URLs are generated).
   const OPERATORS = new Set(['has-text', 'contains', '-abp-contains', 'upward', 'matches-attr', 'matches-css', 'matches-css-before',
                              'matches-css-after', 'matches-path', 'min-text-length', 'min-size', 'xpath', 'has', '-abp-has', 'if', 'not', 'if-not']);
-  const ACTIONS = new Set(['remove', 'style', 'remove-attr', 'remove-class']);
-  const PROCEDURAL = /:(has-text|contains|-abp-contains|-abp-has|upward|matches-attr|matches-css(-before|-after)?|matches-path|min-text-length|min-size|xpath|if|if-not|remove|style|remove-attr|remove-class)\(/;
+  const ACTIONS = new Set(['remove', 'style', 'remove-attr', 'remove-class', 'mask']);
+  const PROCEDURAL = /:(has-text|contains|-abp-contains|-abp-has|upward|matches-attr|matches-css(-before|-after)?|matches-path|min-text-length|min-size|xpath|if|if-not|remove|style|remove-attr|remove-class|mask)\(/;
   // The index of the `)` closing the `(` at `open`, past escapes and quoted
   // attribute values (`:has-text(Don't)` has no quote to close).
   const closing = (text, open) => {
@@ -59,6 +59,13 @@
     const name = text.slice(0, end).trim(), rest = text.slice(end).trim();
     if (!rest) return [name, null];
     return rest[0] === '=' ? [name, rest.slice(1)] : ['', null];
+  };
+  // Zitter's own `:mask(x, y, width, height)`: a region of an element, in CSS
+  // pixels or percents of its box, for ads painted inside a canvas or video.
+  const region = text => {
+    const parts = text.split(',').map(part => part.trim());
+    if (parts.length !== 4 || !parts.every(part => /^\d+(\.\d+)?(px|%)?$/.test(part))) throw new Error(':mask() needs x, y, width, height');
+    return parts.map(part => ({ value: parseFloat(part), percent: part.endsWith('%') }));
   };
   // A selector becomes a CSS head, then steps run on the elements it found.
   const compile = (text, nested = false) => {
@@ -107,6 +114,7 @@
     if (!steps.length) steps.push({ css: '*' });
     if (steps[0].css && !valid(steps[0].css.replace(/^[>+~]\s*/, ''))) throw new Error(`bad CSS: ${steps[0].css}`);
     if (action?.type === 'style' && /url\(|expression|javascript:/i.test(action.arg)) throw new Error(':style() may not load anything');
+    if (action?.type === 'mask') action.box = region(action.arg);
     if (action && action.type !== 'remove' && !action.arg.trim()) throw new Error(`:${action.type}() needs an argument`);
     return { steps, action };
   };
@@ -238,6 +246,7 @@
   // hid, so those elements stay hidden while they are in the page.
   const apply = () => {
     const hide = new Set();
+    const masks = new Set();
     state.sticky ??= new Map();
     for (const list of Object.values(state.procedural)) for (const selector of list) {
       const rule = compiled(selector);
@@ -261,6 +270,7 @@
         else if (action.type === 'style') for (const [property, value] of declarations(action.arg)) e.style.setProperty(property, value, 'important');
         else if (action.type === 'remove-attr') { const re = pattern(action.arg, true); for (const n of e.getAttributeNames()) if (re.test(n)) e.removeAttribute(n); }
         else if (action.type === 'remove-class') { const re = pattern(action.arg, true); for (const c of [...e.classList]) if (re.test(c)) e.classList.remove(c); }
+        else if (action.type === 'mask') masks.add({ element: e, box: action.box });
       }
     }
     // The slot an ad leaves goes too: a parent with no text of its own whose
@@ -286,8 +296,44 @@
       }
     }
     for (const e of collapsed) e.setAttribute(state.mark, '');
+    state.maskList = [...masks];
+    place();
     state.marked = new Set([...hide, ...collapsed]);
     state.counted = hide;
+  };
+  // Masks: opaque boxes over their regions, in the page's color, following
+  // scrolling and resizing. They take no clicks.
+  state.masks ??= new Map();
+  const place = () => {
+    const wanted = new Set();
+    for (const { element, box } of state.maskList ?? []) {
+      if (!element.isConnected) continue;
+      const key = `${box.map(b => b.value + (b.percent ? '%' : '')).join(',')}`;
+      let byKey = state.masks.get(element);
+      if (!byKey) state.masks.set(element, byKey = new Map());
+      let cover = byKey.get(key);
+      if (!cover) {
+        cover = document.createElement('div');
+        cover.setAttribute('data-zitter', 'mask');
+        byKey.set(key, cover);
+      }
+      wanted.add(cover);
+      const r = element.getBoundingClientRect(), [x, y, w, h] = box.map((b, i) => b.percent ? b.value / 100 * (i % 2 ? r.height : r.width) : b.value);
+      const color = getComputedStyle(document.body ?? document.documentElement).backgroundColor;
+      cover.style.cssText = `position:absolute!important;left:${r.left + scrollX + x}px!important;top:${r.top + scrollY + y}px!important;` +
+        `width:${w}px!important;height:${h}px!important;background:${color === 'rgba(0, 0, 0, 0)' ? '#fff' : color}!important;` +
+        'z-index:2147483646!important;pointer-events:none!important;display:block!important;margin:0!important;border:0!important';
+      if (cover.parentNode !== document.documentElement) document.documentElement.append(cover);
+    }
+    for (const [element, byKey] of state.masks) for (const [key, cover] of byKey)
+      if (!wanted.has(cover)) { cover.remove(); byKey.delete(key); if (!byKey.size) state.masks.delete(element); }
+    if (wanted.size && !state.following) {
+      state.following = true;
+      let frame = 0;
+      const again = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; place(); }); };
+      addEventListener('scroll', again, true);
+      addEventListener('resize', again);
+    }
   };
   // Procedural rules follow the page as it changes, at most every 150 ms, or
   // less often when a pass is slow.

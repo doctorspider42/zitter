@@ -93,7 +93,7 @@ adblock_inspect {tab:string} - for blocking ads on a page (if pages permission):
 third-party requests and hosts, what Zitter already blocked there, the site and whether blocking is on. Use it when the
 user wants ads, banners, sponsored boxes, overlays or trackers gone from a page; add screenshot when unsure what the user
 sees as an ad.
-adblock_add_rules {tab:string,rules:string[],replaces?:string[],reason?:string} - save ad blocking rules for this page's
+adblock_add_rules {tab:string,rules:string[],replaces?:string[],check?:boolean,reason?:string} - save ad blocking rules for this page's
 site (if pages and actions permissions), in Adblock Plus / uBlock syntax: "site##selector" hides elements,
 "||host^$domain=site" blocks a third-party host on this site, "||site/path^" blocks the site's own ad files. Every rule
 must name the page's site. Selectors may use CSS (with :has(), :not(), attribute patterns like [class^="ad-"]) and
@@ -105,7 +105,19 @@ their slot size when names and URLs are generated, e.g. "site##a[href]:has(img):
 90)" for image links with no words), and :has()/:not() around them; ending with an action: :remove() removes the
 element, :style(declarations) restyles it, :remove-attr(name) and :remove-class(name) strip what locks a page (an
 anti-adblock wall: remove the wall, then "site##body:style(overflow: auto)" or :remove-class() on html/body restores
-scrolling). No +js() scriptlets. When class names look generated (random letters that change with deploys), anchor on
+scrolling), and Zitter's :mask(x, y, width, height) (px or % of the element) covers a region of a canvas or video an ad
+is painted into. Scriptlets run in the page's own world before its scripts: "site##+js(name, arg, ...)" with set-constant
+(chain, value: true/false/null/undefined/noopFunc/trueFunc/falseFunc/emptyArr/emptyObj/number), abort-on-property-read
+(chain), abort-on-property-write (chain), abort-current-script (chain, needle), prevent-setTimeout and
+prevent-setInterval (needle, delay), prevent-addEventListener (type, needle), prevent-fetch and prevent-xhr (url
+needle), json-prune (paths to delete, required paths), remove-attr and remove-class (names a|b, selector), set-cookie,
+set-local-storage-item, set-session-storage-item (name, value), no-window-open-if (needle), noeval-if (needle), and
+zitter-skip-draw (image URL needle, WxH) which stops images from being painted into canvases; needles are text or
+/regex/, "!" negates. "||host^$script,redirect=noop.js,domain=site" answers a blocked request with a harmless body
+instead of an error (noop.js, noop.txt, noop.json, noop.html, noop.css, 1x1.gif, 2x2.png, googletagservices_gpt.js,
+google-analytics_analytics.js, googlesyndication_adsbygoogle.js), for detectors that watch failed loads. With check:
+true nothing is saved and nobody is asked: the rules act in this tab only and it reloads with them; look (screenshot)
+and then call again without check to save. Always check scriptlet and redirect rules first. When class names look generated (random letters that change with deploys), anchor on
 what the ad must show: its label, e.g. "site##span:has-text(/^REKLAMA$/i):upward(2)" or "site##article:has(>
 small:has-text(/^Mat\\. promocyjny$/))", a link or image host, an attribute, or a fixed ad size; start from rule_hint.
 Sponsored items mixed into real content are fine to hide when they carry their own label.
@@ -117,6 +129,12 @@ the page in one call. replaces lists this site's saved rules (exactly as saved) 
 stopped working. Before it: adblock_inspect, then keep only what the user would call an ad, never the article, product
 or video they came for; prefer rules with few matches. After it, say what was hidden and that the rules can be removed
 in Settings, Ad blocking.
+adblock_diagnose {tab:string} - for anti-adblock walls, ads that come back, and ads painted into a canvas (if pages and
+actions permissions): reloads the tab once with probes in the page's own world and returns which scripts (by) read
+bait elements, listen to failed loads, read detector globals, which walls and scroll locks appeared, what failed to
+load, and every image drawn into a canvas (source, size, draws). Use it when a page nags about ad blocking, hides
+content or keeps re-adding an ad, or when an ad is inside a canvas; then write +js(), $redirect, :remove() or
+zitter-skip-draw rules and try them with adblock_add_rules check: true.
 history {query:string} - search current profile history (if history permission).
 web_search {query:string}, web_read {url:string} - public web search/read without cookies (if web permission).
 Deep research workers may only use browser_help, web_search and web_read.

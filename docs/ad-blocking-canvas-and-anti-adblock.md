@@ -1,8 +1,9 @@
 # Ad blocking: anti-adblock and canvas ads (plan)
 
-Status: **plan, not implemented.** It follows [ad-blocking.md](ad-blocking.md),
-which describes what ships: network rules, cosmetic and procedural hiding,
-assistant-written rules and stale-rule repair.
+Status: **implemented**, except where a step says otherwise. The details of
+what ships are in [ad-blocking.md](ad-blocking.md) ("Scriptlets and redirect
+bodies", `adblock_diagnose`, `check`). This page keeps the reasoning and the
+limits. Where the build differs from the plan, the step says so.
 
 What is still missing falls into two groups:
 
@@ -46,15 +47,18 @@ The assistant knows these actions. They do not help when the page:
 
 ### Plan
 
-**Step A: run in the page's main world at document start (the base for
-everything below).**
+**Step A: run in the page's main world at document start (done).**
 
 - Add a renderer-side hook to the overlay: a `content::RenderFrameObserver`
   that runs a script synchronously in `DidCreateScriptContext` for the main
   world, before any page script. This is how Brave injects its cosmetic
   filtering and scriptlets.
-- The script comes from the browser per frame URL over a small mojo interface,
-  like the isolated-world calls today.
+- Built differently: the scripts reach the renderer as a
+  `RendererPreferences` field the browser fills per tab, a list of
+  `host\nscript` entries the renderer matches against each frame's host. It
+  is the channel the fingerprint key already uses, and it needs no new mojom
+  interface. The hook is `ChromeContentRendererClient::RunScriptsAtDocumentStart`
+  (extensions' `document_start`), not `DidCreateScriptContext`.
 - It needs a `ContentRendererClient` patch in `tools/` (Zitter has no renderer
   code yet), plus browser tests that check it runs before an inline
   `<script>`.
@@ -65,7 +69,7 @@ everything below).**
   - DevTools `Page.addScriptToEvaluateOnNewDocument` attaches a debugger to
     every tab.
 
-**Step B: Zitter's own scriptlet library (Apache-2.0, written from scratch).**
+**Step B: Zitter's own scriptlet library (Apache-2.0, written from scratch; done).**
 
 uBO's scriptlets are GPL-3.0, as is AdGuard's Scriptlets library, so neither
 ships. Zitter writes its own from their documented behavior, under the same
@@ -95,7 +99,7 @@ How it fits together:
 - `check_rule` then accepts `+js()` for scriptlets that exist and refuses
   unknown names.
 
-**Step C: neutral answers instead of errors.**
+**Step C: neutral answers instead of errors (done).**
 
 Many detectors only notice the failed request. With `$redirect=` (also parsed
 by adblock-rust) the request proxy answers from a resource Zitter ships instead
@@ -110,7 +114,7 @@ These are Zitter's own files, again because uBO's are GPL. This needs a branch i
 URLLoader proxy that completes a blocked request with a body instead of
 `ERR_BLOCKED_BY_CLIENT`.
 
-**Step D: the assistant finds the detector.**
+**Step D: the assistant finds the detector (done).**
 
 A new tool `adblock_diagnose {tab}`:
 
@@ -137,12 +141,12 @@ rules need a reload to show their effect.
 
 ### Order and rough size
 
-| Step | Size (estimate) | Unblocks |
+| Step | Status | Unblocks |
 | --- | --- | --- |
-| A. Main-world hook | 2–3 days with tests | B, C (surrogates that run JS), D, canvas level 3 |
-| B. Scriptlets (≈12) | ~1 week with test pages | Most detectors |
-| C. Redirect resources + GPT surrogate | 2–3 days | Detectors that watch request errors |
-| D. `adblock_diagnose` + check mode | 2–3 days | The assistant writing B and C rules itself |
+| A. Main-world hook | done | B, C (surrogates that run JS), D, canvas level 3 |
+| B. Scriptlets (≈20) | done | Most detectors |
+| C. Redirect resources + GPT surrogate | done | Detectors that watch request errors |
+| D. `adblock_diagnose` + check mode | done | The assistant writing B and C rules itself |
 
 ## 2. Canvas ads
 
@@ -165,9 +169,9 @@ walk, `<canvas>` and `<video>` elements of standard ad sizes become
 candidates; inside a labelled or third-party box they are found through that
 box. This covers case 1.
 
-**Level 2: mask a region (case 2, static layouts only).**
+**Level 2: mask a region (case 2, static layouts only; done).**
 
-- A new Zitter-only action, `site##canvas#app:mask(x, y, w, h)`, places an
+- A Zitter-only action, `site##canvas#app:mask(x, y, w, h)`, places an
   opaque box above that region of the element. The coordinates are relative
   to the canvas and follow its resizes.
 - The assistant gets the region from a screenshot (the model sees it) and the
@@ -176,22 +180,25 @@ box. This covers case 1.
   so it only suits ads at fixed positions (a bottom banner in a game).
 - The rule must say it is Zitter syntax, so other blockers ignore it.
 
-**Level 3: stop the draw (case 2, the real fix; needs step A).**
+**Level 3: stop the draw (case 2, the real fix; done).**
 
 - Main-world hooks on `CanvasRenderingContext2D.drawImage`, `putImageData`,
   `createPattern` and WebGL `texImage2D` / `texSubImage2D` record where each
   drawn image came from: the `src` of an `<img>`, the URL behind an
   `ImageBitmap` or a `fetch`, its size and the target rectangle.
-- A new tool, `canvas_inspect {tab}`, returns that list for the model, with a
-  crop of each image so it can see which one is the ad.
-- A rule such as `site##canvas:skip-draw(src=/\/creatives\//)` or
-  `skip-draw(size=300x250)` turns those draws into no-ops.
+- Built differently: `adblock_diagnose` returns that list (its `canvas` field)
+  instead of a separate `canvas_inspect` tool, and it has no image crops; the
+  model takes a screenshot for that.
+- The rule is a scriptlet, `site##+js(zitter-skip-draw, /creatives/)` or
+  `+js(zitter-skip-draw, , 300x250)`, so it reaches the main world like the
+  others.
 - When the ad image comes from an ad host, the network rule already blocks
   it. This is for first-party CDNs with random paths (the wp.pl pattern).
 - A perceptual hash of the creative is a later option, for when the source
   URL and size reveal nothing.
 - Cost: the hooks wrap hot drawing calls, so they install only on sites with a
-  `skip-draw` rule.
+  `zitter-skip-draw` rule.
+- Not built: a perceptual hash of the creative.
 
 **Level 4: video.** Out of scope. Server-side ad insertion has no separate
 request or element to block. The only realistic move is the player's own skip
@@ -199,19 +206,15 @@ and its manifest, which differs per site.
 
 ### Order and rough size
 
-| Level | Size (estimate) | Needs |
+| Level | Status | Needs |
 | --- | --- | --- |
 | 1. Canvas and video candidates | done | Nothing new |
-| 2. `:mask()` | 2 days | Nothing new (isolated world can draw the mask) |
-| 3. `skip-draw` + `canvas_inspect` | ~1 week | Step A |
+| 2. `:mask()` | done | Nothing new (isolated world can draw the mask) |
+| 3. `zitter-skip-draw` + diagnosis | done | Step A |
 
-## Recommendation
+## What is left
 
-Level 1 is done and covers most "canvas ads" seen on news sites. Next:
-
-1. Step A, because every remaining anti-adblock and canvas measure builds on
-   it.
-2. Then B and C together, since detectors mostly combine bait elements and
-   bait requests.
-3. Then D, so the assistant can write those rules itself.
-4. Level 3 last, when a real site needs it.
+- Level 4 (video) stays out of scope, as do server-side gating and a perceptual
+  hash for canvas creatives.
+- Stale-rule repair counts hiding rules only; scriptlet and redirect rules have
+  no success signal yet.

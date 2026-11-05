@@ -95,7 +95,11 @@ class ContentBlocking final {
 
   // The request check: kBlock when the profile's engine blocks `url` loaded by
   // `page` as `type` (adblock-rust request types: script, image, sub_frame…).
-  Verdict Check(Profile* profile, const GURL& url, const GURL& page, const std::string& type);
+  // With a `$redirect=` rule, `redirect` gets the data: URL to answer with.
+  Verdict Check(Profile* profile, const GURL& url, const GURL& page, const std::string& type, std::string* redirect = nullptr);
+  // Main-world scripts: host -> the scriptlets the profile's `+js()` rules
+  // give it, for the hosts those rules name.
+  std::vector<std::pair<std::string, std::string>> PageScripts(Profile* profile);
   // Cosmetic selectors for a frame on `url`: its site's, the generic ones that
   // need no class/ID lookup, and whether generic class/ID rules apply.
   // `procedural`: rules with an action, as adblock-rust's JSON for the page script.
@@ -155,6 +159,17 @@ class ContentBlockingTabHelper final : public content::WebContentsObserver,
   void RecordBlocked(const GURL& url);
   // Applies the current rules to every frame again (rules or switch changed).
   void Reapply();
+  // Rules on trial (adblock_add_rules check): their scriptlets and network
+  // rules act in this tab only, on its next load, until cleared or saved.
+  // False and `error` when they do not build.
+  bool SetTrial(const std::vector<std::string>& rules, std::string* error);
+  void ClearTrial();
+  bool has_trial() const { return trial_ != nullptr; }
+  // The trial's network verdict, as ContentBlocking::Check gives it.
+  bool TrialBlocks(const GURL& url, const GURL& page, const std::string& type, std::string* redirect);
+  // A main-world script for every frame of this tab, from its next load
+  // (adblock_diagnose's probe); empty removes it.
+  void SetProbe(std::string script);
   // Hides `selectors` at once on the main frame, before the engine has them.
   void HideNow(const std::vector<std::string>& selectors, base::OnceCallback<void(int)> done);
   // Outlines what `selectors` match on the main frame; empty clears it. `done`
@@ -174,6 +189,8 @@ class ContentBlockingTabHelper final : public content::WebContentsObserver,
   void Scan(content::RenderFrameHost* frame, bool reset = false);
   void Run(content::RenderFrameHost* frame, base::DictValue args, base::OnceCallback<void(base::Value)> done);
   void SetHidden(int hidden);
+  // The tab's renderer preferences: which main-world scripts run where.
+  void ApplyPageScripts();
   // Counts what the site's own hiding rules act on once the page has settled.
   void CheckRuleHealth();
   Profile* profile();
@@ -185,6 +202,9 @@ class ContentBlockingTabHelper final : public content::WebContentsObserver,
   base::CallbackListSubscription rules_changed_;
   base::OneShotTimer rescan_;
   base::OneShotTimer health_;
+  struct Trial;
+  std::unique_ptr<Trial> trial_;
+  std::string probe_;
   base::WeakPtrFactory<ContentBlockingTabHelper> weak_factory_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

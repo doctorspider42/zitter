@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/files/file_util.h"
+#include "base/json/json_writer.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
@@ -32,6 +33,7 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "sandbox/policy/features.h"
+#include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/base_window.h"
 
@@ -307,6 +309,59 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, ProceduralRulesAnchorOn
   EXPECT_FALSE(std::ranges::contains(rules, old_rule));
   EXPECT_TRUE(std::ranges::contains(rules, new_rule));
   EXPECT_TRUE(ContentBlocking::StaleRules(work_, url).empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, ScriptletsRedirectsAndCanvasBeatAnAntiAdblockWall) {
+  const GURL url = embedded_test_server()->GetURL("block.test", "/adblock_wall.html");
+  ASSERT_TRUE(content::NavigateToURL(page(), url));
+  // The bait script is blocked and the global is missing: the page walls itself off.
+  ASSERT_TRUE(base::test::RunUntil([&] { return content::EvalJs(page(), "!!document.getElementById('wall') && window.painted === 255").ExtractBool(); }))
+      << content::EvalJs(page(), "JSON.stringify({wall: !!document.getElementById('wall'), painted: window.painted, detected})").ExtractString();
+  // The diagnosis reloads once with probes in the page's own world.
+  const auto diagnosis = Tool("adblock_diagnose", {});
+  ASSERT_TRUE(diagnosis.is_dict() && !diagnosis.GetDict().FindString("error")) << diagnosis;
+  const std::string log = base::WriteJson(diagnosis).value_or("");
+  EXPECT_NE(std::string::npos, log.find("ads.test")) << "the failed bait load: " << log;
+  EXPECT_NE(std::string::npos, log.find("canRunAds")) << "the detector global: " << log;
+  EXPECT_NE(std::string::npos, log.find("div.adsbox")) << "the bait element read: " << log;
+  EXPECT_NE(std::string::npos, log.find("Please disable your ad blocker")) << "the wall: " << log;
+  EXPECT_NE(std::string::npos, log.find("adblock_banner.png")) << "the canvas draw: " << log;
+  EXPECT_TRUE(page()->GetMutableRendererPrefs()->zitter_page_scripts.empty()) << "the probe is gone after one load";
+  // Unknown scriptlets and redirect bodies are refused.
+  EXPECT_NE("", ContentBlocking::RuleError("block.test##+js(no-such-scriptlet)"));
+  EXPECT_NE("", ContentBlocking::RuleError("||ads.test^$redirect=nothing.js,domain=block.test"));
+  // check: the rules act in this tab only and it reloads with them; nothing is saved.
+  const auto rules = base::ListValue()
+      .Append("block.test##+js(set-constant, canRunAds, true)")
+      .Append("||ads.test^$script,redirect=noop.js,domain=block.test")
+      .Append("block.test##+js(zitter-skip-draw, adblock_banner)");
+  const auto tried = Tool("adblock_add_rules", base::DictValue().Set("rules", rules.Clone()).Set("check", true));
+  EXPECT_TRUE(tried.GetDict().FindBool("checked").value_or(false)) << tried;
+  ASSERT_TRUE(base::test::RunUntil([&] { return content::EvalJs(page(), "window.painted !== undefined").ExtractBool(); }));
+  EXPECT_EQ(false, content::EvalJs(page(), "!!document.getElementById('wall')"));
+  EXPECT_EQ(true, content::EvalJs(page(), "window.baitLoaded"));
+  EXPECT_EQ(0, content::EvalJs(page(), "window.painted"));
+  EXPECT_EQ("function toString() { [native code] }", content::EvalJs(page(), "Function.prototype.toString.toString()"));
+  EXPECT_TRUE(ContentBlocking::Rules(work_).empty());
+  // Saved with consent, they come from the profile's engine on every load.
+  const auto saved = Tool("adblock_add_rules", base::DictValue().Set("rules", rules.Clone()), true);
+  EXPECT_TRUE(saved.GetDict().FindBool("ok").value_or(false)) << saved;
+  ASSERT_TRUE(base::test::RunUntil([&] { return ContentBlocking::Get().ReadyForTesting(work_); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !page()->GetMutableRendererPrefs()->zitter_page_scripts.empty(); }));
+  ASSERT_TRUE(content::NavigateToURL(page(), url));
+  ASSERT_TRUE(base::test::RunUntil([&] { return content::EvalJs(page(), "window.painted !== undefined").ExtractBool(); }));
+  EXPECT_EQ(false, content::EvalJs(page(), "!!document.getElementById('wall')"));
+  EXPECT_EQ(true, content::EvalJs(page(), "window.baitLoaded && window.canRunAds === true"));
+  EXPECT_EQ(0, content::EvalJs(page(), "window.painted"));
+  // The page's own world never sees Zitter's helpers as globals.
+  EXPECT_EQ(false, content::EvalJs(page(), "'zitterSafe' in window || 'setConstant' in window"));
+  // A region of a canvas is covered by a mask in the page's color.
+  const auto masked = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue().Append("block.test##canvas#board:mask(0, 0, 50%, 100%)")), true);
+  EXPECT_TRUE(masked.GetDict().FindBool("ok").value_or(false)) << masked;
+  EXPECT_EQ(150, content::EvalJs(page(), "Math.round(document.querySelector('[data-zitter=mask]').getBoundingClientRect().width)"));
+  // The site switch turns the scriptlets off with everything else.
+  ContentBlocking::SetSiteAllowed(work_, "block.test", true);
+  ASSERT_TRUE(base::test::RunUntil([&] { return page()->GetMutableRendererPrefs()->zitter_page_scripts.empty(); }));
 }
 
 }  // namespace zitter::prototype

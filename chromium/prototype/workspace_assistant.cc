@@ -13,6 +13,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/content_blocking.h"
+#include "content_blocking_probe_script.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "components/download/public/common/download_item.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
@@ -425,6 +426,53 @@ void AdblockInspect(content::WebContents* page, base::OnceCallback<void(base::Va
 }
 void SaveAdblockRules(content::WebContents* page, std::vector<std::string> rules, std::vector<std::string> replaces, const std::string& site,
                       int network, base::OnceCallback<void(base::Value)> done);
+void TryAdblockRules(content::WebContents* page, std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done);
+// Reloads `page`, waits until it has loaded and then `linger` more, for
+// detectors and late ads, then runs `then`.
+void ReloadAndWait(content::WebContents* page, base::TimeDelta linger, base::OnceCallback<void(base::WeakPtr<content::WebContents>)> then) {
+  page->GetController().Reload(content::ReloadType::NORMAL, true);
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce(
+      [](base::WeakPtr<content::WebContents> page, base::TimeDelta linger, base::OnceCallback<void(base::WeakPtr<content::WebContents>)> then) {
+        WhenLoaded(page, base::TimeTicks::Now() + base::Seconds(20), base::BindOnce(
+            [](base::WeakPtr<content::WebContents> page, base::TimeDelta linger, base::OnceCallback<void(base::WeakPtr<content::WebContents>)> then, bool) {
+              base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce(std::move(then), page), linger);
+            }, page, linger, std::move(then)));
+      }, page->GetWeakPtr(), linger, std::move(then)), base::Milliseconds(500));
+}
+// Anti-adblock and canvas ads (docs/ad-blocking.md): reloads the tab once with
+// a probe in the page's own world and returns what it saw. Nothing is kept.
+void AdblockDiagnose(content::WebContents* page, base::OnceCallback<void(base::Value)> done) {
+  auto* helper = ContentBlockingTabHelper::FromWebContents(page);
+  if (!helper || !page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) { std::move(done).Run(Error("Only web pages can be diagnosed")); return; }
+  std::string nonce = base::Uuid::GenerateRandomV4().AsLowercaseString();
+  std::erase(nonce, '-');
+  std::string probe = kContentBlockingProbeScript;
+  base::ReplaceFirstSubstringAfterOffset(&probe, 0, "ZITTER_NONCE", nonce);
+  helper->SetProbe(std::move(probe));
+  ReloadAndWait(page, base::Seconds(6), base::BindOnce(
+      [](std::string nonce, base::OnceCallback<void(base::Value)> done, base::WeakPtr<content::WebContents> page) {
+        if (!page) { std::move(done).Run(Error("The page closed")); return; }
+        PageOp(page.get(), base::DictValue().Set("tool", "probe_log").Set("nonce", nonce), base::BindOnce(
+            [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, base::Value log) {
+              if (!page) { std::move(done).Run(Error("The page closed")); return; }
+              auto* helper = ContentBlockingTabHelper::FromWebContents(page.get());
+              if (helper) helper->SetProbe(std::string());
+              if (!log.is_dict()) { std::move(done).Run(Error("The probe log could not be read")); return; }
+              auto result = std::move(log).TakeDict();
+              result.Set("site", ContentBlocking::RegistrableDomain(page->GetLastCommittedURL()));
+              if (helper) {
+                base::ListValue blocked;
+                for (const auto& url : helper->blocked_urls()) if (blocked.size() < 60) blocked.Append(url);
+                result.Set("blocked_requests", std::move(blocked));
+              }
+              result.Set("note", "One reload with probes in the page's own world. bait_reads, error_listeners and globals name the "
+                                 "script (by) that checks for blocking; walls and scroll_locks are what it did; canvas lists every "
+                                 "image drawn into a canvas. Turn them into +js() or $redirect rules, then adblock_add_rules with "
+                                 "check: true before saving.");
+              std::move(done).Run(base::Value(std::move(result)));
+            }, page, std::move(done)));
+      }, std::move(nonce), std::move(done)));
+}
 // Checks the rules, outlines what they hide and asks for native consent; with
 // consent, saves them as the profile's own and applies them at once.
 void AdblockAddRules(content::WebContents* page, base::DictValue args, bool confirmed, base::OnceCallback<void(base::Value)> done) {
@@ -444,6 +492,8 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
     list = &lines;
   }
   if (!list || list->empty() || list->size() > 50) { std::move(done).Run(Error("Give rules: 1 to 50 filter rules as strings")); return; }
+  // check: try the rules in this tab only, with a reload, before asking to save.
+  const bool check = args.FindBool("check").value_or(false);
   for (const auto& item : *list) {
     std::string rule = item.is_string() ? std::string(base::TrimWhitespaceASCII(item.GetString(), base::TRIM_ALL)) : std::string();
     std::string problem = rule.empty() || rule.size() > 1000 ? "a rule of 1 to 1000 characters is required" : ContentBlocking::RuleError(rule);
@@ -473,7 +523,7 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
   // will disappear stays outlined while the user decides.
   helper->Preview(selectors, base::BindOnce(
       [](base::WeakPtr<content::WebContents> page, std::vector<std::string> rules, std::vector<std::string> replaces, std::string site, bool confirmed,
-         base::OnceCallback<void(base::Value)> done, base::DictValue preview) {
+         bool check, base::OnceCallback<void(base::Value)> done, base::DictValue preview) {
         if (!page) { std::move(done).Run(Error("The page closed")); return; }
         base::ListValue invalid;
         if (const auto* checked = preview.FindList("rules")) for (const auto& item : *checked) {
@@ -497,7 +547,8 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
         }
         const int count = preview.FindInt("count").value_or(0);
         int network = 0;
-        for (const auto& rule : rules) if (ContentBlocking::HidingSelector(rule).empty()) ++network;
+        for (const auto& rule : rules) if (rule.find('#') == std::string::npos) ++network;
+        if (check) { TryAdblockRules(page.get(), std::move(rules), std::move(done)); return; }
         if (!confirmed) {
           const auto prompt = !replaces.empty()
               ? TF(u"Zablokować reklamy na {}? Ukryte elementy: {}, reguły sieciowe: {}, zastąpione stare reguły: {}.",
@@ -510,7 +561,33 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
           return;
         }
         SaveAdblockRules(page.get(), std::move(rules), std::move(replaces), site, network, std::move(done));
-      }, page->GetWeakPtr(), std::move(rules), std::move(replaces), site, confirmed, std::move(done)));
+      }, page->GetWeakPtr(), std::move(rules), std::move(replaces), site, confirmed, check, std::move(done)));
+}
+// adblock_add_rules check: the rules act in this tab only (scriptlets and
+// network rules from the next load, hiding rules at once after it), the tab
+// reloads, and the model looks before anything is saved.
+void TryAdblockRules(content::WebContents* page, std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done) {
+  auto* helper = ContentBlockingTabHelper::FromWebContents(page);
+  helper->Preview({}, base::DoNothing());
+  std::string error;
+  if (!helper->SetTrial(rules, &error)) { std::move(done).Run(Error("The rules could not be tried: " + error)); return; }
+  ReloadAndWait(page, base::Seconds(4), base::BindOnce(
+      [](std::vector<std::string> rules, base::OnceCallback<void(base::Value)> done, base::WeakPtr<content::WebContents> page) {
+        auto* helper = page ? ContentBlockingTabHelper::FromWebContents(page.get()) : nullptr;
+        if (!helper) { std::move(done).Run(Error("The page closed")); return; }
+        std::vector<std::string> selectors;
+        for (const auto& rule : rules) if (auto selector = ContentBlocking::HidingSelector(rule); !selector.empty()) selectors.push_back(std::move(selector));
+        helper->HideNow(selectors, base::BindOnce(
+            [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, int hidden) {
+              auto* helper = page ? ContentBlockingTabHelper::FromWebContents(page.get()) : nullptr;
+              if (!helper) { std::move(done).Run(Error("The page closed")); return; }
+              std::move(done).Run(base::Value(base::DictValue().Set("checked", true).Set("hidden_now", hidden)
+                  .Set("blocked_requests", helper->blocked_requests())
+                  .Set("detail", "The rules are on trial in this tab only and the tab reloaded with them; nothing is saved. "
+                                 "Look (screenshot, read_page) whether the ads or the wall are gone and the content works; then call "
+                                 "adblock_add_rules again without check to save them, or with other rules. Leaving the site ends the trial.")));
+            }, page, std::move(done)));
+      }, std::move(rules), std::move(done)));
 }
 // With consent: the rules join the profile's own and hide at once.
 void SaveAdblockRules(content::WebContents* page, std::vector<std::string> rules, std::vector<std::string> replaces, const std::string& site,
@@ -518,6 +595,7 @@ void SaveAdblockRules(content::WebContents* page, std::vector<std::string> rules
   auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
   auto* helper = ContentBlockingTabHelper::FromWebContents(page);
   if (!helper) { std::move(done).Run(Error("Ad blocking rules cannot be saved here")); return; }
+  helper->ClearTrial();
   std::vector<std::string> selectors;
   for (const auto& rule : rules) if (auto selector = ContentBlocking::HidingSelector(rule); !selector.empty()) selectors.push_back(std::move(selector));
   helper->Preview({}, base::DoNothing());
@@ -577,6 +655,7 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
   if (tool == "mouse") { MouseTool(page, std::move(args), confirmed, std::move(done)); return; }
   if (tool == "adblock_inspect") { AdblockInspect(page, std::move(done)); return; }
   if (tool == "adblock_add_rules") { AdblockAddRules(page, std::move(args), confirmed, std::move(done)); return; }
+  if (tool == "adblock_diagnose") { AdblockDiagnose(page, std::move(done)); return; }
   if (tool == "adblock_clear_preview") {
     if (auto* helper = ContentBlockingTabHelper::FromWebContents(page)) helper->Preview({}, base::DoNothing());
     std::move(done).Run(base::Value(base::DictValue().Set("ok", true))); return;
@@ -1098,10 +1177,10 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
   const bool mutation = tool == "open_tab" || tool == "navigate" || tool == "activate_tab" || tool == "close_tab" ||
                         tool == "click" || tool == "type" || tool == "scroll" || tool == "pin_tab" || tool == "unpin_tab" ||
                         tool == "insert_text" || tool == "press_key" || tool == "select" || tool == "mouse" || tool == "dialog" ||
-                        tool == "adblock_add_rules";
+                        tool == "adblock_add_rules" || tool == "adblock_diagnose";
   if (!read && !mutation) { fail("Unknown browser tool"); return; }
   if (read ? !permissions.pages : !permissions.actions) { fail("Required page/action permission is disabled"); return; }
-  if (tool == "adblock_add_rules" && !permissions.pages) { fail("Writing blocking rules needs the page permission"); return; }
+  if ((tool == "adblock_add_rules" || tool == "adblock_diagnose") && !permissions.pages) { fail("Ad blocking tools need the page permission"); return; }
   // In the background the session's own page replaces @current, and the
   // user's visible tabs stay read-only.
   const auto* requested = args.FindString("tab");

@@ -323,6 +323,17 @@
              note: 'Candidates are guesses: keep only what the user would call an ad, never the content they came for. ' +
                    'A candidate with a label comes with rule_hint, a procedural rule anchored on that label, and how many elements it matches.' };
   }
+  if (args.tool === 'probe_log') {
+    // adblock_diagnose: the probe in the page's own world answers an event
+    // only Zitter knows the name of (content_blocking_probe.js).
+    let data = null;
+    const take = event => { data = event.detail; };
+    document.addEventListener(`zitter-probe-${args.nonce}-log`, take);
+    document.dispatchEvent(new CustomEvent(`zitter-probe-${args.nonce}`));
+    document.removeEventListener(`zitter-probe-${args.nonce}-log`, take);
+    if (typeof data !== 'string') return { error: 'The probe did not run on this load' };
+    try { return JSON.parse(data); } catch { return { error: 'The probe log could not be read' }; }
+  }
   if (args.tool === 'focus_info') {
     // Natively requested before keyboard input: where would typing land?
     let e = document.activeElement, opaque = false;
