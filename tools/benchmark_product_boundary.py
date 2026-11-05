@@ -13,7 +13,7 @@ import statistics
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-TESTS = {"interaction": "PerformanceUiInteraction", "boundary": "PerformanceProductBoundary"}
+TESTS = {"interaction": "PerformanceUiInteraction", "boundary": "PerformanceProductBoundary", "subtree": "PerformanceSidebarSubtree"}
 BACKENDS = {"compositor": [], "metal": ["--zitter-rust-raster=metal"]}
 
 
@@ -73,7 +73,7 @@ def run(binary, test, backend, iterations, tabs, pins, log):
     grouped = {}
     for sample in samples:
         grouped.setdefault(sample["metric"], []).append(sample)
-    expected = 9 if test == "interaction" else 7
+    expected = {"interaction": 9, "boundary": 7, "subtree": 8}[test]
     if len(grouped) != expected or len(resources) != 1:
         raise RuntimeError(f"Unexpected metric/resource count: {log}")
     for metric, values in grouped.items():
