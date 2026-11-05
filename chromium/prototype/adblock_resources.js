@@ -424,3 +424,224 @@ iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAC0lEQVR4nGNgQAcAABIAAXfx+gAAAAAA
   for (const ins of document.querySelectorAll('ins.adsbygoogle')) ins.setAttribute('data-adsbygoogle-status', 'done');
   void queue;
 })();
+
+//@ scriptlet nano-setInterval-booster.js nano-setInterval-booster nano-sib needs zitter-safe.fn
+function nanoSetIntervalBooster(needle = '', delay = '1000', boost = '0.05') {
+  // Timers whose code matches run at `boost` times their delay: the countdown
+  // before a download or a skip button.
+  const { mask, pattern } = zitterSafe();
+  const code = pattern(needle), wait = delay === '*' ? null : Number(delay || 1000), factor = Math.min(50, Math.max(0.001, Number(boost) || 0.05));
+  const original = window.setInterval;
+  window.setInterval = mask(function (handler, ms, ...rest) {
+    if ((wait === null || ms === wait) && code.test(typeof handler === 'function' ? Function.prototype.toString.call(handler) : handler)) ms = ms * factor;
+    return Reflect.apply(original, this, [handler, ms, ...rest]);
+  }, original);
+}
+
+//@ scriptlet nano-setTimeout-booster.js nano-setTimeout-booster nano-stb needs zitter-safe.fn
+function nanoSetTimeoutBooster(needle = '', delay = '1000', boost = '0.05') {
+  const { mask, pattern } = zitterSafe();
+  const code = pattern(needle), wait = delay === '*' ? null : Number(delay || 1000), factor = Math.min(50, Math.max(0.001, Number(boost) || 0.05));
+  const original = window.setTimeout;
+  window.setTimeout = mask(function (handler, ms, ...rest) {
+    if ((wait === null || ms === wait) && code.test(typeof handler === 'function' ? Function.prototype.toString.call(handler) : handler)) ms = ms * factor;
+    return Reflect.apply(original, this, [handler, ms, ...rest]);
+  }, original);
+}
+
+//@ scriptlet nowebrtc.js nowebrtc needs zitter-safe.fn
+function nowebrtc() {
+  // RTCPeerConnection that never connects: ad scripts use it to find the local IP.
+  const { mask } = zitterSafe();
+  for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection']) {
+    const original = window[name];
+    if (typeof original !== 'function') continue;
+    const fake = mask(function () {
+      return { close() {}, createDataChannel() { return {}; }, createOffer() { return Promise.reject(new DOMException('', 'NotSupportedError')); },
+               setLocalDescription() { return Promise.resolve(); }, setRemoteDescription() { return Promise.resolve(); },
+               addEventListener() {}, removeEventListener() {} };
+    }, original);
+    fake.prototype = original.prototype;
+    window[name] = fake;
+  }
+}
+
+//@ scriptlet remove-node-text.js remove-node-text rmnt needs zitter-safe.fn
+function removeNodeText(name = '', needle = '') {
+  // Empties text nodes (or inline <script>s, with name "script") whose text
+  // matches, as the parser adds them: an inline detector never runs.
+  const { pattern } = zitterSafe();
+  if (!name) return;
+  const tag = name.toUpperCase(), match = pattern(needle);
+  const check = node => {
+    if (tag === '#TEXT' ? node.nodeType === 3 && match.test(node.nodeValue) : node.nodeName === tag && match.test(node.textContent)) node.textContent = '';
+  };
+  new MutationObserver(records => { for (const record of records) for (const node of record.addedNodes) check(node); })
+    .observe(document, { childList: true, subtree: true });
+}
+
+//@ scriptlet abort-on-stack-trace.js abort-on-stack-trace aost needs zitter-safe.fn
+function abortOnStackTrace(chain = '', needle = '') {
+  // Touching `chain` throws when the call stack matches `needle`: a detector
+  // that lives inside a bundle with the page's own code.
+  const { onChain, pattern, magic } = zitterSafe();
+  if (!chain) return;
+  const match = pattern(needle);
+  const guilty = () => match.test(String(new Error().stack));
+  onChain(chain, (owner, leaf) => {
+    const descriptor = Object.getOwnPropertyDescriptor(owner, leaf);
+    if (descriptor && !descriptor.configurable) return;
+    let stored = descriptor?.get ? undefined : descriptor?.value;
+    Object.defineProperty(owner, leaf, { configurable: false, enumerable: true,
+      get() { if (guilty()) throw new ReferenceError(magic); return descriptor?.get ? descriptor.get.call(this) : stored; },
+      set(next) { if (guilty()) throw new ReferenceError(magic); if (descriptor?.set) descriptor.set.call(this, next); else stored = next; } });
+  });
+}
+
+//@ scriptlet noeval.js noeval needs zitter-safe.fn
+function noeval() {
+  // eval() does nothing at all.
+  const { mask } = zitterSafe();
+  const original = window.eval;
+  window.eval = mask(function () { return undefined; }, original);
+}
+
+//@ scriptlet no-requestAnimationFrame-if.js no-requestAnimationFrame-if norafif needs zitter-safe.fn
+function noRequestAnimationFrameIf(needle = '') {
+  const { mask, pattern } = zitterSafe();
+  const code = pattern(needle);
+  const original = window.requestAnimationFrame;
+  window.requestAnimationFrame = mask(function (callback) {
+    if (code.test(Function.prototype.toString.call(callback))) callback = function () {};
+    return Reflect.apply(original, this, [callback]);
+  }, original);
+}
+
+//@ scriptlet refresh-defuser.js refresh-defuser needs zitter-safe.fn
+function refreshDefuser() {
+  // <meta http-equiv="refresh"> that sends the page elsewhere is removed.
+  const { observe } = zitterSafe();
+  observe(() => { for (const meta of document.querySelectorAll('meta[http-equiv="refresh" i]')) meta.remove(); });
+}
+
+//@ scriptlet cookie-remover.js cookie-remover needs zitter-safe.fn
+function cookieRemover(needle = '') {
+  // Deletes the page's cookies whose name matches, now and as they come back.
+  const { pattern } = zitterSafe();
+  const match = pattern(needle);
+  const sweep = () => {
+    for (const entry of document.cookie.split(';')) {
+      const name = entry.split('=')[0].trim();
+      if (!name || !match.test(name)) continue;
+      for (const domain of ['', location.hostname, '.' + location.hostname.split('.').slice(-2).join('.')])
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/${domain ? '; domain=' + domain : ''}`;
+    }
+  };
+  sweep();
+  window.addEventListener('beforeunload', sweep);
+  setInterval(sweep, 2000);
+}
+
+//@ scriptlet json-prune-fetch-response.js json-prune-fetch-response jpfr needs zitter-safe.fn
+function jsonPruneFetchResponse(remove = '', required = '', needle = '') {
+  // json-prune, for the JSON bodies of fetch() responses whose URL matches.
+  const { mask, pattern } = zitterSafe();
+  const paths = remove.split(/\s+/).filter(Boolean), needs = required.split(/\s+/).filter(Boolean), url = pattern(needle);
+  if (!paths.length) return;
+  const walk = (node, parts, visit) => {
+    if (node === null || typeof node !== 'object') return;
+    const [head, ...rest] = parts;
+    for (const key of head === '[]' ? (Array.isArray(node) ? [...node.keys()] : []) : head === '*' ? Object.keys(node) : [head])
+      if (!rest.length) visit(node, key); else walk(node[key], rest, visit);
+  };
+  const has = (node, path) => { let found = false; walk(node, path.split('.'), (owner, key) => { if (Object.hasOwn(owner, key)) found = true; }); return found; };
+  const fetch = window.fetch;
+  window.fetch = mask(function (resource, ...rest) {
+    const target = resource instanceof Request ? resource.url : String(resource);
+    return Reflect.apply(fetch, this, [resource, ...rest]).then(response => {
+      if (!url.test(target)) return response;
+      return response.clone().json().then(data => {
+        if (needs.length && !needs.every(path => has(data, path))) return response;
+        for (const path of paths) walk(data, path.split('.'), (owner, key) => { delete owner[key]; });
+        return new Response(JSON.stringify(data), { status: response.status, statusText: response.statusText, headers: response.headers });
+      }).catch(() => response);
+    });
+  }, fetch);
+}
+
+//@ scriptlet popads-dummy.js popads-dummy popads.net needs zitter-safe.fn
+function popadsDummy() {
+  // PopAds' pop-under code finds its globals taken and gives up.
+  for (const name of ['PopAds', 'popns']) {
+    try { Object.defineProperty(window, name, { configurable: false, get: () => ({}), set: () => {} }); } catch {}
+  }
+}
+
+//@ scriptlet nobab-scriptlet.js nobab bab-defuser nofab needs zitter-safe.fn
+function noAdblockDetectors() {
+  // BlockAdBlock, FuckAdBlock and their clones always report "no ad blocker".
+  const fake = function () {};
+  fake.prototype = { onDetected() { return this; }, onNotDetected(callback) { try { callback(); } catch {} return this; },
+                     check() { return true; }, emitEvent() { return this; }, clearEvent() {}, setOption() { return this; } };
+  for (const name of ['BlockAdBlock', 'FuckAdBlock', 'SniffAdBlock'])
+    try { Object.defineProperty(window, name, { configurable: false, value: fake }); } catch {}
+  for (const name of ['blockAdBlock', 'fuckAdBlock', 'sniffAdBlock'])
+    try { Object.defineProperty(window, name, { configurable: false, value: new fake() }); } catch {}
+}
+
+//@ redirect nobab.js application/javascript blockadblock.js
+(function () {
+  // A stand-in for BlockAdBlock: it always finds no ad blocker.
+  const fake = function () {};
+  fake.prototype = { onDetected() { return this; }, onNotDetected(callback) { try { callback(); } catch (e) {} return this; },
+                     check() { return true; }, emitEvent() { return this; }, clearEvent() {}, setOption() { return this; } };
+  window.BlockAdBlock = fake;
+  window.blockAdBlock = new fake();
+})();
+
+//@ redirect nofab.js application/javascript fuckadblock.js-3.2.0 fuckadblock.js
+(function () {
+  // A stand-in for FuckAdBlock: it always finds no ad blocker.
+  const fake = function () {};
+  fake.prototype = { onDetected() { return this; }, onNotDetected(callback) { try { callback(); } catch (e) {} return this; },
+                     check() { return true; }, emitEvent() { return this; }, clearEvent() {}, setOption() { return this; } };
+  window.FuckAdBlock = fake;
+  window.fuckAdBlock = new fake();
+})();
+
+//@ redirect google-analytics_ga.js application/javascript google-analytics.com/ga.js
+(function () {
+  // A stand-in for the old ga.js: _gaq runs its callbacks, nothing is sent.
+  const noop = function () {};
+  const tracker = new Proxy({}, { get: function () { return noop; } });
+  const gaq = { push: function () { for (const item of arguments) if (typeof item === 'function') try { item(); } catch (e) {} return 0; } };
+  const queue = Array.isArray(window._gaq) ? window._gaq : [];
+  window._gat = { _createTracker: function () { return tracker; }, _getTracker: function () { return tracker; },
+                  _getTrackerByName: function () { return tracker; }, _anonymizeIp: noop };
+  window._gaq = gaq;
+  gaq.push.apply(gaq, queue);
+})();
+
+//@ redirect googletagmanager_gtm.js application/javascript googletagmanager.com/gtm.js
+(function () {
+  // A stand-in for Tag Manager and gtag.js: dataLayer events that wait for
+  // the container run their callbacks; nothing is sent.
+  const layer = window.dataLayer = window.dataLayer || [];
+  const done = function (item) { if (item && typeof item.eventCallback === 'function') setTimeout(function () { try { item.eventCallback(); } catch (e) {} }, 1); };
+  layer.forEach(done);
+  const push = layer.push.bind(layer);
+  layer.push = function () { for (const item of arguments) done(item); return push.apply(null, arguments); };
+  window.google_tag_manager = window.google_tag_manager || {};
+})();
+
+//@ redirect amazon_apstag.js application/javascript amazon-adsystem.com/aax2/apstag.js
+(function () {
+  // A stand-in for Amazon's apstag: bids come back empty at once.
+  const noop = function () {};
+  const queue = window.apstag && Array.isArray(window.apstag._Q) ? window.apstag._Q : [];
+  window.apstag = {
+    _Q: [], init: noop, setDisplayBids: noop, targetingKeys: function () { return []; }, deleteId: noop, rpa: noop, upa: noop, dpa: noop,
+    fetchBids: function (config, callback) { if (typeof callback === 'function') setTimeout(function () { try { callback([]); } catch (e) {} }, 1); },
+  };
+  for (const entry of queue) try { window.apstag[entry[0]] && window.apstag[entry[0]].apply(null, entry[1]); } catch (e) {}
+})();

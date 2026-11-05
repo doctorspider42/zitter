@@ -23,6 +23,7 @@ ENABLED = 'zitter.ad_blocking'
 ALLOWED_SITES = 'zitter.ad_blocking_allowed_sites'
 RULES = 'zitter.ad_blocking_rules'
 RULE_MISSES = 'zitter.ad_blocking_rule_misses'
+LISTS = 'zitter.ad_blocking_lists'
 EDITS = [
     ('chrome/browser/prefs/browser_prefs.cc',
      '  AccessibilityUIMessageHandler::RegisterProfilePrefs(registry);\n',
@@ -34,6 +35,9 @@ EDITS = [
     ('chrome/browser/prefs/browser_prefs.cc',
      f'  registry->RegisterListPref("{RULES}");\n',
      f'  registry->RegisterDictionaryPref("{RULE_MISSES}");\n'),
+    ('chrome/browser/prefs/browser_prefs.cc',
+     f'  registry->RegisterDictionaryPref("{RULE_MISSES}");\n',
+     f'  registry->RegisterDictionaryPref("{LISTS}");\n'),
     # Scriptlets: the browser's per-tab list of "host\nscript" entries...
     ('third_party/blink/public/common/renderer_preferences/renderer_preferences.h',
      '  std::string accept_languages;\n',

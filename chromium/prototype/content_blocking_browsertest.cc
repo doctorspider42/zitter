@@ -269,7 +269,7 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, ProceduralRulesAnchorOn
   EXPECT_EQ(2u, broken.GetDict().FindList("invalid")->size()) << broken;
   EXPECT_EQ(false, content::EvalJs(page(), "document.querySelector('[data-zitter-preview]') !== null"));
   EXPECT_NE("", ContentBlocking::RuleError("block.test##div:has-text(open"));
-  EXPECT_NE("", ContentBlocking::RuleError("block.test##+js(nowebrtc)"));
+  EXPECT_NE("", ContentBlocking::RuleError("block.test##+js(trusted-set-constant, x, 1)"));
   // With consent the label's box goes at once; the story stays.
   const auto saved = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue().Append(hint)), true);
   EXPECT_TRUE(saved.GetDict().FindBool("ok").value_or(false)) << saved;
@@ -367,6 +367,40 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, ScriptletsRedirectsAndC
   // The site switch turns the scriptlets off with everything else.
   ContentBlocking::SetSiteAllowed(work_, "block.test", true);
   ASSERT_TRUE(base::test::RunUntil([&] { return page()->GetMutableRendererPrefs()->zitter_page_scripts.empty(); }));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, BuiltInStandInsAndOptionalLists) {
+  // Zitter's own list and the Adblock Warning Removal List are on by default;
+  // uBlock filters is off until switched on. Required lists have no switch.
+  const auto read = [&](const std::string& id) {
+    for (const auto& item : *window_->ReadAdBlocking().FindList("lists"))
+      if (*item.GetDict().FindString("id") == id) return item.GetDict().Clone();
+    return base::DictValue();
+  };
+  EXPECT_TRUE(read("zitter").FindBool("enabled").value_or(false));
+  EXPECT_TRUE(read("zitter").FindBool("builtin").value_or(false));
+  EXPECT_GT(read("zitter").FindInt("rules").value_or(0), 10);
+  EXPECT_TRUE(read("antiadblock").FindBool("enabled").value_or(false));
+  EXPECT_FALSE(read("ublock").FindBool("enabled").value_or(true));
+  EXPECT_FALSE(read("easylist").FindBool("optional").value_or(true));
+  // A detector library the test list blocks gets Zitter's stand-in instead of an error.
+  const GURL url = embedded_test_server()->GetURL("block.test", "/adblock_detectors.html");
+  ASSERT_TRUE(content::NavigateToURL(page(), url));
+  ASSERT_TRUE(base::test::RunUntil([&] { return content::EvalJs(page(), "window.detector").ExtractString() != "pending"; }));
+  EXPECT_EQ("stand-in", content::EvalJs(page(), "window.detector"));
+  // Switched off, the same request just fails again.
+  EXPECT_EQ("", window_->WriteAdBlocking(base::DictValue().Set("command", "list").Set("list", "zitter").Set("enabled", false)));
+  EXPECT_FALSE(ContentBlocking::ListEnabled(work_, "zitter"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return ContentBlocking::Get().ReadyForTesting(work_); }));
+  ASSERT_TRUE(content::NavigateToURL(page(), url));
+  ASSERT_TRUE(base::test::RunUntil([&] { return content::EvalJs(page(), "window.detector").ExtractString() != "pending"; }));
+  EXPECT_EQ("blocked", content::EvalJs(page(), "window.detector"));
+  // The switches are per profile, and a required list cannot be turned off.
+  EXPECT_TRUE(ContentBlocking::ListEnabled(personal_, "zitter"));
+  EXPECT_EQ("", window_->WriteAdBlocking(base::DictValue().Set("command", "list").Set("list", "ublock").Set("enabled", true)));
+  EXPECT_TRUE(ContentBlocking::ListEnabled(work_, "ublock"));
+  window_->WriteAdBlocking(base::DictValue().Set("command", "list").Set("list", "easylist").Set("enabled", false));
+  EXPECT_TRUE(ContentBlocking::ListEnabled(work_, "easylist"));
 }
 
 }  // namespace zitter::prototype

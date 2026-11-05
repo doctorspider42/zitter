@@ -29,7 +29,7 @@ class ContentBlockingPatchTests(unittest.TestCase):
             self.assertEqual(before, {p: p.read_bytes() for p in root.rglob('*') if p.is_file()})
             patch.apply(plan)
             prefs = (root / patch.EDITS[0][0]).read_text()
-            for pref in (patch.ENABLED, patch.ALLOWED_SITES, patch.RULES, patch.RULE_MISSES):
+            for pref in (patch.ENABLED, patch.ALLOWED_SITES, patch.RULES, patch.RULE_MISSES, patch.LISTS):
                 self.assertEqual(1, prefs.count(f'"{pref}"'))
             vendor = root / patch.VENDOR
             self.assertTrue((vendor / patch.MARKER).exists())

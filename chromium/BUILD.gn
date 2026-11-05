@@ -27,7 +27,10 @@ rust_static_library("content_blocking_engine") {
   crate_root = "chromium/prototype/adblock.rs"
   sources = [ crate_root ]
   # Zitter's scriptlets and redirect bodies, compiled in with include_str!.
-  inputs = [ "chromium/prototype/adblock_resources.js" ]
+  inputs = [
+    "chromium/prototype/adblock_resources.js",
+    "chromium/prototype/adblock_zitter_list.txt",
+  ]
   cxx_bindings = [ crate_root ]
   allow_unsafe = true
   build_native_rust_unit_tests = true

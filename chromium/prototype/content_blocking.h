@@ -34,6 +34,8 @@ inline constexpr char kAdBlockingAllowedSitesPref[] = "zitter.ad_blocking_allowe
 inline constexpr char kAdBlockingRulesPref[] = "zitter.ad_blocking_rules";
 // Own hiding rules that hid nothing on their site's recent loads: rule -> loads.
 inline constexpr char kAdBlockingRuleMissesPref[] = "zitter.ad_blocking_rule_misses";
+// Optional lists switched away from their default: list id -> on.
+inline constexpr char kAdBlockingListsPref[] = "zitter.ad_blocking_lists";
 
 // Built-in ad blocking (docs/ad-blocking.md): the downloaded filter lists, one
 // adblock-rust engine per profile (lists plus that profile's own rules), the
@@ -42,6 +44,9 @@ class ContentBlocking final {
  public:
   struct List {
     std::string id, name, url;
+    // `optional` lists have a switch (on when `default_on`); `builtin` ones
+    // ship with Zitter and are never downloaded.
+    bool optional = false, default_on = true, builtin = false;
     size_t rules = 0;
     base::Time updated;
   };
@@ -72,6 +77,9 @@ class ContentBlocking final {
   static bool SiteAllowed(Profile* profile, const GURL& page);
   static void SetSiteAllowed(Profile* profile, const std::string& site, bool allowed);
   static std::vector<std::string> AllowedSites(Profile* profile);
+  // Whether a list is on for `profile`; required lists always are.
+  static bool ListEnabled(Profile* profile, const std::string& id);
+  static void SetListEnabled(Profile* profile, const std::string& id, bool enabled);
 
   // The profile's own rules, one per entry.
   static std::vector<std::string> Rules(Profile* profile);
@@ -130,6 +138,12 @@ class ContentBlocking final {
   void ScheduleUpdate(base::TimeDelta delay);
   void DownloadStale(bool force);
   void Downloaded(size_t index, std::unique_ptr<network::SimpleURLLoader> loader, std::optional<std::string> body);
+  // uBlock-style lists pull in more files with `!#include name`; they are
+  // fetched from the list's directory and put in place of those lines.
+  void FetchIncludes(size_t index, std::string body);
+  void Store(size_t index, std::string body);
+  // Whether a loaded profile has the list on: only those are downloaded.
+  bool Wanted(size_t index);
   void Notify();
 
   bool started_ = false;

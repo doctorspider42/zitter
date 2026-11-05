@@ -7997,14 +7997,36 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
   ad_blocking_list_->RemoveAllChildViews();
   // The lists: EasyList's license asks for attribution, here and in the docs.
   heading(T(u"Listy filtrów"));
+  const bool available=data.FindBool("available").value_or(false);
   if(const auto* lists=data.FindList("lists"))for(const auto& item:*lists){
     const auto& list=item.GetDict();
-    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(line,true,gfx::Insets(),2);
-    AddPreferenceCopy(line,text(list,"name"),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
+    const std::string id=list.FindString("id")?*list.FindString("id"):std::string();
+    const bool optional=list.FindBool("optional").value_or(false),enabled=list.FindBool("enabled").value_or(true);
+    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
+    auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
+    // Zitter's own list has a name in the UI language; the others are proper names.
+    const std::u16string name=id=="zitter"?T(u"Zamienniki Zittera"):text(list,"name");
+    AddPreferenceCopy(labels,name,kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
+    // What the optional lists are for: they are switches, so say what each does.
+    const std::u16string purpose=id=="zitter"?T(u"Zamiast błędu podaje stronie atrapy skryptów reklamowych, więc nie wykrywa blokowania.")
+                                :id=="antiadblock"?T(u"Usuwa komunikaty z prośbą o wyłączenie blokowania reklam.")
+                                :id=="ublock"?T(u"Reguły twórców uBlock Origin, także przeciw wykrywaniu blokowania. Około 2 MB więcej do pobrania."):std::u16string();
+    if(!purpose.empty())AddPreferenceCopy(labels,purpose,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
     const int rules=list.FindInt("rules").value_or(0);
-    AddPreferenceCopy(line,rules?TF(u"Reguły: {} · pobrano {}",{base::FormatNumber(rules),text(list,"updated")}):T(u"Jeszcze nie pobrano"),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    const std::u16string state=list.FindBool("builtin").value_or(false)?TF(u"Wbudowana · reguły: {}",{base::FormatNumber(rules)})
+                              :!enabled?T(u"Wyłączona")
+                              :rules?TF(u"Reguły: {} · pobrano {}",{base::FormatNumber(rules),text(list,"updated")}):T(u"Jeszcze nie pobrano");
+    AddPreferenceCopy(labels,state,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    if(optional){
+      auto* toggle=PreferenceToggle(line,TF(u"Używaj listy {}",{name}));
+      SetToggleOn(toggle,enabled);toggle->SetEnabled(available);
+      SetActionCallback(toggle,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string id,views::View* toggle){
+        write(shell,base::DictValue().Set("command","list").Set("list",id).Set("enabled",ToggleOn(toggle)));
+      },write,weak,id,base::Unretained(toggle)));
+    }
+    SetSidebarPanelLayout(line,false,gfx::Insets(),16,labels,true);
   }
-  AddPreferenceCopy(ad_blocking_list_,T(u"EasyList i EasyPrivacy: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. Silnik: adblock-rust od Brave, licencja MPL-2.0."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  AddPreferenceCopy(ad_blocking_list_,T(u"EasyList, EasyPrivacy i Adblock Warning Removal List: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. uBlock filters: © autorzy uBlock Origin, licencja GPLv3, pobierane z github.com/uBlockOrigin/uAssets. Zamienniki Zittera są częścią Zittera. Silnik: adblock-rust od Brave, licencja MPL-2.0."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   {
     auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
     const bool updating=data.FindBool("updating").value_or(false);const auto error=text(data,"error");
@@ -8033,8 +8055,7 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
     ++shown;
   }
   if(!shown)AddPreferenceCopy(ad_blocking_list_,T(u"Brak. Dodaj regułę poniżej albo poproś asystenta o zablokowanie reklam na stronie."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  const bool enabled=data.FindBool("available").value_or(false);
-  ad_blocking_rule_->view()->SetEnabled(enabled);
+  ad_blocking_rule_->view()->SetEnabled(available);
   RefreshChoiceViewports(ad_blocking_list_->parent());
   if(general_widget_)general_widget_->GetContentsView()->InvalidateLayout();
 }

@@ -959,8 +959,9 @@ base::DictValue WorkspaceWindow::ReadAdBlocking() {
   auto& blocking = ContentBlocking::Get();
   base::ListValue lists;
   for (const auto& list : blocking.lists())
-    lists.Append(base::DictValue().Set("name", list.name).Set("rules", static_cast<int>(list.rules))
-        .Set("updated", list.updated.is_null() ? std::string() : base::UTF16ToUTF8(base::TimeFormatShortDate(list.updated))));
+    lists.Append(base::DictValue().Set("id", list.id).Set("name", list.name).Set("rules", static_cast<int>(list.rules))
+        .Set("optional", list.optional).Set("builtin", list.builtin).Set("enabled", ContentBlocking::ListEnabled(profile, list.id))
+        .Set("updated", list.updated.is_null() || list.builtin ? std::string() : base::UTF16ToUTF8(base::TimeFormatShortDate(list.updated))));
   base::ListValue sites, rules;
   for (const auto& site : ContentBlocking::AllowedSites(profile)) sites.Append(site);
   for (const auto& rule : ContentBlocking::Rules(profile)) rules.Append(rule);
@@ -973,6 +974,10 @@ std::string WorkspaceWindow::WriteAdBlocking(base::DictValue command) {
   const auto* name = command.FindString("command");
   if (!profile || profile->IsOffTheRecord() || !name) return {};
   if (*name == "update") { ContentBlocking::Get().UpdateLists(); return {}; }
+  if (const auto* list = command.FindString("list"); list && *name == "list") {
+    ContentBlocking::SetListEnabled(profile, *list, command.FindBool("enabled").value_or(false));
+    return {};
+  }
   if (const auto* site = command.FindString("site"); site && *name == "site_remove") { ContentBlocking::SetSiteAllowed(profile, *site, false); return {}; }
   const auto* rule = command.FindString("rule");
   if (!rule) return {};

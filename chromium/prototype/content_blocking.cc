@@ -12,6 +12,7 @@
 #include "base/no_destructor.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
+#include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/supports_user_data.h"
@@ -61,13 +62,20 @@ namespace {
 constexpr int kZitterWorld = content::ISOLATED_WORLD_ID_CONTENT_END;
 constexpr char kStateKey[] = "zitter-content-blocking";
 constexpr base::TimeDelta kListAge = base::Days(4);
-constexpr size_t kMaxList = 8 * 1024 * 1024;
-struct ListSource { const char* id; const char* name; const char* url; };
-// GPLv3 / CC BY-SA 3.0 data, downloaded, never compiled in (docs/ad-blocking.md).
+constexpr size_t kMaxList = 16 * 1024 * 1024;
+enum class ListKind { kRequired, kDefaultOn, kDefaultOff, kBuiltin };
+struct ListSource { const char* id; const char* name; const char* url; ListKind kind; };
+// Downloaded lists are data under their own licenses, never compiled in
+// (docs/ad-blocking.md): EasyList's family GPLv3 / CC BY-SA 3.0, uBlock
+// filters GPLv3. The built-in one is Zitter's (adblock_zitter_list.txt).
 constexpr ListSource kLists[] = {
-    {"easylist", "EasyList", "https://easylist.to/easylist/easylist.txt"},
-    {"easyprivacy", "EasyPrivacy", "https://easylist.to/easylist/easyprivacy.txt"},
+    {"easylist", "EasyList", "https://easylist.to/easylist/easylist.txt", ListKind::kRequired},
+    {"easyprivacy", "EasyPrivacy", "https://easylist.to/easylist/easyprivacy.txt", ListKind::kRequired},
+    {"zitter", "Zamienniki Zittera", "", ListKind::kBuiltin},
+    {"antiadblock", "Adblock Warning Removal List", "https://easylist-downloads.adblockplus.org/antiadblockfilters.txt", ListKind::kDefaultOn},
+    {"ublock", "uBlock filters", "https://ublockorigin.github.io/uAssets/filters/filters.txt", ListKind::kDefaultOff},
 };
+constexpr size_t kMaxIncludes = 24;
 constexpr net::NetworkTrafficAnnotationTag kListTraffic = net::DefineNetworkTrafficAnnotation("zitter_filter_lists", R"(
     semantics {
       sender: "Zitter ad blocking"
@@ -142,7 +150,18 @@ struct ContentBlocking::ProfileState final : base::SupportsUserData::Data {
     registrar.Add(kAdBlockingAllowedSitesPref, read);
     registrar.Add(kAdBlockingRulesPref, base::BindRepeating(
         [](ProfileState* state) { ContentBlocking::Get().Rebuild(state->profile); }, base::Unretained(this)));
+    // A list switched on that was never downloaded is fetched now.
+    registrar.Add(kAdBlockingListsPref, base::BindRepeating([](ProfileState* state) {
+      ContentBlocking::Get().Rebuild(state->profile);
+      ContentBlocking::Get().DownloadStale(false);
+      ContentBlocking::Get().Notify();
+    }, base::Unretained(this)));
     ReadSwitches();
+    // Optional lists this profile has on may never have been downloaded: look
+    // once the first pages had their turn.
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce([] {
+      ContentBlocking::Get().DownloadStale(false);
+    }), base::Seconds(30));
   }
   void ReadSwitches() {
     enabled = profile->GetPrefs()->GetBoolean(kAdBlockingPref);
@@ -180,8 +199,21 @@ ContentBlocking& ContentBlocking::Get() {
 }
 ContentBlocking::ContentBlocking() {
   zitter_adblock_set_domain_resolver(&ResolveDomain);
-  for (const auto& list : kLists) lists_.push_back({list.id, list.name, list.url});
-  texts_ = std::make_shared<const std::vector<std::string>>();
+  auto texts = std::make_shared<std::vector<std::string>>(std::size(kLists));
+  size_t i = 0;
+  for (const auto& source : kLists) {
+    List list{source.id, source.name, source.url};
+    list.optional = source.kind != ListKind::kRequired;
+    list.default_on = source.kind != ListKind::kDefaultOff;
+    list.builtin = source.kind == ListKind::kBuiltin;
+    if (list.builtin) {
+      (*texts)[i] = std::string(adblock::builtin_list());
+      list.rules = adblock::count_rules((*texts)[i]);
+    }
+    lists_.push_back(std::move(list));
+    ++i;
+  }
+  texts_ = std::move(texts);
 }
 ContentBlocking::~ContentBlocking() = default;
 
@@ -198,6 +230,7 @@ void ContentBlocking::Start() {
   directory_ = user_data.AppendASCII("Zitter Filter Lists");
   std::vector<base::FilePath> paths;
   for (const auto& list : kLists) paths.push_back(directory_.AppendASCII(std::string(list.id) + ".txt"));
+  // The built-in list is never on disk.
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::BindOnce([](std::vector<base::FilePath> paths) {
         std::pair<std::vector<std::optional<std::string>>, std::vector<base::Time>> result;
@@ -223,12 +256,13 @@ void ContentBlocking::ListsLoaded(std::vector<std::optional<std::string>> texts,
   auto next = std::make_shared<std::vector<std::string>>(lists_.size());
   bool stale = false;
   for (size_t i = 0; i < lists_.size(); ++i) {
+    if (lists_[i].builtin) { (*next)[i] = (*texts_)[i]; continue; }
     if (texts[i]) {
       lists_[i].rules = adblock::count_rules(*texts[i]);
       lists_[i].updated = times[i];
       (*next)[i] = std::move(*texts[i]);
     }
-    stale |= !texts[i] || base::Time::Now() - times[i] > kListAge;
+    stale |= (!texts[i] || base::Time::Now() - times[i] > kListAge) && Wanted(i);
   }
   texts_ = std::move(next);
   RebuildAll();
@@ -247,6 +281,7 @@ void ContentBlocking::DownloadStale(bool force) {
   if (directory_.empty() || !g_browser_process || !g_browser_process->shared_url_loader_factory()) return;
   if (updating_) return;
   for (size_t i = 0; i < lists_.size(); ++i) {
+    if (lists_[i].builtin || !Wanted(i)) continue;
     if (!force && !lists_[i].updated.is_null() && base::Time::Now() - lists_[i].updated < kListAge) continue;
     auto request = std::make_unique<network::ResourceRequest>();
     request->url = GURL(lists_[i].url);
@@ -265,11 +300,65 @@ void ContentBlocking::Downloaded(size_t index, std::unique_ptr<network::SimpleUR
   --updating_;
   const int status = loader->ResponseInfo() && loader->ResponseInfo()->headers ? loader->ResponseInfo()->headers->response_code() : 0;
   // Only a whole list replaces the one on disk.
-  if (!body || status != 200 || !body->starts_with("[Adblock") || !base::IsStringUTF8(*body) || adblock::count_rules(*body) < 1000) {
+  if (!body || status != 200 || !(body->starts_with("[Adblock") || body->starts_with("! Title:")) || !base::IsStringUTF8(*body)) {
     last_error_ = lists_[index].name;
     Notify();
     return;
   }
+  if (body->find("\n!#include ") != std::string::npos) { FetchIncludes(index, std::move(*body)); return; }
+  Store(index, std::move(*body));
+}
+void ContentBlocking::FetchIncludes(size_t index, std::string body) {
+  struct Pending { std::string body; std::vector<std::pair<std::string, std::optional<std::string>>> parts; size_t left = 0; };
+  auto pending = std::make_shared<Pending>();
+  for (const auto& line : base::SplitStringPiece(body, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL)) {
+    std::string_view name = base::TrimWhitespaceASCII(line, base::TRIM_ALL);
+    if (!name.starts_with("!#include ")) continue;
+    name = base::TrimWhitespaceASCII(name.substr(10), base::TRIM_ALL);
+    // Only files beside the list: no paths, no other hosts.
+    if (name.empty() || name.size() > 80 || !std::ranges::all_of(name, [](char c) { return base::IsAsciiAlphaNumeric(c) || c == '-' || c == '_' || c == '.'; }))
+      continue;
+    if (pending->parts.size() >= kMaxIncludes) break;
+    pending->parts.emplace_back(std::string(name), std::nullopt);
+  }
+  pending->body = std::move(body);
+  pending->left = pending->parts.size();
+  if (!pending->left) { Store(index, std::move(pending->body)); return; }
+  ++updating_;
+  const GURL base_url(lists_[index].url);
+  for (size_t part = 0; part < pending->parts.size(); ++part) {
+    auto request = std::make_unique<network::ResourceRequest>();
+    request->url = base_url.Resolve(pending->parts[part].first);
+    request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+    auto loader = network::SimpleURLLoader::Create(std::move(request), kListTraffic);
+    auto* raw = loader.get();
+    raw->DownloadToString(g_browser_process->shared_url_loader_factory().get(), base::BindOnce(
+        [](base::WeakPtr<ContentBlocking> self, size_t index, std::shared_ptr<Pending> pending, size_t part,
+           std::unique_ptr<network::SimpleURLLoader> loader, std::optional<std::string> text) {
+          if (!self) return;
+          const int status = loader->ResponseInfo() && loader->ResponseInfo()->headers ? loader->ResponseInfo()->headers->response_code() : 0;
+          if (text && status == 200 && base::IsStringUTF8(*text)) pending->parts[part].second = std::move(text);
+          if (--pending->left) return;
+          --self->updating_;
+          // Every part or nothing: a list missing half its rules is not stored.
+          std::string merged;
+          for (const auto& line : base::SplitStringPiece(pending->body, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL)) {
+            const auto trimmed = base::TrimWhitespaceASCII(line, base::TRIM_ALL);
+            const auto included = std::ranges::find_if(pending->parts, [&](const auto& entry) {
+              return trimmed.starts_with("!#include ") && base::TrimWhitespaceASCII(trimmed.substr(10), base::TRIM_ALL) == entry.first; });
+            if (included == pending->parts.end()) { merged.append(line); merged.push_back('\n'); continue; }
+            if (!included->second) { self->last_error_ = self->lists_[index].name; self->Notify(); return; }
+            merged.append(*included->second);
+            merged.push_back('\n');
+          }
+          if (merged.size() > kMaxList) { self->last_error_ = self->lists_[index].name; self->Notify(); return; }
+          self->Store(index, std::move(merged));
+        }, weak_factory_.GetWeakPtr(), index, pending, part, std::move(loader)), kMaxList);
+  }
+}
+void ContentBlocking::Store(size_t index, std::string text) {
+  if (adblock::count_rules(text) < 1000) { last_error_ = lists_[index].name; Notify(); return; }
+  std::optional<std::string> body(std::move(text));
   base::ThreadPool::PostTask(FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT, base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce([](base::FilePath directory, std::string name, std::string text) {
         base::CreateDirectory(directory);
@@ -286,8 +375,10 @@ void ContentBlocking::Downloaded(size_t index, std::unique_ptr<network::SimpleUR
 void ContentBlocking::SetListsForTesting(std::vector<std::string> texts) {
   started_ = true;
   update_timer_.Stop();
+  texts.resize(lists_.size());
   for (size_t i = 0; i < lists_.size(); ++i) {
-    lists_[i].rules = i < texts.size() ? adblock::count_rules(texts[i]) : 0;
+    if (lists_[i].builtin) texts[i] = std::string(adblock::builtin_list());
+    lists_[i].rules = adblock::count_rules(texts[i]);
     lists_[i].updated = base::Time::Now();
   }
   texts_ = std::make_shared<const std::vector<std::string>>(std::move(texts));
@@ -312,13 +403,15 @@ void ContentBlocking::Rebuild(Profile* profile) {
   if (!state) return;
   const uint64_t generation = ++state->generation;
   std::vector<std::string> rules = Rules(profile);
+  std::vector<bool> enabled;
+  for (const auto& list : lists_) enabled.push_back(ListEnabled(profile, list.id));
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE, {base::TaskPriority::USER_VISIBLE},
-      base::BindOnce([](std::shared_ptr<const std::vector<std::string>> texts, std::vector<std::string> rules) {
+      base::BindOnce([](std::shared_ptr<const std::vector<std::string>> texts, std::vector<bool> enabled, std::vector<std::string> rules) {
         rust::Vec<rust::String> lists;
-        for (const auto& text : *texts) lists.push_back(rust::String(text));
+        for (size_t i = 0; i < texts->size(); ++i) if (i >= enabled.size() || enabled[i]) lists.push_back(rust::String((*texts)[i]));
         lists.push_back(rust::String(base::JoinString(rules, "\n")));
         return adblock::new_engine(lists);
-      }, texts_, std::move(rules)),
+      }, texts_, std::move(enabled), std::move(rules)),
       base::BindOnce([](base::WeakPtr<ProfileState> state, uint64_t generation, rust::Box<adblock::Engine> engine) {
         if (!state || state->generation != generation) return;
         state->engine.emplace(std::move(engine));
@@ -359,6 +452,27 @@ void ContentBlocking::SetSiteAllowed(Profile* profile, const std::string& site, 
   ScopedListPrefUpdate update(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingAllowedSitesPref);
   update->EraseIf([&](const base::Value& value) { return value.is_string() && Normalize(value.GetString()) == key; });
   if (allowed) update->Append(key);
+}
+bool ContentBlocking::ListEnabled(Profile* profile, const std::string& id) {
+  const auto source = std::ranges::find_if(kLists, [&](const ListSource& list) { return list.id == id; });
+  if (source == std::end(kLists)) return false;
+  if (source->kind == ListKind::kRequired) return true;
+  const bool fallback = source->kind != ListKind::kDefaultOff;
+  if (!profile) return fallback;
+  return profile->GetOriginalProfile()->GetPrefs()->GetDict(kAdBlockingListsPref).FindBool(id).value_or(fallback);
+}
+void ContentBlocking::SetListEnabled(Profile* profile, const std::string& id, bool enabled) {
+  const auto source = std::ranges::find_if(kLists, [&](const ListSource& list) { return list.id == id; });
+  if (!profile || source == std::end(kLists) || source->kind == ListKind::kRequired) return;
+  ScopedDictPrefUpdate(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingListsPref)->Set(id, enabled);
+}
+bool ContentBlocking::Wanted(size_t index) {
+  if (index >= lists_.size() || lists_[index].builtin) return false;
+  if (!lists_[index].optional) return true;
+  for (auto* profile : g_browser_process && g_browser_process->profile_manager() ?
+                       g_browser_process->profile_manager()->GetLoadedProfiles() : std::vector<Profile*>())
+    if (!profile->IsOffTheRecord() && ListEnabled(profile, lists_[index].id)) return true;
+  return false;
 }
 std::vector<std::string> ContentBlocking::AllowedSites(Profile* profile) {
   return profile ? StringList(profile->GetOriginalProfile()->GetPrefs()->GetList(kAdBlockingAllowedSitesPref)) : std::vector<std::string>();

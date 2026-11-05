@@ -54,18 +54,67 @@ How it is embedded:
 
 ### Filter lists
 
-EasyList and EasyPrivacy are dual-licensed GPLv3 / CC BY-SA 3.0. They are **data
-Zitter downloads**, never compiled in and never part of the installer. They go to
-`<user data>/Zitter Filter Lists/` with their own license headers intact. The
-Settings page and this document name them with attribution:
+Downloaded lists are **data Zitter downloads**, never compiled in and never
+part of the installer. They go to `<user data>/Zitter Filter Lists/` with their
+own license headers intact. The Settings page and this document name them with
+attribution:
 
-- EasyList, https://easylist.to/easylist/easylist.txt, © The EasyList authors,
-  GPLv3 / CC BY-SA 3.0.
-- EasyPrivacy, https://easylist.to/easylist/easyprivacy.txt, © The EasyList
-  authors, GPLv3 / CC BY-SA 3.0.
+| List | Switch | Source and license |
+| --- | --- | --- |
+| EasyList | always on | https://easylist.to/easylist/easylist.txt, © The EasyList authors, GPLv3 / CC BY-SA 3.0 |
+| EasyPrivacy | always on | https://easylist.to/easylist/easyprivacy.txt, © The EasyList authors, GPLv3 / CC BY-SA 3.0 |
+| Zitter's stand-ins (Zamienniki Zittera) | on by default | built in, `chromium/prototype/adblock_zitter_list.txt`, part of Zitter (Apache-2.0) |
+| Adblock Warning Removal List | on by default | https://easylist-downloads.adblockplus.org/antiadblockfilters.txt, © The EasyList authors, same license as EasyList |
+| uBlock filters | off by default | https://ublockorigin.github.io/uAssets/filters/filters.txt, © The uBlock Origin authors, GPLv3 |
 
-uBO's own lists (`uBlock filters`) are GPLv3-only and depend on uBO scriptlets,
-so they are not offered.
+Not offered: the Polish anti-adblock lists (Certyficate.IT's Official Polish
+Filters and `olegwukr/polish-privacy-filters`) are CC BY-NC-SA 4.0, which
+rules out commercial use, and the second has not changed since 2023.
+
+### Built-in lists: blocking that pages cannot see
+
+Most anti-adblock detection checks whether an ad library loaded. **Zitter's
+stand-ins** answer the blocked request with a harmless body instead of an
+error:
+
+- AdSense (`adsbygoogle.js`, `show_ads.js`);
+- Google Publisher Tags (`gpt.js`);
+- Google Analytics (`analytics.js`, `ga.js`) and Tag Manager (`gtm.js`,
+  `gtag/js`);
+- Amazon's `apstag.js`;
+- BlockAdBlock and FuckAdBlock wherever they are hosted;
+- the ad pixels bait checks load.
+
+The rules use `$redirect-rule`, which acts only on a request another rule
+already blocks, so an exception, a site switched off, or the list itself
+turned off still wins. Nothing extra is fetched; the request still never
+leaves the machine. adblock-rust returns a redirect even when nothing blocks
+the request, so the bridge answers with one only when `should_block()` holds.
+
+The **Adblock Warning Removal List** removes the "please turn off your ad
+blocker" messages and keeps bait elements visible on the sites it knows.
+
+**uBlock filters** reaches much further: about 24 000 rules, many of them
+`+js()` against detectors, but it adds 2.5 MB to download. Of its scriptlet
+uses, about 93 % name ones Zitter ships under the same names (`aopr`, `acs`,
+`set`, `aeld`, `nostif`, `aopw`, `nowoif`, …). The rest, uBO's `trusted-*`
+family and a few rare ones, do nothing.
+
+Lists in uBlock's format need two things adblock-rust does not do:
+
+- `!#include file` lines pull in more files from the list's directory (most of
+  uBlock filters lives in `filters-2020.txt` … `filters-2026.txt`). The
+  download fetches them, at most 24 plain file names beside the list, and puts
+  them in place. If one is missing, the old copy stays.
+- `!#if` / `!#else` / `!#endif` blocks are resolved when the engine is built
+  (`preprocess` in `adblock.rs`), the way uBlock Origin reads them on desktop
+  Chromium: `ext_ublock`, `env_chromium` and `cap_user_stylesheet` are true;
+  mobile, Firefox, AdGuard, ABP and HTML filtering are false. adblock-rust
+  would otherwise keep both branches.
+
+The switches are per profile (`zitter.ad_blocking_lists`, list id → on, only
+lists switched away from their default). A list nobody has switched on is
+never downloaded; switching one on fetches it at once and rebuilds the engine.
 
 ## Design
 
@@ -248,8 +297,9 @@ preference catalogue in `sidebar_scene.rs`:
   default on, per profile);
 - **Listy, wyjątki i Twoje reguły**, one card (row kind `AdBlocking`, built
   natively like the assistant's model list) with three parts:
-- **Listy filtrów**: EasyList and EasyPrivacy with their rule counts, last update,
-  attribution, and **Aktualizuj teraz**;
+- **Listy filtrów**: every list with its rule count and last update; the
+  optional ones with what they are for and a switch; attribution for all of
+  them, and **Aktualizuj teraz**;
 - **Witryny bez blokowania**: the allow list, each with a remove button;
 - **Twoje reguły**: the profile's own rules (pref `zitter.ad_blocking_rules`, a
   list of strings), each in the `url` style (mono, it is code) with a remove
@@ -259,16 +309,20 @@ preference catalogue in `sidebar_scene.rs`:
 
 ### List updates
 
-- At startup the service reads both files. A list missing or older than four
-  days is downloaded 30 s after startup (so it never competes with the first
-  page), through the system network context: no cookies, no profile data.
+- At startup the service reads the files. A list some loaded profile has on,
+  missing or older than four days, is downloaded 30 s after startup (so it
+  never competes with the first page), through the system network context: no
+  cookies, no profile data.
 - Every 24 h while running, the same check.
 - **Aktualizuj teraz** downloads at once.
-- A download must be HTTP 200, at most 8 MB, start with `[Adblock Plus` and
-  parse to at least 1 000 rules; otherwise the old file stays.
-- This is new background traffic (two GETs to easylist.to every four days,
-  traffic annotation `zitter_filter_lists`); the next network audit
-  (`docs/network-audit-2026-10-23.md` is the last) should list it.
+- A download must be HTTP 200, at most 16 MB with its includes, start with
+  `[Adblock` or `! Title:` and parse to at least 1 000 rules; otherwise the old
+  file stays.
+- This is new background traffic, under the traffic annotation
+  `zitter_filter_lists`: GETs to easylist.to and
+  easylist-downloads.adblockplus.org every four days, and, with uBlock filters
+  on, to ublockorigin.github.io (the list and its includes). The next network
+  audit (`docs/network-audit-2026-10-23.md` is the last) should list it.
 
 ## The assistant flow
 
@@ -471,6 +525,11 @@ reguły**.
     it appears; three missed loads make a rule stale and one hit clears it;
     `replaces` swaps the stale rule for a new one and refuses rules that were
     never saved.
+  - `BuiltInStandInsAndOptionalLists` (`testdata/adblock_detectors.html`):
+    Zitter's stand-ins and the Adblock Warning Removal List are on by default
+    and uBlock filters off; a BlockAdBlock file the test list blocks loads as
+    Zitter's stand-in, and with the stand-ins switched off it fails again; the
+    switches are per profile and required lists have none.
   - `ScriptletsRedirectsAndCanvasBeatAnAntiAdblockWall`
     (`testdata/adblock_wall.html`): the page walls itself off because its bait
     script is blocked and `canRunAds` is missing, and it paints an ad into a

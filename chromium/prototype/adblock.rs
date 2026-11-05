@@ -53,6 +53,9 @@ mod ffi {
         // Whether `rule` only acts on pages of `site` (an eTLD+1, like "example.com").
         fn rule_in_scope(rule: &str, site: &str) -> bool;
         fn count_rules(list: &str) -> usize;
+        // Zitter's own list (adblock_zitter_list.txt): stand-ins for ad and
+        // analytics libraries the other lists block.
+        fn builtin_list() -> String;
     }
 }
 
@@ -100,6 +103,58 @@ pub struct Engine {
 }
 
 const RESOURCES: &str = include_str!("adblock_resources.js");
+const BUILTIN_LIST: &str = include_str!("adblock_zitter_list.txt");
+
+fn builtin_list() -> String { BUILTIN_LIST.to_string() }
+
+/// What `!#if` sees: Zitter reads uBlock Origin's syntax on desktop Chromium,
+/// without HTML filtering. Everything else (mobile, Firefox, AdGuard, ABP) is false.
+fn condition_true(token: &str) -> bool {
+    matches!(token, "ext_ublock" | "env_chromium" | "cap_user_stylesheet" | "true")
+}
+
+fn evaluate(tokens: &[&str], at: &mut usize) -> bool {
+    // or := and ('||' and)* ; and := unary ('&&' unary)* ; unary := '!' unary | '(' or ')' | name
+    fn unary(tokens: &[&str], at: &mut usize) -> bool {
+        match tokens.get(*at).copied() {
+            Some("!") => { *at += 1; !unary(tokens, at) }
+            Some("(") => { *at += 1; let value = evaluate(tokens, at); if tokens.get(*at) == Some(&")") { *at += 1; } value }
+            Some(name) => { *at += 1; condition_true(name) }
+            None => false,
+        }
+    }
+    fn and(tokens: &[&str], at: &mut usize) -> bool {
+        let mut value = unary(tokens, at);
+        while tokens.get(*at) == Some(&"&&") { *at += 1; value &= unary(tokens, at); }
+        value
+    }
+    let mut value = and(tokens, at);
+    while tokens.get(*at) == Some(&"||") { *at += 1; value |= and(tokens, at); }
+    value
+}
+
+/// Applies `!#if` / `!#else` / `!#endif` the way uBlock Origin does, dropping
+/// the lines meant for other blockers or for mobile. adblock-rust treats them
+/// as comments and would keep both branches.
+fn preprocess(list: &str) -> String {
+    let mut out = String::with_capacity(list.len());
+    let mut stack: Vec<(bool, bool)> = Vec::new(); // (this branch on, parent on)
+    let active = |stack: &Vec<(bool, bool)>| stack.last().map_or(true, |(on, parent)| *on && *parent);
+    for line in list.lines() {
+        let trimmed = line.trim();
+        if let Some(expression) = trimmed.strip_prefix("!#if ") {
+            let spaced = expression.replace("&&", " && ").replace("||", " || ").replace('!', " ! ").replace('(', " ( ").replace(')', " ) ");
+            let tokens: Vec<&str> = spaced.split_whitespace().collect();
+            let parent = active(&stack);
+            stack.push((evaluate(&tokens, &mut 0), parent));
+            continue;
+        }
+        if trimmed == "!#else" { if let Some(top) = stack.last_mut() { top.0 = !top.0; } continue; }
+        if trimmed == "!#endif" { stack.pop(); continue; }
+        if active(&stack) { out.push_str(line); out.push('\n'); }
+    }
+    out
+}
 
 fn base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -188,8 +243,9 @@ fn new_engine(lists: &Vec<String>) -> Box<Engine> {
     let mut hosts = BTreeSet::new();
     for list in lists {
         rules += count_rules(list);
-        script_hosts(list, &mut hosts);
-        set.add_filter_list(list.clone(), ParseOptions::default());
+        let list = preprocess(list);
+        script_hosts(&list, &mut hosts);
+        set.add_filter_list(list, ParseOptions::default());
     }
     let mut engine = adblock::Engine::new_with_filter_set(set);
     engine.use_resources(resources());
@@ -201,8 +257,11 @@ impl Engine {
     fn check_request(&self, url: &str, source_url: &str, request_type: &str) -> ffi::RequestCheck {
         let Ok(request) = Request::new(url, source_url, request_type, "GET") else { return ffi::RequestCheck { verdict: 0, redirect: String::new() } };
         let result = self.engine.check_network_request(&request);
-        let verdict = if result.should_block() || result.redirect.is_some() { 1 } else if result.filter.is_some() || result.exception.is_some() { 2 } else { 0 };
-        ffi::RequestCheck { verdict, redirect: result.redirect.unwrap_or_default() }
+        // A redirect alone does not block: `$redirect-rule` only applies when
+        // another rule blocks the request (`$redirect` blocks through its own filter).
+        let blocked = result.should_block();
+        let verdict = if blocked { 1 } else if result.filter.is_some() || result.exception.is_some() { 2 } else { 0 };
+        ffi::RequestCheck { verdict, redirect: if blocked { result.redirect.unwrap_or_default() } else { String::new() } }
     }
     fn page_scripts(&self) -> Vec<ffi::PageScript> {
         self.script_hosts.iter().filter_map(|host| {
@@ -433,6 +492,26 @@ mod tests {
     }
 
     #[test]
+    fn preprocesses_ublock_conditions() {
+        let list = "a.test##.one\n!#if env_mobile\na.test##.mobile\n!#else\na.test##.desktop\n!#endif\n!#if !ext_ublock\na.test##.other\n!#endif\n!#if (ext_ublock && !adguard) || env_firefox\na.test##.ours\n!#if cap_html_filtering\na.test##^script\n!#endif\n!#endif";
+        assert_eq!(preprocess(list), "a.test##.one\na.test##.desktop\na.test##.ours\n");
+    }
+
+    #[test]
+    fn builtin_list_redirects_what_other_lists_block() {
+        let list = builtin_list();
+        assert!(list.lines().filter(|l| !is_comment(l)).all(|l| check_rule(l).kind == 1), "every line is a valid network rule");
+        // Alone it blocks nothing; with a list that blocks adsbygoogle, the page gets the stand-in.
+        let alone = new_engine(&vec![list.clone()]);
+        let url = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js";
+        assert_eq!(alone.check_request(url, "https://news.test/", "script").verdict, 0);
+        let both = new_engine(&vec!["||pagead2.googlesyndication.com^".into(), list]);
+        let check = both.check_request(url, "https://news.test/", "script");
+        assert_eq!(check.verdict, 1);
+        assert!(check.redirect.starts_with("data:application/javascript;base64,"));
+    }
+
+    #[test]
     fn generichide_turns_generic_rules_off() {
         let e = engine("##.ad-banner\n@@||news.test^$generichide");
         assert!(e.cosmetic_resources("https://news.test/").generichide);
@@ -444,7 +523,7 @@ mod tests {
         assert_eq!(check_rule("||ads.example^$script").kind, 1);
         assert_eq!(check_rule("example.com##.ad").kind, 2);
         assert_eq!(check_rule("! a comment").kind, 3);
-        assert_eq!(check_rule("example.com##+js(nowebrtc)").kind, 0);
+        assert_eq!(check_rule("example.com##+js(trusted-set-constant, x, 1)").kind, 0);
         assert_eq!(check_rule("example.com##+js(set-constant, canRunAds, true)").kind, 2);
         assert_eq!(check_rule("example.com##+js(aopr, detectAdBlock)").kind, 2);
         assert_eq!(check_rule("||ads.example^$script,redirect=noop.js").kind, 1);
