@@ -4,9 +4,11 @@ import argparse
 import functools
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import plistlib
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import threading
 from urllib.parse import urlencode
@@ -103,7 +105,14 @@ def main():
         extra.append(f"--load-extension={','.join(str(path.resolve()) for path in args.load_extension)}")
     print(f"Rust UI raster: {args.raster}; isolated profile: {args.profile.resolve()}", flush=True)
     try:
-        launcher = [str(binary)] if WINDOWS else ["/usr/bin/open", "-W", "-n", str(args.app.resolve()), "--args"]
+        launcher = [str(binary)]
+        if not WINDOWS:
+            launcher = ["/usr/bin/open", "-W", "-n"]
+            # LaunchServices does not inherit the shell's Homebrew/Node PATH.
+            node = os.environ.get("ZITTER_NODE_PATH") or shutil.which("node")
+            if node:
+                launcher += ["--env", f"ZITTER_NODE_PATH={node}"]
+            launcher += [str(args.app.resolve()), "--args"]
         return subprocess.call([*launcher, f"--user-data-dir={args.profile.resolve()}",
                                 "--no-first-run",
                                 "--disable-component-update", "--disable-background-networking", "--enable-logging=stderr", *extra])

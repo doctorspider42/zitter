@@ -158,9 +158,11 @@ def package(out, destination, binary="zitter", register=True, identity=None, thi
             raise ValueError(f"Refusing to overwrite an unowned bundle: {destination}")
     macos = contents / "MacOS"
     macos.mkdir(parents=True, exist_ok=True)
-    # Optional assistant scripts live beside the browser executable on all platforms.
+    # macOS reserves MacOS/ for code; scripts must be sealed as resources.
+    shutil.rmtree(macos / "assistant", ignore_errors=True)
+    shutil.rmtree(contents / "Resources/assistant", ignore_errors=True)
     if (out / "assistant").is_dir():
-        shutil.copytree(out / "assistant", macos / "assistant", dirs_exist_ok=True)
+        shutil.copytree(out / "assistant", contents / "Resources/assistant", dirs_exist_ok=True)
     # Upstream helper/path conventions expect this inner executable name. The
     # application's visible name, bundle identity and data directory are Zitter.
     target = macos / "Chromium"

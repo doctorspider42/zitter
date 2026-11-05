@@ -12,6 +12,29 @@ spec.loader.exec_module(packager)
 
 
 class PackageTests(unittest.TestCase):
+    def test_assistant_scripts_are_resources_before_signing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / 'out'
+            framework = out / 'Chromium Framework.framework/Versions/1.0'
+            framework.mkdir(parents=True)
+            (framework / 'Chromium Framework').write_bytes(b'framework')
+            (out / 'zitter').write_bytes(b'app')
+            runtime = out / 'assistant'
+            runtime.mkdir()
+            (runtime / 'server.mjs').write_text('console.log("runtime")')
+            app = root / 'Zitter.app'
+            packager.package(out, app, register=False)
+            legacy = app / 'Contents/MacOS/assistant'
+            legacy.mkdir()
+            (legacy / 'stale.mjs').write_text('old runtime')
+            def verify_at_signing(*_):
+                self.assertFalse(legacy.exists())
+                self.assertEqual((runtime / 'server.mjs').read_bytes(),
+                                 (app / 'Contents/Resources/assistant/server.mjs').read_bytes())
+            with mock.patch.object(packager, 'sign_bundle', side_effect=verify_at_signing):
+                packager.package(out, app, register=False, identity='test')
+
     def test_every_hardlink_path_is_signed_independently(self):
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory) / 'Zitter.app'
