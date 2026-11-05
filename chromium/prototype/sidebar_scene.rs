@@ -63,7 +63,7 @@ mod ffi {
     struct ToolsFormChoice { key: String, label: Vec<u16> }
     struct ToolsFormChoices { choices: Vec<ToolsFormChoice>, enabled: bool }
     struct ToolsChoiceDraft { valid: bool, page: usize, create: bool, target: String, chord: Vec<u16>, name: Vec<u16>, keyword: Vec<u16>, url: Vec<u16>, stop_recording: bool }
-    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language, TimeMachine, TimeMachineDays }
+    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language, TimeMachine, TimeMachineDays, AssistantBackends, AssistantModels }
     #[repr(u32)]
     #[derive(Debug)]
     enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset }
@@ -160,7 +160,7 @@ mod ffi {
     // tone (0 none, 1 ok, 2 warn, 3 danger), then the muted facts.
     struct DownloadRow { tone: u8, state: String, meta: String }
     struct CommandWorkspace { id: String, name: String, asleep: bool, same_profile: bool, capturing: bool }
-    struct CommandContext { page: bool, http_page: bool, split: bool, can_back: bool, can_forward: bool, tab_count: usize, reopen: bool, workspaces: Vec<CommandWorkspace> }
+    struct CommandContext { page: bool, http_page: bool, split: bool, can_back: bool, can_forward: bool, tab_count: usize, reopen: bool, assistant: bool, workspaces: Vec<CommandWorkspace> }
     struct CommandEntry { id: String, title: String, detail: String, target: String }
     struct PalettePlanInput { text: String, command_palette: bool, provider: String, resolved: String, keywords: Vec<String>, results: usize, commands: usize }
     #[derive(Debug)]
@@ -1180,8 +1180,20 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     let mut clear=preference_spec(0,K::Action,"",t("Wyczyść historię kart"),t("Usuń historię Time Machine wszystkich przestrzeni na tym komputerze."),vec![],"",A::ClearTimeline);
     clear.button=t("Wyczyść").into();rows.push(clear);
     rows.push(preference_spec(1,K::ShortcutHint,"",t("Szybciej z klawiaturą"),t("⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_enabled",t("Włącz asystenta"),t("Wyłączony asystent nie otwiera panelu przy krawędzi okna, znika z Command Center i nie uruchamia procesu. Dotyczy całej aplikacji."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::AssistantBackends,"",t("Backendy"),t("Klucze API czytamy ze środowiska uruchomienia Zittera. Nie wpisujesz ich tutaj i nie trafiają do profilu."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::AssistantModels,"",t("Modele w panelu"),t("Widoczne modele trafiają do menu modelu w panelu. Domyślny startuje każdą nową sesję."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_tabs",t("Otwarte i przypięte karty"),t("Tytuły i adresy bez parametrów, potrzebne do podpowiedzi po @."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_pages",t("Treść i kontrolki stron"),t("Czytanie tekstu i elementów wskazanych kart; może obejmować dane osobowe."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_actions",t("Klikanie, pisanie i zarządzanie kartami"),t("Nawigacja, karty, przypinanie i polecenia przeglądarki."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_history",t("Historia przeglądania"),t("Przeszukiwanie historii tego profilu; może obejmować dane osobowe."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_web",t("Publiczne strony i wyszukiwanie"),t("Osobny klient sieci, bez ciasteczek i logowania."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_confirm_clicks",t("Potwierdzaj kliknięcia na widocznej karcie"),t("Mała prośba przy klikanym elemencie: Enter zezwala, Escape pomija."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_background",t("Pozwól pracować w tle"),t("Niewidoczna karta tego profilu z tymi samymi ciasteczkami i logowaniami. Postęp widać w panelu asystenta."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Toggle,"assistant_confirm_background",t("Potwierdzaj kliknięcia w tle"),t("Zadanie czeka w panelu, aż zezwolisz. Bez tego asystent działa na Twoich zalogowanych kontach, a Ty tego nie widzisz."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::Picker,"assistant_concurrency",t("Równoległe wywołania Deep research"),t("Więcej to szybszy raport i większe zużycie zasobów u dostawcy."),vec!["2".into(),"4".into(),"8".into(),"12".into()],"",A::None));
     ffi::PreferenceCatalogue{
-        categories:vec![t("Wygląd").into(),t("Wyszukiwanie").into(),t("Prywatność").into(),t("Uprawnienia stron").into(),t("Treści i czytelność").into(),t("Hasła i profile").into(),t("Pobieranie").into(),t("Języki i pisownia").into(),t("Dane przeglądania").into(),t("Zaawansowane").into()],descriptions:vec![t("Dopasuj Zitter do swojego rytmu.").into(),t("Wybierz, gdzie zaczyna się każde wyszukiwanie.").into(),t("Zdecyduj, jakie ślady zostawiasz w sieci.").into(),t("Ustal domyślny dostęp witryn do urządzenia.").into(),t("Wygodne czytanie i kontrola zawartości stron.").into(),t("Oddzielne logowania, wspólne możliwości.").into(),t("Wybierz miejsce dla pobieranych plików.").into(),t("Wybierz języki witryn i pomoc podczas pisania.").into(),t("Kontroluj dane zapisane w bieżącym profilu.").into(),t("Dostępność, połączenia i ustawienia silnika Chromium.").into()],rows,
+        categories:vec![t("Wygląd").into(),t("Wyszukiwanie").into(),t("Prywatność").into(),t("Uprawnienia stron").into(),t("Treści i czytelność").into(),t("Hasła i profile").into(),t("Pobieranie").into(),t("Języki i pisownia").into(),t("Dane przeglądania").into(),t("Zaawansowane").into(),t("Asystent AI").into()],descriptions:vec![t("Dopasuj Zitter do swojego rytmu.").into(),t("Wybierz, gdzie zaczyna się każde wyszukiwanie.").into(),t("Zdecyduj, jakie ślady zostawiasz w sieci.").into(),t("Ustal domyślny dostęp witryn do urządzenia.").into(),t("Wygodne czytanie i kontrola zawartości stron.").into(),t("Oddzielne logowania, wspólne możliwości.").into(),t("Wybierz miejsce dla pobieranych plików.").into(),t("Wybierz języki witryn i pomoc podczas pisania.").into(),t("Kontroluj dane zapisane w bieżącym profilu.").into(),t("Dostępność, połączenia i ustawienia silnika Chromium.").into(),t("Backend, modele i uprawnienia. W panelu wybierasz już tylko model.").into()],rows,
         site:ffi::PreferenceSiteCopy{origin_ax:t("Adres witryny dla wyjątku").into(),placeholder:"https://example.com".into(),type_ax:t("Rodzaj uprawnienia dla witryny").into(),policy_ax:t("Polityka dla witryny").into(),save:t("Zapisz wyjątek").into(),types:vec!["JavaScript".into(),t("Obrazy").into(),t("Wyskakujące okna").into(),t("Dźwięk").into(),t("Powiadomienia").into(),t("Lokalizacja").into(),t("Kamera").into(),t("Mikrofon").into(),t("Schowek").into()]},
         clear:ffi::PreferenceClearCopy{period_ax:t("Zakres czasu czyszczenia danych").into(),periods:vec![t("Ostatnia godzina").into(),t("Ostatnie 24 godziny").into(),t("Ostatnie 7 dni").into(),t("Cały okres").into()],checks:vec![t("Historia przeglądania").into(),t("Cookies i dane witryn (może wylogować)").into(),t("Pamięć podręczna").into()],action:t("Wyczyść…").into()}
     }
@@ -1793,6 +1805,9 @@ fn command_catalogue(c:&ffi::CommandContext,query:&str)->Vec<ffi::CommandEntry>{
         if !w.asleep&&!w.capturing{add("sleep_space",tf("Uśpij przestrzeń: {}",&[&w.name]),t("Zwolnij pamięć · strony przeładują się po obudzeniu; zapisz formularze"),"sleep space memory",&w.id);}
     }
     if awake_background{add("sleep_others",t("Uśpij pozostałe przestrzenie").into(),t("Pomiń aktywne nagrywanie · inne strony przeładują się; zapisz formularze"),"sleep other spaces memory pamiec","");}
+    // A disabled assistant leaves only a way back to its settings.
+    if c.assistant{add("assistant",t("Asystent AI").into(),t("Opcjonalny asystent przeglądarki i deep research"),"ai assistant asystent research","");}
+    else{add("assistant_settings",t("Asystent AI jest wyłączony").into(),t("Otwórz Ustawienia → Asystent AI, żeby go włączyć"),"ai assistant asystent research","");}
     // The initial view stays compact; ">" reveals the full catalogue.
     if query.is_empty()&&!only{out.truncate(6);}out
 }
@@ -2953,6 +2968,8 @@ fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
             4|7=>{rect(cx-7.0,cy-7.0,14.0,14.0,7.0,i.ink,1.25);rect(cx-3.0,cy-7.0,6.0,14.0,3.0,i.ink,1.0);rect(cx-6.0,cy-0.6,12.0,1.2,0.6,i.ink,0.0);},
             5=>{rect(cx-4.0,cy-7.0,8.0,10.0,4.0,i.ink,1.5);rect(cx-6.0,cy-1.0,12.0,9.0,2.0,i.ink,0.0);},
             6=>{rect(cx-0.75,cy-7.0,1.5,10.0,0.75,i.ink,0.0);for d in 0..5{let d=d as f32;rect(cx-d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);rect(cx+d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);}rect(cx-6.0,cy+7.0,12.0,1.5,0.75,i.ink,0.0);},
+            // AI assistant: a spark, a thin cross around a small ring, and a second dot.
+            10=>{rect(cx-0.75,cy-7.0,1.5,14.0,0.75,i.ink,0.0);rect(cx-7.0,cy-0.75,14.0,1.5,0.75,i.ink,0.0);rect(cx-2.75,cy-2.75,5.5,5.5,2.75,i.ink,1.25);rect(cx+4.0,cy-7.0,3.0,3.0,1.5,i.ink,0.0);},
             _=>{}
         }
     }
@@ -4086,17 +4103,17 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane"]);assert_eq!(c.descriptions.len(),10);assert_eq!(c.rows.len(),61);
-        let mut counts=[0;10];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,2,3,1,6]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),30);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),60);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI"]);assert_eq!(c.descriptions.len(),11);assert_eq!(c.rows.len(),73);
+        let mut counts=[0;11];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,2,3,1,6,12]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),39);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),72);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
         for row in &c.rows{if row.kind==K::Text||row.kind==K::Toggle||row.kind==K::Picker{assert!(!row.key.is_empty());assert!(keys.insert(row.key.clone()));}else{assert!(row.key.is_empty());}}
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration"]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration","assistant_enabled","assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web","assistant_confirm_clicks","assistant_background","assistant_confirm_background"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).map(|r|r.key.as_str()).collect::<Vec<_>>(),["font_standard","font_serif","font_sans","font_fixed","accept_languages","dns_templates"]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode"]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","assistant_concurrency"]);
         for key in ["hardware_acceleration","dns_mode","dns_templates"]{let row=c.rows.iter().find(|r|r.key==key).unwrap();assert!(row.detail.contains("całej aplikacji"));}
     }
     #[test] fn preference_catalogue_editor_and_action_accessibility_retains_native_copy() {
@@ -5273,10 +5290,10 @@ mod tests {
         assert_eq!(r(&download_facts(P::Cancelled)).1,"⚠ Anulowano");let mut f=download_facts(P::Interrupted);assert_eq!(r(&f).0,3);assert_eq!(r(&f).1,"⚠ Przerwano");f.can_resume=false;assert_eq!(r(&f).1,"⚠ Przerwano");
         let mut f=download_facts(P::Complete);f.blocked=true;assert_eq!((r(&f).0,r(&f).1),(3,"⚠ Zablokowane".into()));
     }
-    fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}
+    fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,assistant:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}
     #[test] fn command_catalogue_lists_conditional_entries_with_targets() {
         let all=command_catalogue(&command_context(),">");let ids=all.iter().map(|e|e.id.as_str()).collect::<Vec<_>>();
-        assert_eq!(ids,vec!["new_tab","save_snapshot","timeline","settings","shortcuts","engines","sidebar","spaces","profiles","import","history","downloads","split","reload","find","print","copy_url","back","passwords","close_tab","close_other_tabs","reopen","select_space","move_tab","sleep_space","select_space","copy_tab","sleep_others"]);
+        assert_eq!(ids,vec!["new_tab","save_snapshot","timeline","settings","shortcuts","engines","sidebar","spaces","profiles","import","history","downloads","split","reload","find","print","copy_url","back","passwords","close_tab","close_other_tabs","reopen","select_space","move_tab","sleep_space","select_space","copy_tab","sleep_others","assistant"]);
         assert_eq!(all[0].detail,"Polecenie · Otwórz pasek nowej karty");assert_eq!(all[12].title,"Otwórz Split View");
         let wake=all.iter().find(|e|e.target=="club"&&e.id=="select_space").unwrap();assert_eq!(wake.title,"Obudź przestrzeń: Klub");assert_eq!(all.iter().find(|e|e.id=="move_tab").unwrap().target,"home");
         let mut split=command_context();split.split=true;split.can_forward=true;split.tab_count=1;split.reopen=false;split.page=true;let ids=command_catalogue(&split,">").into_iter().map(|e|e.id).collect::<Vec<_>>();
@@ -5285,9 +5302,12 @@ mod tests {
         assert!(!ids.iter().any(|i|matches!(i.as_str(),"split"|"reload"|"move_tab"|"copy_tab"|"sleep_space"|"sleep_others")));
     }
     #[test] fn command_catalogue_matches_folded_words_and_compacts_initial_view() {
-        let c=command_context();assert_eq!(command_catalogue(&c,"").len(),6);assert_eq!(command_catalogue(&c,">").len(),28);
+        let c=command_context();assert_eq!(command_catalogue(&c,"").len(),6);assert_eq!(command_catalogue(&c,">").len(),29);
         let found=command_catalogue(&c,"PRZYWROC  karte");assert_eq!(found.iter().map(|e|e.id.as_str()).collect::<Vec<_>>(),vec!["reopen"]);
         let found=command_catalogue(&c,">  uśpij\tdom ");assert_eq!(found.iter().map(|e|(e.id.as_str(),e.target.as_str())).collect::<Vec<_>>(),vec![("sleep_space","home")]);
+        assert_eq!(command_catalogue(&c,"asystent")[0].id,"assistant");
+        let mut off=command_context();off.assistant=false;let found=command_catalogue(&off,"asystent");
+        assert_eq!(found.iter().map(|e|e.id.as_str()).collect::<Vec<_>>(),vec!["assistant_settings"]);assert_eq!(found[0].title,"Asystent AI jest wyłączony");
         assert!(command_catalogue(&c,"nonexistent").is_empty());assert_eq!(command_fold("ĄĆĘŁŃÓŚŹŻ Żółć"),"acelnoszz zolc");
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {

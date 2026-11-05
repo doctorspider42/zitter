@@ -37,6 +37,11 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   bool checking_before_unload() const { return checking_; }
   size_t navigation_generation() const { return navigation_generation_; }
   views::Widget* dialog() const { return dialog_.get(); }
+  // The open page dialog, for the assistant: its kind and message.
+  bool dialog_open() const { return !!dialog_callback_; }
+  bool leave_dialog_open() const { return unload_dialog_; }
+  content::JavaScriptDialogType dialog_type() const { return dialog_type_; }
+  const std::u16string& dialog_message() const { return dialog_message_; }
   EditorControl* prompt_input() const { return dialog_?prompt_.get():nullptr; }
   bool HandlePromptKey(const ui::KeyEvent& event);
   views::View* dialog_button_for_testing(bool accept) const;
@@ -81,6 +86,8 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   size_t dialog_generation_ = 0;
   bool checking_ = false;
   bool unload_dialog_ = false;
+  content::JavaScriptDialogType dialog_type_ = content::JAVASCRIPT_DIALOG_TYPE_ALERT;
+  std::u16string dialog_message_;
   base::WeakPtrFactory<PageDialogs> weak_factory_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

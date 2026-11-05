@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
+#include "ui/gfx/geometry/rect.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "base/timer/timer.h"
@@ -23,6 +25,7 @@
 #include "components/find_in_page/find_tab_helper.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
+#include "chromium/prototype/assistant_panel.h"
 #include "chromium/prototype/workspace_shell.h"
 #include "zitter/application/workspace_controller.h"
 
@@ -43,6 +46,7 @@ class Textfield;
 class WebView;
 class Widget;
 class WidgetDelegate;
+class ViewTracker;
 }  // namespace views
 
 namespace zitter::sidebar { struct Timeline; }
@@ -122,6 +126,39 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowPasswords();
   void ShowDownloads();
   void ShowHistory();
+  // `hover`: opened from the window edge; it hides again once the pointer is gone.
+  void ShowAssistant(bool hover = false);
+  Profile* AssistantProfile() const;
+  std::string AssistantProfileId() const;
+  base::DictValue AssistantContext(const AssistantPermissions& permissions);
+  // `background` names a session's invisible page: @current and new pages
+  // resolve to it, and mutations of the user's visible tabs are refused.
+  void AssistantTool(std::string tool, base::DictValue args, AssistantPermissions permissions,
+                     base::OnceCallback<void(base::Value)> done, bool user_confirmed = false,
+                     std::string background = {});
+  const AssistantSettings& assistant_settings() const { return assistant_settings_; }
+  void SetAssistantSettings(AssistantSettings settings);
+  // Settings rows for backends and models (Settings → Asystent AI).
+  base::DictValue AssistantSettingsForShell();
+  void WriteAssistantSettings(base::DictValue value);
+  // Invisible pages of the assistant profile share its cookies and logins.
+  // Starting from a visible tab moves that tab, with its page state, away from the user.
+  bool AssistantStartBackground(const std::string& key, const std::string& from_tab, const GURL& url);
+  bool AssistantHasBackground(const std::string& key) const { return assistant_background_.contains(key); }
+  // Puts the page back among the user's tabs and selects it.
+  bool AssistantTakeOver(const std::string& key);
+  void AssistantDiscardBackground(const std::string& key);
+  // The element's bounds in screen coordinates, for a consent bubble beside it.
+  views::WebView* AssistantTabView(std::string id);
+  // Saved assistant conversations, beside the workspace configuration.
+  void LoadAssistantSessions(base::OnceCallback<void(std::optional<base::DictValue>)> done);
+  void SaveAssistantSessions(base::DictValue sessions);
+  base::FilePath assistant_sessions_path() const { return data_directory_.AppendASCII("ZitterAssistantSessions.json"); }
+  // The assistant's stable id for a tab (@tab:<id>), made on first use.
+  std::string AssistantTargetFor(views::View* view);
+  void AssistantElementBounds(std::string tab, std::string element, base::OnceCallback<void(std::optional<gfx::Rect>)> done);
+  content::WebContents* assistant_background_for_testing(const std::string& key) const;
+  AssistantPanel* assistant() const { return assistant_; }
   void ShowSitePanel();
   DownloadPanel* downloads() const { return downloads_.get(); }
   void EnsureDownloads();
@@ -370,6 +407,21 @@ class WorkspaceWindow final : public WorkspaceRuntime,
     std::optional<base::DictValue> sleeping;
   };
   WorkspaceModel model_;
+  raw_ptr<AssistantPanel> assistant_ = nullptr;
+  std::map<std::string, std::unique_ptr<views::ViewTracker>> assistant_targets_;
+  AssistantSettings assistant_settings_;
+  struct AssistantBackgroundPage {
+    AssistantBackgroundPage();
+    AssistantBackgroundPage(AssistantBackgroundPage&&);
+    AssistantBackgroundPage& operator=(AssistantBackgroundPage&&);
+    ~AssistantBackgroundPage();
+    raw_ptr<views::WebView> view = nullptr;  // Hidden child of the content host.
+    std::string profile_id, workspace_id, alias;  // `alias`: the tab id it was moved from.
+    base::ScopedClosureRunner rendering;
+  };
+  std::map<std::string, AssistantBackgroundPage> assistant_background_;
+  base::ListValue assistant_backend_status_;
+  bool assistant_status_pending_ = false;
   WorkspaceController controller_;
   std::vector<Host> hosts_;
   std::vector<LinkRule> link_rules_;
