@@ -5109,6 +5109,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TypedAddressStaysPrimaryAsSugg
   EXPECT_EQ(count + 1, window_->tab_count("work"));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PartialSchemeKeepsTheAddressBarAlive) {
+  // "https:" resolves to an invalid URL; the suggestions list must still build.
+  auto* shell = window_->shell();
+  window_->OpenCommandPalette();
+  for (const auto* text : {u"h", u"https", u"https:", u"https:/", u"https://"}) {
+    SetPaletteQuery(text);
+    ASSERT_FALSE(shell->suggestions().empty()) << text;
+  }
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InlineSiteCompletionOpensANewTabWithoutSelectingAnExistingOne) {
   auto* shell = window_->shell();
   net::EmbeddedTestServer site;
