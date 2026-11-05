@@ -9,7 +9,7 @@ layout and, on the compositor backend, text painting.
 These results freeze the product before integrating the subsequent assistant and
 ad-blocking changes from `main` (`d51f69d`). The later local macOS build includes
 that merge; these measurements must not be presented as a before/after comparison
-of those additional features.
+of those additional features. See the separate [macOS integration validation](product-boundary-macos-validation-2026-11-05.md) for the merged build and local launch.
 
 ![Before/after process medians](benchmarks/product-boundary-ui-2026-11-05.png)
 
