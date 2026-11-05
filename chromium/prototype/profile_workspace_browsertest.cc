@@ -6172,6 +6172,37 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeLocalEditsDoNotDetachUn
   EXPECT_EQ(builds, shell->pinned_list_build_count());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeBulkResetAttachesTheNewTreeOnce) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetPinned(true); shell->ShowSidebar();
+  std::vector<PinnedItem> pins = {{"keep", "", "Retained folder", GURL(), true}};
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  auto* keep = shell->pin_button("keep"); ASSERT_TRUE(keep);
+  auto* root = keep->parent()->parent()->parent();
+  class HierarchyCounter final : public views::ViewObserver {
+   public:
+    explicit HierarchyCounter(views::View* view) : observation_(this) { observation_.Observe(view); }
+    void OnViewHierarchyChanged(views::View*, const views::ViewHierarchyChangedDetails&) override { ++changes; }
+    int changes = 0;
+   private:
+    base::ScopedObservation<views::View, views::ViewObserver> observation_;
+  } counter(root);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  for (int i = 0; i < 250; ++i)
+    pins.push_back({"new-" + std::to_string(i), "keep", "New pin", url, false});
+  keep->RequestFocus();
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ(pins, window_->pinned_items("work"));
+  EXPECT_EQ(keep, shell->pin_button("keep"));
+  EXPECT_EQ(keep, keep->GetFocusManager()->GetFocusedView());
+  // A reset must not issue hundreds of live hierarchy mutations. Construction
+  // off the widget delivers the completed subtree in a bounded number of steps.
+  EXPECT_LT(counter.changes, 16);
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeTopologyChangeRetainsFolderGroupsAndListContainer) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->CreatePinnedFolder("work","","Retained group"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->SetPinned(true);shell->ShowSidebar();

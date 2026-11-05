@@ -5040,6 +5040,14 @@ bool WorkspaceShell::PatchPinnedItems(TabListCache& cache,
     return false;
   for (const auto& slot : cache.node_graph->graph->sidebar_tabs().slots)
     if (slot.pair && slot.pin != SidebarTree::kRoot) return false;
+  const auto next = cache.node_graph->graph->pin_tree();
+  std::set<uint64_t> old_ids;
+  for (const auto& entry : previous.entries) old_ids.insert(entry.id);
+  size_t survivors = 0;
+  for (const auto& entry : next.entries) survivors += old_ids.contains(entry.id);
+  // Bulk imports/resets with mostly new nodes are cheaper to construct off the
+  // live widget and attach once. Incremental delivery is for retained trees.
+  if (survivors < next.entries.size() - survivors) return false;
   auto* root = cache.pins_root->children().front().get();
   PinProjection projection;
   std::set<views::View*> actual_rows;
@@ -5089,7 +5097,6 @@ bool WorkspaceShell::PatchPinnedItems(TabListCache& cache,
   if (projection.groups.size() != expected_groups || root->children().size() < 2) return false;
   for (const auto& [parent, count] : expected_children)
     if (parent->children().size() != count) return false;
-  const auto next = cache.node_graph->graph->pin_tree();
   // A kind/identity replacement cannot reuse the old callback binding.
   for (const auto& entry : next.entries) {
     const auto found = cache.pin_buttons.find(std::string(entry.key));
