@@ -6,6 +6,11 @@ a measurable improvement in ordinary tab, folder-toggle or palette completion
 times. Large catalogue updates remain dominated by native view hierarchy changes,
 layout and, on the compositor backend, text painting.
 
+These results freeze the product before integrating the subsequent assistant and
+ad-blocking changes from `main` (`d51f69d`). The later local macOS build includes
+that merge; these measurements must not be presented as a before/after comparison
+of those additional features.
+
 ![Before/after process medians](benchmarks/product-boundary-ui-2026-11-05.png)
 
 ## Method and scope

@@ -8,7 +8,6 @@ set -euo pipefail
 
 ROOT=${0:A:h}
 SRC=$ROOT/.chromium/src
-OVERLAY=$SRC/zitter_ui_lab
 OUT=out/ZitterOptimized
 APP=$ROOT/build/ZitterRustMetal.app
 
@@ -18,40 +17,23 @@ if [[ $# -gt 0 && $run == false ]]; then
   echo "usage: $0 [--run [run_metal_sidebar.py args...]]" >&2; exit 2
 fi
 
-# Stage sources into the hand-staged zitter_ui_lab overlay. Unchanged files keep
-# their mtimes, so ninja rebuilds only what changed.
-stage() {
-  local dest=$1 tmp=$1.tmp
-  if cmp -s $tmp $dest 2>/dev/null; then rm $tmp; else mv $tmp $dest; echo "staged ${dest#$OVERLAY/}"; fi
-}
-for f in $ROOT/chromium/prototype/*; do
-  dest=$OVERLAY/chromium/prototype/${f:t}
-  if [[ $f == *_browsertest.cc ]]; then sed 's#zitter/testdata#zitter_ui_lab/testdata#g' $f > $dest.tmp; else cp $f $dest.tmp; fi
-  stage $dest
-done
-for f in $OVERLAY/chromium/prototype/*; do
-  [[ -e $ROOT/chromium/prototype/${f:t} ]] || { rm $f; echo "removed ${f:t}"; }
-done
-# Product logic is compiled by :core and must track the same checkout as the UI.
-for f in $ROOT/zitter/**/*(N.); do
-  dest=$OVERLAY/${f#$ROOT/}
-  mkdir -p ${dest:h}
-  cp $f $dest.tmp
-  stage $dest
-done
-# The overlay renames the targets and leaves out the network policy targets.
-python3 - $ROOT/chromium/BUILD.gn $OVERLAY/BUILD.gn.tmp <<'EOF'
+# Install the complete browser overlay, including bootstrap, renderer hooks and
+# vendored ad-blocking crates. The installer refuses modified/unowned sources.
+ZITTER_PYTHON_BIN=${ZITTER_PYTHON:-$ROOT/.chromium/depot_tools/python-bin/python3}
+if [[ ! -x $ZITTER_PYTHON_BIN ]]; then ZITTER_PYTHON_BIN=$(command -v python3); fi
+"$ZITTER_PYTHON_BIN" - "$SRC/$OUT/args.gn" <<'EOF'
+from pathlib import Path
 import re, sys
-s = open(sys.argv[1]).read()
-s = re.sub(r'source_set\("network_policy"\) \{.*?\n\}\n\ntest\("network_policy_tests"\) \{.*?\n\}\n\n', '', s, flags=re.S)
-s = s.replace('      ":network_policy",\n', '')
-s = s.replace('test("zitter_prototype")', 'test("zitter_prototype_ui_lab")').replace('executable("zitter")', 'executable("zitter_ui_lab")')
-open(sys.argv[2], 'w').write(s)
+args = Path(sys.argv[1]).read_text()
+if not re.search(r"^is_debug\s*=\s*false\s*$", args, re.M):
+    raise SystemExit("The local app requires an existing Release output (is_debug = false)")
 EOF
-stage $OVERLAY/BUILD.gn
-
-# Chromium's own ninja; Homebrew ninja would wipe the build log.
-(cd $SRC && third_party/ninja/ninja -C $OUT zitter_ui_lab)
+"$ZITTER_PYTHON_BIN" "$ROOT/tools/install_chromium_overlay.py" "$SRC"
+targets=(zitter)
+if [[ ${ZITTER_BUILD_TESTS:-0} == 1 ]]; then targets+=(zitter_prototype); fi
+# The standard target owns the adblock vendor visibility and full browser client.
+(cd "$SRC" && buildtools/mac/gn gen "$OUT" --root-target=//zitter)
+(cd "$SRC" && third_party/ninja/ninja -C "$OUT" -j "${ZITTER_BUILD_JOBS:-6}" $targets)
 
 if $run; then
   # A second instance cannot share the isolated profile; quit the old one first.
@@ -60,13 +42,15 @@ if $run; then
   fi
 fi
 
-# codesign is verbose; show its output only when packaging fails.
-if ! log=$(python3 $ROOT/tools/package_app.py --out $SRC/$OUT --binary zitter_ui_lab --destination $APP \
-    --no-register --third-party-licenses $ROOT/build/license-audit/open-source/THIRD_PARTY_LICENSES.txt 2>&1); then
-  print -r -- $log >&2; exit 1
-fi
-print -r -- ${log##*$'\n'}
+# Package once for the concrete binary audit, then include its fresh notices
+# before the final signature. Keep the public release/notarization flow separate.
+audit="$ROOT/build/license-audit/mac-local"
+"$ZITTER_PYTHON_BIN" "$ROOT/tools/package_app.py" --out "$SRC/$OUT" --binary zitter --destination "$APP" --no-register
+"$ZITTER_PYTHON_BIN" "$ROOT/tools/audit_licenses.py" --app "$APP" --out "$SRC/$OUT" \
+  --target //zitter:zitter --destination "$audit"
+"$ZITTER_PYTHON_BIN" "$ROOT/tools/package_app.py" --out "$SRC/$OUT" --binary zitter --destination "$APP" \
+  --no-register --third-party-licenses "$audit/THIRD_PARTY_LICENSES.txt"
 
 if $run; then
-  exec python3 $ROOT/tools/run_metal_sidebar.py --app $APP "$@"
+  exec "$ZITTER_PYTHON_BIN" "$ROOT/tools/run_metal_sidebar.py" --app "$APP" "$@"
 fi

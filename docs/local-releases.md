@@ -48,9 +48,10 @@ require rebuilding an already published binary.
 
 ## macOS: build the optimized application
 
-The existing local Rust UI setup uses `.chromium/src/zitter_ui_lab`,
-`.chromium/src/out/ZitterOptimized`, and target `zitter_ui_lab`. Check for another
-active build before staging into these shared directories; do not interrupt it.
+The local build uses `.chromium/src/zitter`, `.chromium/src/out/ZitterOptimized`,
+and the standard `zitter` target. The former `zitter_ui_lab` overlay remains a
+benchmark reference. Check for another active build before staging into these
+shared directories; do not interrupt it.
 
 ```sh
 pgrep -fl 'ninja|build.sh'
@@ -65,13 +66,21 @@ older component configuration, not the authoritative optimized configuration.
 If PGO is enabled, its pinned profile must be available. Do not silently fall
 back to a Debug build when a release configuration fails.
 
-`build.sh` stages prototype sources, builds with Chromium's own Ninja and packages
-`build/ZitterRustMetal.app`. It requires the existing overlay and local signing
-configuration; it is not a fresh-checkout bootstrap script. Check that the
-staged source and Chromium patches correspond to the intended revision. The
-helper does not restage all application/bootstrap files or install every upstream
-patch. Preserve intentional local setup and record any build-overlay differences
-instead of assuming that staging the prototype synchronizes the entire browser.
+`build.sh` runs the guarded full overlay installer, including application/bootstrap
+sources, assistant assets, renderer hooks and vendored ad-blocking crates. It
+generates the standard target's graph with `--root-target=//zitter`, builds with
+Chromium's own Ninja, audits the concrete bundle and repackages
+`build/ZitterRustMetal.app` with fresh license notices and the local signature.
+The standard target also matches the ad-blocking vendor's GN visibility; copying
+only the UI into the old lab overlay no longer synchronizes the whole browser.
+
+It requires the pinned Chromium checkout, optimized output and local signing
+configuration; it is not a fresh-checkout toolchain bootstrap. Modified or
+unowned overlay files are refused. Use `ZITTER_BUILD_TESTS=1 ./build.sh` to build
+`zitter_prototype` too, and `ZITTER_BUILD_JOBS` to set Ninja concurrency (default
+6). The depot-tools Python runtime is preferred; `ZITTER_PYTHON` can override it.
+`--run` retains the owned isolated-profile launcher. A local build does not create
+a release tag, submit to Apple, or upload distribution assets.
 
 Audit the actual target and collect its license notices:
 
@@ -79,11 +88,11 @@ Audit the actual target and collect its license notices:
 python3 tools/audit_licenses.py \
   --app build/ZitterRustMetal.app \
   --out .chromium/src/out/ZitterOptimized \
-  --target //zitter_ui_lab:zitter_ui_lab \
+  --target //zitter:zitter \
   --destination build/releases/v0.1.0/audit
 python3 tools/package_app.py \
   --out .chromium/src/out/ZitterOptimized \
-  --binary zitter_ui_lab \
+  --binary zitter \
   --app-version 0.1.0 --hardened-runtime \
   --destination build/releases/v0.1.0/Zitter.app \
   --no-register \
