@@ -13,6 +13,23 @@ import { pathToFileURL } from 'node:url';
 export const IMAGE_NOTE = 'The images are the screenshots the transcript above names. You have no tools here: ' +
   'request every browser tool only in the "actions" of your structured answer.';
 
+// Native tool calls the Claude CLI refused ("No such tool available"), as
+// actions: [{tool, args}] with args JSON-encoded, at most the schema's 16.
+export function refusedCalls(events) {
+  const calls = new Map(), refused = [];
+  for (const event of events) {
+    for (const block of event?.message?.content ?? []) {
+      if (block?.type === 'tool_use' && /^[a-z][a-z_]{0,40}$/.test(block.name ?? '')) calls.set(block.id, block);
+      const text = typeof block?.content === 'string' ? block.content : JSON.stringify(block?.content ?? '');
+      if (block?.type === 'tool_result' && calls.has(block.tool_use_id) && /No such tool available/.test(text)) {
+        const call = calls.get(block.tool_use_id);
+        refused.push({ tool: call.name, args: JSON.stringify(call.input ?? {}) });
+      }
+    }
+  }
+  return refused.slice(0, 16);
+}
+
 export const schema = {
   type: 'object', additionalProperties: false, required: ['answer', 'actions'],
   properties: {
@@ -224,11 +241,14 @@ export class Provider {
         ], images.length ? JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: input },
             ...images.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } })),
             { type: 'text', text: IMAGE_NOTE }] } }) + '\n' : input, signal, cwd, onData);
-        const result = streaming
-          ? output.split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).find(line => line?.type === 'result') ?? { is_error: true }
-          : JSON.parse(output);
+        const events = streaming ? output.split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }) : [];
+        const result = streaming ? events.find(line => line?.type === 'result') ?? { is_error: true } : JSON.parse(output);
         if (result.is_error) throw new AssistantError('Claude could not complete the request.');
-        return decode(result.structured_output ?? result.result);
+        const turn = decode(result.structured_output ?? result.result);
+        // The model may still call a browser tool natively, which the CLI refuses;
+        // when its answer then asks for nothing, those calls are the actions it meant.
+        const refused = turn.actions.length ? [] : refusedCalls(events);
+        return refused.length ? decode({ answer: '', actions: refused }) : turn;
       }
       let Codex;
       try { ({ Codex } = await this.sdkLoader()); }

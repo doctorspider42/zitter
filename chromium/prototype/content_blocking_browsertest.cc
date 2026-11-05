@@ -192,6 +192,10 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, AssistantAddedRuleHides
   const auto refused = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue().Append("##.promo-rail").Append("block.test##div#unlisted")));
   ASSERT_TRUE(refused.GetDict().FindList("invalid"));
   EXPECT_EQ(1u, refused.GetDict().FindList("invalid")->size());
+  // Rules sent as one string are read one per line, with the same checks.
+  const auto lines = Tool("adblock_add_rules", base::DictValue().Set("rules", "##.promo-rail\nblock.test##div#unlisted"));
+  ASSERT_TRUE(lines.GetDict().FindList("invalid")) << lines;
+  EXPECT_EQ(1u, lines.GetDict().FindList("invalid")->size());
   EXPECT_TRUE(ContentBlocking::Rules(work_).empty());
   // Without consent: a preview and a question, nothing saved.
   const auto rules = base::ListValue().Append("block.test##div#unlisted");

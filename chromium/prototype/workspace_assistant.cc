@@ -434,6 +434,13 @@ void AdblockAddRules(content::WebContents* page, base::DictValue args, bool conf
   std::vector<std::string> rules, selectors;
   base::ListValue invalid;
   const auto* list = args.FindList("rules");
+  // Models sometimes send the rules as one string, one rule per line.
+  base::ListValue lines;
+  if (!list && args.FindString("rules")) {
+    for (const auto& line : base::SplitString(*args.FindString("rules"), "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY))
+      lines.Append(line);
+    list = &lines;
+  }
   if (!list || list->empty() || list->size() > 50) { std::move(done).Run(Error("Give rules: 1 to 50 filter rules as strings")); return; }
   for (const auto& item : *list) {
     std::string rule = item.is_string() ? std::string(base::TrimWhitespaceASCII(item.GetString(), base::TRIM_ALL)) : std::string();

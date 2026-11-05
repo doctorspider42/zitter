@@ -223,7 +223,10 @@ so.
 With the Claude CLI backend, a screenshot switches the request to `stream-json`
 input, where the model tends to call browser tools natively; the CLI refuses
 ("No such tool") and the turn could end without saving anything. A note after
-the images (`IMAGE_NOTE` in `providers.mjs`) steers it back to `actions`.
+the images (`IMAGE_NOTE` in `providers.mjs`) steers it back to `actions`, and
+when the answer still asks for nothing, the refused calls become the turn's
+actions (`refusedCalls`). `adblock_add_rules` also reads `rules` sent as one
+string, one rule per line.
 
 Why native consent instead of `ask_user`: `ask_user` runs through the model,
 which could skip it or misreport the answer. Saving rules changes the user's

@@ -130,6 +130,23 @@ test('screenshots reach every provider as images, never as transcript text', asy
   assert.equal((await claude.complete('Policy', messages, signal)).answer, 'Ready');
 });
 
+test('browser tools the Claude CLI refused as native calls become the turn actions', async () => {
+  const messages = [{ role: 'user', content: '{"untrusted_tool_results":[]}', images: ['aW1hZ2U='] }];
+  const stream = (structured) => [
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'adblock_add_rules', input: { tab: 'a', rules: ['x.pl##.ad'] } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: '<tool_use_error>Error: No such tool available: adblock_add_rules</tool_use_error>' }] } },
+    { type: 'result', structured_output: structured },
+  ].map(e => JSON.stringify(e)).join('\n') + '\n';
+  const gaveUp = new Provider({ provider: 'claude', model: 'sonnet' }, { environment: {},
+    runCLI: async () => stream({ answer: 'The tool is unavailable, nothing was saved.', actions: [] }) });
+  assert.deepEqual(await gaveUp.complete('Policy', messages, signal),
+    { answer: '', actions: [{ tool: 'adblock_add_rules', args: { tab: 'a', rules: ['x.pl##.ad'] } }] });
+  // When the answer asks for actions itself, those win.
+  const recovered = new Provider({ provider: 'claude', model: 'sonnet' }, { environment: {},
+    runCLI: async () => stream({ answer: '', actions: [{ tool: 'read_page', args: '{"tab":"a"}' }] }) });
+  assert.deepEqual((await recovered.complete('Policy', messages, signal)).actions, [{ tool: 'read_page', args: { tab: 'a' } }]);
+});
+
 test('Claude streams the answer as the model writes it', async () => {
   const { partialAnswer } = await import('./providers.mjs');
   assert.equal(partialAnswer('{"answer": "Ko'), 'Ko');
