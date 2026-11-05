@@ -114,6 +114,10 @@ python3 tools/check_boundaries.py
 
 **Chromium** handles the web. **Rust** owns Zitter's UI models, layout and interaction logic. **C++ and Views adapters** connect them to browser services, native windows, input and accessibility. The default rendering path uses Chromium's compositor; an optional Metal backend is available on macOS.
 
+The [product/browser boundary](docs/product-browser-boundary.md) describes the
+standalone workspace, command-ranking and pin-tree logic, shared UI data models,
+and the responsibilities retained by the Chromium adapters.
+
 ## Contributing
 
 Bug reports and focused pull requests are welcome. Include your platform, build revision and reproduction steps. For UI changes, add screenshots; for performance claims, include the measurement method.

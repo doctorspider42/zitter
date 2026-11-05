@@ -697,6 +697,100 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceUiInteraction) {
             << ",\"text_bytes\":" << stats.text_bytes << ",\"drawable_bytes\":" << stats.drawable_bytes << ",\"device_bytes\":" << stats.device_bytes << ",\"frames\":" << stats.frames << ",\"drawable_wait_ms\":" << stats.drawable_wait_ms << ",\"render_ms\":" << stats.render_ms << "}";
 #endif
 }
+// Matched product-boundary workload: unchanged APIs on both product versions.
+// Dispatch includes synchronous UI projection; settled additionally includes
+// asynchronous persistence and posted layout work, not monitor presentation.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceProductBoundary) {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();
+  int iterations = 20, pins = 1000;
+  if (command->HasSwitch("zitter-perf-iterations"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-iterations"), &iterations));
+  if (command->HasSwitch("zitter-perf-pins"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-pins"), &pins));
+  ASSERT_GE(iterations, 1); ASSERT_LE(iterations, 400);
+  ASSERT_GE(pins, 40); ASSERT_LE(pins, 5000);
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(120));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready() && shell->tools_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  for (int i = 0; i < 8; ++i)
+    ASSERT_TRUE(window_->AddWorkspace("Benchmark " + std::to_string(i), "work-profile"));
+  ASSERT_TRUE(window_->Select("work"));
+  const auto url = embedded_test_server()->GetURL("/performance_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  shell->SetPinned(true); shell->ShowSidebar();
+  for (const auto& entry : window_->CommandResults(u">"))
+    shell->RecordCommandUse(entry.command_id, entry.target_workspace_id);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved() && window_->configuration_saved(); }));
+  auto drain = [&] {
+    base::RunLoop().RunUntilIdle();
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    base::RunLoop().RunUntilIdle();
+  };
+  // Child-before-parent order exercises imported catalogues. A 32-level group
+  // makes repeated descendant scans visible without violating UI depth bounds.
+  std::vector<PinnedItem> catalogue;
+  for (int i = 0; i < pins - 34; ++i)
+    catalogue.push_back({"perf-leaf-" + std::to_string(i), "perf-chain-31", "Benchmark pin", url, false});
+  for (int i = 31; i >= 0; --i)
+    catalogue.push_back({"perf-chain-" + std::to_string(i), i ? "perf-chain-" + std::to_string(i - 1) : "perf-root-a",
+                         "Benchmark folder", GURL(), true});
+  catalogue.push_back({"perf-root-a", "", "Group A", GURL(), true});
+  catalogue.push_back({"perf-root-b", "", "Group B", GURL(), true});
+  ASSERT_EQ(static_cast<size_t>(pins), catalogue.size());
+  drain();
+  LOG(INFO) << "ZITTER_BOUNDARY_READY pins=" << pins;
+  auto emit = [](const char* metric, int trial, double ms) {
+    if (trial >= 0) LOG(INFO) << "ZITTER_PERF {\"metric\":\"" << metric << "\",\"trial\":" << trial << ",\"ms\":" << ms << "}";
+  };
+  auto metrics = base::ProcessMetrics::CreateCurrentProcessMetrics();
+  std::optional<base::TimeDelta> cpu_start;
+  for (int trial = -3; trial < iterations; ++trial) {
+    if (trial == 0) {
+      const auto cpu = metrics->GetCumulativeCPUUsage(); ASSERT_TRUE(cpu.has_value()); cpu_start = *cpu;
+    }
+    auto start = base::TimeTicks::Now();
+    size_t command_count = 0;
+    constexpr int kCommandBatch = 100;
+    for (int i = 0; i < kCommandBatch; ++i) command_count += window_->CommandResults(u">").size();
+    emit("command_catalogue_per_call_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF() / kCommandBatch);
+    ASSERT_GT(command_count, 0u);
+
+    start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->RestorePins("work", catalogue));
+    const auto restored = base::TimeTicks::Now();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); })); drain();
+    emit("pin_restore_dispatch_ms", trial, (restored - start).InMillisecondsF());
+    emit("pin_restore_settled_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF());
+    ASSERT_EQ(static_cast<size_t>(pins), window_->pinned_items("work").size());
+
+    start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->MovePin("perf-root-a", "perf-root-b", {}));
+    const auto moved = base::TimeTicks::Now();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); })); drain();
+    emit("pin_move_dispatch_ms", trial, (moved - start).InMillisecondsF());
+    emit("pin_move_settled_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF());
+
+    start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->RemovePinnedFolder("work", "perf-root-a", true));
+    const auto removed = base::TimeTicks::Now();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); })); drain();
+    emit("pin_delete_dispatch_ms", trial, (removed - start).InMillisecondsF());
+    emit("pin_delete_settled_ms", trial, (base::TimeTicks::Now() - start).InMillisecondsF());
+    ASSERT_EQ(1u, window_->pinned_items("work").size());
+  }
+  const auto cpu_end = metrics->GetCumulativeCPUUsage(); ASSERT_TRUE(cpu_end.has_value());
+  const auto memory = metrics->GetMemoryInfo(); ASSERT_TRUE(memory.has_value());
+  uint64_t footprint = 0;
+#if BUILDFLAG(IS_APPLE)
+  footprint = memory->physical_footprint_bytes;
+#endif
+  LOG(INFO) << "ZITTER_UI_RESOURCE {\"iterations\":" << iterations << ",\"pins\":" << pins
+            << ",\"browser_cpu_ms\":" << (*cpu_end - *cpu_start).InMillisecondsF()
+            << ",\"browser_footprint_bytes\":" << footprint << "}";
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceRestoration) {
   const auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();
@@ -6083,6 +6177,41 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFoldersCreateNestAndPer
   ASSERT_EQ(2u, window_->pinned_items("work").size());
   EXPECT_EQ(parent, window_->pinned_items("work")[1].parent_id);
   EXPECT_EQ("Projekty 📁", window_->pinned_items("work")[0].title);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinPlacementRejectsCorruptCyclesAndExcessiveSubtreeDepth) {
+  ASSERT_TRUE(window_->Select("work"));
+  // Reject damaged metadata before publishing it to the logical UI graph.
+  const auto previous = window_->pinned_items("work");
+  std::vector<PinnedItem> corrupt{
+      {"a", "b", "A", GURL(), true}, {"b", "a", "B", GURL(), true},
+      {"pin", "", "Page", GURL("https://example.com/"), false}};
+  EXPECT_FALSE(window_->RestorePins("work", corrupt));
+  EXPECT_EQ(previous, window_->pinned_items("work"));
+
+  const std::vector<PinnedItem> ambiguous{
+      {"duplicate", "", "A", GURL(), true}, {"duplicate", "", "B", GURL(), true},
+      {"child", "duplicate", "Page", GURL("https://example.com/"), false}};
+  EXPECT_FALSE(window_->RestorePins("work", ambiguous));
+  EXPECT_EQ(previous, window_->pinned_items("work"));
+
+  std::vector<PinnedItem> deep;
+  for (int i = 0; i < 64; ++i)
+    deep.push_back({"depth-" + std::to_string(i), i ? "depth-" + std::to_string(i - 1) : "",
+                    "Folder", GURL(), true});
+  deep.push_back({"branch", "", "Branch", GURL(), true});
+  deep.push_back({"tip", "branch", "Page", GURL("https://example.com/"), false});
+  ASSERT_TRUE(window_->RestorePins("work", deep));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_FALSE(window_->MovePin("depth-0", "depth-1", {}));
+  EXPECT_FALSE(window_->MovePin("branch", "depth-63", {}));
+  EXPECT_EQ(deep, window_->pinned_items("work"));
+  ASSERT_TRUE(window_->MovePin("branch", "depth-62", {}));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto& moved = window_->pinned_items("work");
+  const auto branch = std::find_if(moved.begin(), moved.end(), [](const auto& pin) { return pin.id == "branch"; });
+  ASSERT_NE(moved.end(), branch);
+  EXPECT_EQ("depth-62", branch->parent_id);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarFolderRenameAndDeleteContents) {

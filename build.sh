@@ -32,6 +32,13 @@ done
 for f in $OVERLAY/chromium/prototype/*; do
   [[ -e $ROOT/chromium/prototype/${f:t} ]] || { rm $f; echo "removed ${f:t}"; }
 done
+# Product logic is compiled by :core and must track the same checkout as the UI.
+for f in $ROOT/zitter/**/*(N.); do
+  dest=$OVERLAY/${f#$ROOT/}
+  mkdir -p ${dest:h}
+  cp $f $dest.tmp
+  stage $dest
+done
 # The overlay renames the targets and leaves out the network policy targets.
 python3 - $ROOT/chromium/BUILD.gn $OVERLAY/BUILD.gn.tmp <<'EOF'
 import re, sys
