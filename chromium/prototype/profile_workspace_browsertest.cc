@@ -6139,13 +6139,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeLocalEditsDoNotDetachUn
   } row_observer(untouched), group_observer(group), tab_observer(tab);
   untouched->RequestFocus();
   const auto builds = shell->pinned_list_build_count();
-  ASSERT_TRUE(window_->MovePin("a1", "b", {}));
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
-  EXPECT_EQ(moving, shell->pin_button("a1"));
-  EXPECT_EQ(shell->scene_parent_id_for_testing(shell->pin_button("b")) != 0, true);
-  ASSERT_TRUE(window_->MovePin("a", "b", {}));
-  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
-  EXPECT_EQ(survivor, shell->pin_button("a2"));
+  {
+    AttachmentObserver moving_observer(moving), subtree_observer(survivor);
+    moving->RequestFocus();
+    ASSERT_TRUE(window_->MovePin("a1", "b", {}));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    EXPECT_EQ(moving, shell->pin_button("a1"));
+    EXPECT_EQ(moving, moving->GetFocusManager()->GetFocusedView());
+    EXPECT_EQ(shell->scene_parent_id_for_testing(moving),
+              shell->sidebar_node_id_for_testing(moving->parent()->parent()));
+    EXPECT_EQ(0, moving_observer.detaches);
+    ASSERT_TRUE(window_->MovePin("a", "b", {}));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    EXPECT_EQ(survivor, shell->pin_button("a2"));
+    EXPECT_EQ(0, subtree_observer.detaches);
+  }
+  untouched->RequestFocus();
   // Deleting a folder without its contents must move survivors out before the
   // old group is destroyed; unrelated groups and normal tabs stay attached.
   ASSERT_TRUE(window_->RemovePinnedFolder("work", "a", false));

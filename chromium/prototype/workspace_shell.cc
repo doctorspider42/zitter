@@ -5001,11 +5001,18 @@ struct WorkspaceShell::PinProjection {
   views::ViewTracker focus;
   bool moved_focus = false;
 
+  static void CancelSubtreeInput(views::View* view) {
+    if (auto* row = views::AsViewClass<RustRowView>(view)) row->OnMouseCaptureLost();
+    for (const auto& child : view->children()) CancelSubtreeInput(child.get());
+  }
   void Place(views::View* parent, views::View* view) {
     obsolete.erase(view);
     if (view->parent() != parent) {
       moved_focus |= focus.view() && view->Contains(focus.view());
-      parent->AddChildView(view->parent()->RemoveChildViewT(view));
+      CancelSubtreeInput(view);
+      // Transfer an existing child directly: Views preserves same-widget
+      // membership and theme caches. Removing it first defeats that fast path.
+      parent->AddChildView(view);
     }
     order[parent].push_back(view);
   }
@@ -5078,7 +5085,8 @@ bool WorkspaceShell::PatchPinnedItems(TabListCache& cache,
       if (group == projection.groups.end()) return false;
       parent = group->second;
     }
-    if (!holder || !holder->GetProperty(kPinRowHolder) || holder->children().size() != 1 ||
+    if (found->second->GetWidget() != sidebar_widget_.get() ||
+        !holder || !holder->GetProperty(kPinRowHolder) || holder->children().size() != 1 ||
         holder->parent() != parent) return false;
     expected_children[parent] += entry.group ? 2 : 1;
     projection.holders.emplace(key, holder);
