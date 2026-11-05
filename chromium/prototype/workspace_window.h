@@ -56,6 +56,7 @@ struct TimelineStore;
 class DownloadPanel;
 class HistoryPanel;
 class PasswordsPanel;
+class AdBlockingRulesPanel;
 class ExtensionsBar;
 struct BrowsingImportData;
 
@@ -128,6 +129,14 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowHistory();
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
   void ShowAssistant(bool hover = false);
+  // Opens the assistant and sends `prompt` (the shield's "block more").
+  void AskAssistant(std::u16string prompt);
+  // Settings → Blokowanie reklam, for the active profile.
+  base::DictValue ReadAdBlocking();
+  std::string WriteAdBlocking(base::DictValue command);
+  // Settings > Ad blocking > Twoje reguły: the editor dialog over Settings.
+  void OpenAdBlockingRules();
+  AdBlockingRulesPanel* ad_blocking_rules_panel() const { return ad_blocking_rules_panel_.get(); }
   Profile* AssistantProfile() const;
   std::string AssistantProfileId() const;
   base::DictValue AssistantContext(const AssistantPermissions& permissions);
@@ -408,6 +417,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   };
   WorkspaceModel model_;
   raw_ptr<AssistantPanel> assistant_ = nullptr;
+  base::CallbackListSubscription ad_blocking_changed_;
   std::map<std::string, std::unique_ptr<views::ViewTracker>> assistant_targets_;
   AssistantSettings assistant_settings_;
   struct AssistantBackgroundPage {
@@ -509,6 +519,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::unique_ptr<DownloadPanel> downloads_;
   std::unique_ptr<HistoryPanel> history_panel_;
   std::unique_ptr<PasswordsPanel> passwords_panel_;
+  std::unique_ptr<AdBlockingRulesPanel> ad_blocking_rules_panel_;
   raw_ptr<ExtensionsBar> extensions_bar_ = nullptr;  // Owned by the window root.
   std::unique_ptr<base::AutoReset<bool>> extension_install_ui_;
   // Extensions see the window's tabs through ExtensionTabUtil::EmbedderTabs.

@@ -181,3 +181,24 @@ test('the answer being written is visible through progress until the turn return
   assert.equal((await turn).answer, 'Piszę dalej');
   assert.equal(engine.sessions.get('live').partial, '');
 });
+
+test('ad blocking tools are documented for the model and leave the runtime as browser actions', async () => {
+  const { SYSTEM, HELP } = await import('./engine.mjs');
+  for (const tool of ['adblock_inspect {tab:string}', 'adblock_add_rules {tab:string,rules:string[]'])
+    assert.ok(SYSTEM.includes(tool), tool);
+  assert.match(SYSTEM, /asks the user natively/);
+  assert.match(SYSTEM, /Never pin an element by its position/);
+  assert.match(SYSTEM, /:has-text\(/);
+  assert.match(SYSTEM, /replaces lists this site's saved rules/);
+  assert.ok(SYSTEM.includes('adblock_diagnose {tab:string}'));
+  assert.match(SYSTEM, /zitter-skip-draw/);
+  assert.match(SYSTEM, /With check:\ntrue nothing is saved/);
+  assert.match(HELP, /Ad blocking is built in/);
+  const engine = new Engine({ providerFactory: () => ({ async complete() {
+    return { answer: 'Checking', actions: [action('adblock_inspect', { tab: '@current' }),
+      action('adblock_add_rules', { tab: '@current', rules: ['example.com##.ad'] })] };
+  } }) });
+  const reply = await engine.turn(request({ permissions: { web: false, tabs: true, pages: true, actions: true, history: false } }),
+    new AbortController().signal);
+  assert.deepEqual(reply.actions.map(a => a.tool), ['adblock_inspect', 'adblock_add_rules']);
+});
