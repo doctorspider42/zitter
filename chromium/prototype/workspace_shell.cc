@@ -7861,6 +7861,28 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
         SetSidebarPanelLayout(add,false,gfx::Insets::TLBR(4,0,0,0),8,assistant_add_model_->view(),true);
         break;
       }
+      case Kind::AdBlocking:{
+        auto* fields=row->children().front().get();
+        ad_blocking_list_=fields->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(ad_blocking_list_,true,gfx::Insets::TLBR(6,0,0,0),10);
+        // A rule of your own: one line of Adblock Plus / uBlock syntax.
+        auto* add=fields->AddChildView(std::make_unique<views::View>());
+        ad_blocking_rule_=AddEditor(add);ad_blocking_rule_->SetPlaceholderText(u"example.com##.sponsored");ad_blocking_rule_->GetViewAccessibility().SetName(T(u"Nowa reguła blokowania"));ad_blocking_rule_->view()->SetPreferredSize(gfx::Size(240,36));
+        auto submit=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+          if(!shell||!shell->callbacks_.write_ad_blocking)return;
+          const auto rule=base::UTF16ToUTF8(base::TrimWhitespace(shell->ad_blocking_rule_->GetText(),base::TRIM_ALL));if(rule.empty())return;
+          const auto error=shell->callbacks_.write_ad_blocking.Run(base::DictValue().Set("command","rule_add").Set("rule",rule));
+          if(error.empty())shell->ad_blocking_rule_->SetText(u"");
+          SetPanelText(shell->ad_blocking_error_,base::UTF8ToUTF16(error));shell->ad_blocking_error_->SetVisible(!error.empty());
+          shell->RefreshAdBlockingPreferences();
+        },weak);
+        ad_blocking_rule_->SetCallbacks({},base::BindRepeating([](base::RepeatingClosure submit,const ui::KeyEvent& event){
+          if(event.type()!=ui::EventType::kKeyPressed||event.key_code()!=ui::VKEY_RETURN)return false;submit.Run();return true;},submit));
+        auto* button=PreferenceAction(add,base::BindRepeating([](base::RepeatingClosure submit,const ui::Event&){submit.Run();},submit),T(u"Dodaj regułę"));
+        SetSidebarPanelLayout(add,false,gfx::Insets::TLBR(4,0,0,0),8,ad_blocking_rule_->view(),true);
+        (void)button;
+        ad_blocking_error_=AddPreferenceCopy(fields,u"",kError,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);ad_blocking_error_->SetVisible(false);
+        break;
+      }
       case Kind::SiteRules:
         site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(site_rules_list_,true,gfx::Insets(),8);break;
       case Kind::ClearData:{
@@ -7940,6 +7962,75 @@ void WorkspaceShell::RefreshGeneralControls() {
     if (it != values.end()) SyncPickerIndex(control,it->second.value < 0 ? std::nullopt : std::optional<size_t>(it->second.value));
   }
   BuildAssistantPreferences();
+  BuildAdBlockingPreferences();
+}
+void WorkspaceShell::RefreshAdBlockingPreferences() {
+  if(ad_blocking_refresh_pending_)return;ad_blocking_refresh_pending_=true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){
+    if(!shell)return;shell->ad_blocking_refresh_pending_=false;shell->BuildAdBlockingPreferences();
+  },weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::BuildAdBlockingPreferences() {
+  if(!ad_blocking_list_||!callbacks_.read_ad_blocking)return;
+  auto data=callbacks_.read_ad_blocking.Run();
+  const auto snapshot=base::WriteJson(data).value_or("");
+  if(snapshot==ad_blocking_snapshot_)return;
+  ad_blocking_snapshot_=snapshot;
+  auto weak=weak_factory_.GetWeakPtr();
+  auto text=[](const base::DictValue& d,const char* key){const auto* v=d.FindString(key);return v?base::UTF8ToUTF16(*v):std::u16string();};
+  auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){
+    if(!shell||!shell->callbacks_.write_ad_blocking)return;shell->callbacks_.write_ad_blocking.Run(std::move(command));shell->RefreshAdBlockingPreferences();};
+  auto heading=[&](std::u16string title){AddPreferenceCopy(ad_blocking_list_,std::move(title),kInk,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);};
+  auto removable=[&](std::u16string label,std::u16string detail,std::u16string remove_name,base::DictValue command){
+    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
+    auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
+    AddPreferenceCopy(labels,std::move(label),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),true);
+    if(!detail.empty())AddPreferenceCopy(labels,std::move(detail),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    auto* remove=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const base::DictValue& c,const ui::Event&){write(shell,c.Clone());},write,weak,std::move(command)),T(u"Usuń"));
+    remove->GetViewAccessibility().SetName(std::move(remove_name));
+    SetSidebarPanelLayout(line,false,gfx::Insets(),12,labels,true);
+  };
+  ad_blocking_list_->RemoveAllChildViews();
+  // The lists: EasyList's license asks for attribution, here and in the docs.
+  heading(T(u"Listy filtrów"));
+  if(const auto* lists=data.FindList("lists"))for(const auto& item:*lists){
+    const auto& list=item.GetDict();
+    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(line,true,gfx::Insets(),2);
+    AddPreferenceCopy(line,text(list,"name"),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
+    const int rules=list.FindInt("rules").value_or(0);
+    AddPreferenceCopy(line,rules?TF(u"Reguły: {} · pobrano {}",{base::NumberToString16(rules),text(list,"updated")}):T(u"Jeszcze nie pobrano"),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  }
+  AddPreferenceCopy(ad_blocking_list_,T(u"EasyList i EasyPrivacy: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. Silnik: adblock-rust od Brave, licencja MPL-2.0."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  {
+    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
+    const bool updating=data.FindBool("updating").value_or(false);const auto error=text(data,"error");
+    auto* status=AddPreferenceCopy(line,updating?T(u"Pobieram listy…"):error.empty()?u"":TF(u"Nie udało się pobrać: {}",{error}),error.empty()?kMuted:kError,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    auto* update=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const ui::Event&){write(shell,base::DictValue().Set("command","update"));},write,weak),T(u"Aktualizuj teraz"));
+    update->SetEnabled(!updating);
+    SetSidebarPanelLayout(line,false,gfx::Insets(),12,status,true);
+  }
+  heading(T(u"Witryny bez blokowania"));
+  const auto* sites=data.FindList("sites");
+  if(!sites||sites->empty())AddPreferenceCopy(ad_blocking_list_,T(u"Brak. Wyłączysz blokowanie dla witryny tarczą w pasku."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  else for(const auto& site:*sites)if(site.is_string())
+    removable(base::UTF8ToUTF16(site.GetString()),{},TF(u"Włącz blokowanie na {}",{base::UTF8ToUTF16(site.GetString())}),base::DictValue().Set("command","site_remove").Set("site",site.GetString()));
+  heading(T(u"Twoje reguły"));
+  const auto* rules=data.FindList("rules");
+  std::u16string note;
+  size_t shown=0;
+  for(size_t i=0;rules&&i<rules->size();++i){
+    if(!(*rules)[i].is_string())continue;
+    const auto& rule=(*rules)[i].GetString();
+    // A comment says where the rules under it came from.
+    if(rule.starts_with("!")){note=base::UTF8ToUTF16(std::string(base::TrimWhitespaceASCII(rule.substr(1),base::TRIM_ALL)));continue;}
+    removable(base::UTF8ToUTF16(rule),note,TF(u"Usuń regułę {}",{base::UTF8ToUTF16(rule)}),base::DictValue().Set("command","rule_remove").Set("rule",rule));
+    ++shown;
+  }
+  if(!shown)AddPreferenceCopy(ad_blocking_list_,T(u"Brak. Dodaj regułę poniżej albo poproś asystenta o zablokowanie reklam na stronie."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  const bool enabled=data.FindBool("available").value_or(false);
+  ad_blocking_rule_->view()->SetEnabled(enabled);
+  RefreshChoiceViewports(ad_blocking_list_->parent());
+  if(general_widget_)general_widget_->GetContentsView()->InvalidateLayout();
 }
 void WorkspaceShell::RefreshAssistantPreferences() {
   // Rows rebuild after the click that changed them has finished.
@@ -8021,6 +8112,10 @@ void WorkspaceShell::BuildAssistantPreferences() {
 void WorkspaceShell::OpenAssistantSettings() {
   OpenGeneralSettings();
   if (general_widget_ && general_widget_->IsVisible()) SelectPreferenceCategory(10);
+}
+void WorkspaceShell::OpenAdBlockingSettings() {
+  OpenGeneralSettings();
+  if (general_widget_ && general_widget_->IsVisible()) SelectPreferenceCategory(11);
 }
 void WorkspaceShell::OpenPrivacySettings() {
   OpenGeneralSettings();

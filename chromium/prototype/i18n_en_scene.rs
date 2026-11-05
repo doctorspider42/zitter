@@ -557,4 +557,11 @@ pub static EN: &[(&str, &str)] = &[
     ("Otwarte i przypięte karty", "Open and pinned tabs"),
     ("Publiczne strony i wyszukiwanie", "Public pages and search"),
     ("Treść i kontrolki stron", "Page content and controls"),
+    // Ad blocking (docs/ad-blocking.md).
+    ("Blokowanie reklam", "Ad blocking"),
+    ("Blokuj reklamy i elementy śledzące", "Block ads and trackers"),
+    ("Według list EasyList i EasyPrivacy, zanim się załadują. Tarcza w pasku pokazuje, ile zablokowano na stronie, i wyłącza blokowanie dla jednej witryny. Dotyczy tego profilu.", "Using the EasyList and EasyPrivacy lists, before they load. The shield in the toolbar shows how much was blocked on the page and turns blocking off for one site. Applies to this profile."),
+    ("Listy, wyjątki i Twoje reguły", "Lists, exceptions and your rules"),
+    ("Listy aktualizują się same co kilka dni. Twoje reguły, także te od asystenta, działają tylko w tym profilu.", "The lists update themselves every few days. Your rules, including those from the assistant, apply only to this profile."),
+    ("Mniej reklam i śledzenia, bez rozszerzeń.", "Fewer ads and less tracking, no extensions needed."),
 ];

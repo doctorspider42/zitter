@@ -15,6 +15,7 @@
 #include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
 #include "chrome/browser/printing/print_view_manager.h"
@@ -167,6 +168,7 @@ constexpr BooleanPreference kBooleanPreferences[] = {
     {"save_passwords", password_manager::prefs::kCredentialsEnableService},
     {"auto_signin", password_manager::prefs::kCredentialsEnableAutosignin},
     {"fingerprint_protection", kFingerprintProtectionPref},
+    {"ad_blocking", kAdBlockingPref},
 };
 struct ContentPreference {
   const char* key;
@@ -691,6 +693,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.write_preference = base::BindRepeating(&WorkspaceWindow::WritePreference, base::Unretained(this));
   callbacks.read_assistant = base::BindRepeating(&WorkspaceWindow::AssistantSettingsForShell, base::Unretained(this));
   callbacks.write_assistant = base::BindRepeating(&WorkspaceWindow::WriteAssistantSettings, base::Unretained(this));
+  callbacks.read_ad_blocking = base::BindRepeating(&WorkspaceWindow::ReadAdBlocking, base::Unretained(this));
+  callbacks.write_ad_blocking = base::BindRepeating(&WorkspaceWindow::WriteAdBlocking, base::Unretained(this));
   callbacks.operation_pending = base::BindRepeating(&WorkspaceWindow::lifecycle_pending, base::Unretained(this));
   callbacks.timeline = base::BindRepeating([](WorkspaceWindow* window) { return &window->timeline(); }, base::Unretained(this));
   callbacks.timeline_now = base::BindRepeating(&WorkspaceWindow::Now, base::Unretained(this));
@@ -755,6 +759,18 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.open_privacy_settings = base::BindRepeating([](WorkspaceWindow* window) {
     window->shell_->OpenPrivacySettings();
   }, base::Unretained(this));
+  extension_callbacks.open_ad_blocking_settings = base::BindRepeating([](WorkspaceWindow* window) {
+    window->shell_->OpenAdBlockingSettings();
+  }, base::Unretained(this));
+  extension_callbacks.assistant_available = base::BindRepeating([](WorkspaceWindow* window) {
+    return window->assistant_settings_.enabled;
+  }, base::Unretained(this));
+  extension_callbacks.block_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
+    window->AskAssistant(T(u"Zablokuj reklamy na tej stronie, których nie blokują listy filtrów."));
+  }, base::Unretained(this));
+  ad_blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating([](WorkspaceWindow* window) {
+    if (window->shell_) window->shell_->RefreshAdBlockingPreferences();
+  }, base::Unretained(this)));
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
@@ -927,6 +943,7 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
       window->StartPrint(page);
   }, weak_factory_.GetWeakPtr()));
   FingerprintProtection::Attach(page);
+  ContentBlockingTabHelper::Attach(page);
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
   // Design: Prośba o dostęp — under the address pill, folding into its icon.

@@ -100,6 +100,105 @@
         "@root/assets/fonts/JetBrainsMono-OFL.txt"
       ],
       "rationale": "Design system typeface bundled in Contents/Resources/Fonts (tools/package_app.py) from google/fonts ofl/."
+    },
+    {
+      "Name": "adblock-rust (Brave)",
+      "dir": "third_party/rust/zitter_vendor/adblock",
+      "License": "MPL-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/adblock/LICENSE"
+      ],
+      "rationale": "Built-in ad blocking engine, vendored unmodified by tools/vendor_adblock.py; MPL-2.0 source is this directory."
+    },
+    {
+      "Name": "arrayvec",
+      "dir": "third_party/rust/zitter_vendor/arrayvec",
+      "License": "MIT OR Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/arrayvec/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency."
+    },
+    {
+      "Name": "bitflags (with serde)",
+      "dir": "third_party/rust/zitter_vendor/bitflags",
+      "License": "MIT OR Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/bitflags/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency; Chromium's copy lacks the serde feature."
+    },
+    {
+      "Name": "flatbuffers",
+      "dir": "third_party/rust/zitter_vendor/flatbuffers",
+      "License": "Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/arrayvec/LICENSE-APACHE"
+      ],
+      "rationale": "adblock-rust dependency (Copyright Google Inc. and the FlatBuffers maintainers); its crate archive has no license file, so the notice is the standard Apache-2.0 text."
+    },
+    {
+      "Name": "idna",
+      "dir": "third_party/rust/zitter_vendor/idna",
+      "License": "MIT OR Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/idna/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency."
+    },
+    {
+      "Name": "idna_adapter",
+      "dir": "third_party/rust/zitter_vendor/idna_adapter",
+      "License": "Apache-2.0 OR MIT",
+      "License File": [
+        "third_party/rust/zitter_vendor/idna_adapter/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency."
+    },
+    {
+      "Name": "percent-encoding",
+      "dir": "third_party/rust/zitter_vendor/percent-encoding",
+      "License": "MIT OR Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/percent-encoding/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency."
+    },
+    {
+      "Name": "regex (vendored for adblock-rust)",
+      "dir": "third_party/rust/zitter_vendor/regex",
+      "License": "MIT OR Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/regex/LICENSE-MIT"
+      ],
+      "rationale": "Chromium keeps its regex facade test-only; the same version is vendored for adblock-rust."
+    },
+    {
+      "Name": "rustc-hash",
+      "dir": "third_party/rust/zitter_vendor/rustc-hash",
+      "License": "Apache-2.0 OR MIT",
+      "License File": [
+        "third_party/rust/zitter_vendor/rustc-hash/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency."
+    },
+    {
+      "Name": "seahash",
+      "dir": "third_party/rust/zitter_vendor/seahash",
+      "License": "MIT",
+      "License File": [
+        "@root/third_party/rust/licenses/seahash-LICENSE-MIT.txt"
+      ],
+      "rationale": "adblock-rust dependency; its crate archive has no license file."
+    },
+    {
+      "Name": "thiserror 1",
+      "dir": "third_party/rust/zitter_vendor/thiserror",
+      "License": "MIT OR Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/thiserror/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency (build-time derive in thiserror-impl)."
     }
   ],
   "aliases": {

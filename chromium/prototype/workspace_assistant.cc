@@ -11,6 +11,8 @@
 #include "base/environment.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/i18n/time_formatting.h"
+#include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "components/download/public/common/download_item.h"
 #include "components/viz/common/frame_sinks/copy_output_result.h"
@@ -399,6 +401,80 @@ void MouseTool(content::WebContents* page, base::DictValue args, bool confirmed,
         Settle(page, base::Milliseconds(400), std::move(done));
       }, weak, std::move(args), std::move(action), confirmed, std::move(done)));
 }
+// Ad blocking (docs/ad-blocking.md): what on the page looks like an ad, with
+// selectors and third-party requests, for the model to write rules from.
+void AdblockInspect(content::WebContents* page, base::OnceCallback<void(base::Value)> done) {
+  PageOp(page, base::DictValue().Set("tool", "adblock_inspect"), base::BindOnce(
+      [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, base::Value value) {
+        if (!page || !value.is_dict()) { std::move(done).Run(Error("The page could not be inspected")); return; }
+        auto result = std::move(value).TakeDict();
+        auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
+        const GURL url = page->GetLastCommittedURL();
+        result.Set("site", ContentBlocking::RegistrableDomain(url));
+        result.Set("blocking", ContentBlocking::EnabledFor(profile, url) ? "on" : "off");
+        if (auto* helper = ContentBlockingTabHelper::FromWebContents(page.get())) {
+          result.Set("blocked_on_page", helper->blocked());
+          base::ListValue blocked;
+          for (const auto& blocked_url : helper->blocked_urls()) if (blocked.size() < 60) blocked.Append(blocked_url);
+          result.Set("blocked_requests", std::move(blocked));
+        }
+        result.Set("rule_scope", "Every rule must name this site: site##selector for elements, ||host^$domain=site "
+                                 "for third-party requests, or ||site/path for the site's own files.");
+        std::move(done).Run(base::Value(std::move(result)));
+      }, page->GetWeakPtr(), std::move(done)));
+}
+// Checks the rules, outlines what they hide and asks for native consent; with
+// consent, saves them as the profile's own and applies them at once.
+void AdblockAddRules(content::WebContents* page, base::DictValue args, bool confirmed, base::OnceCallback<void(base::Value)> done) {
+  auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
+  auto* helper = ContentBlockingTabHelper::FromWebContents(page);
+  if (!profile || profile->IsOffTheRecord() || !helper) { std::move(done).Run(Error("Ad blocking rules cannot be saved here")); return; }
+  const GURL url = page->GetLastCommittedURL();
+  const std::string site = ContentBlocking::RegistrableDomain(url);
+  std::vector<std::string> rules, selectors;
+  base::ListValue invalid;
+  const auto* list = args.FindList("rules");
+  if (!list || list->empty() || list->size() > 50) { std::move(done).Run(Error("Give rules: 1 to 50 filter rules as strings")); return; }
+  for (const auto& item : *list) {
+    std::string rule = item.is_string() ? std::string(base::TrimWhitespaceASCII(item.GetString(), base::TRIM_ALL)) : std::string();
+    std::string problem = rule.empty() || rule.size() > 1000 ? "a rule of 1 to 1000 characters is required" : ContentBlocking::RuleError(rule);
+    if (problem.empty() && !ContentBlocking::RuleInScope(rule, site))
+      problem = "the rule must apply only to " + site + " (" + site + "##selector, ||host^$domain=" + site + " or ||" + site + "/path)";
+    if (!problem.empty()) { invalid.Append(base::DictValue().Set("rule", rule).Set("error", problem)); continue; }
+    if (const auto at = rule.find("##"); at != std::string::npos && rule.find("#@#") == std::string::npos) selectors.push_back(rule.substr(at + 2));
+    rules.push_back(std::move(rule));
+  }
+  if (!invalid.empty()) {
+    std::move(done).Run(base::Value(base::DictValue().Set("error", "Some rules are invalid; nothing was saved. Fix them and call again.")
+        .Set("invalid", std::move(invalid))));
+    return;
+  }
+  const int network = static_cast<int>(rules.size() - selectors.size());
+  if (!confirmed) {
+    // The preview: what will disappear is outlined while the user decides.
+    helper->Preview(selectors, base::BindOnce([](std::string site, int network, base::OnceCallback<void(base::Value)> done, int count) {
+      const auto prompt = network ? TF(u"Zablokować reklamy na {}? Ukryte elementy: {}, reguły sieciowe: {}.",
+                                       {base::UTF8ToUTF16(site), base::NumberToString16(count), base::NumberToString16(network)})
+                                  : TF(u"Ukryć na {} zaznaczone elementy ({})?", {base::UTF8ToUTF16(site), base::NumberToString16(count)});
+      std::move(done).Run(base::Value(base::DictValue().Set("confirmation_required", true).Set("label", site)
+          .Set("prompt", base::UTF16ToUTF8(prompt)).Set("preview", count)));
+    }, site, network, std::move(done)));
+    return;
+  }
+  helper->Preview({}, base::DoNothing());
+  std::string error;
+  base::Time::Exploded now;
+  base::Time::Now().LocalExplode(&now);
+  const auto today = base::StringPrintf("%04d-%02d-%02d", now.year, now.month, now.day_of_month);
+  if (!ContentBlocking::AddRules(profile, rules, "Asystent: " + site + ", " + today, &error)) {
+    std::move(done).Run(Error("Rules were not saved: " + error)); return;
+  }
+  const size_t saved = rules.size();
+  helper->HideNow(selectors, base::BindOnce([](size_t saved, int network, base::OnceCallback<void(base::Value)> done, int hidden) {
+    std::move(done).Run(base::Value(base::DictValue().Set("ok", true).Set("saved", static_cast<int>(saved)).Set("hidden_now", hidden)
+        .Set("network_rules", network).Set("detail", "Saved in Settings > Ad blocking > Your rules; network rules apply from the next load.")));
+  }, saved, network, std::move(done)));
+}
 // Everything the assistant does inside one page, visible or in the background.
 // `confirmed` is native user consent, never a model-supplied argument.
 void ActOnPage(content::WebContents* page, std::string tool, base::DictValue args, bool confirmed, base::OnceCallback<void(base::Value)> done) {
@@ -438,6 +514,12 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
   }
   if (tool == "insert_text" || tool == "press_key") { KeyboardTool(page, tool, std::move(args), confirmed, std::move(done)); return; }
   if (tool == "mouse") { MouseTool(page, std::move(args), confirmed, std::move(done)); return; }
+  if (tool == "adblock_inspect") { AdblockInspect(page, std::move(done)); return; }
+  if (tool == "adblock_add_rules") { AdblockAddRules(page, std::move(args), confirmed, std::move(done)); return; }
+  if (tool == "adblock_clear_preview") {
+    if (auto* helper = ContentBlockingTabHelper::FromWebContents(page)) helper->Preview({}, base::DoNothing());
+    std::move(done).Run(base::Value(base::DictValue().Set("ok", true))); return;
+  }
   args.Set("tool", tool);
   args.Set("confirmed", confirmed);
   if (tool == "click") {
@@ -709,6 +791,42 @@ Profile* WorkspaceWindow::AssistantProfile() const {
 std::string WorkspaceWindow::AssistantProfileId() const {
   return model_.active() ? model_.active()->profile_id : std::string();
 }
+void WorkspaceWindow::AskAssistant(std::u16string prompt) {
+  if (!assistant_settings_.enabled) return;
+  ShowAssistant();
+  if (assistant_) assistant_->Ask(std::move(prompt));
+}
+base::DictValue WorkspaceWindow::ReadAdBlocking() {
+  auto* profile = AssistantProfile();
+  auto& blocking = ContentBlocking::Get();
+  base::ListValue lists;
+  for (const auto& list : blocking.lists())
+    lists.Append(base::DictValue().Set("name", list.name).Set("rules", static_cast<int>(list.rules))
+        .Set("updated", list.updated.is_null() ? std::string() : base::UTF16ToUTF8(base::TimeFormatShortDate(list.updated))));
+  base::ListValue sites, rules;
+  for (const auto& site : ContentBlocking::AllowedSites(profile)) sites.Append(site);
+  for (const auto& rule : ContentBlocking::Rules(profile)) rules.Append(rule);
+  return base::DictValue().Set("lists", std::move(lists)).Set("updating", blocking.updating())
+      .Set("error", blocking.last_error()).Set("sites", std::move(sites)).Set("rules", std::move(rules))
+      .Set("available", profile && !profile->IsOffTheRecord());
+}
+std::string WorkspaceWindow::WriteAdBlocking(base::DictValue command) {
+  auto* profile = AssistantProfile();
+  const auto* name = command.FindString("command");
+  if (!profile || profile->IsOffTheRecord() || !name) return {};
+  if (*name == "update") { ContentBlocking::Get().UpdateLists(); return {}; }
+  if (const auto* site = command.FindString("site"); site && *name == "site_remove") { ContentBlocking::SetSiteAllowed(profile, *site, false); return {}; }
+  const auto* rule = command.FindString("rule");
+  if (!rule) return {};
+  if (*name == "rule_remove") { ContentBlocking::RemoveRule(profile, *rule); return {}; }
+  if (*name == "rule_add") {
+    if (rule->size() > 1000) return base::UTF16ToUTF8(T(u"Reguła jest za długa."));
+    std::string error;
+    if (!ContentBlocking::AddRules(profile, {*rule}, {}, &error))
+      return base::UTF16ToUTF8(TF(u"Tej reguły nie da się użyć: {}", {base::UTF8ToUTF16(ContentBlocking::RuleError(*rule))}));
+  }
+  return {};
+}
 void WorkspaceWindow::ShowAssistant(bool hover) {
   if (!assistant_settings_.enabled) return;
   if (!assistant_) {
@@ -915,12 +1033,14 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
     }
     return;
   }
-  const bool read = tool == "read_page" || tool == "screenshot" || tool == "wait";
+  const bool read = tool == "read_page" || tool == "screenshot" || tool == "wait" || tool == "adblock_inspect" || tool == "adblock_clear_preview";
   const bool mutation = tool == "open_tab" || tool == "navigate" || tool == "activate_tab" || tool == "close_tab" ||
                         tool == "click" || tool == "type" || tool == "scroll" || tool == "pin_tab" || tool == "unpin_tab" ||
-                        tool == "insert_text" || tool == "press_key" || tool == "select" || tool == "mouse" || tool == "dialog";
+                        tool == "insert_text" || tool == "press_key" || tool == "select" || tool == "mouse" || tool == "dialog" ||
+                        tool == "adblock_add_rules";
   if (!read && !mutation) { fail("Unknown browser tool"); return; }
   if (read ? !permissions.pages : !permissions.actions) { fail("Required page/action permission is disabled"); return; }
+  if (tool == "adblock_add_rules" && !permissions.pages) { fail("Writing blocking rules needs the page permission"); return; }
   // In the background the session's own page replaces @current, and the
   // user's visible tabs stay read-only.
   const auto* requested = args.FindString("tab");
@@ -1039,6 +1159,9 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
     Settle(page->GetWeakPtr(), base::Milliseconds(300), std::move(done)); return;
   }
   if (tool == "screenshot" && page->GetSize().IsEmpty()) page->Resize(gfx::Rect(shell_->content_host()->size()));
-  ActOnPage(page, tool, std::move(args), user_confirmed || !permissions.confirm_clicks, std::move(done));
+  // Saved rules change the browser for good: they always ask, whatever the
+  // click setting says.
+  const bool confirmed = user_confirmed || (!permissions.confirm_clicks && tool != "adblock_add_rules");
+  ActOnPage(page, tool, std::move(args), confirmed, std::move(done));
 }
 }

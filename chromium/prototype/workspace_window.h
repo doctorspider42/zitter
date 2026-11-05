@@ -128,6 +128,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowHistory();
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
   void ShowAssistant(bool hover = false);
+  // Opens the assistant and sends `prompt` (the shield's "block more").
+  void AskAssistant(std::u16string prompt);
+  // Settings → Blokowanie reklam, for the active profile.
+  base::DictValue ReadAdBlocking();
+  std::string WriteAdBlocking(base::DictValue command);
   Profile* AssistantProfile() const;
   std::string AssistantProfileId() const;
   base::DictValue AssistantContext(const AssistantPermissions& permissions);
@@ -408,6 +413,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   };
   WorkspaceModel model_;
   raw_ptr<AssistantPanel> assistant_ = nullptr;
+  base::CallbackListSubscription ad_blocking_changed_;
   std::map<std::string, std::unique_ptr<views::ViewTracker>> assistant_targets_;
   AssistantSettings assistant_settings_;
   struct AssistantBackgroundPage {

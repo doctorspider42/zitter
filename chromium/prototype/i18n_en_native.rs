@@ -527,4 +527,11 @@ pub static EN: &[(&str, &str)] = &[
     ("Kliknij jeszcze raz, aby usunąć {}", "Click again to delete {}"),
     ("Usuń wszystkie rozmowy", "Delete all conversations"),
     ("Rozmowy są zapisane na tym komputerze. Usuń te, których nie potrzebujesz.", "Conversations are saved on this computer. Delete the ones you no longer need."),
+    // Ad blocking (docs/ad-blocking.md).
+    ("Przygotowuję reguły blokowania…", "Preparing blocking rules…"),
+    ("Szukam reklam na stronie…", "Looking for ads on the page…"),
+    ("Reguła jest za długa.", "The rule is too long."),
+    ("Tej reguły nie da się użyć: {}", "This rule cannot be used: {}"),
+    ("Ukryć na {} zaznaczone elementy ({})?", "Hide the outlined elements on {} ({})?"),
+    ("Zablokować reklamy na {}? Ukryte elementy: {}, reguły sieciowe: {}.", "Block ads on {}? Hidden elements: {}, network rules: {}."),
 ];

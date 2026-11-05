@@ -170,6 +170,10 @@ class WorkspaceShell final : public ui::EventHandler,
     // Settings → Asystent AI: backends with their status and the model list.
     base::RepeatingCallback<base::DictValue()> read_assistant;
     base::RepeatingCallback<void(base::DictValue)> write_assistant;
+    // Settings → Blokowanie reklam: lists, allowed sites and the profile's
+    // own rules; a write answers with an error to show, or nothing.
+    base::RepeatingCallback<base::DictValue()> read_ad_blocking;
+    base::RepeatingCallback<std::string(base::DictValue)> write_ad_blocking;
     base::RepeatingCallback<bool(std::string, std::string)> write_text_preference;
     base::RepeatingCallback<std::vector<SitePreferenceRule>()> read_site_preferences;
     base::RepeatingCallback<bool(std::string, std::string, int)> write_site_preference;
@@ -232,6 +236,12 @@ class WorkspaceShell final : public ui::EventHandler,
   bool assistant_edge_visible_for_testing() const;
   void RefreshAssistantPreferences();
   void OpenAssistantSettings();
+  void OpenAdBlockingSettings();
+  // Lists, sites or rules changed: the Settings card rebuilds after the click
+  // that changed them has finished.
+  void RefreshAdBlockingPreferences();
+  views::View* ad_blocking_list_for_testing() const { return ad_blocking_list_; }
+  EditorControl* ad_blocking_rule_for_testing() const { return ad_blocking_rule_; }
   views::View* assistant_models_for_testing() const { return assistant_models_list_; }
   // A view at the right end of the header band, owned by the window's root
   // (design: Extensions). Its preferred width is honored up to the page commands.
@@ -825,6 +835,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id);
   void RefreshSitePreferences(bool reload = true);
   void BuildAssistantPreferences();
+  void BuildAdBlockingPreferences();
   void SaveSitePreference();
   void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
@@ -1042,6 +1053,11 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> assistant_add_model_ = nullptr;
   std::string assistant_preferences_snapshot_;
   bool assistant_refresh_pending_ = false;
+  raw_ptr<views::View> ad_blocking_list_ = nullptr;
+  raw_ptr<EditorControl> ad_blocking_rule_ = nullptr;
+  raw_ptr<views::View> ad_blocking_error_ = nullptr;
+  std::string ad_blocking_snapshot_;
+  bool ad_blocking_refresh_pending_ = false;
   raw_ptr<views::View> site_rules_card_ = nullptr;
   std::vector<SitePreferenceRule> site_preference_rules_;
   size_t site_rules_limit_ = 50;

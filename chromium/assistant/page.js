@@ -165,6 +165,85 @@
              scroll: { y: Math.round(scrollY), height: document.documentElement.scrollHeight, viewport: innerHeight },
              editor: !!editorPoint(), canvas: canvasContent() };
   }
+  if (args.tool === 'adblock_inspect') {
+    // Ad candidates and third-party requests for writing blocking rules
+    // (docs/ad-blocking.md). Selectors avoid tokens that look generated.
+    const words = /(^|[^a-z])(ads?|adv|advert\w*|adslot|adunit|adbox|adsense|adsbygoogle|banners?|sponsor\w*|promo\w*|dfp|gpt|doubleclick|taboola|outbrain|teads|criteo|affiliate|commercial|reklam\w*|partner-?content|native-?ad)([^a-z]|$)/i;
+    const randomish = token => /\d{4,}|[0-9a-f]{8,}|^[a-z0-9]{14,}$|^_|__/i.test(token) || token.length > 40;
+    const css = token => CSS.escape(token);
+    const site = location.hostname.split('.').slice(-2).join('.');
+    const thirdParty = url => { try { const h = new URL(url, location.href).hostname; return !!h && h !== site && !h.endsWith('.' + site); } catch { return false; } };
+    const blocking = globalThis.__zitterBlocking;
+    const zitterHides = e => !!blocking && Object.values(blocking.selectors).some(list => list.some(s => { try { return e.matches(s); } catch { return false; } }));
+    const stable = e => {
+      const tag = e.tagName.toLowerCase();
+      if (e.id && !randomish(e.id)) return `${tag}#${css(e.id)}`;
+      const classes = Array.from(e.classList).filter(c => !randomish(c)).slice(0, 3);
+      if (classes.length) return tag + classes.map(c => '.' + css(c)).join('');
+      for (const name of e.getAttributeNames())
+        if (/^(data-ad|data-google|data-testid|aria-label|data-slot|data-type|name)/i.test(name)) {
+          const value = e.getAttribute(name);
+          if (value && value.length < 60 && !randomish(value)) return `${tag}[${name}="${value.replace(/["\\]/g, '\\$&')}"]`;
+        }
+      if (tag === 'iframe' && e.src) { try { return `iframe[src*="${new URL(e.src).hostname}"]`; } catch {} }
+      return null;
+    };
+    const unique = e => {
+      const path = [];
+      for (let n = e; n && n.nodeType === 1 && n !== document.documentElement; n = n.parentElement) {
+        if (n.id && !randomish(n.id)) { path.unshift('#' + css(n.id)); break; }
+        let index = 1;
+        for (let s = n.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === n.tagName) index++;
+        path.unshift(`${n.tagName.toLowerCase()}:nth-of-type(${index})`);
+        if (path.length > 8) break;
+      }
+      return path.join(' > ');
+    };
+    const count = selector => { try { return document.querySelectorAll(selector).length; } catch { return 0; } };
+    const sizes = ['300x250', '728x90', '160x600', '320x50', '300x600', '970x250', '970x90', '336x280', '468x60', '320x100'];
+    const candidates = [], seen = new Set();
+    const consider = (e, reason) => {
+      if (candidates.length >= 60 || seen.has(e)) return;
+      for (const s of seen) if (s.contains(e)) return;
+      seen.add(e);
+      const r = e.getBoundingClientRect(), hiddenByZitter = zitterHides(e);
+      if (!hiddenByZitter && (r.width < 20 || r.height < 15)) return;
+      const selector = stable(e);
+      const item = { selector: selector ?? unique(e), unique: unique(e), reason, tag: e.tagName.toLowerCase(),
+        size: `${Math.round(r.width)}x${Math.round(r.height)}`, x: Math.round(r.x), y: Math.round(r.y + scrollY),
+        text: (e.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 80), hidden_by_zitter: hiddenByZitter };
+      item.matches = count(item.selector);
+      const source = e.src || e.querySelector?.('iframe[src],img[src]')?.src;
+      if (source) item.source = String(source).split('?')[0].slice(0, 200);
+      candidates.push(item);
+    };
+    let scanned = 0;
+    for (const e of document.body?.querySelectorAll('*') ?? []) {
+      if (++scanned > 8000) break;
+      if (e.closest('[data-private],[data-sensitive]')) continue;
+      const tag = e.tagName;
+      if (tag === 'IFRAME' && e.src && thirdParty(e.src)) { consider(e, 'third-party iframe'); continue; }
+      if (tag === 'INS' && e.classList.contains('adsbygoogle')) { consider(e, 'ad slot'); continue; }
+      const names = [e.id, typeof e.className === 'string' ? e.className : '', e.getAttribute('aria-label') ?? '',
+                     ...e.getAttributeNames().filter(n => n.startsWith('data-'))].join(' ');
+      if (words.test(names)) { consider(e, 'ad-like name'); continue; }
+      const r = e.getBoundingClientRect();
+      if (sizes.includes(`${Math.round(r.width)}x${Math.round(r.height)}`) && e.querySelector('iframe,img,a[href]')) { consider(e, 'standard ad size'); continue; }
+      const s = getComputedStyle(e);
+      if ((s.position === 'fixed' || s.position === 'sticky') && Number(s.zIndex) > 100 && r.width * r.height > innerWidth * innerHeight * 0.2)
+        consider(e, 'overlay over the page');
+    }
+    const requests = [], hosts = {};
+    for (const entry of performance.getEntriesByType('resource')) {
+      if (!thirdParty(entry.name)) continue;
+      let host = '';
+      try { host = new URL(entry.name).hostname; } catch { continue; }
+      hosts[host] = (hosts[host] ?? 0) + 1;
+      if (requests.length < 150) requests.push({ url: entry.name.split('?')[0].slice(0, 200), type: entry.initiatorType });
+    }
+    return { url: location.href.split('?')[0], title: document.title, candidates, third_party_hosts: hosts, requests,
+             note: 'Candidates are guesses: keep only what the user would call an ad, never the content they came for.' };
+  }
   if (args.tool === 'focus_info') {
     // Natively requested before keyboard input: where would typing land?
     let e = document.activeElement, opaque = false;
