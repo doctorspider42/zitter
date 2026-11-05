@@ -6233,8 +6233,12 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
     }
     if (projection) projection->Place(parent, row);
     row->SetVisible(shown_in_parent);
-    if (!projection || !projection->depths.contains(pin->id) || projection->depths.at(pin->id) != entry.depth)
-      row->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(0, SidebarFolderIndent(entry.depth), 0, 0)));
+    if (!projection || !projection->depths.contains(pin->id) || projection->depths.at(pin->id) != entry.depth) {
+      const auto insets = gfx::Insets::TLBR(0, SidebarFolderIndent(entry.depth), 0, 0);
+      // Indentation is capped. A logical depth change need not invalidate the
+      // geometry of every row in an already deeply nested subtree.
+      if (row->GetInsets() != insets) row->SetBorder(views::CreateEmptyBorder(insets));
+    }
     views::View* folder_group=nullptr;
     if(pin->folder){
       if (projection) {
