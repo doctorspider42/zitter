@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Detector library probe</title>
+<!-- Ad blocking fixture (content_blocking_browsertest.cc): a page that loads a
+     detector library from an ad host the test list blocks. -->
+<script>
+  window.detector = 'pending';
+  const script = document.createElement('script');
+  script.src = `http://ads.test:${location.port}/blockadblock.js`;
+  script.onload = () => { window.detector = typeof window.BlockAdBlock === 'function' ? 'stand-in' : 'loaded'; };
+  script.onerror = () => { window.detector = 'blocked'; };
+  document.head.append(script);
+</script>
+<h1 id="story">A page that asks whether you block ads</h1>

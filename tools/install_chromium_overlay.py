@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 
+import content_blocking_patch as content_blocking
 import editor_service_patch as editor_services
 import fingerprint_protection_patch as fingerprint_protection
 
@@ -45,9 +46,11 @@ def patch_build(text):
 
 def overlay_files():
     files = {"BUILD.gn": ROOT / "chromium/BUILD.gn"}
-    for directory in ("zitter", "chromium/prototype", "chromium/app", "chromium/installer", "testdata", "assets/fonts"):
+    for directory in ("zitter", "chromium/prototype", "chromium/app", "chromium/assistant", "chromium/installer", "testdata", "assets/fonts"):
         for path in sorted((ROOT / directory).rglob("*")):
             if path.is_file():
+                if "node_modules" in path.parts or path.name.endswith(".test.mjs"):
+                    continue
                 files[path.relative_to(ROOT).as_posix()] = path
     return files
 
@@ -996,6 +999,8 @@ def install(checkout, dry_run=False):
                     write(path, text)
             editor_services.apply(editor_patch)
             fingerprint_protection.apply(fingerprint_patch)
+            # browser_prefs.cc carries both patches: plan this one after the first.
+            content_blocking.apply(content_blocking.prepare(checkout))
         except Exception:
             if destination.exists():
                 shutil.rmtree(destination)

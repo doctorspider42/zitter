@@ -13,13 +13,14 @@ The sidebar, palette and panels are translucent windows that PrintWindow leaves
 blank, so shot brings the app forward and copies that window's area of the
 screen, never more. Coordinates are physical pixels (this process is DPI aware).
 """
-import argparse, ctypes, json, subprocess, sys, time
+import argparse, ctypes, json, os, subprocess, sys, time
 from ctypes import wintypes
 from pathlib import Path
 
 ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
                            cwd=Path(__file__).parent).stdout.strip())
-EXE = ROOT / ".chromium/src/out/ZitterWin/zitter.exe"
+# ZITTER_UI_OUT picks another build directory, e.g. out/ZitterAssistant.
+EXE = ROOT / ".chromium/src" / os.environ.get("ZITTER_UI_OUT", "out/ZitterWin") / "zitter.exe"
 PROFILE = ROOT / "build/win-ui-profile"
 LOG = ROOT / "build/win-ui.log"
 
@@ -146,8 +147,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     l = sub.add_parser("launch")
-    l.add_argument("--open-panel", choices=["space", "sidebar", "palette", "address", "settings", "privacy", "profiles", "downloads",
-                                            "history", "time-machine", "extensions", "extension-popup", "fingerprint",
+    l.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads",
+                                            "history", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "ad-blocking",
                                             "menu", "app-menu", "dialog", "toast",
                                             "add", "space-end", "space-new", "remove", "drop"],
                    help="open this panel once the window is up (no mouse needed)")

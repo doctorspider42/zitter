@@ -21,6 +21,22 @@ rust_static_library("sidebar_scene") {
   build_native_rust_unit_tests = true
 }
 
+# Built-in ad blocking (docs/ad-blocking.md): Brave's adblock-rust (MPL-2.0),
+# vendored unmodified by tools/vendor_adblock.py, behind a small cxx bridge.
+rust_static_library("content_blocking_engine") {
+  crate_root = "chromium/prototype/adblock.rs"
+  sources = [ crate_root ]
+  # Zitter's scriptlets and redirect bodies, compiled in with include_str!.
+  inputs = [
+    "chromium/prototype/adblock_resources.js",
+    "chromium/prototype/adblock_zitter_list.txt",
+  ]
+  cxx_bindings = [ crate_root ]
+  allow_unsafe = true
+  build_native_rust_unit_tests = true
+  deps = [ "//third_party/rust/zitter_vendor:adblock" ]
+}
+
 if (is_mac) {
   action("ui_lab_shader") {
     script = "chromium/app/compile_ui_lab_metal.py"
@@ -72,11 +88,12 @@ test("zitter_prototype") {
   data = [ "testdata/" ]
   if (is_mac) {
     data_deps = [
+      ":assistant_runtime",
       "//chrome",
       "//chrome:chrome_framework",
     ]
   } else {
-    data_deps = [ "//chrome:packed_resources" ]
+    data_deps = [ "//chrome:packed_resources", ":assistant_runtime" ]
   }
 }
 
@@ -112,6 +129,11 @@ if (!is_mac) {
 source_set("shell") {
   public_configs = [ ":shell_includes" ]
   sources = [
+    "chromium/prototype/assistant_panel.cc",
+    "chromium/prototype/assistant_panel.h",
+    "chromium/prototype/assistant_visuals.cc",
+    "chromium/prototype/assistant_visuals.h",
+    "chromium/prototype/workspace_assistant.cc",
     "chromium/prototype/workspace_window.cc",
     "chromium/prototype/password_csv_import.cc",
     "chromium/prototype/password_csv_import.h",
@@ -153,6 +175,10 @@ source_set("shell") {
     "chromium/prototype/site_data.h",
     "chromium/prototype/fingerprint_protection.h",
     "chromium/prototype/fingerprint_protection.cc",
+    "chromium/prototype/content_blocking.h",
+    "chromium/prototype/content_blocking.cc",
+    "chromium/prototype/ad_blocking_rules_panel.h",
+    "chromium/prototype/ad_blocking_rules_panel.cc",
     "chromium/prototype/image_link_preview.h",
     "chromium/prototype/image_link_preview.cc",
     "chromium/prototype/page_services.h",
@@ -177,6 +203,10 @@ source_set("shell") {
   ]
   include_dirs = [ ".", target_gen_dir ]
   public_deps = [
+    ":assistant_page_script",
+    ":content_blocking_engine",
+    ":content_blocking_probe_script",
+    ":content_blocking_script",
     ":core",
     ":sidebar_scene",
     "//base",
@@ -249,6 +279,7 @@ source_set("shell") {
     "//ui/compositor",
     "//ui/native_theme",
     "//ui/gfx/animation",
+    "//ui/gfx/codec",
     "//ui/display",
     "//ui/base",
     "//ui/content_accelerators",
@@ -288,6 +319,40 @@ source_set("shell") {
   }
 }
 
+action("assistant_page_script") {
+  script = "chromium/assistant/embed.py"
+  sources = [ "chromium/assistant/page.js" ]
+  outputs = [ "$target_gen_dir/assistant_page_script.h" ]
+  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir) ]
+}
+
+action("content_blocking_probe_script") {
+  script = "chromium/assistant/embed.py"
+  sources = [ "chromium/prototype/content_blocking_probe.js" ]
+  outputs = [ "$target_gen_dir/content_blocking_probe_script.h" ]
+  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingProbeScript" ]
+}
+
+action("content_blocking_script") {
+  script = "chromium/assistant/embed.py"
+  sources = [ "chromium/prototype/content_blocking.js" ]
+  outputs = [ "$target_gen_dir/content_blocking_script.h" ]
+  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingScript" ]
+}
+
+copy("assistant_runtime") {
+  sources = [
+    "chromium/assistant/server.mjs",
+    "chromium/assistant/engine.mjs",
+    "chromium/assistant/errors.mjs",
+    "chromium/assistant/providers.mjs",
+    "chromium/assistant/web.mjs",
+    "chromium/assistant/package.json",
+    "chromium/assistant/package-lock.json",
+  ]
+  outputs = [ "$root_out_dir/assistant/{{source_file_part}}" ]
+}
+
 source_set("profile_workspace_browser_tests") {
   testonly = true
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
@@ -297,6 +362,7 @@ source_set("profile_workspace_browser_tests") {
     "chromium/prototype/page_file_access_browsertest.cc",
     "chromium/prototype/page_media_access_browsertest.cc",
     "chromium/prototype/fingerprint_protection_browsertest.cc",
+    "chromium/prototype/content_blocking_browsertest.cc",
   ]
   include_dirs = [ ".", target_gen_dir ]
   deps = [
@@ -477,7 +543,7 @@ if (is_mac || is_linux || is_win) {
       "//services/network/public/mojom",
       "//ui/lottie",
     ]
-    data_deps = [ "//chrome:packed_resources" ]
+    data_deps = [ "//chrome:packed_resources", ":assistant_runtime" ]
     if (is_posix) {
       # On Windows, chrome_elf holds the crash reporter client.
       sources += [

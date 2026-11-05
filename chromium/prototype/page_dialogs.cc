@@ -119,6 +119,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   }
   const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
+  dialog_type_ = type; dialog_message_ = message.substr(0, 2000);
   std::unique_ptr<views::DialogDelegate> dialog=std::make_unique<PageDialogDelegate>();
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());body_=body;

@@ -1,0 +1,33 @@
+[Adblock Plus 2.0]
+! Title: Zamienniki Zittera (Zitter's stand-ins)
+! Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+! Description: Ad and analytics libraries that the other lists block get a
+! harmless stand-in (adblock_resources.js) instead of a failed request, so a
+! page that checks whether they loaded does not see the blocking. Nothing is
+! fetched from the network. `redirect-rule` acts only on requests another
+! rule already blocks: an exception or a site switched off still wins.
+! See docs/ad-blocking.md, "Built-in lists".
+!
+! Google AdSense
+||pagead2.googlesyndication.com/pagead/js/adsbygoogle.js$script,redirect-rule=googlesyndication_adsbygoogle.js
+||pagead2.googlesyndication.com/pagead/show_ads.js$script,redirect-rule=noop.js
+||googleads.g.doubleclick.net/pagead/ads$subdocument,redirect-rule=noop.html
+! Google Publisher Tags
+||securepubads.g.doubleclick.net/tag/js/gpt.js$script,redirect-rule=googletagservices_gpt.js
+||securepubads.g.doubleclick.net/pagead/managed/js/gpt/*$script,redirect-rule=noop.js
+||www.googletagservices.com/tag/js/gpt.js$script,redirect-rule=googletagservices_gpt.js
+||googletagservices.com/tag/js/gpt.js$script,redirect-rule=googletagservices_gpt.js
+! Google Analytics and Tag Manager
+||www.google-analytics.com/analytics.js$script,redirect-rule=google-analytics_analytics.js
+||google-analytics.com/analytics.js$script,redirect-rule=google-analytics_analytics.js
+||www.google-analytics.com/ga.js$script,redirect-rule=google-analytics_ga.js
+||www.googletagmanager.com/gtag/js$script,redirect-rule=googletagmanager_gtm.js
+||www.googletagmanager.com/gtm.js$script,redirect-rule=googletagmanager_gtm.js
+! Amazon Publisher Services
+||c.amazon-adsystem.com/aax2/apstag.js$script,redirect-rule=amazon_apstag.js
+! Detector libraries that ship as files of their own
+/blockadblock.js$script,redirect-rule=nobab.js
+/fuckadblock.js$script,redirect-rule=nofab.js
+! Images and pixels the bait checks load
+||pagead2.googlesyndication.com^$image,redirect-rule=1x1.gif
+||googleads.g.doubleclick.net^$image,redirect-rule=1x1.gif

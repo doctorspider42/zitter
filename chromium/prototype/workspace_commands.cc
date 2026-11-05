@@ -63,6 +63,7 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
   context.page = page; context.http_page = page && page->GetVisibleURL().SchemeIsHTTPOrHTTPS(); context.split = split();
   context.can_back = page && page->GetController().CanGoBack(); context.can_forward = page && page->GetController().CanGoForward();
   context.tab_count = tab_count(source); context.reopen = has_closed();
+  context.assistant = assistant_settings_.enabled;
   for (const auto& workspace : model_.workspaces()) {
     if (workspace.id == source) continue;
     const auto pages = WorkspacePages(workspace.id);
@@ -102,6 +103,8 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result, bool record_us
   if (found == available.end()) return false;
   if (record_usage) shell_->RecordCommandUse(result.command_id, result.target_workspace_id);
   const auto& id = result.command_id;
+  if (id == "assistant") { ShowAssistant(); return true; }
+  if (id == "assistant_settings") { shell_->OpenAssistantSettings(); return true; }
   if (id == "shortcuts" || id == "engines") { shell_->OpenTools(id == "shortcuts" ? 1 : 2); return true; }
   if (id == "spaces") { shell_->OpenWorkspaceSettings(); return true; }
   if (id == "profiles") { shell_->OpenProfiles(); return true; }

@@ -167,6 +167,14 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<std::u16string()> download_directory;
     base::RepeatingClosure choose_download_directory;
     base::RepeatingCallback<bool(std::string, int)> write_preference;
+    // Settings → Asystent AI: backends with their status and the model list.
+    base::RepeatingCallback<base::DictValue()> read_assistant;
+    base::RepeatingCallback<void(base::DictValue)> write_assistant;
+    // Settings → Blokowanie reklam: lists, allowed sites and the profile's
+    // own rules; a write answers with an error to show, or nothing.
+    base::RepeatingCallback<base::DictValue()> read_ad_blocking;
+    base::RepeatingCallback<std::string(base::DictValue)> write_ad_blocking;
+    base::RepeatingClosure open_ad_blocking_rules;
     base::RepeatingCallback<bool(std::string, std::string)> write_text_preference;
     base::RepeatingCallback<std::vector<SitePreferenceRule>()> read_site_preferences;
     base::RepeatingCallback<bool(std::string, std::string, int)> write_site_preference;
@@ -212,6 +220,30 @@ class WorkspaceShell final : public ui::EventHandler,
   static views::WidgetDelegate::ClientViewFactory ClientViewFactory();
   std::unique_ptr<views::View> Build();
   views::View* content_host() const { return content_host_; }
+  void SetAssistantView(views::View* view);
+  void LayoutAssistant(bool pinned);
+  void SetAssistantActivity(bool active);
+  views::View* assistant_activity_for_testing() const;
+  // Settings → Asystent AI: off hides the panel and the right-edge opener.
+  void SetAssistantAllowed(bool allowed);
+  // A background task waits for consent: the right-edge opener turns amber.
+  void SetAssistantAttention(bool attention);
+  // Page control overlays, both browser chrome: the status capsule with its
+  // actions, and a consent bubble beside the element (screen coordinates).
+  void SetAssistantCapsule(std::unique_ptr<views::View> capsule);
+  void SetAssistantConsent(std::unique_ptr<views::View> bubble, std::optional<gfx::Rect> anchor);
+  views::View* assistant_capsule_for_testing() const;
+  views::View* assistant_consent_for_testing() const;
+  bool assistant_edge_visible_for_testing() const;
+  void RefreshAssistantPreferences();
+  void OpenAssistantSettings();
+  void OpenAdBlockingSettings();
+  // Lists, sites or rules changed: the Settings card rebuilds after the click
+  // that changed them has finished.
+  void RefreshAdBlockingPreferences();
+  views::View* ad_blocking_list_for_testing() const { return ad_blocking_list_; }
+  views::View* ad_blocking_rules_for_testing() const { return ad_blocking_rules_; }
+  views::View* assistant_models_for_testing() const { return assistant_models_list_; }
   // A view at the right end of the header band, owned by the window's root
   // (design: Extensions). Its preferred width is honored up to the page commands.
   views::View* SetHeaderTrailing(std::unique_ptr<views::View> view);
@@ -803,6 +835,8 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t PreferenceRuleLimit() const;
   void PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id);
   void RefreshSitePreferences(bool reload = true);
+  void BuildAssistantPreferences();
+  void BuildAdBlockingPreferences();
   void SaveSitePreference();
   void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
@@ -1001,6 +1035,10 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<PreferenceRow> rows;
   };
   std::vector<PreferenceSection> preference_sections_;
+  // Rows that share one card (Asystent AI: permissions, safeguards); a card is
+  // hidden when search hides all of its rows.
+  struct PreferenceGroup { raw_ptr<views::View> card; std::vector<raw_ptr<views::View>> rows; };
+  std::vector<PreferenceGroup> preference_groups_;
   std::map<std::string, raw_ptr<views::View>> preference_toggles_;
   std::map<std::string, raw_ptr<views::View>> preference_pickers_;
   std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
@@ -1011,6 +1049,19 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> site_policy_ = nullptr;
   std::shared_ptr<SidebarNodeGraphState> site_rule_node_graph_;
   raw_ptr<views::View> site_rules_list_ = nullptr;
+  raw_ptr<views::View> assistant_backends_list_ = nullptr, assistant_models_list_ = nullptr;
+  raw_ptr<views::View> assistant_add_backend_ = nullptr, assistant_add_button_ = nullptr;
+  raw_ptr<EditorControl> assistant_add_model_ = nullptr;
+  std::string assistant_preferences_snapshot_;
+  bool assistant_refresh_pending_ = false;
+  // Ad blocking cards: the lists, the sites without blocking, the rules summary.
+  raw_ptr<views::View> ad_blocking_list_ = nullptr;
+  raw_ptr<views::View> ad_blocking_sites_ = nullptr;
+  raw_ptr<views::View> ad_blocking_rules_ = nullptr;
+  raw_ptr<views::View> ad_blocking_update_ = nullptr;
+  bool ad_blocking_sources_open_ = false;
+  std::string ad_blocking_snapshot_;
+  bool ad_blocking_refresh_pending_ = false;
   raw_ptr<views::View> site_rules_card_ = nullptr;
   std::vector<SitePreferenceRule> site_preference_rules_;
   size_t site_rules_limit_ = 50;

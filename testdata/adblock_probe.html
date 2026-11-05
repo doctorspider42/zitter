@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ad probe</title>
+<!-- Ad blocking fixture (content_blocking_browsertest.cc): what the test lists
+     block, hide, and ads no list knows about. -->
+<h1 id="story">The story you came for</h1>
+<p id="text">Article text.</p>
+<div class="ad-banner" id="generic">Generic ad</div>
+<div class="sponsored-box" id="specific">Sponsored</div>
+<div class="promo-rail" id="unlisted"><a href="#">Buy now</a> Partner offer</div>
+<!-- A generated class name that changes per deploy, but a label the law requires. -->
+<div class="x9k2qz" id="labelled"><span>REKLAMA</span><a href="#">Toyota</a></div>
+<!-- A banner: an image link with no words in a slot of its own. -->
+<div id="slot"><div><a href="#" id="banner"><img width="320" height="100" alt=""
+  src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='100'/%3E"></a></div><span>REKLAMA</span></div>
+<script>
+  window.loaded = {};
+  const ads = path => `http://ads.test:${location.port}${path}`;
+  const add = (tag, name, src) => {
+    const e = document.createElement(tag);
+    e.onload = () => { loaded[name] = true; };
+    e.onerror = () => { loaded[name] = false; };
+    e.src = src;
+    document.body.append(e);
+  };
+  add('script', 'script', ads('/adblock_ad.js'));
+  add('img', 'image', ads('/preview_image.svg'));
+  add('script', 'own', '/adblock_ad.js');
+</script>

@@ -3,6 +3,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_SIDEBAR_METAL_H_
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,6 +23,10 @@ namespace zitter::prototype {
 // Shared control scene with native event/focus/AX adapters. All managed text,
 // actions and progress share one transparent canvas; browser services stay native.
 bool SceneActionPressedForTesting(views::View* view);
+std::optional<size_t> SceneSelectIndex(views::View* view);
+void SetSceneSelectIndex(views::View* view, size_t index);
+void SetSceneSelectLabels(views::View* view, const std::vector<std::u16string>& labels);
+void SetSceneSelectCallback(views::View* view, base::RepeatingClosure callback);
 
 class EditorControl;
 class PanelScene {
@@ -71,7 +76,8 @@ class PanelScene {
   virtual bool order_correct() const=0;
   virtual bool animating() const=0;
 };
-std::unique_ptr<PanelScene> CreatePanelScene(views::View* root);
+// Native painting keeps custom child surfaces and their text in one compositor layer.
+std::unique_ptr<PanelScene> CreatePanelScene(views::View* root,bool native_painting = false);
 struct SidebarViewportNode { size_t parent; gfx::Rect bounds; bool visible; };
 struct SidebarProjectedNode { size_t index; gfx::RectF bounds, clip; };
 struct SidebarViewportProjection { gfx::PointF offset; std::vector<SidebarProjectedNode> nodes; };

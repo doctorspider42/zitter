@@ -4,6 +4,8 @@
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/workspace_window.h"
 #include "zitter/core/pin_tree.h"
+#include "chromium/prototype/assistant_panel.h"
+#include "ui/views/view_tracker.h"
 #include "chromium/prototype/timeline_store.h"
 #include "base/time/default_clock.h"
 #include "chromium/prototype/i18n.h"
@@ -14,6 +16,8 @@
 #include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "chromium/prototype/ad_blocking_rules_panel.h"
+#include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
 #include "chrome/browser/printing/print_view_manager.h"
@@ -166,7 +170,10 @@ constexpr BooleanPreference kBooleanPreferences[] = {
     {"save_passwords", password_manager::prefs::kCredentialsEnableService},
     {"auto_signin", password_manager::prefs::kCredentialsEnableAutosignin},
     {"fingerprint_protection", kFingerprintProtectionPref},
+    {"ad_blocking", kAdBlockingPref},
 };
+// One switch for the two lists that hide blocking from pages (Settings).
+constexpr const char* kStealthLists[] = {"zitter", "antiadblock"};
 struct ContentPreference {
   const char* key;
   ContentSettingsType type;
@@ -688,6 +695,11 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.system_settings = base::BindRepeating(&WorkspaceWindow::OpenSystemSettings, base::Unretained(this));
   callbacks.read_preferences = base::BindRepeating(&WorkspaceWindow::ReadPreferences, base::Unretained(this));
   callbacks.write_preference = base::BindRepeating(&WorkspaceWindow::WritePreference, base::Unretained(this));
+  callbacks.read_assistant = base::BindRepeating(&WorkspaceWindow::AssistantSettingsForShell, base::Unretained(this));
+  callbacks.write_assistant = base::BindRepeating(&WorkspaceWindow::WriteAssistantSettings, base::Unretained(this));
+  callbacks.read_ad_blocking = base::BindRepeating(&WorkspaceWindow::ReadAdBlocking, base::Unretained(this));
+  callbacks.write_ad_blocking = base::BindRepeating(&WorkspaceWindow::WriteAdBlocking, base::Unretained(this));
+  callbacks.open_ad_blocking_rules = base::BindRepeating(&WorkspaceWindow::OpenAdBlockingRules, base::Unretained(this));
   callbacks.operation_pending = base::BindRepeating(&WorkspaceWindow::lifecycle_pending, base::Unretained(this));
   callbacks.timeline = base::BindRepeating([](WorkspaceWindow* window) { return &window->timeline(); }, base::Unretained(this));
   callbacks.timeline_now = base::BindRepeating(&WorkspaceWindow::Now, base::Unretained(this));
@@ -752,6 +764,28 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.open_privacy_settings = base::BindRepeating([](WorkspaceWindow* window) {
     window->shell_->OpenPrivacySettings();
   }, base::Unretained(this));
+  extension_callbacks.toggle_assistant = base::BindRepeating([](WorkspaceWindow* window) {
+    window->ToggleAssistantFromBar();
+  }, base::Unretained(this));
+  extension_callbacks.open_ad_blocking_settings = base::BindRepeating([](WorkspaceWindow* window) {
+    window->shell_->OpenAdBlockingSettings();
+  }, base::Unretained(this));
+  extension_callbacks.assistant_available = base::BindRepeating([](WorkspaceWindow* window) {
+    return window->assistant_settings_.enabled;
+  }, base::Unretained(this));
+  extension_callbacks.block_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
+    // Rules that stopped working come first: the assistant replaces them.
+    auto* bar = window->extensions_bar_.get();
+    const auto stale = bar && bar->page() ? ContentBlocking::StaleRules(bar->profile(), bar->page()->GetLastCommittedURL())
+                                          : std::vector<std::string>();
+    if (stale.empty()) { window->AskAssistant(T(u"Zablokuj reklamy na tej stronie, których nie blokują listy filtrów.")); return; }
+    window->AskAssistant(TF(u"Moje reguły blokowania na tej stronie od kilku wizyt nic nie ukrywają, reklamy pewnie się zmieniły. Znajdź te reklamy ponownie i zapisz nowe reguły, zastępując nimi stare (replaces): {}",
+                            {base::UTF8ToUTF16(base::JoinString(stale, "\n"))}));
+  }, base::Unretained(this));
+  ad_blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating([](WorkspaceWindow* window) {
+    if (window->shell_) window->shell_->RefreshAdBlockingPreferences();
+    if (window->ad_blocking_rules_panel_) window->ad_blocking_rules_panel_->Refresh();
+  }, base::Unretained(this)));
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
@@ -808,6 +842,9 @@ WorkspaceWindow::Host::Host(Host&&) noexcept = default;
 WorkspaceWindow::Host& WorkspaceWindow::Host::operator=(Host&&) noexcept = default;
 
 WorkspaceWindow::~WorkspaceWindow() {
+  if (assistant_) assistant_->Stop();
+  assistant_ = nullptr;
+  assistant_targets_.clear();
   external_command_timer_.Stop();
   downloads_.reset();
   if (clear_data_dialog_) clear_data_dialog_->Close();
@@ -921,6 +958,7 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
       window->StartPrint(page);
   }, weak_factory_.GetWeakPtr()));
   FingerprintProtection::Attach(page);
+  ContentBlockingTabHelper::Attach(page);
   PageDialogs::Attach(page);
   PageMediaAccess::Attach(page);
   // Design: Prośba o dostęp — under the address pill, folding into its icon.
@@ -968,10 +1006,12 @@ bool WorkspaceWindow::Select(std::string_view id) {
   if (peek_view_ && id != active_id() && GuardPages({peek_contents()},
       base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->Select(id); }, weak_factory_.GetWeakPtr(), std::string(id)))) return false;
   const auto previous = active_id();
+  const auto previous_assistant_profile = AssistantProfileId();
   const bool sidebar_was_visible = shell_->sidebar_visible();
   const bool changed = previous != id;
   const bool selected = controller_.Activate(id);
   if (selected) {
+    if (assistant_ && previous_assistant_profile != AssistantProfileId()) assistant_->StopAll();
     if (changed) ClosePeek();
     shell_->CloseOverlays(true);
     UpdateShell();
@@ -1208,6 +1248,23 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   if (!profile) return result;
   result["image_link_previews"] = {image_link_previews_, !configuration_invalid_};
   result["shift_click_peek"] = {shift_click_peek_, !configuration_invalid_};
+  {
+    // Assistant rows depend on the master switch and on the click permission.
+    const auto& a = assistant_settings_;
+    const bool on = !configuration_invalid_ && a.enabled;
+    result["assistant_enabled"] = {a.enabled, !configuration_invalid_};
+    result["assistant_tabs"] = {a.defaults.tabs, on};
+    result["assistant_pages"] = {a.defaults.pages, on};
+    result["assistant_actions"] = {a.defaults.actions, on};
+    result["assistant_history"] = {a.defaults.history, on};
+    result["assistant_web"] = {a.defaults.web, on};
+    result["assistant_confirm_clicks"] = {a.defaults.confirm_clicks, on && a.defaults.actions};
+    result["assistant_background"] = {a.background, on && a.defaults.actions};
+    result["assistant_confirm_background"] = {a.confirm_background, on && a.defaults.actions && a.background};
+    constexpr auto kConcurrency = std::to_array({2, 4, 8, 12});
+    const auto found = std::ranges::find(kConcurrency, a.concurrency);
+    result["assistant_concurrency"] = {found == kConcurrency.end() ? 3 : static_cast<int>(found - kConcurrency.begin()), on};
+  }
   auto* service = profile->GetPrefs();
   auto read = [&](const char* key, const char* pref, int value) {
     const auto* entry = service->FindPreference(pref);
@@ -1216,6 +1273,8 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   AppendChromiumPreferences(profile, g_browser_process->local_state(), result);
   for (const auto& entry : kBooleanPreferences)
     read(entry.key, entry.pref, service->GetBoolean(entry.pref));
+  result["ad_blocking_stealth"] = {std::ranges::all_of(kStealthLists, [&](const char* id) { return ContentBlocking::ListEnabled(profile, id); }),
+                                   service->GetBoolean(kAdBlockingPref)};
   read("download_directory", prefs::kDownloadDefaultDirectory, 0);
   read("preconnect", prefs::kNetworkPredictionOptions,
        prefetch::GetPreloadPagesState(*service) != prefetch::PreloadPagesState::kNoPreloading);
@@ -1273,6 +1332,29 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   auto current = ReadPreferences();
   auto it = current.find(key);
   if (it == current.end() || !it->second.editable) return false;
+  if (key.starts_with("assistant_")) {
+    auto settings = assistant_settings_;
+    if (key == "assistant_concurrency") {
+      constexpr auto kConcurrency = std::to_array({2, 4, 8, 12});
+      if (value < 0 || value >= static_cast<int>(kConcurrency.size())) return false;
+      settings.concurrency = kConcurrency[static_cast<size_t>(value)];
+    } else {
+      if (value != 0 && value != 1) return false;
+      const bool on = value != 0;
+      if (key == "assistant_enabled") settings.enabled = on;
+      else if (key == "assistant_tabs") settings.defaults.tabs = on;
+      else if (key == "assistant_pages") settings.defaults.pages = on;
+      else if (key == "assistant_actions") settings.defaults.actions = on;
+      else if (key == "assistant_history") settings.defaults.history = on;
+      else if (key == "assistant_web") settings.defaults.web = on;
+      else if (key == "assistant_confirm_clicks") settings.defaults.confirm_clicks = on;
+      else if (key == "assistant_background") settings.background = on;
+      else if (key == "assistant_confirm_background") settings.confirm_background = on;
+      else return false;
+    }
+    SetAssistantSettings(std::move(settings));
+    return true;
+  }
   if (key == "image_link_previews" || key == "shift_click_peek") {
     if (value != 0 && value != 1) return false;
     if (key == "image_link_previews") {
@@ -1299,6 +1381,11 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   for (const auto& entry : kBooleanPreferences) if (key == entry.key) {
     if (value != 0 && value != 1) return false;
     service->SetBoolean(entry.pref, value != 0);
+    return true;
+  }
+  if (key == "ad_blocking_stealth") {
+    if (value != 0 && value != 1) return false;
+    for (const char* id : kStealthLists) ContentBlocking::SetListEnabled(profile, id, value != 0);
     return true;
   }
   if (key == "third_party_cookies") {
@@ -2280,6 +2367,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
   if (accelerator.key_state() != ui::Accelerator::KeyState::PRESSED) return false;
   if (shell_->CaptureShortcut(accelerator)) return true;
   if (accelerator.modifiers() == 0 && accelerator.key_code() == ui::VKEY_ESCAPE) {
+    if (assistant_ && assistant_->HandleEscape()) return true;
     if (fullscreen_page_) { fullscreen_page_->ExitFullscreen(true); return true; }
     if (!shell_->CloseOverlays()) {
       if (!peek_view_) return false;
@@ -2302,6 +2390,8 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 }
 
 bool WorkspaceWindow::RunShortcut(std::string id) {
+  if (id == "assistant") { ShowAssistant(); return true; }
+  if (id == "assistant_hover") { ShowAssistant(true); return true; }
   if (id.empty()) return false;
   if (id == "exit_fullscreen") {
     if (fullscreen_page_) fullscreen_page_->ExitFullscreen(true);
@@ -2361,6 +2451,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   }
   if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
   if (id == "fingerprint") { shell_->CloseOverlays(true); extensions_bar_->ToggleFingerprintPanel(); return extensions_bar_->fingerprint_panel_for_testing() != nullptr; }
+  if (id == "shield") { shell_->CloseOverlays(true); extensions_bar_->ToggleShieldPanel(); return extensions_bar_->shield_panel_for_testing() != nullptr; }
   if (id == "history") { ShowHistory(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {
@@ -2425,6 +2516,9 @@ content::KeyboardEventProcessingResult WorkspaceWindow::PreHandlePageKeyEvent(
   suppress_shortcut_char_ = false;
   if (event.skip_if_unhandled || (source != contents(active_id()) && source != peek_contents())) return Result::NOT_HANDLED;
   const bool escape_peek = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && source == peek_contents() && !fullscreen_page_;
+  if (key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && assistant_ && assistant_->HandleEscape()) {
+    consumed_keys_.insert(key); suppress_shortcut_char_ = true; return Result::HANDLED;
+  }
   const bool escape_fullscreen = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && fullscreen_page_;
   auto action = shell_->ShortcutFor(accelerator);
 #if BUILDFLAG(IS_WIN)
@@ -2572,6 +2666,7 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   base::DictValue dict;
   dict.Set("image_link_previews", image_link_previews_);
   dict.Set("shift_click_peek", shift_click_peek_);
+  dict.Set("assistant", assistant_settings_.ToValue());
   const auto* replaced_starter = import_replaces_starter_ ? model_.Find(starter_workspace_id_) : nullptr;
   base::ListValue profile_list;
   for (const auto& entry : profiles_) {
@@ -2886,6 +2981,8 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
     pins_ = std::move(restored_pins);
     image_link_previews_ = dict->FindBool("image_link_previews").value_or(false);
     shift_click_peek_ = dict->FindBool("shift_click_peek").value_or(true);
+    assistant_settings_ = AssistantSettings::FromValue(dict->FindDict("assistant"));
+    shell_->SetAssistantAllowed(assistant_settings_.enabled);
     onboarding_complete_ = dict->FindBool("onboarding_complete").value_or(true);
     if (const auto* starter = dict->FindString("starter_workspace"))
       if (!onboarding_complete_ && model_.Find(*starter)) starter_workspace_id_ = *starter;
@@ -3072,6 +3169,12 @@ void WorkspaceWindow::FinishConfiguration() {
   closing_ = false;
   configuration_ready_ = true;
   Select(restored_active_);
+  AssistantStateChanged();
+  // Saved scheduled tasks need the panel, even when nobody opens it.
+  LoadAssistantSessions(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::optional<base::DictValue> saved) {
+    const auto* tasks = saved ? saved->FindList("tasks") : nullptr;
+    if (window && tasks && !tasks->empty()) window->EnsureAssistant();
+  }, weak_factory_.GetWeakPtr()));
   shell_->WarmWorkspaceSidebars(pins_);
   SaveConfiguration();
   for (const auto& directory : deleted_directories_) ScheduleProfileDeletion(directory);
