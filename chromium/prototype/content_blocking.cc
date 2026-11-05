@@ -551,6 +551,56 @@ void ContentBlocking::RecordRuleHits(Profile* profile, const std::vector<std::pa
     else misses->Set(rule, std::min(misses->FindInt(rule).value_or(0) + 1, 99));
   }
 }
+bool ContentBlocking::RuleStale(Profile* profile, const std::string& rule) {
+  return profile && profile->GetOriginalProfile()->GetPrefs()->GetDict(kAdBlockingRuleMissesPref).FindInt(rule).value_or(0) >= kStaleLoads;
+}
+std::string ContentBlocking::RuleSite(const std::string& rule) {
+  auto first_host = [](std::string_view list, char separator) {
+    for (auto part : base::SplitStringPiece(list, std::string(1, separator), base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY))
+      if (!part.starts_with("~")) return std::string(part);
+    return std::string();
+  };
+  if (const auto at = rule.find('#'); at != std::string::npos && at > 0 && !rule.starts_with("||") && !rule.starts_with("@@"))
+    return first_host(std::string_view(rule).substr(0, at), ',');
+  if (const auto options = rule.rfind('$'); options != std::string::npos)
+    for (auto option : base::SplitStringPiece(std::string_view(rule).substr(options + 1), ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY))
+      if (option.starts_with("domain=")) return first_host(option.substr(7), '|');
+  std::string_view body = rule;
+  if (body.starts_with("@@")) body.remove_prefix(2);
+  if (!body.starts_with("||")) return std::string();
+  body.remove_prefix(2);
+  return std::string(body.substr(0, body.find_first_of("^/*:|?$")));
+}
+std::vector<std::pair<size_t, std::string>> ContentBlocking::TextErrors(const std::string& text) {
+  std::vector<std::pair<size_t, std::string>> errors;
+  size_t line_number = 0;
+  for (auto line : base::SplitStringPiece(text, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL)) {
+    ++line_number;
+    const std::string rule(base::TrimWhitespaceASCII(line, base::TRIM_ALL));
+    if (rule.empty() || rule.starts_with("!")) continue;
+    if (rule.size() > 1000) { errors.emplace_back(line_number, "the rule is longer than 1000 characters"); continue; }
+    if (auto problem = RuleError(rule); !problem.empty()) errors.emplace_back(line_number, std::move(problem));
+  }
+  return errors;
+}
+bool ContentBlocking::SetRulesText(Profile* profile, const std::string& text) {
+  if (!profile || !TextErrors(text).empty()) return false;
+  base::ListValue rules;
+  std::set<std::string> kept;
+  for (auto line : base::SplitStringPiece(text, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
+    rules.Append(std::string(line));
+    if (!line.starts_with("!")) kept.insert(std::string(line));
+  }
+  // Counters of rules that are gone go with them.
+  {
+    ScopedDictPrefUpdate misses(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref);
+    std::vector<std::string> gone;
+    for (const auto [rule, value] : *misses) if (!kept.contains(rule)) gone.push_back(rule);
+    for (const auto& rule : gone) misses->Remove(rule);
+  }
+  profile->GetOriginalProfile()->GetPrefs()->SetList(kAdBlockingRulesPref, std::move(rules));
+  return true;
+}
 std::vector<std::string> ContentBlocking::StaleRules(Profile* profile, const GURL& page) {
   std::vector<std::string> stale;
   if (!profile) return stale;

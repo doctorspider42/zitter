@@ -15,6 +15,7 @@
 #include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "chromium/prototype/ad_blocking_rules_panel.h"
 #include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
@@ -170,6 +171,8 @@ constexpr BooleanPreference kBooleanPreferences[] = {
     {"fingerprint_protection", kFingerprintProtectionPref},
     {"ad_blocking", kAdBlockingPref},
 };
+// One switch for the two lists that hide blocking from pages (Settings).
+constexpr const char* kStealthLists[] = {"zitter", "antiadblock"};
 struct ContentPreference {
   const char* key;
   ContentSettingsType type;
@@ -695,6 +698,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.write_assistant = base::BindRepeating(&WorkspaceWindow::WriteAssistantSettings, base::Unretained(this));
   callbacks.read_ad_blocking = base::BindRepeating(&WorkspaceWindow::ReadAdBlocking, base::Unretained(this));
   callbacks.write_ad_blocking = base::BindRepeating(&WorkspaceWindow::WriteAdBlocking, base::Unretained(this));
+  callbacks.open_ad_blocking_rules = base::BindRepeating(&WorkspaceWindow::OpenAdBlockingRules, base::Unretained(this));
   callbacks.operation_pending = base::BindRepeating(&WorkspaceWindow::lifecycle_pending, base::Unretained(this));
   callbacks.timeline = base::BindRepeating([](WorkspaceWindow* window) { return &window->timeline(); }, base::Unretained(this));
   callbacks.timeline_now = base::BindRepeating(&WorkspaceWindow::Now, base::Unretained(this));
@@ -776,6 +780,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   }, base::Unretained(this));
   ad_blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating([](WorkspaceWindow* window) {
     if (window->shell_) window->shell_->RefreshAdBlockingPreferences();
+    if (window->ad_blocking_rules_panel_) window->ad_blocking_rules_panel_->Refresh();
   }, base::Unretained(this)));
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
@@ -1264,6 +1269,8 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   AppendChromiumPreferences(profile, g_browser_process->local_state(), result);
   for (const auto& entry : kBooleanPreferences)
     read(entry.key, entry.pref, service->GetBoolean(entry.pref));
+  result["ad_blocking_stealth"] = {std::ranges::all_of(kStealthLists, [&](const char* id) { return ContentBlocking::ListEnabled(profile, id); }),
+                                   service->GetBoolean(kAdBlockingPref)};
   read("download_directory", prefs::kDownloadDefaultDirectory, 0);
   read("preconnect", prefs::kNetworkPredictionOptions,
        prefetch::GetPreloadPagesState(*service) != prefetch::PreloadPagesState::kNoPreloading);
@@ -1370,6 +1377,11 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   for (const auto& entry : kBooleanPreferences) if (key == entry.key) {
     if (value != 0 && value != 1) return false;
     service->SetBoolean(entry.pref, value != 0);
+    return true;
+  }
+  if (key == "ad_blocking_stealth") {
+    if (value != 0 && value != 1) return false;
+    for (const char* id : kStealthLists) ContentBlocking::SetListEnabled(profile, id, value != 0);
     return true;
   }
   if (key == "third_party_cookies") {

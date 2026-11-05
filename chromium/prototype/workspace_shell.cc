@@ -7864,27 +7864,19 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
         break;
       }
       case Kind::AdBlocking:{
-        auto* fields=row->children().front().get();
-        ad_blocking_list_=fields->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(ad_blocking_list_,true,gfx::Insets::TLBR(6,0,0,0),10);
-        // A rule of your own: one line of Adblock Plus / uBlock syntax.
-        auto* add=fields->AddChildView(std::make_unique<views::View>());
-        ad_blocking_rule_=AddEditor(add);ad_blocking_rule_->SetPlaceholderText(u"example.com##.sponsored");ad_blocking_rule_->GetViewAccessibility().SetName(T(u"Nowa reguła blokowania"));ad_blocking_rule_->view()->SetPreferredSize(gfx::Size(240,36));
-        auto submit=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
-          if(!shell||!shell->callbacks_.write_ad_blocking)return;
-          const auto rule=base::UTF16ToUTF8(base::TrimWhitespace(shell->ad_blocking_rule_->GetText(),base::TRIM_ALL));if(rule.empty())return;
-          const auto error=shell->callbacks_.write_ad_blocking.Run(base::DictValue().Set("command","rule_add").Set("rule",rule));
-          if(error.empty())shell->ad_blocking_rule_->SetText(u"");
-          SetPanelText(shell->ad_blocking_error_,base::UTF8ToUTF16(error));shell->ad_blocking_error_->SetVisible(!error.empty());
-          shell->RefreshAdBlockingPreferences();
-        },weak);
-        ad_blocking_rule_->SetCallbacks({},base::BindRepeating([](base::RepeatingClosure submit,const ui::KeyEvent& event){
-          if(event.type()!=ui::EventType::kKeyPressed||event.key_code()!=ui::VKEY_RETURN)return false;submit.Run();return true;},submit));
-        auto* button=PreferenceAction(add,base::BindRepeating([](base::RepeatingClosure submit,const ui::Event&){submit.Run();},submit),T(u"Dodaj regułę"));
-        SetSidebarPanelLayout(add,false,gfx::Insets::TLBR(4,0,0,0),8,ad_blocking_rule_->view(),true);
-        (void)button;
-        ad_blocking_error_=AddPreferenceCopy(fields,u"",kError,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);ad_blocking_error_->SetVisible(false);
+        // Lists (design: Zitter — Ad blocking preferences): status and the
+        // update action at the end of the card, the lists under its title.
+        ad_blocking_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(ad_blocking_list_,true,gfx::Insets::TLBR(8,0,0,0),8);
         break;
       }
+      case Kind::AdBlockingSites:
+        ad_blocking_sites_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(ad_blocking_sites_,true,gfx::Insets(),6);break;
+      case Kind::AdBlockingRules:
+        // A summary here; the rules themselves are edited in their own dialog.
+        ad_blocking_rules_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(ad_blocking_rules_,true,gfx::Insets::TLBR(4,0,0,0),4);
+        PreferenceAction(row,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::Event&){
+          if(shell&&shell->callbacks_.open_ad_blocking_rules)shell->callbacks_.open_ad_blocking_rules.Run();},weak),T(u"Edytuj reguły"));
+        break;
       case Kind::SiteRules:
         site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(site_rules_list_,true,gfx::Insets(),8);break;
       case Kind::ClearData:{
@@ -7973,89 +7965,99 @@ void WorkspaceShell::RefreshAdBlockingPreferences() {
   },weak_factory_.GetWeakPtr()));
 }
 void WorkspaceShell::BuildAdBlockingPreferences() {
-  if(!ad_blocking_list_||!callbacks_.read_ad_blocking)return;
+  if(!ad_blocking_list_||!ad_blocking_sites_||!ad_blocking_rules_||!callbacks_.read_ad_blocking)return;
   auto data=callbacks_.read_ad_blocking.Run();
-  const auto snapshot=base::WriteJson(data).value_or("");
+  const auto snapshot=base::WriteJson(data).value_or("")+(ad_blocking_sources_open_?"1":"0");
   if(snapshot==ad_blocking_snapshot_)return;
   ad_blocking_snapshot_=snapshot;
   auto weak=weak_factory_.GetWeakPtr();
   auto text=[](const base::DictValue& d,const char* key){const auto* v=d.FindString(key);return v?base::UTF8ToUTF16(*v):std::u16string();};
   auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){
     if(!shell||!shell->callbacks_.write_ad_blocking)return;shell->callbacks_.write_ad_blocking.Run(std::move(command));shell->RefreshAdBlockingPreferences();};
-  auto heading=[&](std::u16string title){AddPreferenceCopy(ad_blocking_list_,std::move(title),kInk,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);};
-  auto removable=[&](std::u16string label,std::u16string detail,std::u16string remove_name,base::DictValue command,bool code=false){
-    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
-    auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
-    auto* copy=AddPreferenceCopy(labels,std::move(label),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),true);
-    // A filter rule is code: the `url` style (mono), like addresses.
-    if(auto* text=views::AsViewClass<PreferenceCopy>(copy);text&&code)text->SetTextStyle(8);
-    if(!detail.empty())AddPreferenceCopy(labels,std::move(detail),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-    auto* remove=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const base::DictValue& c,const ui::Event&){write(shell,c.Clone());},write,weak,std::move(command)),T(u"Usuń"));
-    remove->GetViewAccessibility().SetName(std::move(remove_name));
-    SetSidebarPanelLayout(line,false,gfx::Insets(),12,labels,true);
-  };
-  ad_blocking_list_->RemoveAllChildViews();
-  // The lists: EasyList's license asks for attribution, here and in the docs.
-  heading(T(u"Listy filtrów"));
+  auto muted=[&](views::View* parent,std::u16string value){return AddPreferenceCopy(parent,std::move(value),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);};
   const bool available=data.FindBool("available").value_or(false);
+  const bool updating=data.FindBool("updating").value_or(false);
+
+  // Lists: one compact row each, a count in `url`, "Zawsze" or a switch. The
+  // stand-ins and the Adblock Warning Removal List live under "Ukrywaj
+  // blokowanie przed stronami".
+  ad_blocking_list_->RemoveAllChildViews();
+  {
+    // The lists' state, and updating them now, on one line above them.
+    const auto error=text(data,"error");
+    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
+    auto* status=muted(line,updating?T(u"Pobieram listy…"):!error.empty()?TF(u"Nie udało się pobrać: {}",{error})
+                                 :data.FindString("updated")&&!data.FindString("updated")->empty()?TF(u"Aktualne · {}",{text(data,"updated")}):std::u16string());
+    if(!error.empty())if(auto* copy=views::AsViewClass<PreferenceCopy>(status))copy->SetInk(Palette(ad_blocking_list_).danger);
+    ad_blocking_update_=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const ui::Event&){
+      write(shell,base::DictValue().Set("command","update"));},write,weak),T(u"Aktualizuj"));
+    if(auto* button=views::AsViewClass<SceneTextButton>(ad_blocking_update_))button->SetKind(6);
+    SetSidebarPanelLayout(line,false,gfx::Insets(),12,status,true);
+  }
   if(const auto* lists=data.FindList("lists"))for(const auto& item:*lists){
     const auto& list=item.GetDict();
     const std::string id=list.FindString("id")?*list.FindString("id"):std::string();
+    if(id=="zitter"||id=="antiadblock")continue;
     const bool optional=list.FindBool("optional").value_or(false),enabled=list.FindBool("enabled").value_or(true);
     auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
     auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
-    // Zitter's own list has a name in the UI language; the others are proper names.
-    const std::u16string name=id=="zitter"?T(u"Zamienniki Zittera"):text(list,"name");
-    AddPreferenceCopy(labels,name,kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
-    // What the optional lists are for: they are switches, so say what each does.
-    const std::u16string purpose=id=="zitter"?T(u"Zamiast błędu podaje stronie atrapy skryptów reklamowych, więc nie wykrywa blokowania.")
-                                :id=="antiadblock"?T(u"Usuwa komunikaty z prośbą o wyłączenie blokowania reklam.")
-                                :id=="ublock"?T(u"Reguły twórców uBlock Origin, także przeciw wykrywaniu blokowania. Około 2 MB więcej do pobrania."):std::u16string();
-    if(!purpose.empty())AddPreferenceCopy(labels,purpose,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    AddPreferenceCopy(labels,text(list,"name"),kInk,0,static_cast<int>(gfx::Font::Weight::NORMAL),false);
+    if(id=="ublock")muted(labels,T(u"Więcej reguł przeciw wykrywaniu · około 2,5 MB"));
     const int rules=list.FindInt("rules").value_or(0);
-    const std::u16string state=list.FindBool("builtin").value_or(false)?TF(u"Wbudowana · reguły: {}",{base::FormatNumber(rules)})
-                              :!enabled?T(u"Wyłączona")
-                              :rules?TF(u"Reguły: {} · pobrano {}",{base::FormatNumber(rules),text(list,"updated")}):T(u"Jeszcze nie pobrano");
-    AddPreferenceCopy(labels,state,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    auto* count=muted(line,enabled&&rules?base::FormatNumber(rules):std::u16string(u"—"));
+    if(auto* copy=views::AsViewClass<PreferenceCopy>(count))copy->SetTextStyle(8);
     if(optional){
-      auto* toggle=PreferenceToggle(line,TF(u"Używaj listy {}",{name}));
+      auto* toggle=PreferenceToggle(line,TF(u"Używaj listy {}",{text(list,"name")}));
       SetToggleOn(toggle,enabled);toggle->SetEnabled(available);
       SetActionCallback(toggle,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string id,views::View* toggle){
         write(shell,base::DictValue().Set("command","list").Set("list",id).Set("enabled",ToggleOn(toggle)));
       },write,weak,id,base::Unretained(toggle)));
+    }else{
+      auto* always=muted(line,T(u"Zawsze"));always->SetPreferredSize(gfx::Size(38,always->GetPreferredSize().height()));
     }
     SetSidebarPanelLayout(line,false,gfx::Insets(),16,labels,true);
   }
-  AddPreferenceCopy(ad_blocking_list_,T(u"EasyList, EasyPrivacy i Adblock Warning Removal List: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. uBlock filters: © autorzy uBlock Origin, licencja GPLv3, pobierane z github.com/uBlockOrigin/uAssets. Zamienniki Zittera są częścią Zittera. Silnik: adblock-rust od Brave, licencja MPL-2.0."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  // Attribution, as EasyList's license asks: behind one quiet action.
   {
-    auto* line=ad_blocking_list_->AddChildView(std::make_unique<views::View>());
-    const bool updating=data.FindBool("updating").value_or(false);const auto error=text(data,"error");
-    auto* status=AddPreferenceCopy(line,updating?T(u"Pobieram listy…"):error.empty()?u"":TF(u"Nie udało się pobrać: {}",{error}),error.empty()?kMuted:kError,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-    auto* update=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const ui::Event&){write(shell,base::DictValue().Set("command","update"));},write,weak),T(u"Aktualizuj teraz"));
-    update->SetEnabled(!updating);
-    SetSidebarPanelLayout(line,false,gfx::Insets(),12,status,true);
+    auto* sources=PreferenceAction(ad_blocking_list_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::Event&){
+      if(!shell)return;shell->ad_blocking_sources_open_=!shell->ad_blocking_sources_open_;shell->RefreshAdBlockingPreferences();},weak),
+      ad_blocking_sources_open_?T(u"Ukryj źródła i licencje"):T(u"Źródła i licencje"));
+    if(auto* button=views::AsViewClass<SceneTextButton>(sources))button->SetKind(6);
+    if(ad_blocking_sources_open_)muted(ad_blocking_list_,T(u"EasyList, EasyPrivacy i Adblock Warning Removal List: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. uBlock filters: © autorzy uBlock Origin, licencja GPLv3, pobierane z github.com/uBlockOrigin/uAssets. Zamienniki Zittera są częścią Zittera. Silnik: adblock-rust od Brave, licencja MPL-2.0."));
   }
-  heading(T(u"Witryny bez blokowania"));
-  const auto* sites=data.FindList("sites");
-  if(!sites||sites->empty())AddPreferenceCopy(ad_blocking_list_,T(u"Brak. Wyłączysz blokowanie dla witryny tarczą w pasku."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  else for(const auto& site:*sites)if(site.is_string())
-    removable(base::UTF8ToUTF16(site.GetString()),{},TF(u"Włącz blokowanie na {}",{base::UTF8ToUTF16(site.GetString())}),base::DictValue().Set("command","site_remove").Set("site",site.GetString()));
-  heading(T(u"Twoje reguły"));
-  const auto* rules=data.FindList("rules");
-  std::u16string note;
-  size_t shown=0;
-  for(size_t i=0;rules&&i<rules->size();++i){
-    if(!(*rules)[i].is_string())continue;
-    const auto& rule=(*rules)[i].GetString();
-    // A comment says where the rules under it came from.
-    if(rule.starts_with("!")){note=base::UTF8ToUTF16(std::string(base::TrimWhitespaceASCII(rule.substr(1),base::TRIM_ALL)));continue;}
-    // The note heads its batch: shown under the batch's first rule only.
-    removable(base::UTF8ToUTF16(rule),std::exchange(note,std::u16string()),TF(u"Usuń regułę {}",{base::UTF8ToUTF16(rule)}),
-              base::DictValue().Set("command","rule_remove").Set("rule",rule),true);
-    ++shown;
+  if(ad_blocking_update_)ad_blocking_update_->SetEnabled(!updating&&available);
+
+  // Sites without blocking: each with the action that turns blocking back on.
+  ad_blocking_sites_->RemoveAllChildViews();
+  if(const auto* sites=data.FindList("sites"))for(const auto& site:*sites)if(site.is_string()){
+    auto* line=ad_blocking_sites_->AddChildView(std::make_unique<views::View>());
+    auto* name=AddPreferenceCopy(line,base::UTF8ToUTF16(site.GetString()),kInk,0,static_cast<int>(gfx::Font::Weight::NORMAL),false);
+    if(auto* copy=views::AsViewClass<PreferenceCopy>(name))copy->SetTextStyle(8);
+    auto* on=PreferenceAction(line,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string site,const ui::Event&){
+      write(shell,base::DictValue().Set("command","site_remove").Set("site",site));},write,weak,site.GetString()),T(u"Włącz"));
+    on->GetViewAccessibility().SetName(TF(u"Włącz blokowanie na {}",{base::UTF8ToUTF16(site.GetString())}));
+    SetSidebarPanelLayout(line,false,gfx::Insets(),12,name,true);
   }
-  if(!shown)AddPreferenceCopy(ad_blocking_list_,T(u"Brak. Dodaj regułę poniżej albo poproś asystenta o zablokowanie reklam na stronie."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  ad_blocking_rule_->view()->SetEnabled(available);
+  ad_blocking_sites_->SetVisible(!ad_blocking_sites_->children().empty());
+
+  // The rules summary: how many, and per site; a site with a rule that
+  // stopped working says so.
+  ad_blocking_rules_->RemoveAllChildViews();
+  {
+    const auto* rule_sites=data.FindList("rule_sites");
+    int total=0;std::u16string per_site;
+    for(size_t i=0;rule_sites&&i<rule_sites->size();++i){
+      const auto& entry=(*rule_sites)[i].GetDict();const int count=entry.FindInt("count").value_or(0);total+=count;
+      const auto site=text(entry,"site");
+      per_site+=(per_site.empty()?u"":u" · ")+(site.empty()?T(u"ogólne"):site)+u" "+base::NumberToString16(count);
+      if(entry.FindBool("stale").value_or(false))per_site+=u" "+T(u"(nie działa)");
+    }
+    if(!total)muted(ad_blocking_rules_,T(u"Brak. Dodaj regułę w edytorze albo poproś asystenta."));
+    else{
+      AddPreferenceCopy(ad_blocking_rules_,TF(u"Reguły: {} · witryny: {}",{base::NumberToString16(total),base::NumberToString16(rule_sites->size())}),kInk,0,static_cast<int>(gfx::Font::Weight::NORMAL),false);
+      auto* sites=muted(ad_blocking_rules_,per_site);if(auto* copy=views::AsViewClass<PreferenceCopy>(sites))copy->SetTextStyle(8);
+    }
+  }
   RefreshChoiceViewports(ad_blocking_list_->parent());
   if(general_widget_)general_widget_->GetContentsView()->InvalidateLayout();
 }

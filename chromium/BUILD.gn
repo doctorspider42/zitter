@@ -172,6 +172,8 @@ source_set("shell") {
     "chromium/prototype/fingerprint_protection.cc",
     "chromium/prototype/content_blocking.h",
     "chromium/prototype/content_blocking.cc",
+    "chromium/prototype/ad_blocking_rules_panel.h",
+    "chromium/prototype/ad_blocking_rules_panel.cc",
     "chromium/prototype/image_link_preview.h",
     "chromium/prototype/image_link_preview.cc",
     "chromium/prototype/page_services.h",

@@ -174,6 +174,7 @@ class WorkspaceShell final : public ui::EventHandler,
     // own rules; a write answers with an error to show, or nothing.
     base::RepeatingCallback<base::DictValue()> read_ad_blocking;
     base::RepeatingCallback<std::string(base::DictValue)> write_ad_blocking;
+    base::RepeatingClosure open_ad_blocking_rules;
     base::RepeatingCallback<bool(std::string, std::string)> write_text_preference;
     base::RepeatingCallback<std::vector<SitePreferenceRule>()> read_site_preferences;
     base::RepeatingCallback<bool(std::string, std::string, int)> write_site_preference;
@@ -241,7 +242,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // that changed them has finished.
   void RefreshAdBlockingPreferences();
   views::View* ad_blocking_list_for_testing() const { return ad_blocking_list_; }
-  EditorControl* ad_blocking_rule_for_testing() const { return ad_blocking_rule_; }
+  views::View* ad_blocking_rules_for_testing() const { return ad_blocking_rules_; }
   views::View* assistant_models_for_testing() const { return assistant_models_list_; }
   // A view at the right end of the header band, owned by the window's root
   // (design: Extensions). Its preferred width is honored up to the page commands.
@@ -1053,9 +1054,12 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> assistant_add_model_ = nullptr;
   std::string assistant_preferences_snapshot_;
   bool assistant_refresh_pending_ = false;
+  // Ad blocking cards: the lists, the sites without blocking, the rules summary.
   raw_ptr<views::View> ad_blocking_list_ = nullptr;
-  raw_ptr<EditorControl> ad_blocking_rule_ = nullptr;
-  raw_ptr<views::View> ad_blocking_error_ = nullptr;
+  raw_ptr<views::View> ad_blocking_sites_ = nullptr;
+  raw_ptr<views::View> ad_blocking_rules_ = nullptr;
+  raw_ptr<views::View> ad_blocking_update_ = nullptr;
+  bool ad_blocking_sources_open_ = false;
   std::string ad_blocking_snapshot_;
   bool ad_blocking_refresh_pending_ = false;
   raw_ptr<views::View> site_rules_card_ = nullptr;

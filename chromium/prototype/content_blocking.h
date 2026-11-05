@@ -99,6 +99,16 @@ class ContentBlocking final {
   // hiding rules acted on. A rule at zero on kStaleLoads loads in a row is stale.
   static void RecordRuleHits(Profile* profile, const std::vector<std::pair<std::string, int>>& hits);
   static std::vector<std::string> StaleRules(Profile* profile, const GURL& page);
+  static bool RuleStale(Profile* profile, const std::string& rule);
+  // The site a rule acts on, as Settings groups rules: the first host before
+  // `##`, else `domain=`, else the `||host`; empty when it names none.
+  static std::string RuleSite(const std::string& rule);
+  // The rules editor's text mode: one rule per line, `!` lines are notes.
+  // Errors by line (1-based); empty when every line is a valid rule.
+  static std::vector<std::pair<size_t, std::string>> TextErrors(const std::string& text);
+  // Replaces the profile's own rules with `text`, notes included; false when
+  // TextErrors finds any.
+  static bool SetRulesText(Profile* profile, const std::string& text);
   static constexpr int kStaleLoads = 3;
 
   // The request check: kBlock when the profile's engine blocks `url` loaded by

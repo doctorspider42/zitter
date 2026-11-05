@@ -290,22 +290,56 @@ covers `news.example.com`.
 
 ### Settings
 
-A new category **Blokowanie reklam** ("Ad blocking") at the end of the
-preference catalogue in `sidebar_scene.rs`:
+Design: [Zitter — Ad blocking preferences](https://claude.ai/artifact/XxZgCge5RjuXEg2YwdgBMC).
+The category **Blokowanie reklam** ("Ad blocking") comes last in the preference
+catalogue in `sidebar_scene.rs`. Its navigation entry is a shield (glyph 11,
+drawn from the same rounded rectangles as the other category icons). The
+category has five cards, each with a title and one short line:
 
-- **Blokuj reklamy i elementy śledzące** (toggle, pref `zitter.ad_blocking`,
-  default on, per profile);
-- **Listy, wyjątki i Twoje reguły**, one card (row kind `AdBlocking`, built
-  natively like the assistant's model list) with three parts:
-- **Listy filtrów**: every list with its rule count and last update; the
-  optional ones with what they are for and a switch; attribution for all of
-  them, and **Aktualizuj teraz**;
-- **Witryny bez blokowania**: the allow list, each with a remove button;
-- **Twoje reguły**: the profile's own rules (pref `zitter.ad_blocking_rules`, a
-  list of strings), each in the `url` style (mono, it is code) with a remove
-  button, and a field to add a rule. A batch's note ("Asystent: site, date")
-  shows under its first rule only. A rule the engine cannot parse is refused
-  with a message.
+- **Blokuj reklamy i śledzenie** (toggle, pref `zitter.ad_blocking`, default
+  on, per profile);
+- **Ukrywaj blokowanie przed stronami** (toggle `ad_blocking_stealth`): one
+  switch for Zitter's stand-ins and the Adblock Warning Removal List
+  together, the two lists that keep pages from seeing the blocking;
+- **Listy filtrów** (row kind `AdBlocking`):
+  - the lists' state ("Aktualne · 5 lis") and **Aktualizuj** on one line;
+  - one compact row per list: name, rule count in `url` (mono), then
+    "Zawsze" or the list's switch (uBlock filters, with "about 2.5 MB");
+  - the attribution EasyList's license asks for, behind a **Źródła i
+    licencje** chip;
+- **Witryny bez blokowania** (`AdBlockingSites`): the allow list, each site
+  with **Włącz**; the card's line says how to add one;
+- **Twoje reguły** (`AdBlockingRules`): a summary ("Reguły: 10 · witryny: 3"
+  and each site with its count, "(nie działa)" for a site with a stale rule)
+  and **Edytuj reguły**.
+
+The rules themselves are edited in **`AdBlockingRulesPanel`**
+(`ad_blocking_rules_panel.{h,cc}`), a window-modal dialog over Settings built
+on `PanelScene` like the passwords panel. It has two views of the same pref
+(`zitter.ad_blocking_rules`), and a × to close.
+
+- **Lista**:
+  - the sites as chips ("Wszystkie" first, each with its count);
+  - the chosen site's rules in `url` with their note (the comment line above
+    the batch), a copy and a remove action. A stale rule says "Nic nie ukrywa
+    od kilku wizyt" and offers **Napraw z asystentem**, the shield's repair
+    for that one rule;
+  - a field to add a rule, checked before it is saved.
+- **Tekst**: the whole list in a `Textarea` in the mono face, notes
+  included. Every edit is checked line by line (`ContentBlocking::TextErrors`):
+  the first four errors show by line number, and **Zapisz** stays off until
+  there are none. Saving replaces the list (`SetRulesText`) and drops the
+  stale counters of rules that are gone.
+
+Rules are grouped by `ContentBlocking::RuleSite`: the first host before `##`,
+else `domain=`, else the `||host`.
+
+Differences from the design:
+- the text view has no line numbers or syntax colours (a plain `Textarea`;
+  the app's own editor is single-line);
+- the site list uses the filter chips of the scene rather than full-width
+  rows;
+- the cards carry no icon tiles, like every other Settings card.
 
 ### List updates
 
@@ -525,6 +559,11 @@ reguły**.
     it appears; three missed loads make a rule stale and one hit clears it;
     `replaces` swaps the stale rule for a new one and refuses rules that were
     never saved.
+  - `RulesEditorListsBySiteAndEditsAsText`: rules group by site (`RuleSite`
+    for cosmetic, `domain=` and `||host` rules); the editor lists every site
+    and then one; adding checks the rule; text mode counts a bad line, saves
+    nothing until it is fixed, then replaces the rules notes included; the
+    "Ukrywaj blokowanie" switch turns both of its lists off and on.
   - `BuiltInStandInsAndOptionalLists` (`testdata/adblock_detectors.html`):
     Zitter's stand-ins and the Adblock Warning Removal List are on by default
     and uBlock filters off; a BlockAdBlock file the test list blocks loads as

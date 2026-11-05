@@ -1,5 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/workspace_window.h"
+
+#include <map>
 #include "chromium/prototype/assistant_panel.h"
 #include "assistant_page_script.h"
 #include <algorithm>
@@ -12,6 +14,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/i18n/time_formatting.h"
+#include "chromium/prototype/ad_blocking_rules_panel.h"
 #include "chromium/prototype/content_blocking.h"
 #include "content_blocking_probe_script.h"
 #include "chromium/prototype/page_dialogs.h"
@@ -954,6 +957,16 @@ void WorkspaceWindow::AskAssistant(std::u16string prompt) {
   ShowAssistant();
   if (assistant_) assistant_->Ask(std::move(prompt));
 }
+void WorkspaceWindow::OpenAdBlockingRules() {
+  auto* profile = AssistantProfile();
+  if (!profile || profile->IsOffTheRecord() || !shell_ || !shell_->general_widget()) return;
+  if (!ad_blocking_rules_panel_) ad_blocking_rules_panel_ = std::make_unique<AdBlockingRulesPanel>();
+  ad_blocking_rules_panel_->Show(profile, shell_->general_widget(), base::BindRepeating([](WorkspaceWindow* window, std::string rule) {
+    // The same request as the shield's repair, for one rule.
+    window->AskAssistant(TF(u"Moja reguła blokowania na {} od kilku wizyt nic nie ukrywa: {} Znajdź tę reklamę ponownie i zapisz nową regułę, zastępując nią starą (replaces).",
+                            {base::UTF8ToUTF16(ContentBlocking::RuleSite(rule)), base::UTF8ToUTF16(rule)}));
+  }, base::Unretained(this)));
+}
 base::DictValue WorkspaceWindow::ReadAdBlocking() {
   auto* profile = AssistantProfile();
   auto& blocking = ContentBlocking::Get();
@@ -962,11 +975,28 @@ base::DictValue WorkspaceWindow::ReadAdBlocking() {
     lists.Append(base::DictValue().Set("id", list.id).Set("name", list.name).Set("rules", static_cast<int>(list.rules))
         .Set("optional", list.optional).Set("builtin", list.builtin).Set("enabled", ContentBlocking::ListEnabled(profile, list.id))
         .Set("updated", list.updated.is_null() || list.builtin ? std::string() : base::UTF16ToUTF8(base::TimeFormatShortDate(list.updated))));
-  base::ListValue sites, rules;
+  base::ListValue sites, rules, rule_sites;
   for (const auto& site : ContentBlocking::AllowedSites(profile)) sites.Append(site);
-  for (const auto& rule : ContentBlocking::Rules(profile)) rules.Append(rule);
+  // The rules summary: how many rules each site has, and whether one stopped working.
+  std::vector<std::string> order;
+  std::map<std::string, std::pair<int, bool>> per_site;
+  for (const auto& rule : ContentBlocking::Rules(profile)) {
+    rules.Append(rule);
+    if (rule.starts_with("!")) continue;
+    const auto site = ContentBlocking::RuleSite(rule);
+    if (!per_site.contains(site)) order.push_back(site);
+    auto& [count, stale] = per_site[site];
+    ++count;
+    stale |= ContentBlocking::RuleStale(profile, rule);
+  }
+  for (const auto& site : order)
+    rule_sites.Append(base::DictValue().Set("site", site).Set("count", per_site[site].first).Set("stale", per_site[site].second));
+  base::Time updated;
+  for (const auto& list : blocking.lists()) if (!list.builtin && list.updated > updated) updated = list.updated;
   return base::DictValue().Set("lists", std::move(lists)).Set("updating", blocking.updating())
       .Set("error", blocking.last_error()).Set("sites", std::move(sites)).Set("rules", std::move(rules))
+      .Set("rule_sites", std::move(rule_sites))
+      .Set("updated", updated.is_null() ? std::string() : base::UTF16ToUTF8(base::TimeFormatShortDate(updated)))
       .Set("available", profile && !profile->IsOffTheRecord());
 }
 std::string WorkspaceWindow::WriteAdBlocking(base::DictValue command) {

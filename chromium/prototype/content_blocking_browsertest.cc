@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/content_blocking.h"
+#include "chromium/prototype/ad_blocking_rules_panel.h"
 #include "chromium/prototype/extensions_bar.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/workspace_shell.h"
@@ -401,6 +402,49 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, BuiltInStandInsAndOptio
   EXPECT_TRUE(ContentBlocking::ListEnabled(work_, "ublock"));
   window_->WriteAdBlocking(base::DictValue().Set("command", "list").Set("list", "easylist").Set("enabled", false));
   EXPECT_TRUE(ContentBlocking::ListEnabled(work_, "easylist"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, RulesEditorListsBySiteAndEditsAsText) {
+  // Settings group the rules by site (design: Zitter — Ad blocking preferences).
+  EXPECT_EQ("wp.pl", ContentBlocking::RuleSite("wp.pl,~m.wp.pl##.ad"));
+  EXPECT_EQ("onet.pl", ContentBlocking::RuleSite("||npttech.com^$script,domain=onet.pl|www.onet.pl"));
+  EXPECT_EQ("ads.test", ContentBlocking::RuleSite("@@||ads.test/x.js^"));
+  EXPECT_EQ("", ContentBlocking::RuleSite("/banner/*"));
+  std::string error;
+  ASSERT_TRUE(ContentBlocking::AddRules(work_, {"block.test##.one", "||ads.test^$domain=block.test"}, "Asystent: block.test, 2026-11-05", &error)) << error;
+  ASSERT_TRUE(ContentBlocking::AddRules(work_, {"example.com##.two"}, {}, &error)) << error;
+  const auto settings = window_->ReadAdBlocking();
+  ASSERT_EQ(2u, settings.FindList("rule_sites")->size());
+  EXPECT_EQ(2, *(*settings.FindList("rule_sites"))[0].GetDict().FindInt("count"));
+  // The editor opens over Settings, with every site and then one.
+  window_->OpenAdBlockingRules();
+  auto* panel = window_->ad_blocking_rules_panel();
+  ASSERT_TRUE(panel && panel->widget());
+  EXPECT_EQ((std::vector<std::string>{"block.test", "example.com"}), panel->sites_for_testing());
+  EXPECT_EQ(3u, panel->listed_for_testing().size());
+  panel->SelectSite("example.com");
+  EXPECT_EQ((std::vector<std::string>{"example.com##.two"}), panel->listed_for_testing());
+  // Adding checks the rule first.
+  EXPECT_NE("", panel->AddForTesting("example.com##+js(no-such-scriptlet)"));
+  EXPECT_EQ("", panel->AddForTesting("example.com##.three"));
+  EXPECT_EQ(2u, panel->listed_for_testing().size());
+  // Text: every line checked; nothing saved while one is wrong.
+  panel->SetMode(AdBlockingRulesPanel::Mode::kText);
+  panel->SetTextForTesting(u"! Mine\nblock.test##.one\nblock.test##+js(no-such-scriptlet)\n");
+  EXPECT_EQ(1u, panel->text_errors_for_testing());
+  EXPECT_FALSE(panel->SaveTextForTesting());
+  EXPECT_EQ(5u, ContentBlocking::Rules(work_).size());
+  panel->SetTextForTesting(u"! Mine\nblock.test##.one\n\nexample.com##.four\n");
+  EXPECT_EQ(0u, panel->text_errors_for_testing());
+  EXPECT_TRUE(panel->SaveTextForTesting());
+  EXPECT_EQ((std::vector<std::string>{"! Mine", "block.test##.one", "example.com##.four"}), ContentBlocking::Rules(work_));
+  panel->widget()->CloseNow();
+  // One switch hides blocking from pages: Zitter's stand-ins and the warning removal list.
+  EXPECT_TRUE(window_->WritePreference("ad_blocking_stealth", 0));
+  EXPECT_FALSE(ContentBlocking::ListEnabled(work_, "zitter"));
+  EXPECT_FALSE(ContentBlocking::ListEnabled(work_, "antiadblock"));
+  EXPECT_TRUE(window_->WritePreference("ad_blocking_stealth", 1));
+  EXPECT_TRUE(ContentBlocking::ListEnabled(work_, "zitter") && ContentBlocking::ListEnabled(work_, "antiadblock"));
 }
 
 }  // namespace zitter::prototype

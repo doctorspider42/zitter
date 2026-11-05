@@ -56,6 +56,7 @@ struct TimelineStore;
 class DownloadPanel;
 class HistoryPanel;
 class PasswordsPanel;
+class AdBlockingRulesPanel;
 class ExtensionsBar;
 struct BrowsingImportData;
 
@@ -133,6 +134,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // Settings → Blokowanie reklam, for the active profile.
   base::DictValue ReadAdBlocking();
   std::string WriteAdBlocking(base::DictValue command);
+  // Settings > Ad blocking > Twoje reguły: the editor dialog over Settings.
+  void OpenAdBlockingRules();
+  AdBlockingRulesPanel* ad_blocking_rules_panel() const { return ad_blocking_rules_panel_.get(); }
   Profile* AssistantProfile() const;
   std::string AssistantProfileId() const;
   base::DictValue AssistantContext(const AssistantPermissions& permissions);
@@ -515,6 +519,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::unique_ptr<DownloadPanel> downloads_;
   std::unique_ptr<HistoryPanel> history_panel_;
   std::unique_ptr<PasswordsPanel> passwords_panel_;
+  std::unique_ptr<AdBlockingRulesPanel> ad_blocking_rules_panel_;
   raw_ptr<ExtensionsBar> extensions_bar_ = nullptr;  // Owned by the window root.
   std::unique_ptr<base::AutoReset<bool>> extension_install_ui_;
   // Extensions see the window's tabs through ExtensionTabUtil::EmbedderTabs.

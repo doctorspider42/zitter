@@ -63,7 +63,7 @@ mod ffi {
     struct ToolsFormChoice { key: String, label: Vec<u16> }
     struct ToolsFormChoices { choices: Vec<ToolsFormChoice>, enabled: bool }
     struct ToolsChoiceDraft { valid: bool, page: usize, create: bool, target: String, chord: Vec<u16>, name: Vec<u16>, keyword: Vec<u16>, url: Vec<u16>, stop_recording: bool }
-    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language, TimeMachine, TimeMachineDays, AssistantBackends, AssistantModels, AdBlocking }
+    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language, TimeMachine, TimeMachineDays, AssistantBackends, AssistantModels, AdBlocking, AdBlockingSites, AdBlockingRules }
     #[repr(u32)]
     #[derive(Debug)]
     enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset }
@@ -1192,8 +1192,14 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(10,K::Toggle,"assistant_background",t("Pozwól pracować w tle"),t("Niewidoczna karta tego profilu z tymi samymi ciasteczkami i logowaniami. Postęp widać w panelu asystenta."),vec![],"",A::None));
     rows.push(preference_spec(10,K::Toggle,"assistant_confirm_background",t("Potwierdzaj kliknięcia w tle"),t("Zadanie czeka w panelu, aż zezwolisz. Bez tego asystent działa na Twoich zalogowanych kontach, a Ty tego nie widzisz."),vec![],"",A::None));
     rows.push(preference_spec(10,K::Picker,"assistant_concurrency",t("Równoległe wywołania Deep research"),t("Więcej to szybszy raport i większe zużycie zasobów u dostawcy."),vec!["2".into(),"4".into(),"8".into(),"12".into()],"",A::None));
-    rows.push(preference_spec(11,K::Toggle,"ad_blocking",t("Blokuj reklamy i elementy śledzące"),t("Według list EasyList i EasyPrivacy, zanim się załadują. Tarcza w pasku pokazuje, ile zablokowano na stronie, i wyłącza blokowanie dla jednej witryny. Dotyczy tego profilu."),vec![],"",A::None));
-    rows.push(preference_spec(11,K::AdBlocking,"",t("Listy, wyjątki i Twoje reguły"),t("Listy aktualizują się same co kilka dni. Twoje reguły, także te od asystenta, działają tylko w tym profilu."),vec![],"",A::None));
+    // Ad blocking (design: Zitter — Ad blocking preferences): two switches, then
+    // the lists, the sites without blocking and a summary of the own rules,
+    // whose editor is a dialog of its own.
+    rows.push(preference_spec(11,K::Toggle,"ad_blocking",t("Blokuj reklamy i śledzenie"),t("Zanim strona się załaduje. Tarcza w pasku wyłącza to dla jednej witryny."),vec![],"",A::None));
+    rows.push(preference_spec(11,K::Toggle,"ad_blocking_stealth",t("Ukrywaj blokowanie przed stronami"),t("Strony nie zobaczą, że coś blokujesz, i nie poproszą o wyłączenie."),vec![],"",A::None));
+    rows.push(preference_spec(11,K::AdBlocking,"",t("Listy filtrów"),t("Aktualizują się same co kilka dni."),vec![],"",A::None));
+    rows.push(preference_spec(11,K::AdBlockingSites,"",t("Witryny bez blokowania"),t("Wyłączysz blokowanie tarczą w pasku."),vec![],"",A::None));
+    rows.push(preference_spec(11,K::AdBlockingRules,"",t("Twoje reguły"),t("Działają tylko w tym profilu. Dodaje je też asystent."),vec![],"",A::None));
     ffi::PreferenceCatalogue{
         categories:vec![t("Wygląd").into(),t("Wyszukiwanie").into(),t("Prywatność").into(),t("Uprawnienia stron").into(),t("Treści i czytelność").into(),t("Hasła i profile").into(),t("Pobieranie").into(),t("Języki i pisownia").into(),t("Dane przeglądania").into(),t("Zaawansowane").into(),t("Asystent AI").into(),t("Blokowanie reklam").into()],descriptions:vec![t("Dopasuj Zitter do swojego rytmu.").into(),t("Wybierz, gdzie zaczyna się każde wyszukiwanie.").into(),t("Zdecyduj, jakie ślady zostawiasz w sieci.").into(),t("Ustal domyślny dostęp witryn do urządzenia.").into(),t("Wygodne czytanie i kontrola zawartości stron.").into(),t("Oddzielne logowania, wspólne możliwości.").into(),t("Wybierz miejsce dla pobieranych plików.").into(),t("Wybierz języki witryn i pomoc podczas pisania.").into(),t("Kontroluj dane zapisane w bieżącym profilu.").into(),t("Dostępność, połączenia i ustawienia silnika Chromium.").into(),t("Backend, modele i uprawnienia. W panelu wybierasz już tylko model.").into(),t("Mniej reklam i śledzenia, bez rozszerzeń.").into()],rows,
         site:ffi::PreferenceSiteCopy{origin_ax:t("Adres witryny dla wyjątku").into(),placeholder:"https://example.com".into(),type_ax:t("Rodzaj uprawnienia dla witryny").into(),policy_ax:t("Polityka dla witryny").into(),save:t("Zapisz wyjątek").into(),types:vec!["JavaScript".into(),t("Obrazy").into(),t("Wyskakujące okna").into(),t("Dźwięk").into(),t("Powiadomienia").into(),t("Lokalizacja").into(),t("Kamera").into(),t("Mikrofon").into(),t("Schowek").into()]},
@@ -2972,6 +2978,10 @@ fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
             6=>{rect(cx-0.75,cy-7.0,1.5,10.0,0.75,i.ink,0.0);for d in 0..5{let d=d as f32;rect(cx-d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);rect(cx+d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);}rect(cx-6.0,cy+7.0,12.0,1.5,0.75,i.ink,0.0);},
             // AI assistant: a spark, a thin cross around a small ring, and a second dot.
             10=>{rect(cx-0.75,cy-7.0,1.5,14.0,0.75,i.ink,0.0);rect(cx-7.0,cy-0.75,14.0,1.5,0.75,i.ink,0.0);rect(cx-2.75,cy-2.75,5.5,5.5,2.75,i.ink,1.25);rect(cx+4.0,cy-7.0,3.0,3.0,1.5,i.ink,0.0);},
+            // Ad blocking: a shield, its straight top and sides meeting in a point.
+            11=>{rect(cx-6.0,cy-7.0,12.0,1.5,0.75,i.ink,0.0);rect(cx-6.0,cy-7.0,1.5,7.0,0.75,i.ink,0.0);rect(cx+4.5,cy-7.0,1.5,7.0,0.75,i.ink,0.0);
+                 for d in 0..7{let d=d as f32*0.85;rect(cx-6.0+d,cy-0.5+d,1.6,1.6,0.8,i.ink,0.0);rect(cx+4.4-d,cy-0.5+d,1.6,1.6,0.8,i.ink,0.0);}
+                 rect(cx-1.25,cy-3.5,2.5,2.5,1.25,i.ink,0.0);},
             _=>{}
         }
     }
@@ -4105,15 +4115,15 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),75);
-        let mut counts=[0;12];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,2,3,1,6,12,2]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),40);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),74);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),78);
+        let mut counts=[0;12];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,2,3,1,6,12,5]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),41);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),77);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
         for row in &c.rows{if row.kind==K::Text||row.kind==K::Toggle||row.kind==K::Picker{assert!(!row.key.is_empty());assert!(keys.insert(row.key.clone()));}else{assert!(row.key.is_empty());}}
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration","assistant_enabled","assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web","assistant_confirm_clicks","assistant_background","assistant_confirm_background","ad_blocking"]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration","assistant_enabled","assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web","assistant_confirm_clicks","assistant_background","assistant_confirm_background","ad_blocking","ad_blocking_stealth"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).map(|r|r.key.as_str()).collect::<Vec<_>>(),["font_standard","font_serif","font_sans","font_fixed","accept_languages","dns_templates"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","assistant_concurrency"]);
         for key in ["hardware_acceleration","dns_mode","dns_templates"]{let row=c.rows.iter().find(|r|r.key==key).unwrap();assert!(row.detail.contains("całej aplikacji"));}
@@ -4164,7 +4174,7 @@ mod tests {
         item.active=false;let ops=layout(std::slice::from_ref(&item));assert_eq!(ops.len(),2);assert_eq!(ops[1].stroke,1.0);assert_eq!(ops[0].radius,12.0);
     }
     #[test] fn preference_category_and_dismiss_share_clipped_cpu_gpu_recipe() {
-        for glyph in 0..10{let mut i=row(180.0);i.kind=22;i.glyph=glyph;i.title="Uprawnienia stron".into();i.active=true;i.focused=true;let ops=layout(std::slice::from_ref(&i));assert!(ops.iter().any(|p|p.text=="Uprawnienia stron"&&p.bold));assert!(ops.iter().any(|p|p.stroke>0.0));assert!(ops.iter().all(|p|p.shape==0&&p.clip.width==180.0&&p.width>0.0&&p.height>0.0));i.tile=true;assert_eq!(layout(std::slice::from_ref(&i)).iter().find(|p|!p.text.is_empty()).unwrap().x,i.x+10.0);}
+        for glyph in 0..12{let mut i=row(180.0);i.kind=22;i.glyph=glyph;i.title="Uprawnienia stron".into();i.active=true;i.focused=true;let ops=layout(std::slice::from_ref(&i));assert!(ops.iter().any(|p|p.text=="Uprawnienia stron"&&p.bold));assert!(ops.iter().any(|p|p.stroke>0.0));assert!(ops.iter().all(|p|p.shape==0&&p.clip.width==180.0&&p.width>0.0&&p.height>0.0));i.tile=true;assert_eq!(layout(std::slice::from_ref(&i)).iter().find(|p|!p.text.is_empty()).unwrap().x,i.x+10.0);}
         let mut close=row(32.0);close.kind=23;close.height=32.0;close.fill=0;close.title.clear();let ops=layout(std::slice::from_ref(&close));assert_eq!(ops.len(),22);assert!(ops.iter().all(|p|p.text.is_empty()&&p.shape==0));close.width=f32::NAN;assert!(layout(std::slice::from_ref(&close)).is_empty());
     }
     #[test] fn toggle_transition_reverses_and_programmatic_refresh_snaps() {
