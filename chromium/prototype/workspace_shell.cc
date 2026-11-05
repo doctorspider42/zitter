@@ -7413,7 +7413,7 @@ void WorkspaceShell::RebuildSuggestions() {
       // Frame the target projection, not its current list index or display text.
       // Native browser services remain authoritative for executing that target.
       base::ListValue identity;identity.Append(state_.profile_id);identity.Append(state_.workspace_id);identity.Append(base::UTF16ToUTF8(suggestions_text_));identity.Append(command_palette_);identity.Append(new_tab_);
-      identity.Append(item.url.spec());identity.Append(item.tab?base::NumberToString(*item.tab):std::string());identity.Append(item.workspace_id);identity.Append(item.pin_id);identity.Append(item.workspace_only);identity.Append(item.command_id);identity.Append(item.target_workspace_id);identity.Append(item.command_page_id);
+      identity.Append(item.url.possibly_invalid_spec());identity.Append(item.tab?base::NumberToString(*item.tab):std::string());identity.Append(item.workspace_id);identity.Append(item.pin_id);identity.Append(item.workspace_only);identity.Append(item.command_id);identity.Append(item.target_workspace_id);identity.Append(item.command_page_id);
       std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));
       std::string name;CHECK(base::JSONWriter::Write(identity,&name));const uint32_t icon=!item.command_id.empty()?2:(item.tab||item.workspace_only||!item.pin_id.empty()||item.title==T(u"Otwórz"))?1:0;items.push_back({std::move(name),units(item.title),units(item.detail),icon});
     }
