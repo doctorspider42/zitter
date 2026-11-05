@@ -2429,6 +2429,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   }
   if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
   if (id == "fingerprint") { shell_->CloseOverlays(true); extensions_bar_->ToggleFingerprintPanel(); return extensions_bar_->fingerprint_panel_for_testing() != nullptr; }
+  if (id == "shield") { shell_->CloseOverlays(true); extensions_bar_->ToggleShieldPanel(); return extensions_bar_->shield_panel_for_testing() != nullptr; }
   if (id == "history") { ShowHistory(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {

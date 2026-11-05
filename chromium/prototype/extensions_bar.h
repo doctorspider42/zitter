@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_EXTENSIONS_BAR_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_EXTENSIONS_BAR_H_
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -173,7 +174,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   base::CallbackListSubscription blocking_changed_;
   base::CallbackListSubscription page_count_;
   // Compared only, never used: the page the count subscription is for.
-  const void* counted_page_ = nullptr;
+  uintptr_t counted_page_ = 0;
   std::unique_ptr<ShieldPanel> shield_panel_;
   std::unique_ptr<views::Widget> shield_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.

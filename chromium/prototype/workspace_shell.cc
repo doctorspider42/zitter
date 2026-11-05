@@ -4704,7 +4704,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|history|extensions|extension-popup|menu|app-menu|dialog|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|history|extensions|extension-popup|fingerprint|shield|ad-blocking|menu|app-menu|dialog|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -4719,6 +4719,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "settings") shell->OpenGeneralSettings();
                 else if (panel == "assistant-settings") shell->OpenAssistantSettings();
                 else if (panel == "fingerprint") shell->callbacks_.run_shortcut.Run("fingerprint");
+                else if (panel == "shield") shell->callbacks_.run_shortcut.Run("shield");
+                else if (panel == "ad-blocking") shell->OpenAdBlockingSettings();
                 else if (panel == "privacy") {shell->OpenPrivacySettings();shell->general_widget_->LayoutRootViewIfNecessary();for(auto& row:shell->preference_sections_[2].rows)if(row.keywords.find(u"fingerprint")!=std::u16string::npos)row.view->ScrollViewToVisible();}
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.

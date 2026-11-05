@@ -5,7 +5,6 @@
 #include <set>
 #include <utility>
 
-#include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
@@ -122,7 +121,7 @@ std::vector<std::string> Strings(const rust::Vec<rust::String>& values) {
   for (const auto& value : values) out.emplace_back(value);
   return out;
 }
-std::vector<std::string> StringList(const base::Value::List& list) {
+std::vector<std::string> StringList(const base::ListValue& list) {
   std::vector<std::string> out;
   for (const auto& value : list) if (value.is_string()) out.push_back(value.GetString());
   return out;
@@ -376,7 +375,7 @@ bool ContentBlocking::AddRules(Profile* profile, const std::vector<std::string>&
   std::vector<std::string> added;
   for (const auto& raw : rules) {
     std::string rule(base::TrimWhitespaceASCII(raw, base::TRIM_ALL));
-    if (rule.empty() || base::Contains(existing, rule) || base::Contains(added, rule)) continue;
+    if (rule.empty() || std::ranges::contains(existing, rule) || std::ranges::contains(added, rule)) continue;
     added.push_back(std::move(rule));
   }
   if (added.empty()) return true;

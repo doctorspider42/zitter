@@ -1450,7 +1450,7 @@ void ExtensionsBar::OpenPrivacySettings() {
 
 void ExtensionsBar::ObservePageCount() {
   page_count_ = {};
-  counted_page_ = page_.get();
+  counted_page_ = reinterpret_cast<uintptr_t>(page_.get());
   if (!page_) return;
   ContentBlockingTabHelper::CreateForWebContents(page_.get());
   page_count_ = ContentBlockingTabHelper::FromWebContents(page_.get())->ObserveCount(
@@ -1465,7 +1465,7 @@ int ExtensionsBar::ShieldCount() const {
   return helper ? helper->blocked() : 0;
 }
 void ExtensionsBar::RefreshShield() {
-  if (page_.get() != counted_page_) { ObservePageCount(); return; }
+  if (reinterpret_cast<uintptr_t>(page_.get()) != counted_page_) { ObservePageCount(); return; }
   if (auto* button = views::AsViewClass<ShieldButton>(shield_button_.get())) button->SetCount(ShieldCount());
   if (shield_panel_) shield_panel_->Refresh();
 }

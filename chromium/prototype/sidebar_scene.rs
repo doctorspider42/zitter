@@ -4105,7 +4105,7 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),73);
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),75);
         let mut counts=[0;12];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,2,3,1,6,12,2]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),40);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
         let no=preference_catalogue(false);assert_eq!(no.rows.len(),74);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
