@@ -6181,6 +6181,30 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeLocalEditsDoNotDetachUn
   EXPECT_EQ(builds, shell->pinned_list_build_count());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeFocusFollowsARowMovedOutsideTheViewport) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false); shell->SetPinned(true); shell->ShowSidebar();
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  std::vector<PinnedItem> pins = {{"a", "", "First folder", GURL(), true},
+                                {"focused", "a", "Focused pin", url, false}};
+  for (int i = 0; i < 100; ++i)
+    pins.push_back({"filler-" + std::to_string(i), "a", "Other pin", url, false});
+  pins.push_back({"b", "", "Last folder", GURL(), true});
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* row = shell->pin_button("focused"); ASSERT_TRUE(row);
+  row->ScrollViewToVisible(); row->RequestFocus();
+  ASSERT_FALSE(row->GetVisibleBounds().IsEmpty());
+  ASSERT_TRUE(window_->MovePin("focused", "b", {}));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(row, shell->pin_button("focused"));
+  EXPECT_EQ(row, row->GetFocusManager()->GetFocusedView());
+  EXPECT_FALSE(row->GetVisibleBounds().IsEmpty());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeBulkResetAttachesTheNewTreeOnce) {
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));

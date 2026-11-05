@@ -5035,8 +5035,13 @@ struct WorkspaceShell::PinProjection {
         ++index;
       }
     }
-    if (moved_focus && focus.view() && SceneIsVisible(focus.view()))
+    if (moved_focus && focus.view() && SceneIsVisible(focus.view())) {
+      // Focused rows can move outside the viewport. Resolve the changed layout
+      // before scrolling, without forcing layout for unrelated pin edits.
+      if (auto* widget = focus.view()->GetWidget()) widget->LayoutRootViewIfNecessary();
+      focus.view()->ScrollViewToVisible();
       focus.view()->RequestFocus();
+    }
   }
 };
 
