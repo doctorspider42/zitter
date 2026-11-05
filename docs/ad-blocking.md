@@ -124,8 +124,20 @@ code):
   `:matches-css()`, `:matches-css-before()`, `:matches-css-after()`,
   `:min-text-length()`, `:matches-path()`, `:xpath()`, and `:has()` / `:not()`
   (with their ABP aliases) when they wrap a procedural operator;
+- Zitter's own `:min-size(width, height)`: an element at least that many CSS
+  pixels. Ad slots keep their sizes when class names and click URLs are
+  generated (wp.pl routes every link, news included, through
+  `www.wp.pl/<random token>`). Rules that look at layout (`:min-size()`,
+  `:matches-css()`) keep what they hid hidden while it is in the page, since a
+  hidden element has no size;
 - actions, last in the rule: `:remove()`, `:style()` (nothing that loads, so no
   `url()`), `:remove-attr()`, `:remove-class()`;
+- **slot collapsing**: once a rule hides an ad, a parent with no text of its
+  own whose every child is hidden or empty (no words but an ad label, no
+  media bigger than 160×60, which covers label badges, AdChoices and close
+  buttons) is hidden too, up to six levels. It never collapses `main`,
+  `header`, `nav`, `article`, `footer`, `aside` or `form`. Without this, wp.pl
+  kept a 120 px strip and a 316 px gap where its banners were;
 - elements they hide get a random per-page attribute that one style rule
   hides; ones no rule matches any more get it removed;
 - a `MutationObserver` re-runs them as the page changes, at most every 150 ms
@@ -214,6 +226,12 @@ tools serve it:
     elements it matches; a rule found again adds no second candidate. Portals such as wp.pl generate their class names on
     every deploy, but must keep the label: Polish law requires ads to be
     marked;
+  - **image links with no words** of at least 300×90 (banners; every teaser has
+    a headline), with the rule
+    `site##a[href]:has(img,picture,video,canvas):not(:has-text(/\p{L}/u)):min-size(300, 90)`;
+  - a layer holding nothing but the label (a page wallpaper) counts as the ad
+    whatever its size, and its rule gets `:not(:min-text-length(n))`, so menu
+    items that read "Reklama" stay;
   - iframes from other sites, big images that link to another site, and
     `<canvas>` or `<video>` elements of a standard ad size (HTML5 creatives);
   - elements whose id/class/aria-label/data attributes say ad, sponsor, promo,
@@ -338,7 +356,8 @@ reguły**.
     a typed rule is validated.
   - `ProceduralRulesAnchorOnTheAdLabel`: `adblock_inspect` finds an ad with a
     generated class by its "REKLAMA" label and suggests
-    `span:has-text(…):upward(1)`; a rule that matches nothing and one with a bad
+    `span:has-text(…):upward(1)`; a `:min-size()` banner rule keeps the banner
+    hidden and collapses its slot; a rule that matches nothing and one with a bad
     regex come back as invalid, before any preview; the label rule hides the
     ad at once and, through the engine, on a fresh load, together with a
     `:style()` action rule; an ad added later with the same label is hidden as

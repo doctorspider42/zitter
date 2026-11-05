@@ -231,18 +231,29 @@
     const hints = new Set();
     const labelled = (label, text, viaPseudo) => {
       const tag = label.tagName.toLowerCase(), r0 = label.getBoundingClientRect();
-      let box = label, steps = 0;
-      for (let n = label.parentElement; n && n !== document.body && n !== document.documentElement && steps < 8; n = n.parentElement) {
+      const own = (label.textContent ?? '').replace(/\s+/g, ' ').trim(), area = e => { const r = e.getBoundingClientRect(); return r.width * r.height; };
+      let box = label, steps = 0, k = 0;
+      for (let n = label.parentElement; n && n !== document.body && n !== document.documentElement && k < 8; n = n.parentElement) {
         const r = n.getBoundingClientRect();
+        k++;
+        // A layer holding nothing but the label is the ad itself (a page
+        // wallpaper), however big: hiding it hides no content.
+        if ((n.textContent ?? '').replace(/\s+/g, ' ').trim() === own && !n.matches('main,header,nav,form')) {
+          if (area(n) >= area(box)) { box = n; steps = k; }
+          continue;
+        }
         if (r.width * r.height > innerWidth * innerHeight * 0.7) break;
         if (n.matches('main,article:has(article),header,nav,form') || n.querySelector('nav,form,input,h1,[role=navigation],[role=search]')) break;
         if ((n.textContent ?? '').replace(/\s+/g, ' ').length > text.length + 300) break;
-        box = n; steps++;
+        box = n; steps = k;
         if (r.width >= 100 && r.height >= 50 && (n.querySelector('img,iframe,picture,video,canvas,svg,a[href]') || r.height >= Math.max(3 * r0.height, 60))) break;
       }
       const anchor = viaPseudo ? `${tag}:matches-css-${viaPseudo}(content: /${escape(text)}/i)` : `${tag}:has-text(/^\\s*${escape(text)}\\s*$/i)`;
       // One candidate per rule: its match count says how many boxes it covers.
-      const hint = `${site}##${anchor}${steps ? `:upward(${steps})` : ''}`;
+      // A box of nothing but the label says so, which keeps menu items that
+      // merely read "Reklama" out of the rule.
+      const pure = steps && (box.textContent ?? '').replace(/\s+/g, ' ').trim() === own;
+      const hint = `${site}##${anchor}${steps ? `:upward(${steps})` : ''}${pure ? `:not(:min-text-length(${own.length + 1}))` : ''}`;
       if (hints.has(hint)) return;
       hints.add(hint);
       consider(box, `labelled "${text}"`, { label: text, rule_hint: hint });
@@ -275,6 +286,17 @@
       const s = getComputedStyle(e);
       if ((s.position === 'fixed' || s.position === 'sticky') && Number(s.zIndex) > 100 && r.width * r.height > innerWidth * innerHeight * 0.2) {
         consider(e, 'overlay over the page'); continue;
+      }
+      // A banner is an image link with no words; every teaser has a headline.
+      // Portals route all links through generated redirects, so the size is
+      // the anchor: Zitter's :min-size().
+      const media = tag === 'A' ? [...e.querySelectorAll('img,picture,video,canvas')].map(m => m.getBoundingClientRect()) : [];
+      const wide = Math.max(r.width, ...media.map(m => m.width)), tall = Math.max(r.height, ...media.map(m => m.height));
+      if (media.length && wide >= 300 && tall >= 90 && !/\p{L}/u.test(e.textContent ?? '') && !e.querySelector('svg') && !e.closest('nav,footer')) {
+        const hint = `${site}##a[href]:has(img,picture,video,canvas):not(:has-text(/\\p{L}/u)):min-size(300, 90)`;
+        if (!hints.has(hint)) { hints.add(hint); consider(e, 'image link with no text (a banner)', { rule_hint: hint }); }
+        else consider(e, 'image link with no text (a banner)');
+        continue;
       }
       // Portals link to their sister sites everywhere: only ad sizes and billboards.
       if (tag === 'A' && e.href && thirdParty(e.href) && (standard || (r.width >= 700 && r.height >= 90)) && e.querySelector('img,picture,video,canvas')) {

@@ -100,7 +100,9 @@ must name the page's site. Selectors may use CSS (with :has(), :not(), attribute
 uBlock's procedural operators: :has-text(text or /regex/i) (the element's text), :upward(n or selector) (from a match to
 its ancestor), :matches-attr(name="value", either may be /regex/), :matches-css(property: value),
 :matches-css-before(...)/:matches-css-after(...) (labels drawn with CSS content), :min-text-length(n),
-:matches-path(/regex/), :xpath(...), and :has()/:not() around them; ending with an action: :remove() removes the
+:matches-path(/regex/), :xpath(...), Zitter's own :min-size(width, height) (at least that many CSS pixels; banners keep
+their slot size when names and URLs are generated, e.g. "site##a[href]:has(img):not(:has-text(/\\p{L}/u)):min-size(300,
+90)" for image links with no words), and :has()/:not() around them; ending with an action: :remove() removes the
 element, :style(declarations) restyles it, :remove-attr(name) and :remove-class(name) strip what locks a page (an
 anti-adblock wall: remove the wall, then "site##body:style(overflow: auto)" or :remove-class() on html/body restores
 scrolling). No +js() scriptlets. When class names look generated (random letters that change with deploys), anchor on

@@ -246,8 +246,19 @@ IN_PROC_BROWSER_TEST_F(ZitterContentBlockingBrowserTest, ProceduralRulesAnchorOn
   const auto inspect = Tool("adblock_inspect", {});
   std::string hint;
   for (const auto& item : *inspect.GetDict().FindList("candidates"))
-    if (const auto* label = item.GetDict().FindString("label"); label && *label == "REKLAMA") hint = *item.GetDict().FindString("rule_hint");
+    if (const auto* label = item.GetDict().FindString("label"); label && *label == "REKLAMA" && hint.empty()) hint = *item.GetDict().FindString("rule_hint");
   EXPECT_EQ("block.test##span:has-text(/^\\s*REKLAMA\\s*$/i):upward(1)", hint) << inspect;
+  // A banner anchored on its size: it stays hidden although hidden it has
+  // none, and the slot it leaves collapses with it.
+  const auto banner = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue()
+      .Append("block.test##a[href]:has(img):not(:has-text(/\\p{L}/u)):min-size(300, 90)")), true);
+  EXPECT_TRUE(banner.GetDict().FindBool("ok").value_or(false)) << banner;
+  EXPECT_EQ("none", Display("banner"));
+  EXPECT_EQ("none", Display("slot"));
+  ASSERT_TRUE(content::ExecJs(page(), "document.body.append(document.createElement('p'))"));
+  ASSERT_TRUE(content::ExecJs(page(), "new Promise(r => setTimeout(r, 400))"));
+  EXPECT_EQ("none", Display("banner"));
+  EXPECT_NE("none", Display("story"));
   // The page runs each rule before consent: what it cannot parse, or what
   // matches nothing, goes back to the model with nothing saved.
   const auto broken = Tool("adblock_add_rules", base::DictValue().Set("rules", base::ListValue()

@@ -14,11 +14,13 @@
   // public documentation: `:has-text()`, `:upward()`, `:matches-attr()`,
   // `:matches-css()`, `:min-text-length()`, `:matches-path()`, `:xpath()`,
   // procedural `:has()` / `:not()`, and the actions `:remove()`, `:style()`,
-  // `:remove-attr()`, `:remove-class()`.
+  // `:remove-attr()`, `:remove-class()`. One is Zitter's own: `:min-size(w, h)`,
+  // an element at least that big (ads keep their slot sizes when class names
+  // and URLs are generated).
   const OPERATORS = new Set(['has-text', 'contains', '-abp-contains', 'upward', 'matches-attr', 'matches-css', 'matches-css-before',
-                             'matches-css-after', 'matches-path', 'min-text-length', 'xpath', 'has', '-abp-has', 'if', 'not', 'if-not']);
+                             'matches-css-after', 'matches-path', 'min-text-length', 'min-size', 'xpath', 'has', '-abp-has', 'if', 'not', 'if-not']);
   const ACTIONS = new Set(['remove', 'style', 'remove-attr', 'remove-class']);
-  const PROCEDURAL = /:(has-text|contains|-abp-contains|-abp-has|upward|matches-attr|matches-css(-before|-after)?|matches-path|min-text-length|xpath|if|if-not|remove|style|remove-attr|remove-class)\(/;
+  const PROCEDURAL = /:(has-text|contains|-abp-contains|-abp-has|upward|matches-attr|matches-css(-before|-after)?|matches-path|min-text-length|min-size|xpath|if|if-not|remove|style|remove-attr|remove-class)\(/;
   // The index of the `)` closing the `(` at `open`, past escapes and quoted
   // attribute values (`:has-text(Don't)` has no quote to close).
   const closing = (text, open) => {
@@ -119,6 +121,19 @@
         if (!Number.isInteger(length) || length < 1) throw new Error(':min-text-length() needs a number');
         return { filter: e => (e.textContent ?? '').length >= length };
       }
+      case 'min-size': {
+        const [width, height] = arg.split(',').map(n => Number(n.trim()));
+        if (!(width >= 0 && height >= 0)) throw new Error(':min-size() needs width, height');
+        // An inline box is as tall as its line, not its image: measure what it holds.
+        const size = e => {
+          const r = e.getBoundingClientRect();
+          if (getComputedStyle(e).display !== 'inline') return r;
+          let w = r.width, h = r.height;
+          for (const c of e.children) { const b = size(c); w = Math.max(w, b.width); h = Math.max(h, b.height); }
+          return { width: w, height: h };
+        };
+        return { layout: true, filter: e => { const r = size(e); return r.width >= width && r.height >= height; } };
+      }
       case 'matches-attr': {
         const [rawName, rawValue] = attribute(arg);
         if (!rawName) throw new Error(':matches-attr() needs name="value"');
@@ -130,7 +145,7 @@
         if (at < 1) throw new Error(`:${name}() needs property: value`);
         const property = arg.slice(0, at).trim(), value = pattern(arg.slice(at + 1), true);
         const pseudo = name.endsWith('before') ? '::before' : name.endsWith('after') ? '::after' : null;
-        return { filter: e => value.test(getComputedStyle(e, pseudo).getPropertyValue(property)) };
+        return { layout: true, filter: e => value.test(getComputedStyle(e, pseudo).getPropertyValue(property)) };
       }
       case 'matches-path': {
         const re = pattern(arg);
@@ -219,13 +234,23 @@
     return [d.slice(0, at).trim(), d.slice(at + 1).replace(/!\s*important\s*$/i, '').trim()];
   }).filter(([property]) => property);
   // Applies every procedural rule; elements no rule hides any more come back.
+  // A rule that looks at layout (size, computed style) no longer sees what it
+  // hid, so those elements stay hidden while they are in the page.
   const apply = () => {
     const hide = new Set();
+    state.sticky ??= new Map();
     for (const list of Object.values(state.procedural)) for (const selector of list) {
       const rule = compiled(selector);
       if (rule.error || rule.css) continue;
       let found = [];
       try { found = run(rule); } catch {}
+      if (!rule.action && rule.steps.some(step => step.layout)) {
+        const kept = state.sticky.get(selector) ?? new Set();
+        for (const e of kept) if (!e.isConnected) kept.delete(e);
+        for (const e of found) kept.add(e);
+        state.sticky.set(selector, kept);
+        found = [...kept];
+      }
       state.hits[selector] = Math.max(state.hits[selector] ?? 0, found.length);
       const action = rule.action;
       for (const e of found) {
@@ -238,9 +263,31 @@
         else if (action.type === 'remove-class') { const re = pattern(action.arg, true); for (const c of [...e.classList]) if (re.test(c)) e.classList.remove(c); }
       }
     }
+    // The slot an ad leaves goes too: a parent with no text of its own whose
+    // every child is hidden or empty (no words but an ad label, no media
+    // bigger than the slot's own chrome: a label badge, AdChoices, a close
+    // button), up to six levels, never the page's landmarks.
+    // Measured once the ads are hidden, so what they held has no size.
     for (const e of state.marked) if (!hide.has(e)) e.removeAttribute(state.mark);
     for (const e of hide) if (!e.hasAttribute(state.mark)) e.setAttribute(state.mark, '');
-    state.marked = hide;
+    const collapsed = new Set();
+    const label = /^\s*(reklama|autopromocja|advertisement|anzeige|sponsored|ad|ads)?\s*$/i;
+    const media = 'img,picture,video,canvas,iframe,svg,embed,object';
+    const empty = c => label.test(c.textContent ?? '') &&
+      ![c, ...c.querySelectorAll(media)].some(m => { const r = m.getBoundingClientRect(); return m.matches(media) && (r.width > 160 || r.height > 60); });
+    const gone = c => hide.has(c) || collapsed.has(c) || c.matches('script,style,template,link,meta,noscript') ||
+                      getComputedStyle(c).display === 'none' || empty(c);
+    for (const e of hide) {
+      for (let p = e.parentElement, k = 0; p && k < 6 && p !== document.body && p !== document.documentElement; p = p.parentElement, k++) {
+        if (collapsed.has(p) || p.matches('main,header,nav,article,footer,aside,form,[role=main]')) break;
+        if ([...p.childNodes].some(n => n.nodeType === 3 && n.nodeValue.trim())) break;
+        if (![...p.children].every(gone)) break;
+        collapsed.add(p);
+      }
+    }
+    for (const e of collapsed) e.setAttribute(state.mark, '');
+    state.marked = new Set([...hide, ...collapsed]);
+    state.counted = hide;
   };
   // Procedural rules follow the page as it changes, at most every 150 ms, or
   // less often when a pass is slow.
@@ -254,7 +301,7 @@
     state.observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'id'] });
   };
   const hidden = () => {
-    const found = new Set(state.marked);
+    const found = new Set(state.counted ?? []);
     for (const list of Object.values(state.selectors)) for (const selector of list) for (const e of matches(selector)) found.add(e);
     return found.size + state.removed;
   };
