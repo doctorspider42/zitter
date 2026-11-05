@@ -130,10 +130,17 @@ bool ParseKey(const std::string& name, ui::KeyboardCode& code, int& flags, char1
   if ((flags & (ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN)) && code != ui::VKEY_RETURN) character = 0;
   return true;
 }
+void TypeCharacter(content::RenderWidgetHost* host, char16_t character, int flags = 0) {
+  // FromCharacter is portable; the two-argument native constructor is Aura-only.
+  host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(
+      ui::KeyEvent::FromCharacter(character,
+                                  static_cast<ui::KeyboardCode>(character),
+                                  ui::DomCode::NONE, flags)));
+}
 void PressKey(content::RenderWidgetHost* host, ui::KeyboardCode code, int flags, char16_t character) {
   ui::KeyEvent down(ui::EventType::kKeyPressed, code, flags);
   host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(down));
-  if (character) host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(down, character));
+  if (character) TypeCharacter(host, character, flags);
   host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(ui::KeyEvent(ui::EventType::kKeyReleased, code, flags)));
 }
 // The assistant's own invisible reader tabs: `visit` loads any page there.
@@ -275,7 +282,7 @@ void TypeAtFocus(base::WeakPtr<content::WebContents> page, KeyboardInput request
   if (request.tool == "insert_text") {
     for (const char16_t unit : request.text) {
       if (unit == u'\n') PressKey(host, ui::VKEY_RETURN, 0, u'\r');
-      else if (unit != u'\r') host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(ui::KeyEvent(ui::EventType::kKeyPressed, ui::VKEY_UNKNOWN, 0), unit));
+      else if (unit != u'\r') TypeCharacter(host, unit);
     }
     std::move(done).Run(base::Value(base::DictValue().Set("ok", true).Set("clicked_editor", request.clicked)
         .Set("detail", request.clicked ? "Clicked into the page's editor, then typed; the caret may not be at the end (press_key ctrl+end)" : "Typed at the focus")));
