@@ -55,9 +55,10 @@ build, with no new tag, GitHub release or Apple notarization submission.
 The app was then launched through `tools/run_metal_sidebar.py` with compositor
 raster and the owned isolated profile `build/boundary-local-profile-2026-11-05`,
 served only on `127.0.0.1:8769`. The browser process and fixture server were
-confirmed running. Manual accessibility/screenshot verification was blocked by
-the locked macOS session; no visual verification is claimed. The existing user
-profiles were not used. Reproduction:
+confirmed running. After the user unlocked macOS, screenshot and accessibility
+inspection confirmed the rendered browser window. The address palette opened,
+accepted Polish characters (`Zażółć`), and closed with Escape without navigation.
+The automated fixtures and launch used isolated profiles. Reproduction:
 
 ```sh
 .chromium/depot_tools/python-bin/python3 tools/run_metal_sidebar.py \
