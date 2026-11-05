@@ -967,6 +967,70 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAsksWithOneClickAnswe
   EXPECT_TRUE(read.Get().GetDict().FindString("image"));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSchedulesTasksAddsSearchAndShowsInToolbar) {
+  // Schedules: the next run after a moment.
+  AssistantTask daily; daily.kind=0; daily.minute=8*60;
+  base::Time::Exploded e{};e.year=2026;e.month=11;e.day_of_month=5;e.day_of_week=4;e.hour=9;
+  base::Time thursday_nine;ASSERT_TRUE(base::Time::FromLocalExploded(e,&thursday_nine));
+  base::Time::Exploded next;AssistantTaskNextRun(daily,thursday_nine).LocalExplode(&next);
+  EXPECT_EQ(next.day_of_month,6);EXPECT_EQ(next.hour,8);
+  AssistantTask friday; friday.kind=1; friday.days=1<<4; friday.minute=18*60;
+  AssistantTaskNextRun(friday,thursday_nine).LocalExplode(&next);
+  EXPECT_EQ(next.day_of_week,5);EXPECT_EQ(next.hour,18);
+  AssistantTask hourly; hourly.kind=2; hourly.minute=15;
+  AssistantTaskNextRun(hourly,thursday_nine).LocalExplode(&next);
+  EXPECT_EQ(next.hour,9);EXPECT_EQ(next.minute,15);
+  AssistantTask none; none.kind=1; none.days=0;
+  EXPECT_TRUE(AssistantTaskNextRun(none,thursday_nine).is_null());
+  // The toolbar has the assistant; it opens the panel.
+  auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
+  window_->AssistantStateChanged();
+  ASSERT_TRUE(base::test::RunUntil([&]{return bar->assistant_button_for_testing()!=nullptr;}));
+  static_cast<views::Button*>(bar->assistant_button_for_testing())->button_controller()->NotifyClick();
+  ASSERT_TRUE(window_->assistant());EXPECT_TRUE(window_->assistant()->GetVisible());
+  auto* panel=window_->assistant();
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
+  panel->ConfigureForTesting("ollama","test-local",{true,true,true,false,true});
+  panel->SeedExchangeForTesting("Codziennie rano podsumuj mi newsy","Zaplanuję to.");
+  // A task proposed in the conversation is scheduled with one click.
+  panel->RunActionsForTesting(base::ListValue().Append(base::DictValue().Set("tool","schedule_task").Set("args",base::DictValue()
+      .Set("name","Poranne newsy").Set("instruction","Podsumuj newsy dnia.")
+      .Set("schedule",base::DictValue().Set("kind","daily").Set("time","08:00")))));
+  ASSERT_TRUE(panel->asking_for_testing());
+  panel->AnswerForTesting(base::UTF16ToUTF8(T(u"Zaplanuj")));
+  panel->Stop();
+  ASSERT_EQ(panel->tasks().size(),1u);
+  EXPECT_EQ(panel->tasks()[0].name,"Poranne newsy");
+  EXPECT_EQ(panel->tasks()[0].minute,8*60);
+  EXPECT_FALSE(panel->tasks()[0].next_run.is_null());
+  // Due tasks start by themselves, as their own conversation.
+  const size_t sessions=panel->sessions_for_testing();
+  panel->CheckTasksForTesting(base::Time::Now()+base::Days(2));
+  EXPECT_EQ(panel->sessions_for_testing(),sessions+1);
+  EXPECT_FALSE(panel->tasks()[0].last_run.is_null());
+  EXPECT_TRUE(panel->working());
+  panel->StopAll();
+  // The tasks view and the editor open; a task saved there is kept.
+  panel->ToggleMenuForTesting(AssistantPanel::Menu::kTasks);
+  window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_GT(panel->menu_bounds_for_testing().height(),panel->height()/2);
+  panel->OpenTaskEditorForTesting("");
+  EXPECT_TRUE(panel->SaveDraftForTesting("Co piątek dopisz kody z loterii do OneNote."));
+  EXPECT_EQ(panel->tasks().size(),2u);
+  // Tasks are saved with the conversations.
+  panel->SaveNowForTesting();
+  ASSERT_TRUE(base::test::RunUntil([&]{base::ScopedAllowBlockingForTesting allow;std::string json;
+    return base::ReadFileToString(window_->assistant_sessions_path(),&json)&&json.find("Poranne newsy")!=std::string::npos&&json.find("OneNote")!=std::string::npos;}));
+  // A site search the user confirms is added to the address bar.
+  panel->RunActionsForTesting(base::ListValue().Append(base::DictValue().Set("tool","add_search_engine").Set("args",base::DictValue()
+      .Set("name","Goodreads").Set("keyword","gr").Set("url","https://www.goodreads.com/search?q=%s"))));
+  ASSERT_TRUE(panel->asking_for_testing());
+  panel->AnswerForTesting(base::UTF16ToUTF8(TF(u"Dodaj ze skrótem {}",{u"gr"})));
+  panel->Stop();
+  const auto& providers=window_->shell()->browser_tools().providers;
+  EXPECT_TRUE(std::ranges::any_of(providers,[](const auto& p){return p.keyword=="gr"&&p.url=="https://www.goodreads.com/search?q={query}";}));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMentionsInsertRemovableChips) {
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
   window_->ShowAssistant(); auto* panel=window_->assistant();

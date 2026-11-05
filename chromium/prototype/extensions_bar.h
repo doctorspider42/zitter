@@ -42,6 +42,14 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     base::RepeatingCallback<SkColor()> workspace_color;
     // Preferences, Privacy: where fingerprint protection is set.
     base::RepeatingClosure open_privacy_settings;
+    // The assistant button: shows or hides the assistant panel.
+    base::RepeatingClosure toggle_assistant;
+  };
+  // What the assistant button shows: hidden while the assistant is off.
+  struct AssistantState {
+    bool enabled = false, open = false, working = false;
+    int unread = 0;
+    bool operator==(const AssistantState&) const = default;
   };
   // At most this many pinned actions show; the rest live in the menu.
   static constexpr size_t kMaxVisible = 6;
@@ -92,6 +100,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   content::WebContents* popup_contents_for_testing() const;
   bool tremor_for_testing() const { return tremor_count_ > 0; }
   views::View* fingerprint_button_for_testing() const { return fingerprint_button_; }
+  void SetAssistantState(AssistantState state);
+  views::View* assistant_button_for_testing() const { return assistant_button_; }
   views::Widget* fingerprint_panel_for_testing() const { return fingerprint_widget_.get(); }
   std::u16string fingerprint_code_for_testing() const;
   // Runs a panel command as its row would: 0 new fingerprint, 1 turn off,
@@ -141,6 +151,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   raw_ptr<views::View> divider_ = nullptr;
   raw_ptr<views::View> puzzle_ = nullptr;
   raw_ptr<views::View> fingerprint_button_ = nullptr;
+  raw_ptr<views::View> assistant_button_ = nullptr;
+  AssistantState assistant_state_;
   PrefChangeRegistrar fingerprint_pref_;
   base::CallbackListSubscription fingerprint_key_;
   std::unique_ptr<FingerprintPanel> fingerprint_panel_;

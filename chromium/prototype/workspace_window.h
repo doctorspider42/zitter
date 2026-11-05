@@ -128,6 +128,12 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowHistory();
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
   void ShowAssistant(bool hover = false);
+  // Creates the panel hidden, so its scheduled tasks run.
+  void EnsureAssistant();
+  // The panel's state changed: the toolbar button follows it.
+  void AssistantStateChanged();
+  // The toolbar button: shows or hides the panel.
+  void ToggleAssistantFromBar();
   Profile* AssistantProfile() const;
   std::string AssistantProfileId() const;
   base::DictValue AssistantContext(const AssistantPermissions& permissions);

@@ -755,6 +755,9 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.open_privacy_settings = base::BindRepeating([](WorkspaceWindow* window) {
     window->shell_->OpenPrivacySettings();
   }, base::Unretained(this));
+  extension_callbacks.toggle_assistant = base::BindRepeating([](WorkspaceWindow* window) {
+    window->ToggleAssistantFromBar();
+  }, base::Unretained(this));
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
@@ -3129,6 +3132,12 @@ void WorkspaceWindow::FinishConfiguration() {
   closing_ = false;
   configuration_ready_ = true;
   Select(restored_active_);
+  AssistantStateChanged();
+  // Saved scheduled tasks need the panel, even when nobody opens it.
+  LoadAssistantSessions(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::optional<base::DictValue> saved) {
+    const auto* tasks = saved ? saved->FindList("tasks") : nullptr;
+    if (window && tasks && !tasks->empty()) window->EnsureAssistant();
+  }, weak_factory_.GetWeakPtr()));
   shell_->WarmWorkspaceSidebars(pins_);
   SaveConfiguration();
   for (const auto& directory : deleted_directories_) ScheduleProfileDeletion(directory);

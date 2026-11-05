@@ -249,6 +249,55 @@ click consent covers only one click, not such an approval. It also uses it to
 choose between alternatives or to get details only the user knows. A question
 left open when Zitter closes cannot be answered after a restart.
 
+## Scheduled tasks
+
+A scheduled task is an instruction the assistant runs by itself: "every morning
+summarize the news", "every Friday add the new lottery codes to my OneNote". The
+header's calendar button opens **Scheduled tasks**, which covers the panel like
+the history. Each task shows its name, instruction, schedule, model, access, its
+last run (done, needed you, failed) and the next one. A switch pauses or resumes
+it, **Run** starts it now, the trash deletes it, and clicking the card opens the
+editor.
+
+- **Editor** (**New task**, or a card): the instruction, the schedule (every day,
+  on chosen weekdays, every hour, or once, at a time of day), the model (a click
+  moves to the next model from Settings) and the task's own access, including
+  "Ask before every click". **Delete** removes an existing task.
+- **From a conversation:** asked for something recurring, the model calls
+  `schedule_task`. The conversation shows a proposal (instruction, schedule,
+  model, access) with **Schedule**, **Change settings** (opens the editor) and
+  **Just once, now**. A proposed task never gets wider access than the
+  conversation it came from. `list_tasks` lets the model see the user's tasks.
+- **Runs:** the panel checks every 30 seconds. A due task starts as its own
+  conversation, which opens with a "Started automatically" banner and a link to
+  the editor. When it may act on pages it works in an invisible tab (background
+  work must be allowed in Settings); otherwise it runs without page actions.
+  Access is cut to today's defaults in Settings. Clicks wait for consent only when
+  the task asks for it.
+- **Missed runs:** the panel exists only while Zitter runs. A run missed while
+  Zitter was closed happens once, shortly after start. When saved tasks exist, the
+  panel is created hidden at startup so tasks run even if nobody opens it.
+- **Storage:** tasks are saved in `ZitterAssistantSessions.json` with the
+  conversations, per profile. A task runs only while its profile is active.
+
+## Site search
+
+On a page, the user can ask the assistant to add the site's search ("dodaj
+wyszukiwarkę dla tej strony"). The model finds the site's search URL (from the
+page's search form, or by searching once) and calls `add_search_engine` with a
+name, a short keyword and the URL (`%s` or `{query}` for the query). The
+conversation asks **Add with keyword …** or **Don't add**; a typed answer is used
+as another keyword. The engine joins Settings → Search engines, so typing
+`gr solaris` in the address bar searches Goodreads.
+
+## Toolbar button
+
+The extensions bar shows the assistant's spark next to the fingerprint protection
+button while the assistant is on in Settings. It shows or hides the panel, gets
+an accent tile while the panel is open, a turning arc while a conversation or
+task works, and a count of results not seen yet (task runs that finished while
+the panel was hidden). Opening the panel or the tasks view clears the count.
+
 The model starts from what the user sees: a question about "this" or without a
 clear subject is taken to be about the current tab, and a request to find
 something opens it for the user. A general question is simply answered.
