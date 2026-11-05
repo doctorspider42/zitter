@@ -24,6 +24,12 @@ def digest(path):
 
 def describe_binary(path):
     result = {"path": str(path), "sha256": digest(path)}
+    receipt = path.with_name(path.name + ".source.json")
+    if receipt.is_file():
+        evidence = json.loads(receipt.read_text())
+        if evidence.get("binary_sha256") != result["sha256"]:
+            raise ValueError(f"Binary no longer matches its source receipt: {path}")
+        result["build_receipt"] = evidence
     source = path.parents[2] / ("zitter_" + path.name.removeprefix("zitter_prototype_"))
     if source.is_dir():
         files = [p for p in sorted(source.rglob("*")) if p.is_file() and not p.name.startswith(".zitter")]

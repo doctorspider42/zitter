@@ -1,5 +1,7 @@
 import importlib.util
+import json
 from pathlib import Path
+import tempfile
 import unittest
 
 SPEC = importlib.util.spec_from_file_location("boundary_benchmark", Path(__file__).resolve().parents[1] / "tools/benchmark_product_boundary.py")
@@ -8,6 +10,18 @@ SPEC.loader.exec_module(benchmark)
 
 
 class BenchmarkStatisticsTests(unittest.TestCase):
+    def test_source_receipt_rejects_a_replaced_binary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "out" / "zitter_prototype_receipt_test"
+            binary.parent.mkdir()
+            binary.write_bytes(b"original")
+            receipt = {"binary_sha256": benchmark.digest(binary), "source_commit": "frozen"}
+            binary.with_name(binary.name + ".source.json").write_text(json.dumps(receipt))
+            self.assertEqual(receipt, benchmark.describe_binary(binary)["build_receipt"])
+            binary.write_bytes(b"replacement")
+            with self.assertRaisesRegex(ValueError, "no longer matches"):
+                benchmark.describe_binary(binary)
+
     def test_nearest_rank_p95_keeps_the_tail(self):
         self.assertEqual(20, benchmark.summary(list(range(1, 22)))["p95"])
 
