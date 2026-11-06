@@ -370,6 +370,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // Windows, below |anchor|.
   void ShowAppMenu(views::View* anchor);
   bool app_menu_running_for_testing() const;
+  ui::SimpleMenuModel* app_menu_for_testing() const { return app_menu_.get(); }
   // Preferences on the Privacy category (fingerprint protection).
   void OpenPrivacySettings();
   void OpenTools(int page);  // 0: Time Machine, 1: shortcuts, 2: search providers.

@@ -20,7 +20,7 @@
 #include "ui/base/accelerators/accelerator_manager.h"
 class Profile;
 namespace network { class SimpleURLLoader; }
-namespace views { class Widget; class View; class DialogDelegate; }
+namespace views { class Widget; class View; }
 namespace zitter::prototype {
 class PanelScene;
 class EditorControl;
@@ -79,20 +79,27 @@ class RssReader final : public base::SupportsUserData::Data, public ProfileObser
   base::RepeatingClosureList changed_;
   base::WeakPtrFactory<RssReader> weak_{this};
 };
+inline constexpr char kRssTabUrl[] = "zitter://rss/";
+inline bool IsRssTabUrl(const GURL& url) { return url == GURL(kRssTabUrl); }
+inline bool IsWorkspaceTabUrl(const GURL& url) {
+  return url.SchemeIsHTTPOrHTTPS() || IsRssTabUrl(url);
+}
 class RssPanel final : public ProfileObserver, public views::WidgetObserver, public ui::AcceleratorTarget {
  public:
   RssPanel();
   ~RssPanel() override;
-  void Show(Profile* profile, views::Widget* parent, GURL current,
+  void Show(Profile* profile, views::View* parent,
             base::RepeatingCallback<void(GURL)> open);
   void Discover(std::vector<GURL> urls);
   void DiscoverFromPage(base::Value value);
   void BeginDiscovery();
   size_t discovery_generation() const { return discovery_generation_; }
   base::WeakPtr<RssPanel> GetWeakPtr() { return weak_.GetWeakPtr(); }
-  views::Widget* widget() const { return widget_.get(); }
+  views::Widget* widget() const { return widget_; }
+  views::View* view() const { return content_; }
   RssReader* reader() const { return reader_; }
   void Select(GURL feed, std::string id);
+  void RequestFocus();
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   bool CanHandleAccelerators() const override;
   bool contains_for_testing(std::string_view text) const;
@@ -107,22 +114,25 @@ class RssPanel final : public ProfileObserver, public views::WidgetObserver, pub
   void Update();
   void ScheduleUpdate();
   void Subscribe();
-  void SynchronizeTheme();
+  void OpenSettings(bool add = false);
+  void BackToReader();
   views::View* Text(views::View* parent, std::string text, int style = 5);
   views::View* Action(views::View* parent, std::u16string text, base::RepeatingClosure callback, int kind = 3);
   raw_ptr<RssReader> reader_ = nullptr;
   raw_ptr<Profile> profile_ = nullptr;
   base::CallbackListSubscription subscription_;
   base::RepeatingCallback<void(GURL)> open_;
-  GURL source_, article_feed_, current_;
+  GURL source_, article_feed_;
   std::string selected_;
   std::u16string return_focus_name_;
-  bool unread_ = false, saved_ = false, managing_ = false, update_pending_ = false, adding_ = false;
+  bool unread_ = false, saved_ = false, settings_ = false, screen_focus_pending_ = false, update_pending_ = false, adding_ = false;
   size_t visible_limit_ = 100;
   std::vector<GURL> discovered_;
-  std::unique_ptr<views::DialogDelegate> delegate_;
-  std::unique_ptr<views::Widget> widget_;
+  raw_ptr<views::Widget> widget_ = nullptr;
+  raw_ptr<views::View> content_ = nullptr;
   std::unique_ptr<PanelScene> scene_;
+  raw_ptr<views::View> header_ = nullptr, title_ = nullptr, scroll_ = nullptr, tools_ = nullptr;
+  raw_ptr<views::View> settings_button_ = nullptr, back_button_ = nullptr, refresh_button_ = nullptr;
   raw_ptr<views::View> body_ = nullptr, add_row_ = nullptr, add_button_ = nullptr;
   raw_ptr<EditorControl> address_ = nullptr;
   raw_ptr<PanelViewport> viewport_ = nullptr;

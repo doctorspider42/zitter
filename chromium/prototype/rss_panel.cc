@@ -8,34 +8,93 @@
 #include "base/i18n/time_formatting.h"
 #include "base/task/single_thread_task_runner.h"
 #include "ui/views/focus/focus_manager.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_action_data.h"
-#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/sidebar_metal.h"
-#if BUILDFLAG(IS_MAC)
-#include "chromium/prototype/workspace_keyboard_mac.h"
-#include "chromium/prototype/workspace_frame_mac.h"
-#elif BUILDFLAG(IS_WIN)
-#include "chromium/prototype/workspace_frame_win.h"
-#endif
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
-#include "ui/display/display.h"
-#include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/border.h"
+#include "ui/views/background.h"
+#include "chromium/prototype/sidebar_scene.rs.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/window/dialog_delegate.h"
 namespace zitter::prototype {
 namespace {
 // Native focus/AX targets, painted by the shared compositor/Metal panel scene.
+class RssRoot final : public views::View {
+  METADATA_HEADER(RssRoot, views::View)
+ public:
+  explicit RssRoot(base::RepeatingClosure resized) : resized_(std::move(resized)) {}
+  void OnBoundsChanged(const gfx::Rect& previous) override {
+    views::View::OnBoundsChanged(previous);
+    if ((previous.width() < 420) != (width() < 420)) resized_.Run();
+  }
+  void OnThemeChanged() override {
+    views::View::OnThemeChanged();
+    SetBackground(views::CreateRoundedRectBackground(sidebar::design_palette(
+        GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark, 0).bg_raised, 10));
+  }
+ private:
+  base::RepeatingClosure resized_;
+};
+BEGIN_METADATA(RssRoot)
+END_METADATA
+class RssTitle final : public views::View {
+  METADATA_HEADER(RssTitle, views::View)
+ public:
+  RssTitle(std::u16string name, base::RepeatingClosure read) : read_(std::move(read)) {
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kButton);
+    GetViewAccessibility().SetName(std::move(name));
+    GetViewAccessibility().SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);
+    UpdatePresentation();
+  }
+  ui::Cursor GetCursor(const ui::MouseEvent&) override { return ui::Cursor(ui::mojom::CursorType::kHand); }
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+    pressed_ = event.IsOnlyLeftMouseButton();
+    if (pressed_) RequestFocus();
+    return pressed_;
+  }
+  void OnMouseReleased(const ui::MouseEvent& event) override {
+    const bool read = pressed_ && HitTestPoint(event.location()); pressed_ = false;
+    if (read) read_.Run();
+  }
+  void OnMouseCaptureLost() override { pressed_ = false; }
+  bool OnKeyPressed(const ui::KeyEvent& event) override {
+    if ((event.flags() & (ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN)) || (event.key_code() != ui::VKEY_RETURN && event.key_code() != ui::VKEY_SPACE)) return false;
+    read_.Run(); return true;
+  }
+  bool HandleAccessibleAction(const ui::AXActionData& action) override {
+    if (action.action != ax::mojom::Action::kDoDefault) return views::View::HandleAccessibleAction(action);
+    read_.Run(); return true;
+  }
+  void OnMouseEntered(const ui::MouseEvent&) override { hovered_ = true; UpdatePresentation(); }
+  void OnMouseExited(const ui::MouseEvent&) override { hovered_ = false; UpdatePresentation(); }
+  void OnFocus() override { views::View::OnFocus(); UpdatePresentation(); }
+  void OnBlur() override { views::View::OnBlur(); UpdatePresentation(); }
+  void OnThemeChanged() override { views::View::OnThemeChanged(); UpdatePresentation(); }
+ private:
+  void UpdatePresentation() {
+    const auto palette = sidebar::design_palette(GetWidget() &&
+        GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark, 0);
+    const auto color = HasFocus() ? palette.focus : SK_ColorTRANSPARENT;
+    SetBackground(hovered_ ? views::CreateRoundedRectBackground(palette.bg_hover, 4) : nullptr);
+    SetBorder(views::CreateRoundedRectBorder(2, 4, color));
+    SchedulePaint();
+  }
+  bool pressed_ = false, hovered_ = false;
+  base::RepeatingClosure read_;
+};
+BEGIN_METADATA(RssTitle)
+END_METADATA
 class RssBody final : public views::View {
   METADATA_HEADER(RssBody, views::View)
  public:
@@ -56,19 +115,14 @@ void RssPanel::OnProfileWillBeDestroyed(Profile*) { Close(); }
 void RssPanel::OnWidgetDestroying(views::Widget*) { Close(); }
 void RssPanel::OnWidgetThemeChanged(views::Widget* parent) {
   if (!widget_) return;
-  widget_->SetColorModeOverride(parent->color_mode_override());
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  SetWorkspaceNativeAppearance(widget_.get(), parent->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark);
-#endif
+  if (viewport_) viewport_->SetViewportBackground(sidebar::design_palette(
+      widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark, 0).bg_raised);
   scene_->RefreshSearch(address_); scene_->Schedule();
 }
-void RssPanel::SynchronizeTheme() {
-  if (widget_ && parent_observation_.IsObserving()) OnWidgetThemeChanged(parent_observation_.GetSource());
-}
-bool RssPanel::CanHandleAccelerators() const { return widget_ && widget_->IsVisible(); }
+bool RssPanel::CanHandleAccelerators() const { return content_ && content_->IsDrawn(); }
 bool RssPanel::AcceleratorPressed(const ui::Accelerator& accelerator) {
-  if (!widget_ || accelerator.key_code() != ui::VKEY_RETURN) return false;
-  auto* focused=widget_->GetFocusManager()->GetFocusedView(); if (!focused) return false;
+  if (!CanHandleAccelerators() || accelerator.key_code() != ui::VKEY_RETURN) return false;
+  auto* focused=widget_->GetFocusManager()->GetFocusedView(); if (!focused || !content_->Contains(focused)) return false;
   ui::AXNodeData data; focused->GetViewAccessibility().GetAccessibleNodeData(&data);
   if (data.role != ax::mojom::Role::kButton) return false;
   ui::AXActionData action; action.action=ax::mojom::Action::kDoDefault;
@@ -76,8 +130,9 @@ bool RssPanel::AcceleratorPressed(const ui::Accelerator& accelerator) {
 }
 void RssPanel::Close() {
   if (widget_) widget_->GetFocusManager()->UnregisterAccelerators(this);
-  parent_observation_.Reset(); ++discovery_generation_; update_pending_ = false; observation_.Reset(); subscription_ = {}; weak_.InvalidateWeakPtrs(); scene_.reset(); body_ = nullptr; add_row_ = nullptr; add_button_ = nullptr; address_ = nullptr; viewport_ = nullptr;
-  widget_.reset(); delegate_.reset(); reader_ = nullptr; profile_ = nullptr;
+  parent_observation_.Reset(); ++discovery_generation_; update_pending_ = false; observation_.Reset(); subscription_ = {}; weak_.InvalidateWeakPtrs(); scene_.reset(); header_ = nullptr; title_ = nullptr; scroll_ = nullptr; tools_ = nullptr; settings_button_ = nullptr; back_button_ = nullptr; refresh_button_ = nullptr; body_ = nullptr; add_row_ = nullptr; add_button_ = nullptr; address_ = nullptr; viewport_ = nullptr;
+  auto* content = content_.get(); content_ = nullptr;
+  if (content && content->parent()) content->parent()->RemoveChildViewT(content); widget_ = nullptr; reader_ = nullptr; profile_ = nullptr;
 }
 views::View* RssPanel::Text(views::View* parent, std::string text, int style) {
   auto* view = parent->AddChildView(scene_->MakeText(U(text), true, false, 0));
@@ -86,28 +141,27 @@ views::View* RssPanel::Text(views::View* parent, std::string text, int style) {
 views::View* RssPanel::Action(views::View* parent, std::u16string text, base::RepeatingClosure callback, int kind) {
   auto* button = scene_->AddAction(parent, std::move(callback), std::move(text)); scene_->SetActionKind(button, kind); button->SetFocusBehavior(views::View::FocusBehavior::ALWAYS); return button;
 }
-void RssPanel::Show(Profile* profile, views::Widget* parent, GURL current, base::RepeatingCallback<void(GURL)> open) {
-  if (widget_ && (widget_->IsClosed() || profile_ != profile)) Close();
-  if (widget_) {
-    OnWidgetThemeChanged(parent); widget_->Show(); widget_->Activate();
-    // Parent theme notifications may coalesce an intermediate override away.
-    // Re-read its final state after this event, including hidden-panel reopen.
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&RssPanel::SynchronizeTheme,weak_.GetWeakPtr()));
-    return;
-  }
-  profile_ = profile; parent_observation_.Observe(parent); observation_.Observe(profile); reader_ = RssReader::For(profile); open_ = std::move(open); current_ = current; source_ = {}; adding_ = false; selected_.clear(); discovered_.clear();
+void RssPanel::Show(Profile* profile, views::View* parent, base::RepeatingCallback<void(GURL)> open) {
+  CHECK(!content_);
+  widget_ = parent->GetWidget();
+  profile_ = profile; parent_observation_.Observe(widget_); observation_.Observe(profile);
+  reader_ = RssReader::For(profile); open_ = std::move(open);
   auto weak = weak_.GetWeakPtr();
-  delegate_ = std::make_unique<views::DialogDelegate>();
-  delegate_->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  delegate_->SetTitle(T(u"Czytnik RSS") + u" · " + (profile->IsOffTheRecord() ? T(u"Okno prywatne") : BrowsingProfileName(profile))); delegate_->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
-  delegate_->SetCanResize(true); delegate_->set_use_custom_frame(false); delegate_->set_draggable(true);
-  auto content = std::make_unique<views::View>(); scene_ = CreatePanelScene(content.get());
+  auto content = std::make_unique<RssRoot>(base::BindRepeating(&RssPanel::ScheduleUpdate, weak)); scene_ = CreatePanelScene(content.get());
   auto* header = content->AddChildView(std::make_unique<views::View>());
+  header_ = header;
   auto* title = Text(header, base::UTF16ToUTF8(T(u"Czytnik RSS")), 2);
+  title_ = title;
   auto* tools = header->AddChildView(std::make_unique<views::View>());
+  tools_ = tools;
   auto* add_actions = tools->AddChildView(scene_->MakeActions(0));
   add_button_ = Action(add_actions, T(u"Dodaj źródło"), base::BindRepeating([](base::WeakPtr<RssPanel> p) { if (p) { p->adding_ = !p->adding_; p->ScheduleUpdate(); } },weak));
-  scene_->AddIconAction(tools,base::BindRepeating([](base::WeakPtr<RssPanel> p){if(p)p->reader_->Refresh();},weak),T(u"Odśwież źródła"),&vector_icons::kRefreshIcon)->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
+  auto* back_actions = tools->AddChildView(scene_->MakeActions(0));
+  back_button_ = Action(back_actions, T(u"Wróć do czytnika"), base::BindRepeating(&RssPanel::BackToReader, weak));
+  settings_button_ = scene_->AddIconAction(tools, base::BindRepeating(&RssPanel::OpenSettings, weak, false), T(u"Ustawienia RSS"), &vector_icons::kSettingsIcon);
+  settings_button_->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
+  refresh_button_ = scene_->AddIconAction(tools,base::BindRepeating([](base::WeakPtr<RssPanel> p){if(p)p->reader_->Refresh();},weak),T(u"Odśwież źródła"),&vector_icons::kRefreshIcon);
+  refresh_button_->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
   SetSidebarPanelLayout(tools,false,{},4);
   title->SetTooltipText(profile->IsOffTheRecord() ? T(u"Tryb prywatny · tylko w pamięci tego okna") : T(u"Źródła i odczyty są wspólne dla przestrzeni tego profilu."));
   SetSidebarPanelLayout(header, false, {}, 8, title, true);
@@ -123,23 +177,21 @@ void RssPanel::Show(Profile* profile, views::Widget* parent, GURL current, base:
   PanelViewport* adapter = nullptr;
   auto viewport = CreatePanelViewport(&adapter, scene_->ViewportChangedCallback(), {100, 1200, false, true, false});
   viewport_ = adapter;
-  auto* scroll = content->AddChildView(std::move(viewport));
+  auto* scroll = content->AddChildView(std::move(viewport)); scroll_ = scroll;
   auto body = std::make_unique<RssBody>(); body_ = body.get(); SetSidebarPanelLayout(body_, true, {}, 8); viewport_->SetPanelContents(std::move(body));
   SetSidebarPanelLayout(content.get(), true, gfx::Insets(20), 16, scroll);
-  content->SetPreferredSize(gfx::Size(780, 720)); delegate_->SetContentsView(std::move(content));
-  widget_.reset(views::DialogDelegate::CreateDialogWidget(delegate_.get(), parent->GetNativeWindow(), parent->GetNativeView()));
-  widget_->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<RssPanel> p, views::Widget::ClosedReason) { if (p) p->Close(); }, weak));
+  content_ = parent->AddChildView(std::move(content));
+  content_->SetBoundsRect(parent->GetLocalBounds());
   widget_->GetFocusManager()->RegisterAccelerator(ui::Accelerator(ui::VKEY_RETURN,ui::EF_NONE),ui::AcceleratorManager::kNormalPriority,this);
-  OnWidgetThemeChanged(parent);
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&RssPanel::SynchronizeTheme,weak));
-#if BUILDFLAG(IS_MAC)
-  InstallWorkspaceKeyboardRouting(widget_.get(), true);
-#endif
-  auto area = display::Screen::Get()->GetDisplayNearestWindow(parent->GetNativeWindow()).work_area();
-  gfx::Rect bounds(0, 0, std::min(820, area.width()), std::min(760, area.height()));
-  bounds.set_origin(parent->GetWindowBoundsInScreen().CenterPoint() - gfx::Vector2d(bounds.width()/2, bounds.height()/2)); bounds.AdjustToFit(area); widget_->SetBounds(bounds);
   subscription_ = reader_->Observe(base::BindRepeating(&RssPanel::ScheduleUpdate, weak));
-  Update(); widget_->Show(); scene_->Schedule(); if (add_row_->GetVisible()) address_->RequestFocus();
+  OnWidgetThemeChanged(widget_); Update(); scene_->Schedule();
+
+}
+void RssPanel::RequestFocus() {
+  if (!widget_ || !content_ || !content_->IsDrawn()) return;
+  if (add_row_->GetVisible()) { address_->RequestFocus(); return; }
+  auto* first = widget_->GetFocusManager()->GetNextFocusableView(content_, widget_, false, false);
+  if (first && content_->Contains(first)) first->RequestFocus();
 }
 void RssPanel::BeginDiscovery() { ++discovery_generation_; discovered_.clear(); ScheduleUpdate(); }
 void RssPanel::DiscoverFromPage(base::Value value) {
@@ -158,6 +210,14 @@ void RssPanel::Select(GURL feed, std::string id) {
   for (const auto& f : reader_->feeds()) if (f.url == feed) for (const auto& a : f.articles) if (a.id == id) { return_focus_name_ = TF(u"Czytaj: {}", {U(a.title)}); reader_->Mark(feed, id, true, a.saved); viewport_->ScrollTo(0); return; }
   ScheduleUpdate();
 }
+void RssPanel::OpenSettings(bool add) {
+  settings_ = true; adding_ = add; screen_focus_pending_ = true;
+  viewport_->ScrollTo(0); ScheduleUpdate();
+}
+void RssPanel::BackToReader() {
+  settings_ = false; adding_ = false; screen_focus_pending_ = true;
+  viewport_->ScrollTo(0); ScheduleUpdate();
+}
 void RssPanel::Subscribe() {
   const auto count=reader_->feeds().size(); reader_->Add(GURL(address_->GetText()));
   if (reader_->feeds().size()>count) adding_=false;
@@ -170,11 +230,23 @@ void RssPanel::ScheduleUpdate() {
 }
 void RssPanel::Update() {
   update_pending_ = false;
-  if (!body_) return;
+  if (!body_ || !widget_) return;
+  const bool narrow = content_->width() < 420;
+  SetSidebarPanelLayout(content_, true, gfx::Insets(narrow ? 12 : 20), narrow ? 12 : 16, scroll_);
+  SetSidebarPanelLayout(header_, narrow, {}, 8, narrow ? nullptr : title_.get(), !narrow);
+  SetSidebarPanelLayout(add_row_, narrow, {}, 8, narrow ? nullptr : address_->view(), !narrow);
   const bool empty=reader_->feeds().empty();
-  const bool was_adding=add_row_->GetVisible(); add_row_->SetVisible(empty||adding_);
-  add_button_->SetVisible(!empty||adding_); scene_->SetActionText(add_button_,adding_?T(u"Gotowe"):T(u"Dodaj źródło"));
-  if (!was_adding && add_row_->GetVisible()) address_->RequestFocus();
+  scene_->SetText(title_, settings_ ? T(u"Ustawienia RSS") : T(u"Czytnik RSS"));
+  SetSidebarPanelLayout(tools_, narrow && settings_, {}, 4);
+  settings_button_->SetVisible(!settings_); back_button_->SetVisible(settings_); refresh_button_->SetVisible(!settings_);
+  const bool was_adding = add_row_->GetVisible(); add_row_->SetVisible(settings_ && (empty || adding_));
+  add_button_->SetVisible(settings_ && !empty);
+  scene_->SetActionText(add_button_, adding_ ? T(u"Gotowe") : T(u"Dodaj źródło"));
+  if (screen_focus_pending_) {
+    screen_focus_pending_ = false;
+    if (settings_ && add_row_->GetVisible()) address_->RequestFocus();
+    else (settings_ ? back_button_ : settings_button_)->RequestFocus();
+  } else if (!was_adding && add_row_->GetVisible()) address_->RequestFocus();
   std::u16string focus_name;
   auto* focused = widget_->GetFocusManager()->GetFocusedView();
   if (focused && body_->Contains(focused)) {
@@ -198,16 +270,36 @@ void RssPanel::Update() {
   if (!source_.is_empty() && std::none_of(reader_->feeds().begin(), reader_->feeds().end(), [&](const auto& f) { return f.url == source_; })) source_ = {};
   // Shared profile data, but all explicit navigation is bound to this panel's
   // original Profile by the window callback (even after a workspace switch).
-  if (empty) Text(body_, base::UTF16ToUTF8(profile_->IsOffTheRecord() ? T(u"Tryb prywatny · tylko w pamięci tego okna") : T(u"Źródła i odczyty są wspólne dla przestrzeni tego profilu.")), 6);
+  if (empty || settings_) Text(body_, base::UTF16ToUTF8(profile_->IsOffTheRecord() ? T(u"Tryb prywatny · tylko w pamięci tego okna") : T(u"Źródła i odczyty są wspólne dla przestrzeni tego profilu.")), 6);
   if (!reader_->ready()) Text(body_, base::UTF16ToUTF8(T(u"Wczytywanie źródeł…")), 6);
   if (reader_->busy()) Text(body_, base::UTF16ToUTF8(T(u"Odświeżanie źródeł…")), 6);
   if (!reader_->status().empty()) Text(body_, base::UTF16ToUTF8(T(U(reader_->status()))), 6);
+  if (settings_) {
+    for (const auto& feed : reader_->feeds()) {
+      auto* row = body_->AddChildView(std::make_unique<views::View>());
+      auto* details = row->AddChildView(std::make_unique<views::View>());
+      Text(details, feed.title, 4); Text(details, feed.url.spec(), 8);
+      SetSidebarPanelLayout(details, true, {}, 4);
+      auto* actions = row->AddChildView(scene_->MakeActions(0));
+      Action(actions, T(u"Usuń"), base::BindRepeating([](base::WeakPtr<RssPanel> panel, GURL url) {
+        if (panel) panel->reader_->Remove(url);
+      }, weak, feed.url), 4);
+      SetSidebarPanelLayout(row, narrow, gfx::Insets::VH(8, 0), 8, narrow ? nullptr : details, !narrow);
+      if (!feed.error.empty()) Text(body_, base::UTF16ToUTF8(T(u"Nie udało się odświeżyć źródła. Sprawdź adres lub spróbuj ponownie.")), 6);
+    }
+    if (empty) {
+      Text(body_, base::UTF16ToUTF8(T(u"Twoje źródła, w jednym miejscu")), 3);
+      Text(body_, base::UTF16ToUTF8(T(u"Wklej adres RSS lub Atom powyżej. Nowe wpisy pojawią się tutaj, bez reklam i automatycznie ładowanych obrazów.")));
+    }
+    static_cast<RssBody*>(body_.get())->Changed(); scene_->Schedule(); return;
+  }
   if (!selected_.empty()) {
     for (const auto& f : reader_->feeds()) if (f.url == article_feed_) for (const auto& a : f.articles) if (a.id == selected_) {
       auto* nav = body_->AddChildView(scene_->MakeActions(6));
       Action(nav, T(u"Wróć do wpisów"), base::BindRepeating([](base::WeakPtr<RssPanel> p) { if (p) { p->selected_.clear(); p->ScheduleUpdate(); p->viewport_->ScrollTo(0); } }, weak));
       Text(body_, a.title, 3); Text(body_, f.title + " · " + DateLabel(a.published), 8);
       auto* actions = body_->AddChildView(scene_->MakeActions(6));
+      if (narrow) SetSidebarPanelLayout(actions, true, {}, 4);
       Action(actions, T(u"Otwórz artykuł"), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL url) { if (p && p->open_) p->open_.Run(url); }, weak, a.url), 0);
       Action(actions, a.saved ? T(u"Usuń zapis") : T(u"Zapisz artykuł"), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL feed, std::string id, bool saved) { if (p) p->reader_->Mark(feed, id, true, !saved); }, weak, f.url, a.id, a.saved));
       Action(actions, T(u"Nieprzeczytany"), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL feed, std::string id, bool saved) { if (p) { p->selected_.clear(); p->reader_->Mark(feed, id, false, saved); } }, weak, f.url, a.id, a.saved));
@@ -218,6 +310,7 @@ void RssPanel::Update() {
   }
   if (!empty) {
   auto* filters = body_->AddChildView(scene_->MakeActions(4));
+  if (narrow) SetSidebarPanelLayout(filters, true, {}, 4);
   Action(filters, T(u"Wszystkie"), base::BindRepeating([](base::WeakPtr<RssPanel> p) { if (p) { p->unread_ = false; p->saved_ = false; p->source_ = {}; p->ScheduleUpdate(); } }, weak), !unread_ && !saved_ && source_.is_empty() ? 7 : 6);
   Action(filters, T(u"Nieprzeczytane"), base::BindRepeating([](base::WeakPtr<RssPanel> p) { if (p) { p->unread_ = !p->unread_; p->ScheduleUpdate(); } }, weak), unread_ ? 7 : 6);
   Action(filters, T(u"Zapisane"), base::BindRepeating([](base::WeakPtr<RssPanel> p) { if (p) { p->saved_ = !p->saved_; p->ScheduleUpdate(); } }, weak), saved_ ? 7 : 6);
@@ -225,12 +318,14 @@ void RssPanel::Update() {
   for (const auto& url : discovered_) {
     if (std::any_of(reader_->feeds().begin(), reader_->feeds().end(), [&](const auto& f) { return f.url == url; })) continue;
     auto* row = body_->AddChildView(scene_->MakeActions(4));
-    Action(row, TF(u"Subskrybuj kanał: {}", {U(url.host())}), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL url) { if (p) p->reader_->Add(url); }, weak, url));
+    Action(row, TF(u"Subskrybuj kanał: {}", {U(url.host())}), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL url) { if (p) { p->address_->SetText(base::UTF8ToUTF16(url.spec())); p->OpenSettings(true); } }, weak, url));
     Text(body_, url.spec(), 8);
   }
   if (reader_->feeds().empty()) {
     Text(body_, base::UTF16ToUTF8(T(u"Twoje źródła, w jednym miejscu")), 3);
-    Text(body_, base::UTF16ToUTF8(T(u"Wklej adres RSS lub Atom powyżej. Nowe wpisy pojawią się tutaj, bez reklam i automatycznie ładowanych obrazów.")));
+    Text(body_, base::UTF16ToUTF8(T(u"Dodaj źródło RSS lub Atom. Nowe wpisy pojawią się tutaj, bez reklam i automatycznie ładowanych obrazów.")));
+    auto* actions = body_->AddChildView(scene_->MakeActions(0));
+    Action(actions, T(u"Dodaj źródło"), base::BindRepeating(&RssPanel::OpenSettings, weak, true), 0);
     static_cast<RssBody*>(body_.get())->Changed(); scene_->Schedule(); return;
   }
   auto* source_row = body_->AddChildView(std::make_unique<views::View>());
@@ -243,22 +338,12 @@ void RssPanel::Update() {
     if (!p) return; const auto index = SceneSelectIndex(picker).value_or(0);
     if (index < urls.size()) { p->source_ = urls[index]; p->ScheduleUpdate(); }
   }, weak, picker, feed_urls));
-  auto* manage = source_row->AddChildView(scene_->MakeActions(0));
-  Action(manage, T(u"Zarządzaj źródłami"), base::BindRepeating([](base::WeakPtr<RssPanel> p) { if (p) { p->managing_ = !p->managing_; p->ScheduleUpdate(); } }, weak));
-  scene_->AddIconAction(source_row,base::BindRepeating([](base::WeakPtr<RssPanel> p){if(p)p->reader_->MarkAll(p->source_);},weak),T(u"Oznacz jako przeczytane"),&vector_icons::kChecklistIcon)->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
+  auto* source_tools = source_row->AddChildView(std::make_unique<views::View>());
+  scene_->AddIconAction(source_tools,base::BindRepeating([](base::WeakPtr<RssPanel> p){if(p)p->reader_->MarkAll(p->source_);},weak),T(u"Oznacz jako przeczytane"),&vector_icons::kChecklistIcon)->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
+  SetSidebarPanelLayout(source_tools, false, {}, 8, nullptr, true);
   SetSidebarPanelLayout(source_row, false, {}, 8, picker, true);
-  // Compact source rows double as source management. Lists and previews share
-  // one viewport, keeping narrow windows usable and long titles fully visible.
-  if (managing_) for (const auto& feed : reader_->feeds()) {
-    auto* row = body_->AddChildView(std::make_unique<views::View>());
-    auto* label = Text(row, feed.title, 5);
-    auto* actions = row->AddChildView(scene_->MakeActions(4));
-    Action(actions, source_ == feed.url ? T(u"Wybrane źródło") : T(u"Wybierz"), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL url) { if (p) { p->source_ = p->source_ == url ? GURL() : url; p->ScheduleUpdate(); } }, weak, feed.url), source_ == feed.url ? 7 : 3);
-    Action(actions, T(u"Usuń"), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL url) { if (p) { if (p->source_ == url) p->source_ = {}; p->reader_->Remove(url); } }, weak, feed.url), 4);
-    SetSidebarPanelLayout(row, false, {}, 8, label, true);
-    if (!feed.error.empty()) Text(body_, base::UTF16ToUTF8(T(u"Nie udało się odświeżyć źródła. Sprawdź adres lub spróbuj ponownie.")), 6);
-  }
-  if (!managing_) for (const auto& f : reader_->feeds()) if (!f.error.empty()) Text(body_, f.title + ": " + base::UTF16ToUTF8(T(u"Nie udało się odświeżyć źródła. Sprawdź adres lub spróbuj ponownie.")), 6);
+  for (const auto& feed : reader_->feeds()) if (!feed.error.empty())
+    Text(body_, feed.title + ": " + base::UTF16ToUTF8(T(u"Nie udało się odświeżyć źródła. Sprawdź adres lub spróbuj ponownie.")), 6);
   size_t count = 0;
   struct Item { raw_ptr<const RssFeed> feed; raw_ptr<const RssArticle> article; };
   std::vector<Item> items;
@@ -272,10 +357,14 @@ void RssPanel::Update() {
 
       auto* row = body_->AddChildView(std::make_unique<views::View>());
       auto* column = row->AddChildView(std::make_unique<views::View>());
-      auto* read_actions = row->AddChildView(scene_->MakeActions(0));
-      auto* read_button = Action(read_actions, T(u"Czytaj"), base::BindRepeating([](base::WeakPtr<RssPanel> p, GURL feed, std::string id) { if (p) p->Select(feed,id); },weak,f.url,a.id));
-      read_button->GetViewAccessibility().SetName(TF(u"Czytaj: {}",{U(a.title)}));
-      Text(column, a.title, a.read ? 5 : 4); Text(column, f.title + " · " + DateLabel(a.published) + (a.saved ? " · " + base::UTF16ToUTF8(T(u"Zapisane")) : ""), 8);
+      auto* title = column->AddChildView(std::make_unique<RssTitle>(TF(u"Czytaj: {}", {U(a.title)}),
+          base::BindRepeating([](base::WeakPtr<RssPanel> panel, GURL feed, std::string id) {
+            if (panel) panel->Select(feed, id);
+          }, weak, f.url, a.id)));
+      auto* label = Text(title, a.title, a.read ? 5 : 4);
+      label->GetViewAccessibility().SetIsIgnored(true);
+      SetSidebarPanelLayout(title, true, {}, 0);
+      Text(column, f.title + " · " + DateLabel(a.published) + (a.saved ? " · " + base::UTF16ToUTF8(T(u"Zapisane")) : ""), 8);
       auto preview = base::CollapseWhitespace(base::UTF8ToUTF16(a.text),false); if (preview.size() > 180) { preview.resize(180); if (preview.back() >= 0xd800 && preview.back() <= 0xdbff) preview.pop_back(); preview += u"…"; }
       auto* excerpt=column->AddChildView(scene_->MakeText(std::move(preview),false,false,0));
       scene_->SetTextStyle(excerpt,6,PanelScene::Tone::kMuted);

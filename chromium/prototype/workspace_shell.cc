@@ -11,6 +11,7 @@
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "chromium/prototype/rss_reader.h"
 #include "url/origin.h"
 #include "chromium/prototype/assistant_panel.h"
 #include "chromium/prototype/assistant_visuals.h"
@@ -596,6 +597,7 @@ class SidebarDivider final : public views::View {
 BEGIN_METADATA(SidebarDivider)
 END_METADATA
 std::u16string HostLabel(const GURL& url) {
+  if (IsRssTabUrl(url)) return u"zitter://rss/";
   std::string host(url.host());
   if (host.starts_with("www.")) host = host.substr(4);
   return base::UTF8ToUTF16(host);
@@ -1770,6 +1772,13 @@ END_METADATA
 
 // A sidebar tab, a "New tab" action or a palette suggestion.
 // Row presentation shared by the Rust row adapter and native preview snapshots.
+using enum gfx::CommandType;
+constexpr gfx::PathElement kRssTabPath[] = {CANVAS_DIMENSIONS,16,STROKE,1.6f,
+  MOVE_TO,3,3,CUBIC_TO,8.5f,3,13,7.5f,13,13,
+  MOVE_TO,3,7,CUBIC_TO,6.3f,7,9,9.7f,9,13,
+  CIRCLE,3.5f,12.5f,0.8f};
+constexpr gfx::VectorIconRep kRssTabRep[] = {{kRssTabPath}};
+constexpr gfx::VectorIcon kRssTabIcon(kRssTabRep,1,"zitter_rss_tab");
 struct RowRecipe {
   struct Spec {
     std::u16string title;
@@ -1837,6 +1846,8 @@ struct RowRecipe {
       const gfx::Rect chip(12, (bounds.height() - 28) / 2, 28, 28);
       FillRound(canvas, chip, 7, Tone(theme, kChip));
       if (spec.icon) PaintIcon(canvas, *spec.icon, chip, 15, Tone(theme, kSubtle));
+    } else if (spec.monogram == u"\x1fRSS") {
+      PaintIcon(canvas, kRssTabIcon, gfx::Rect(10, 0, 16, bounds.height()), 16, Tone(theme, kSubtle));
     } else if (spec.icon) {
       PaintIcon(canvas, *spec.icon, gfx::Rect(10, 0, 16, bounds.height()), 16, Tone(theme, kSubtle));
     } else {
@@ -3851,7 +3862,7 @@ GURL ResolveTyped(const std::string& text, SearchEngine engine) {
     // address fixer recognizes the dotted host and port correctly.
     url = url_formatter::FixupURL(text);
   }
-  return url.SchemeIsHTTPOrHTTPS() ? url : GURL();
+  return IsWorkspaceTabUrl(url) ? url : GURL();
 }
 }  // namespace
 bool SceneActionPressedForTesting(views::View* view){
@@ -5027,7 +5038,7 @@ void WorkspaceShell::Update(ShellState state) {
   SetPanelText(profile_name_,TF(u"Profil: {}", {state_.profile_name}));
   RefreshRustWorkspacePresentation();
   const bool blank = !state_.url.is_valid() || state_.url.path() == "/start.html";
-  const std::string path = state_.url.path() == "/" ? std::string() : std::string(state_.url.path());
+  const std::string path = (IsRssTabUrl(state_.url) || state_.url.path() == "/") ? std::string() : std::string(state_.url.path());
   SetRowAddress(url_pill_.get(),
       blank ? T(u"Szukaj lub wpisz adres") : HostLabel(state_.url),
       blank ? u"" : base::UTF8ToUTF16(path), blank, !blank && state_.url.SchemeIs("https"));
@@ -5038,14 +5049,14 @@ void WorkspaceShell::Update(ShellState state) {
     std::optional<size_t> member;
     if (pane < state_.split_tabs.size()) member = state_.split_tabs[pane];
     // SplitView: each pane is labelled by its host in `url` (the page title when there is none).
-    for (const auto& tab : state_.tabs) if (member == tab.index){const auto host=HostLabel(tab.url);title=host.empty()?tab.title:host;identity=tab.identity;}
+    for (const auto& tab : state_.tabs) if (member == tab.index){const auto host=HostLabel(tab.url);title=IsRssTabUrl(tab.url)||host.empty()?tab.title:host;identity=tab.identity;}
     auto* bar=static_cast<PaneHost*>(content_host_.get())->bar(pane);
     bar->SetTarget(state_.workspace_id,member,identity,state_.split_visible&&member.has_value());
     bar->SetTitle(title,state_.active_pane==pane);
   }
   nav_buttons_[0]->SetEnabled(state_.can_go_back);
   nav_buttons_[1]->SetEnabled(state_.can_go_forward);
-  copy_url_button_->SetEnabled(state_.url.SchemeIsHTTPOrHTTPS());
+  copy_url_button_->SetEnabled(IsWorkspaceTabUrl(state_.url));
   if (state_.loading && !reload_timer_.IsRunning()) AnimateReload();
   if (selected) ApplyAppearance(false);
   RebuildTabs(previous_workspace, changed);
@@ -5057,7 +5068,7 @@ void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view 
   if(cache.node_graph&&cache.pins==pins&&cache.split_tabs==split_tabs&&cache.split==split&&cache.tabs.size()==tabs.size()&&
       std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index&&a.pin_id==b.pin_id;}))return;
   if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id),sidebar_tree_.Revealed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
+  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():IsRssTabUrl(pin.url)?u"\x1fRSS":base::i18n::ToUpper(title.substr(0,1));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id),sidebar_tree_.Revealed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
   // Rust owns the split group node, its pin anchor/parent and member visibility.
   rust::Vec<size_t> members;for(size_t member:split_tabs)members.push_back(member);
   const auto plan=cache.node_graph->graph->reconcile_sidebar_layout(std::move(pin_ids),std::move(tab_ids),
@@ -5372,7 +5383,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       spec.tile = tile;
       if (tile) spec.height = 38;
       auto host = HostLabel(tab.url);
-      spec.monogram = base::i18n::ToUpper((host.empty() ? tab.title : host).substr(0, 1));
+      spec.monogram = IsRssTabUrl(tab.url) ? u"\x1fRSS" : base::i18n::ToUpper((host.empty() ? tab.title : host).substr(0, 1));
       spec.monogram_color = kMonogramColors[base::FastHash(base::UTF16ToUTF8(host)) % kMonogramColors.size()];
       spec.drop=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string workspace,size_t index,std::array<uint64_t,2> identity,gfx::Point point){
         if(shell)shell->HandleSidebarDrop(std::move(workspace),index,std::move(identity),{},point);
@@ -6028,7 +6039,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
       } else {
         RowRecipe::Spec spec;spec.title=base::UTF8ToUTF16(pin.title);
         if(pin.folder){spec.icon=&vector_icons::kFolderFilledIcon;spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}
-        else {spec.monogram=base::i18n::ToUpper(spec.title.substr(0,1));spec.monogram_color=kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];}
+        else {spec.monogram=IsRssTabUrl(pin.url)?u"\x1fRSS":base::i18n::ToUpper(spec.title.substr(0,1));spec.monogram_color=kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];}
         row(spec,entry.depth);
       }
       if(pin.folder&&!entry.collapsed)groups.push_back(entry.depth);
@@ -6123,7 +6134,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
                 spec.icon = &vector_icons::kFolderFilledIcon;
                 spec.title = (entry.collapsed ? u"▸ " : u"▾ ") + spec.title;
               } else {
-                spec.monogram = base::i18n::ToUpper(spec.title.substr(0, 1));
+                spec.monogram = IsRssTabUrl(pin->url) ? u"\x1fRSS" : base::i18n::ToUpper(spec.title.substr(0, 1));
                 spec.monogram_color = kMonogramColors[base::FastHash(pin->url.host()) % kMonogramColors.size()];
               }
               row(spec, indent, 34);
@@ -6293,7 +6304,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
         if(shell)shell->HandleSidebarDrop(std::move(workspace),std::nullopt,{},std::move(id),point);
       },weak_factory_.GetWeakPtr(),workspace,pin->id);
       spec.drag=base::BindRepeating(&WorkspaceShell::HandleSidebarDrag,weak_factory_.GetWeakPtr());
-      if(!cache.node_graph){spec.monogram=base::i18n::ToUpper(spec.title.substr(0,1));spec.monogram_color=kMonogramColors[base::FastHash(pin->url.host())%kMonogramColors.size()];}
+      if(!cache.node_graph){spec.monogram=IsRssTabUrl(pin->url)?u"\x1fRSS":base::i18n::ToUpper(spec.title.substr(0,1));spec.monogram_color=kMonogramColors[base::FastHash(pin->url.host())%kMonogramColors.size()];}
     }
     views::View* row = nullptr;
     views::View* button = nullptr;
@@ -6785,7 +6796,7 @@ void WorkspaceShell::RequestEditPinnedUrl(std::string workspace, std::string pin
         if (shell->state_.workspace_id != workspace || std::none_of(shell->state_.pins.begin(), shell->state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; })) return true;
         const auto text = base::UTF16ToUTF8(base::TrimWhitespace(input->GetText(), base::TRIM_ALL));
         const GURL url = url_formatter::FixupURL(text);
-        const bool valid = !text.empty() && url.is_valid() && url.SchemeIsHTTPOrHTTPS();
+        const bool valid = !text.empty() && url.is_valid() && IsWorkspaceTabUrl(url);
         if (valid && shell->callbacks_.update_pinned_url.Run(workspace, pin, url)) return true;
         error->SetText(valid ? T(u"Nie udało się zapisać adresu.") : T(u"Podaj poprawny adres HTTP lub HTTPS."));
         error->SetVisible(true);
@@ -10223,6 +10234,7 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   model->AddSeparator(ui::NORMAL_SEPARATOR);
   add("sidebar", T(u"Pokaż lub ukryj karty"), kMenuSidebarIcon);
   add("history", T(u"Historia…"), kMenuHistoryIcon);
+  add("rss", T(u"Czytnik RSS"), kRssTabIcon);
   add("timeline", T(u"Time Machine…"), kMenuTimelineIcon);
   add("downloads", T(u"Pobrania…"), kMenuDownloadsIcon);
   add("import", T(u"Importuj z przeglądarki…"), kMenuImportIcon);

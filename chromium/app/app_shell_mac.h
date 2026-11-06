@@ -27,6 +27,7 @@ enum class AppCommand {
   kDevConsole,
   kDevInspect,
   kHardReload,
+  kRss,
 };
 
 class AppShellDelegate {

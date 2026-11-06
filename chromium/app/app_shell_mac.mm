@@ -105,6 +105,7 @@ NSMenu* BuildMainMenu() {
     NSMenuItem.separatorItem,
     Command(@"Time Machine…", AppCommand::kTimeline, @"y", kCmdShift),
     Command(Text(u"Historia…"), AppCommand::kHistory, @"y", kCmd),
+    Command(Text(u"Czytnik RSS"), AppCommand::kRss, @"r", kCmdShift | NSEventModifierFlagOption),
     Command(Text(u"Pobrania…"), AppCommand::kDownloads, @"j", kCmd),
     Command(Text(u"Ustawienia…"), AppCommand::kSettings, @",", kCmd),
     NSMenuItem.separatorItem,

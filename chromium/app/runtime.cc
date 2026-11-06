@@ -269,6 +269,7 @@ void Runtime::RunCommand(AppCommand command) {
     case AppCommand::kHardReload: target->RunShortcut("hard_reload"); break;
     case AppCommand::kReload: target->RunPageCommand(prototype::PageCommand::kReload); break;
     case AppCommand::kToggleSidebar: shell->ToggleSidebar(); break;
+    case AppCommand::kRss: target->RunShortcut("rss"); break;
     case AppCommand::kHistory: target->RunShortcut("history"); break;
     case AppCommand::kTimeline: target->RunShortcut("timeline"); break;
     case AppCommand::kFind: target->RunShortcut("find"); break;

@@ -1,4 +1,5 @@
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/rss_reader.h"
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/i18n.h"
 #include <algorithm>
@@ -35,7 +36,7 @@ base::DictValue WorkspaceWindow::CaptureHost(const Host& host) const {
     auto* view = host.tabs[i].get();
     const GURL url = TabUrl(host, view);
     base::DictValue tab;
-    tab.Set("url", url.SchemeIsHTTPOrHTTPS() ? url.spec() : "");
+    tab.Set("url", IsWorkspaceTabUrl(url) ? url.spec() : "");
     tab.Set("title", base::UTF16ToUTF8(TabTitle(host, view)));
     for (const auto& [id, pinned] : host.pin_tabs) if (pinned == view) tab.Set("pin", id);
     tabs.Append(std::move(tab));
@@ -58,7 +59,7 @@ bool WorkspaceWindow::RestoreHost(Host& host, const base::DictValue& entry) {
   for (const auto& value : *tabs) {
     const auto* tab = value.GetIfDict(); if (!tab) return false;
     const auto* url = tab->FindString("url");
-    if (!url || url->size() > 32768 || (!url->empty() && !GURL(*url).SchemeIsHTTPOrHTTPS())) return false;
+    if (!url || url->size() > 32768 || (!url->empty() && !IsWorkspaceTabUrl(GURL(*url)))) return false;
   }
   const bool was_closing = closing_; closing_ = true;
   ReleaseHost(host); host.sleeping.reset();
@@ -295,7 +296,7 @@ bool WorkspaceWindow::RestoreLayout(std::string workspace_id, base::DictValue en
 }
 void WorkspaceWindow::RecordClosedTab(const Host& host, size_t index) {
   const GURL url = TabUrl(host, host.tabs[index]);
-  if (!url.SchemeIsHTTPOrHTTPS() || !host.profile || host.profile->IsOffTheRecord()) return;
+  if (!IsWorkspaceTabUrl(url) || !host.profile || host.profile->IsOffTheRecord()) return;
   closed_tabs_.push_back({host.workspace_id, host.profile_id, url, TabTitle(host, host.tabs[index]), base::Time::Now()});
   if (closed_tabs_.size() > 50) closed_tabs_.erase(closed_tabs_.begin());
 }
@@ -317,9 +318,10 @@ bool WorkspaceWindow::ReopenClosedTab() {
       const auto closed = timeline_->current->timeline_last_closed(host.workspace_id, rust::Slice<const rust::String>(open.data(), open.size()));
       if (closed.valid) { url = GURL(std::string(closed.tab.url)); title = base::UTF8ToUTF16(std::string(closed.tab.title)); }
     }
-    if (!url.SchemeIsHTTPOrHTTPS()) return false;
+    if (!IsWorkspaceTabUrl(url)) return false;
     auto* view = CreatePage(host.profile); host.tabs.push_back(view);
     host.deferred_urls[view] = url;
+    if (IsRssTabUrl(url)) AssociateReaderPin(host, view);
     if (!title.empty()) host.deferred_titles[view] = title;
     SelectTab(host.tabs.size() - 1); SaveSession(); return true;
   }
@@ -335,6 +337,7 @@ bool WorkspaceWindow::ReopenClosedTabAt(size_t newest) {
     closed_tabs_.erase(closed_tabs_.begin() + index);
     auto* view = CreatePage(host.profile); host.tabs.push_back(view);
     host.deferred_urls[view] = tab.url;
+    if (IsRssTabUrl(tab.url)) AssociateReaderPin(host, view);
     if (!tab.title.empty()) host.deferred_titles[view] = tab.title;
     SelectTab(host.tabs.size() - 1); SaveSession(); return true;
   }

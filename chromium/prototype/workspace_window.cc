@@ -129,6 +129,7 @@
 #include "ui/views/controls/native/native_view_host.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/focus/focus_manager.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view.h"
@@ -204,7 +205,21 @@ constexpr std::array kMinimumFontSizes = {0, 10, 12, 14, 16, 18};
 
 // WebView owns the delegate of its WebContents. Extend that delegate rather
 // than replacing it and losing WebView's sizing/focus/lifecycle behavior.
-class WorkspaceWebView final : public views::WebView {
+// Native reader tabs use an inert opaque-origin document solely as the existing
+// tab/navigation identity. No renderer bindings, profile data or feed text cross
+// this boundary. Only browser-created loads can set the virtual internal URL.
+void LoadWorkspaceTab(content::WebContents* page, const GURL& url,
+                      ui::PageTransition transition) {
+  content::NavigationController::LoadURLParams params(url);
+  params.transition_type = transition;
+  if (IsRssTabUrl(url)) {
+    params.url = GURL("data:text/html,<meta http-equiv=Content-Security-Policy content=\"default-src 'none'\"><title>RSS</title>");
+    params.load_type = content::NavigationController::LOAD_TYPE_DATA;
+    params.virtual_url_for_special_cases = url;
+  }
+  page->GetController().LoadURLWithParams(params);
+}
+class WorkspaceWebView final : public views::WebView, public views::FocusChangeListener {
   METADATA_HEADER(WorkspaceWebView, views::WebView)
 
  public:
@@ -227,16 +242,83 @@ class WorkspaceWebView final : public views::WebView {
       : views::WebView(profile), handler_(std::move(handler)), open_(std::move(open)), menu_(std::move(menu)),
         adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)), fullscreen_(std::move(fullscreen)),
         image_previews_(std::move(image_previews)), peek_(std::move(peek)), gestures_enabled_(std::move(gestures_enabled)), gesture_(std::move(gesture)) {}
-  ~WorkspaceWebView() override { if (is_fullscreen_) fullscreen_.Run(web_contents(), false); }
+  ~WorkspaceWebView() override { UnmountReader(false); if (GetFocusManager() && GetFocusManager()->HasFocusChangeListener(this)) GetFocusManager()->RemoveFocusChangeListener(this); if (is_fullscreen_) fullscreen_.Run(web_contents(), false); }
   std::array<uint64_t,2> sidebar_identity() const {return {sidebar_identity_.GetHighForSerialization(),sidebar_identity_.GetLowForSerialization()};}
   void ResetImagePreview() { if (image_preview_) image_preview_->Reset(); }
   bool image_preview_visible() const { return image_preview_ && image_preview_->visible_for_testing(); }
+  RssPanel* rss() const { return rss_.get(); }
+  void SetReaderOpen(base::RepeatingCallback<void(GURL)> open) { rss_open_ = std::move(open); }
+  void MountReader() {
+    if (rss_ || !GetWidget()) return;
+    rss_ = std::make_unique<RssPanel>();
+    rss_->Show(Profile::FromBrowserContext(GetWebContents()->GetBrowserContext()), this, rss_open_);
+    rss_->view()->AddPreTargetHandler(&reader_input_);
+    holder()->SetVisible(false);
+    set_lock_child_ax_tree_id_override(true);
+    GetViewAccessibility().RemoveChildTreeID();
+    GetViewAccessibility().SetIsIgnored(false);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kGenericContainer);
+  }
   void SetWorkspaceBackground(SkColor color) {
     workspace_color_ = color;
     UpdateBlankBackground();
   }
 
  private:
+  class ReaderInput final : public ui::EventHandler {
+   public:
+    explicit ReaderInput(WorkspaceWebView* owner) : owner_(owner) {}
+    void OnEvent(ui::Event* event) override {
+      if (owner_->rss_ && (event->type() == ui::EventType::kMousePressed || event->type() == ui::EventType::kTouchPressed)) {
+        owner_->interacted_.Run(owner_);
+        owner_->rss_->RequestFocus();
+      }
+    }
+   private:
+    raw_ptr<WorkspaceWebView> owner_;
+  } reader_input_{this};
+  void UnmountReader(bool restore_accessibility = true) {
+    if (!rss_) return;
+    if (rss_ && rss_->view()) rss_->view()->RemovePreTargetHandler(&reader_input_);
+    rss_.reset();
+    set_lock_child_ax_tree_id_override(false);
+    if (restore_accessibility) {
+      GetViewAccessibility().SetRole(ax::mojom::Role::kWebView);
+      views::WebView::AXTreeIDForMainFrameHasChanged();
+    }
+  }
+  std::unique_ptr<RssPanel> rss_;
+  base::RepeatingCallback<void(GURL)> rss_open_;
+  void AddedToWidget() override {
+    views::WebView::AddedToWidget();
+    GetFocusManager()->AddFocusChangeListener(this);
+  }
+  void OnWillChangeFocus(views::View*, views::View*) override {}
+  void OnDidChangeFocus(views::View*, views::View* now) override {
+    if (rss_ && now && Contains(now)) interacted_.Run(this);
+  }
+  void OnBoundsChanged(const gfx::Rect& previous) override {
+    views::WebView::OnBoundsChanged(previous);
+    if (rss_ && rss_->view()) { holder()->SetVisible(false); rss_->view()->SetBoundsRect(GetLocalBounds()); }
+  }
+  bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) override {
+    return rss_ ? views::View::SkipDefaultKeyEventProcessing(event)
+                : views::WebView::SkipDefaultKeyEventProcessing(event);
+  }
+  gfx::NativeViewAccessible GetNativeViewAccessible() override {
+    return rss_ ? views::View::GetNativeViewAccessible()
+                : views::WebView::GetNativeViewAccessible();
+  }
+  void OnFocus() override {
+    if (rss_ && rss_->view()) rss_->RequestFocus();
+    else views::WebView::OnFocus();
+  }
+  void DidFinishNavigation(content::NavigationHandle* navigation) override {
+    if (!navigation->HasCommitted() || !navigation->IsInPrimaryMainFrame()) return;
+    if (IsRssTabUrl(web_contents()->GetVisibleURL())) MountReader();
+    else if (rss_) { UnmountReader(); holder()->SetVisible(true); }
+    changed_.Run();
+  }
   SkColor workspace_color_ = SK_ColorTRANSPARENT;
   std::optional<SkColor> blank_background_;
   void UpdateBlankBackground() {
@@ -281,6 +363,7 @@ class WorkspaceWebView final : public views::WebView {
   void RemovedFromWidget() override {
     // A Peek WebView moves to the main window when promoted.
     image_preview_.reset();
+    if (GetFocusManager() && GetFocusManager()->HasFocusChangeListener(this)) GetFocusManager()->RemoveFocusChangeListener(this);
     views::WebView::RemovedFromWidget();
   }
   bool CanEnterFullscreenModeForTab(content::RenderFrameHost*) override {
@@ -935,7 +1018,6 @@ WorkspaceWindow::Host::Host(Host&&) noexcept = default;
 WorkspaceWindow::Host& WorkspaceWindow::Host::operator=(Host&&) noexcept = default;
 
 WorkspaceWindow::~WorkspaceWindow() {
-  rss_panel_.reset();
   if (assistant_) assistant_->Stop();
   assistant_ = nullptr;
   assistant_targets_.clear();
@@ -1013,6 +1095,9 @@ views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* paren
               window->RunShortcut(std::move(command));
             }, window, source, command));
       }, weak_factory_.GetWeakPtr())));
+  view->SetReaderOpen(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, Profile* profile, GURL url) {
+    if (window && url.SchemeIsHTTPOrHTTPS()) window->OpenProfileTab(profile, url, true);
+  }, weak_factory_.GetWeakPtr(), profile));
   view->set_allow_accelerators(true);
   view->SetVisible(false);
   if (owned) view->SetOwnedWebContents(std::move(owned));
@@ -1021,6 +1106,7 @@ views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* paren
     view->SetWorkspaceBackground(shell_->active_workspace_color());
     view->web_contents()->WasHidden();
   }
+  if (view->web_contents() && IsRssTabUrl(view->web_contents()->GetVisibleURL())) view->MountReader();
   return view;
 }
 
@@ -1040,6 +1126,7 @@ GURL WorkspaceWindow::TabUrl(const Host& host, views::WebView* view) {
 }
 
 std::u16string WorkspaceWindow::TabTitle(const Host& host, views::WebView* view) {
+  if (IsRssTabUrl(TabUrl(host, view))) return T(u"Czytnik RSS");
   if (auto stored = host.deferred_titles.find(view); stored != host.deferred_titles.end()) return stored->second;
   return view->web_contents() ? view->web_contents()->GetTitle() : std::u16string();
 }
@@ -1125,7 +1212,7 @@ bool WorkspaceWindow::Select(std::string_view id) {
     shell_->CloseOverlays(true);
     UpdateShell();
     widget_->Activate();
-    contents(active_id())->Focus();
+    for (auto& host : hosts_) if (host.workspace_id == active_id()) host.view->RequestFocus();
     if (sidebar_was_visible && !shell_->sidebar_visible()) shell_->ShowSidebar();
     if (changed) { shell_->AnimateWorkspaceSwitch(previous); SaveSelection(); }
   }
@@ -1310,7 +1397,7 @@ bool WorkspaceWindow::Activate(std::string_view id,
         ShowPage(tab);
         host.deferred_titles.erase(tab);
         if (auto pending = host.deferred_urls.find(tab); pending != host.deferred_urls.end()) {
-          tab->GetWebContents()->GetController().LoadURL(pending->second, content::Referrer(), ui::PAGE_TRANSITION_RELOAD, std::string());
+          LoadWorkspaceTab(tab->GetWebContents(), pending->second, ui::PAGE_TRANSITION_RELOAD);
           host.deferred_urls.erase(pending);
         }
       } else {
@@ -1627,24 +1714,46 @@ void WorkspaceWindow::ShowSitePanel() {
   shell_->ShowSitePanel(ReadSitePermissions(profile, url), std::move(handlers));
 }
 
+void WorkspaceWindow::AssociateReaderPin(Host& host, views::WebView* view) {
+  for (const auto& pin : pinned_items(host.workspace_id)) {
+    if (!pin.folder && IsRssTabUrl(pin.url) && !host.pin_tabs.contains(pin.id)) {
+      host.pin_tabs[pin.id] = view;
+      return;
+    }
+  }
+}
+RssPanel* WorkspaceWindow::rss_panel() const {
+  for (const auto& host : hosts_) if (host.workspace_id == active_id() && host.view)
+    return static_cast<WorkspaceWebView*>(host.view.get())->rss();
+  return nullptr;
+}
 void WorkspaceWindow::ShowRss() {
-  if (!model_.active()) return;
-  auto* profile = ProfileFor(model_.active()->profile_id);
-  if (!profile) return;
+  if (!configuration_ready_ || profiles_busy_ || !model_.active()) return;
+  auto* source = contents(active_id());
   shell_->CloseOverlays(true);
-  if (!rss_panel_) rss_panel_ = std::make_unique<RssPanel>();
-  auto* page = contents(active_id());
-  rss_panel_->Show(profile, widget_.get(), page ? page->GetVisibleURL() : GURL(),
-    base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, Profile* profile, GURL url) {
-      if (window) window->OpenProfileTab(profile, url, true);
-    }, weak_factory_.GetWeakPtr(), profile));
-  rss_panel_->BeginDiscovery();
-  if (page && page->GetPrimaryMainFrame()) {
-    page->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
-      u"Array.from(document.querySelectorAll('link[rel~=alternate i]')).filter(x=>['application/rss+xml','application/atom+xml'].includes(x.type.toLowerCase().split(';')[0].trim())).slice(0,10).map(x=>x.href)",
-      base::BindOnce([](base::WeakPtr<RssPanel> panel, size_t generation, content::WeakDocumentPtr document, base::Value result) {
-        if (panel && panel->discovery_generation() == generation && document.AsRenderFrameHostIfValid()) panel->DiscoverFromPage(std::move(result));
-      }, rss_panel_->GetWeakPtr(), rss_panel_->discovery_generation(), page->GetPrimaryMainFrame()->GetWeakDocumentPtr()), content::ISOLATED_WORLD_ID_CONTENT_END);
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || !host.profile) continue;
+    size_t index = 0;
+    for (; index < host.tabs.size(); ++index) if (IsRssTabUrl(TabUrl(host, host.tabs[index]))) break;
+    if (index == host.tabs.size()) {
+      auto* view = CreatePage(host.profile);
+      host.tabs.push_back(view);
+      host.deferred_urls[view] = GURL(kRssTabUrl);
+      AssociateReaderPin(host, view);
+    }
+    auto* view = static_cast<WorkspaceWebView*>(host.tabs[index].get());
+    view->MountReader();
+    auto* panel = view->rss();
+    if (source && source != view->web_contents() && source->GetLastCommittedURL().SchemeIsHTTPOrHTTPS() && source->GetPrimaryMainFrame()) {
+      panel->BeginDiscovery();
+      source->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
+        u"Array.from(document.querySelectorAll('link[rel~=alternate i]')).filter(x=>['application/rss+xml','application/atom+xml'].includes(x.type.toLowerCase().split(';')[0].trim())).slice(0,10).map(x=>x.href)",
+        base::BindOnce([](base::WeakPtr<RssPanel> panel, size_t generation, content::WeakDocumentPtr document, base::Value result) {
+          if (panel && panel->discovery_generation() == generation && document.AsRenderFrameHostIfValid()) panel->DiscoverFromPage(std::move(result));
+        }, panel->GetWeakPtr(), panel->discovery_generation(), source->GetPrimaryMainFrame()->GetWeakDocumentPtr()), content::ISOLATED_WORLD_ID_CONTENT_END);
+    }
+    SelectTab(index);
+    return;
   }
 }
 
@@ -1749,7 +1858,7 @@ content::WebContents* WorkspaceWindow::OpenProfileTab(Profile* profile, const GU
     auto* view = CreatePage(host.profile);
     host.tabs.push_back(view);
     auto* page = view->GetWebContents();
-    page->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
+    LoadWorkspaceTab(page, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
     if (active) SelectTab(host.tabs.size() - 1);
     else UpdateShell();
     extension_tabs_->Sync();  // The tabs API answers with the new tab's window.
@@ -1757,7 +1866,7 @@ content::WebContents* WorkspaceWindow::OpenProfileTab(Profile* profile, const GU
   }
   return nullptr;
 }
-bool WorkspaceWindow::OpenExternalUrl(const GURL& url) { return OpenLink(url, active_id(), true); }
+bool WorkspaceWindow::OpenExternalUrl(const GURL& url) { return url.SchemeIsHTTPOrHTTPS() && OpenLink(url, active_id(), true); }
 bool WorkspaceWindow::RunExternalCommand(std::string command) {
   if (!widget_) return false;
   const GURL requested_url(command.starts_with("url:") ? command.substr(4) : "");
@@ -1785,7 +1894,7 @@ bool WorkspaceWindow::OpenLink(const GURL& url, std::string source_workspace, bo
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, GURL url, std::string source, bool fresh, bool split) {
     if (w) w->OpenLink(url, source, fresh, split);
   }, weak_factory_.GetWeakPtr(), url, source_workspace, new_tab, split))) return true;
-  if (!configuration_ready_ || profiles_busy_ || !url.SchemeIsHTTPOrHTTPS()) return false;
+  if (!configuration_ready_ || profiles_busy_ || !IsWorkspaceTabUrl(url)) return false;
   auto target = WorkspaceForUrl(url);
   if (target.empty()) target = model_.Find(source_workspace) ? source_workspace : active_id();
   if (DeferForProfile(target, base::BindOnce(
@@ -1834,7 +1943,7 @@ bool WorkspaceWindow::OpenPeek(const GURL& url, std::string source_workspace) {
   peek_view_ = CreatePage(ProfileFor(workspace->profile_id), shell_->peek_host());
   shell_->ShowPeek(base::UTF8ToUTF16(workspace->name + " · " + std::string(url.host())));
   ShowPage(peek_view_);
-  peek_view_->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
+  LoadWorkspaceTab(peek_view_->GetWebContents(), url, ui::PAGE_TRANSITION_LINK);
   peek_view_->RequestFocus();
   UpdateShell();
   return true;
@@ -1913,7 +2022,7 @@ content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source
           for (auto& host : window->hosts_) if (host.workspace_id == workspace) {
             auto* view = window->CreatePage(host.profile);
             host.tabs.push_back(view);
-            view->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
+            LoadWorkspaceTab(view->GetWebContents(), url, ui::PAGE_TRANSITION_LINK);
             window->UpdateShell();
             std::string site(url.host());
             if (base::StartsWith(site, "www.")) site = site.substr(4);
@@ -1957,7 +2066,7 @@ void WorkspaceWindow::ActivatePaletteResult(PaletteResult result) {
       if (*result.tab < host.tabs.size() && matches(*result.tab)) { SelectTab(*result.tab); return; }
       for (size_t i = 0; i < host.tabs.size(); ++i) if (matches(i)) { SelectTab(i); return; }
     }
-    if (result.url.SchemeIsHTTPOrHTTPS()) NavigateFromBar(result.url, true);
+    if (IsWorkspaceTabUrl(result.url)) NavigateFromBar(result.url, true);
   } else if (!result.pin_id.empty()) OpenPinnedItem(result.pin_id);
 }
 void WorkspaceWindow::SearchPalette(std::u16string query) {
@@ -1980,7 +2089,7 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
     for (size_t i = 0; i < host.tabs.size() && results.size() < 8; ++i) {
       const auto& view = host.tabs[i];
       const auto url = TabUrl(host, view);
-      if (!url.SchemeIsHTTPOrHTTPS()) continue;
+      if (!IsWorkspaceTabUrl(url)) continue;
       auto title = TabTitle(host, view);
       if (title.empty()) title = base::UTF8ToUTF16(url.host());
       if (!matches(title + u" " + label, url)) continue;
@@ -2204,7 +2313,7 @@ void WorkspaceWindow::RefreshPanes() {
         if (auto pending = host.deferred_urls.find(tab); pending != host.deferred_urls.end()) {
           GURL url = pending->second;
           host.deferred_urls.erase(pending);
-          tab->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_RELOAD, std::string());
+          LoadWorkspaceTab(tab->GetWebContents(), url, ui::PAGE_TRANSITION_RELOAD);
         }
       } else if (tab->GetVisible()) { tab->SetVisible(false); tab->GetWebContents()->WasHidden(); }
     }
@@ -2258,7 +2367,7 @@ bool WorkspaceWindow::SplitTab(size_t index) {
           ? source->GetWebContents()->GetVisibleURL() : pending->second;
       host.tabs.push_back(CreatePage(host.profile));
       index = host.tabs.size() - 1;
-      if (url.SchemeIsHTTPOrHTTPS()) host.deferred_urls[host.tabs[index]] = url;
+      if (IsWorkspaceTabUrl(url)) host.deferred_urls[host.tabs[index]] = url;
     }
     if (host.split.size() >= kMaxSplitPanes) {
       // A full group replaces its focused pane.
@@ -2353,7 +2462,8 @@ bool WorkspaceWindow::ReopenTabs(std::string workspace_id, std::vector<ClosedTab
     for (const auto& tab : tabs) {
       auto* view = CreatePage(host.profile);
       host.tabs.insert(host.tabs.begin() + std::min(tab.index, host.tabs.size()), view);
-      if (tab.url.SchemeIsHTTPOrHTTPS()) host.deferred_urls[view] = tab.url;
+      if (IsWorkspaceTabUrl(tab.url)) host.deferred_urls[view] = tab.url;
+      if (IsRssTabUrl(tab.url)) AssociateReaderPin(host, view);
       if (!tab.title.empty()) host.deferred_titles[view] = tab.title;
       std::erase_if(closed_tabs_, [&](const ClosedTab& closed) { return closed.workspace_id == workspace_id && closed.url == tab.url; });
     }
@@ -2470,6 +2580,10 @@ void WorkspaceWindow::CloseActiveTab() {
 void WorkspaceWindow::RunPageCommand(PageCommand command) {
   auto* page = peek_contents() ? peek_contents() : contents(active_id());
   if (!page) return;
+  if (command == PageCommand::kReload && IsRssTabUrl(page->GetVisibleURL())) {
+    RssReader::For(Profile::FromBrowserContext(page->GetBrowserContext()))->Refresh();
+    return;
+  }
   auto& controller = page->GetController();
   switch (command) {
     case PageCommand::kBack:
@@ -2491,7 +2605,7 @@ bool WorkspaceWindow::NavigateFromBar(const GURL& url, bool new_tab) {
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, GURL url, bool fresh) {
     if (w) w->NavigateFromBar(url, fresh);
   }, weak_factory_.GetWeakPtr(), url, new_tab))) return true;
-  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) return false;
+  if (!url.is_valid() || !IsWorkspaceTabUrl(url)) return false;
   if (const auto target = WorkspaceForUrl(url); !target.empty() && target != active_id())
     return OpenLink(url, active_id(), true);
   pending_profile_action_.Reset();
@@ -2506,9 +2620,7 @@ bool WorkspaceWindow::NavigateFromBar(const GURL& url, bool new_tab) {
   }
   auto* page = contents(active_id());
   if (!page) return false;
-  content::NavigationController::LoadURLParams params(url);
-  params.transition_type = ui::PAGE_TRANSITION_TYPED;
-  page->GetController().LoadURLWithParams(params);
+  LoadWorkspaceTab(page, url, ui::PAGE_TRANSITION_TYPED);
   return true;
 }
 
@@ -2547,8 +2659,8 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "copy_url") {
     // The address pill trembles once: the copy's only confirmation (design: AddressPill).
     auto* page = peek_contents() ? peek_contents() : contents(active_id());
-    if (!page || !page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) return false;
-    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(page->GetLastCommittedURL().spec()));
+    if (!page || !IsWorkspaceTabUrl(page->GetVisibleURL())) return false;
+    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(page->GetVisibleURL().spec()));
     shell_->TremorAddress();
     return true;
   }
@@ -2556,6 +2668,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id.starts_with("devtools") || id == "hard_reload" || id == "project_split") {
     auto* page = peek_contents() ? peek_contents() : contents(active_id());
     if (!page) return false;
+    if (id == "hard_reload" && IsRssTabUrl(page->GetVisibleURL())) { RunPageCommand(PageCommand::kReload); return true; }
     if (id == "hard_reload") { page->GetController().Reload(content::ReloadType::BYPASSING_CACHE, true); return true; }
     if (id == "project_split") {
       if (peek_contents() || !IsLocalProject(page->GetVisibleURL())) return false;
@@ -3135,7 +3248,7 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
             const bool folder = pin && pin->FindBool("folder").value_or(false);
             if (!pin_id || pin_id->empty() || !seen.insert(*pin_id).second || !parent ||
                 (!parent->empty() && !folders.contains(*parent)) || !title || !url ||
-                (!folder && !GURL(*url).SchemeIsHTTPOrHTTPS())) { valid = false; break; }
+                (!folder && !IsWorkspaceTabUrl(GURL(*url)))) { valid = false; break; }
             restored_pins[*id].push_back({*pin_id, *parent, *title, GURL(*url), folder});
             if (folder) folders.insert(*pin_id);
           }
@@ -3484,7 +3597,7 @@ bool WorkspaceWindow::PinTab(size_t index, std::string parent, std::string befor
     auto* view = host.tabs[index].get();
     for (const auto& [id, pinned] : host.pin_tabs) if (pinned == view) return MovePin(id, std::move(parent), std::move(before));
     const GURL url = TabUrl(host, view);
-    if (!url.SchemeIsHTTPOrHTTPS()) return false;
+    if (!IsWorkspaceTabUrl(url)) return false;
     auto title = base::UTF16ToUTF8(TabTitle(host, view));
     if (title.empty()) title = url.host();
     PinnedItem item{"pin-" + base::Uuid::GenerateRandomV4().AsLowercaseString(), std::move(parent), std::move(title), url, false};
@@ -3498,7 +3611,7 @@ bool WorkspaceWindow::PinTab(size_t index, std::string parent, std::string befor
 }
 bool WorkspaceWindow::UpdatePinnedUrl(std::string workspace, std::string id, GURL url) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace) ||
-      !url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) return false;
+      !url.is_valid() || !IsWorkspaceTabUrl(url)) return false;
   auto& items = pins_[workspace];
   auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
   if (pin == items.end()) return false;
@@ -3512,7 +3625,7 @@ bool WorkspaceWindow::ResetPinnedUrl(std::string id) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return false;
   const auto& items = pinned_items(active_id());
   auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
-  if (pin == items.end() || !pin->url.SchemeIsHTTPOrHTTPS()) return false;
+  if (pin == items.end() || !IsWorkspaceTabUrl(pin->url)) return false;
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce(
       [](base::WeakPtr<WorkspaceWindow> window, std::string workspace, std::string id) {
         if (window && window->active_id() == workspace) window->ResetPinnedUrl(std::move(id));
@@ -3527,7 +3640,7 @@ bool WorkspaceWindow::ResetPinnedUrl(std::string id) {
     SelectTab(std::find(host.tabs.begin(), host.tabs.end(), view) - host.tabs.begin());
     auto* page = EnsurePage(view);
     if (page->GetVisibleURL() != url)
-      page->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_AUTO_BOOKMARK, std::string());
+      LoadWorkspaceTab(page, url, ui::PAGE_TRANSITION_AUTO_BOOKMARK);
     return true;
   }
   return false;
@@ -3749,7 +3862,7 @@ void WorkspaceWindow::CommitArcImport() {
     import_replaces_starter_ = starter && (starter->name == "Moja przestrzeń" || starter->name == base::UTF16ToUTF8(T(u"Moja przestrzeń"))) &&
         starter->profile_id == "personal-profile" && pinned_items(starter->id).empty() &&
         host != hosts_.end() && host->tabs.size() == 1 && host->split.empty() &&
-        !TabUrl(*host, host->view).SchemeIsHTTPOrHTTPS();
+        !IsWorkspaceTabUrl(TabUrl(*host, host->view));
   }
   closing_ = true;
   for (const auto& space : pending_import_->spaces) {

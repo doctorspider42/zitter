@@ -1,4 +1,5 @@
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/rss_reader.h"
 #include "chromium/prototype/timeline_store.h"
 #include "chromium/prototype/page_media_access.h"
 #include "chromium/prototype/i18n.h"
@@ -60,7 +61,7 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
   };
   // Rust owns the catalogue, wording and matching; native code supplies facts.
   sidebar::CommandContext context{};
-  context.page = page; context.http_page = page && page->GetVisibleURL().SchemeIsHTTPOrHTTPS(); context.split = split();
+  context.page = page; context.http_page = page && IsWorkspaceTabUrl(page->GetVisibleURL()); context.split = split();
   context.can_back = page && page->GetController().CanGoBack(); context.can_forward = page && page->GetController().CanGoForward();
   context.tab_count = tab_count(source); context.reopen = has_closed();
   context.assistant = assistant_settings_.enabled;

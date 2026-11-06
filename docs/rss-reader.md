@@ -3,16 +3,37 @@
 Open **RSS reader** from Command Center (`RSS`, `Atom`, or `reader`), or use
 Command+Option+Shift+R on macOS / Ctrl+Alt+Shift+R elsewhere. This command belongs
 to the shared shortcut catalogue and can be reassigned in input settings.
+**RSS reader** also appears beside History in the browser menu (Windows) and
+Zitter's native application menu (macOS), with its current shortcut.
 
+The command opens or activates a real internal tab at `zitter://rss/` in the
+current space. It reuses an open reader, including one in Split View, or reopens
+its existing pin. Pin and unpin it with the normal tab controls. Closing the tab
+keeps subscriptions; reopening a pin, restoring a session, or reopening a closed
+tab restores the reader. Manually duplicating a reader in Split View creates an
+independent view of the same profile's sources. Filters, selection, drafts and
+scroll position belong to each open view and are not session data. Reload
+refreshes the profile's feeds; Copy address copies the canonical internal URL.
+
+Use the **RSS settings** gear in the tab header to open a separate settings
+screen in the same tab. It lists feed names and URLs with removal controls.
 Choose **Add feed**, paste an HTTP(S) RSS 2.0 or Atom feed URL, and subscribe.
-For an empty reader, the URL field is already visible. When the current page
+For an empty profile the settings screen already shows the URL field. **Back to
+reader** returns to the previous list or article preview. The reading screen
+keeps its filters and source picker, with source editing confined to settings.
+
+When the page from which you invoke the command
 advertises RSS or Atom with `link rel="alternate"`, the reader offers those
-feeds. Select a source or browse all sources, unread articles, or saved articles.
+feeds. Discovery starts before switching tabs; invoking the command from the
+reader itself preserves the last discovered sources. Choose a discovered feed
+to review its URL in settings before subscribing. Select a source or browse all
+sources, unread articles, or saved articles.
 Entries are sorted by parsed publication date, with stable ordering for missing
-or equal dates. Select an entry to read its text preview; use **Open article**
+or equal dates. Article titles highlight on hover and use a pointer cursor.
+Click a title (or focus it and press Enter/Space) to read its text preview; use
+**Open article**
 to navigate to the original in a normal tab. Selecting a preview marks it read.
-The preview also supports saving and marking unread. **Manage feeds** reveals
-compact source controls, including removal.
+The preview also supports saving and marking unread.
 
 ## State and isolation
 
@@ -22,11 +43,14 @@ profile's directory. A private browsing profile starts with an empty reader,
 keeps its state only in memory, and discards it with that private profile.
 Explicit article navigation remains bound to the profile that opened the reader.
 
-The profile owns the reader service, so closing the panel does not interrupt a
-refresh. Profile destruction cancels network work, invalidates pending parser
-callbacks, and closes the panel. Discovery is scoped to both the panel generation
-and the source document; results from replaced documents or closed panels are
-ignored. The window tears down its panel before releasing profile leases.
+The profile owns the reader service, so closing a reader tab does not interrupt
+a refresh. Profile destruction cancels network work and invalidates pending
+parser callbacks. Each tab owns its native view, scene, keyboard routing and
+observer subscription, which are torn down before its window releases profile
+leases. Discovery is scoped to both the reader generation and the source
+document; results from replaced documents or closed reader tabs are ignored.
+Article navigation opens a separate normal tab in the originating profile,
+leaving the reader and any pin available.
 
 ## Fetching and untrusted content
 
@@ -45,8 +69,17 @@ namespace prefixes and inherited `xml:base` are resolved. Only HTTP(S) article
 links without embedded credentials are accepted. Previews are inert text:
 HTML tags and script/style bodies are discarded; numeric entities, XML entities,
 and common named typography entities are decoded, and
-paragraphs remain readable. There is no WebContents, script execution, image
+paragraphs remain readable. There is no script execution, image
 loading, iframe, or automatic tracker request in the preview.
+
+The native reader is a child of its normal tab host. The existing tab model uses
+an inert `data:` document with an opaque origin and `default-src 'none'` CSP as
+the navigation identity, with the browser-assigned virtual URL `zitter://rss/`.
+The document contains no feed content or profile state. There is no JavaScript
+binding, WebUI endpoint or web-accessible reader API. Only this exact internal
+address is admitted by pin/session/timeline validation; other internal schemes,
+paths, queries and fragments remain rejected. Reader UI is attached on restored
+navigation and on adoption of an already loaded tab.
 
 ## Bounds and retention
 
@@ -77,8 +110,24 @@ Unicode boundaries, budget eviction, saved retention, and a real disk reload.
 relative links, duplicate entries/redirect aliases, malformed XML and entities,
 credential omission, profile separation, saved/read persistence, and private
 profile destruction during a fetch. `RssReaderLifecycleDiscoveryAndVisuals`
-covers Command Center/shortcut entry, live feed discovery, panel close and profile
+covers Command Center/shortcut entry, local feed discovery, tab close and profile
 switch during a delayed response, English empty state, and captures of list,
-article, narrow, focused, and scrolled layouts in light/dark themes. Pass
+article, narrow, 250–350 px split-pane, pinned-sidebar, focused, and scrolled
+layouts in light/dark themes. Pass
 `--zitter-test-rss-render-dir=/absolute/output/directory` for screenshots; repeat
 with `--zitter-rust-raster=metal` to inspect the Metal renderer.
+`RssReaderTabsPinsRestoreAndIsolation` checks tab deduplication, closed-pin menu
+reopening, AppKit target/selector dispatch on macOS, pin/unpin, a new window's
+session restoration, closed-tab reopening, opaque-document isolation, exact URL
+admission, reload, Copy address, article navigation and private-profile teardown.
+`RssReaderAdoptionMovementAndProfileSwitch` covers adoption of an already loaded
+internal document, moving its native view between spaces of the same profile,
+rejecting a move to a different profile, and assigning a new profile during a
+refresh. `RssReaderNativeSplitFocusAndIndependentViews` checks independent native views,
+Enter/Space routing, control focus and a real click on noninteractive reader
+content before closing the active pane with the keyboard.
+
+`RssReaderSettingsScreenAndReturn` exercises gear dispatch, the dedicated settings
+screen, field focus and subscription through accessibility input, returning to
+an article preview, source removal, and focus after removing the final source.
+The visual helper also captures settings and source entry in a 250–350 px pane.

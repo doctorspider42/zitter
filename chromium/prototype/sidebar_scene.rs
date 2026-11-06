@@ -3488,6 +3488,18 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         }
         return;
     }
+    if i.monogram == "\u{1f}RSS" {
+        // RSS: 1.6 px rounded strokes, two quarter circles and the source dot.
+        let x = i.x + 12.0;
+        let y = i.y + (i.height - 16.0) / 2.0;
+        emit(x+2.7,y+11.7,1.6,1.6,0.8,i.ink,"",0.0,false);
+        for radius in [6.0f32,10.0] {
+            for n in 0..=45 {
+                let a = (n as f32 * 2.0).to_radians();
+                emit(x+3.0+radius*a.sin()-0.8,y+13.0-radius*a.cos()-0.8,1.6,1.6,0.8,i.ink,"",0.0,false);
+            }
+        }
+    } else {
     // Favicon tile at `space-3`: the workspace color's `accent` with `on-accent`.
     let (tile_fill, tile_ink) = monogram_colors(i.badge, i.ink);
     emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
@@ -3496,6 +3508,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
              0.0, if i.badge >> 24 != 0 { tile_ink } else { i.ink },
              &i.monogram, 9.0, true);
+    }
     }
     // Keep a close-button hit area reserved whenever it exists, just as the
     // native interaction node does (including half-width split cards).

@@ -56,7 +56,7 @@ fn admit(frame: &ffi::TimelineFrame, forced: bool) -> Option<Frame> {
     let mut active = -1;
     for (i, tab) in frame.tabs.iter().enumerate() {
         let lower = tab.url.to_ascii_lowercase();
-        if tab.url.len() > MAX_TEXT || !(lower.starts_with("https://") || lower.starts_with("http://")) {
+        if tab.url.len() > MAX_TEXT || !(lower.starts_with("https://") || lower.starts_with("http://") || tab.url == "zitter://rss/") {
             continue;
         }
         if i as i32 == frame.active {

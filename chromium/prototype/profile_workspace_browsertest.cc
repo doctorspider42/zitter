@@ -179,6 +179,7 @@
 #include "base/command_line.h"
 #include "base/i18n/case_conversion.h"
 #include "chromium/prototype/rss_reader.h"
+#include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/location.h"
 #include "base/base_paths.h"
@@ -2487,11 +2488,244 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderFetchParseIsolationAn
   ASSERT_EQ(reloaded->feeds().size(), 5u); EXPECT_TRUE(reloaded->feeds()[0].articles[0].saved); EXPECT_TRUE(reloaded->feeds()[0].articles[0].read);
   auto* private_profile = work_->GetPrimaryOTRProfile(true);
   auto* ephemeral = RssReader::For(private_profile); EXPECT_TRUE(ephemeral->ready()); EXPECT_TRUE(ephemeral->feeds().empty());
-  RssPanel private_panel; private_panel.Show(private_profile,window_->widget(),{},base::DoNothing());
-  EXPECT_NE(private_panel.widget()->widget_delegate()->GetWindowTitle().find(T(u"Okno prywatne")),std::u16string::npos);
+  RssPanel private_panel; private_panel.Show(private_profile,window_->widget()->GetContentsView(),base::DoNothing());
+  EXPECT_TRUE(private_panel.view());
   ephemeral->Add(embedded_test_server()->GetURL("/rss-delayed"));
   EXPECT_TRUE(ephemeral->busy()); ProfileDestroyer::DestroyOTRProfileWhenAppropriate(private_profile);
   ASSERT_TRUE(base::test::RunUntil([&]{return !private_panel.widget();}));
+}
+
+#if BUILDFLAG(IS_MAC)
+bool DispatchRssMenuForTesting(const std::vector<Shortcut>& shortcuts, base::RepeatingClosure action);
+base::ScopedClosureRunner InstallReaderMenuForTesting(base::RepeatingClosure close);
+#endif
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderTabsPinsRestoreAndIsolation) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->tools_ready(); }));
+  auto ready = [&] {
+    return base::test::RunUntil([&] { return window_->rss_panel() && window_->rss_panel()->view() &&
+      !window_->contents(window_->active_id())->IsLoading() && IsRssTabUrl(window_->contents(window_->active_id())->GetVisibleURL()); });
+  };
+  const size_t original = window_->tab_count("work");
+  window_->ShowRss(); ASSERT_TRUE(ready());
+  auto* page = window_->contents("work"); auto* panel = window_->rss_panel();
+  EXPECT_EQ(window_->widget(), panel->widget());
+  EXPECT_TRUE(page->GetPrimaryMainFrame()->GetLastCommittedURL().SchemeIs("data"));
+  EXPECT_TRUE(page->GetPrimaryMainFrame()->GetLastCommittedOrigin().opaque());
+  EXPECT_EQ("", content::EvalJs(page, "document.body.textContent"));
+  EXPECT_EQ("undefined", content::EvalJs(page, "typeof globalThis.chrome?.send"));
+  EXPECT_EQ(GURL(kRssTabUrl), window_->shell()->ResolveInput(kRssTabUrl));
+  for (auto address : {"zitter://rss/elsewhere", "zitter://rss/?query", "zitter://other/", "chrome://settings/"})
+    EXPECT_FALSE(window_->shell()->ResolveInput(address).is_valid());
+  window_->ShowRss(); EXPECT_EQ(original + 1, window_->tab_count("work")); EXPECT_EQ(page, window_->contents("work"));
+  auto* reader = panel->reader(); ASSERT_TRUE(base::test::RunUntil([&] { return reader->ready(); }));
+  reader->Add(embedded_test_server()->GetURL("/rss.xml"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  ASSERT_TRUE(window_->PinTab(original, "", ""));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy() && window_->configuration_saved(); }));
+  const auto pin = window_->pinned_items("work").back().id;
+  EXPECT_EQ(GURL(kRssTabUrl), window_->pinned_items("work").back().url);
+  EXPECT_TRUE(window_->RunShortcut("copy_url"));
+  base::test::TestFuture<std::u16string> copied;
+  ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, copied.GetCallback());
+  EXPECT_EQ(u"zitter://rss/", copied.Get());
+  window_->RunPageCommand(PageCommand::kReload); EXPECT_TRUE(reader->busy());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  window_->CloseActiveTab(); EXPECT_EQ(original, window_->tab_count("work"));
+#if BUILDFLAG(IS_MAC)
+  ASSERT_TRUE(DispatchRssMenuForTesting(window_->shell()->browser_tools().shortcuts,
+      base::BindRepeating([](WorkspaceWindow* window) { window->RunShortcut("rss"); }, base::Unretained(window_.get()))));
+#else
+  window_->shell()->ShowAppMenu(window_->shell()->tab_button(0));
+  auto* menu = window_->shell()->app_menu_for_testing(); ASSERT_TRUE(menu);
+  for (size_t i = 0; i < menu->GetItemCount(); ++i)
+    if (menu->GetLabelAt(i) == T(u"Czytnik RSS")) menu->ActivatedAt(i);
+  if (auto* controller = views::MenuController::GetActiveInstance()) controller->Cancel(views::MenuController::ExitType::kAll);
+#endif
+  ASSERT_TRUE(ready());
+  // Opening through the shared command reattaches the existing, closed pin.
+  const auto reopened_count = window_->tab_count("work");
+  window_->OpenPinnedItem(pin); EXPECT_EQ(reopened_count, window_->tab_count("work"));
+  EXPECT_EQ(reader, window_->rss_panel()->reader());
+  ASSERT_TRUE(window_->UnpinItem(pin, reopened_count));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_TRUE(window_->pinned_items("work").empty());
+  EXPECT_EQ(reopened_count, window_->tab_count("work"));
+  ASSERT_TRUE(window_->PinTab(reopened_count - 1, "", ""));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy() && window_->configuration_saved(); }));
+  window_.reset(); base::ThreadPoolInstance::Get()->FlushForTesting();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  ASSERT_TRUE(ready()); EXPECT_EQ(reopened_count, window_->tab_count("work"));
+  ASSERT_EQ(1u, window_->pinned_items("work").size());
+  EXPECT_EQ(GURL(kRssTabUrl), window_->pinned_items("work")[0].url);
+  EXPECT_EQ(reader, window_->rss_panel()->reader()); EXPECT_EQ(1u, reader->feeds().size());
+  window_->CloseActiveTab(); ASSERT_TRUE(window_->ReopenClosedTab()); ASSERT_TRUE(ready());
+  EXPECT_EQ(reader, window_->rss_panel()->reader());
+  window_->rss_panel()->Select(embedded_test_server()->GetURL("/rss.xml"), "first");
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(window_->rss_panel()->view(), T(u"Otwórz artykuł")); }));
+  const auto articles_before = window_->tab_count("work");
+  ClickControl(FindButton(window_->rss_panel()->view(), T(u"Otwórz artykuł")));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_EQ(articles_before + 1, window_->tab_count("work"));
+  EXPECT_EQ(work_, window_->contents("work")->GetBrowserContext());
+  EXPECT_TRUE(window_->contents("work")->GetVisibleURL().SchemeIsHTTPOrHTTPS());
+  // Web pages have neither a reader DOM nor a backend binding.
+  EXPECT_EQ("undefined", content::EvalJs(window_->contents("work"), "typeof window.zitterRss"));
+  window_->ShowRss(); ASSERT_TRUE(ready());
+  ASSERT_TRUE(window_->Select("personal")); window_->ShowRss(); ASSERT_TRUE(ready());
+  EXPECT_NE(reader, window_->rss_panel()->reader());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->rss_panel()->reader()->ready(); }));
+  EXPECT_TRUE(window_->rss_panel()->reader()->feeds().empty());
+  auto* private_profile = work_->GetOffTheRecordProfile(Profile::OTRProfileID::CreateUnique("RssTabPrivate"), true);
+  auto private_window = std::make_unique<WorkspaceWindow>(work_->GetPath().DirName(), false, private_profile);
+  ASSERT_TRUE(base::test::RunUntil([&] { return private_window->configuration_ready() && private_window->shell()->tools_ready(); }));
+  private_window->ShowRss(); ASSERT_TRUE(content::WaitForLoadStop(private_window->contents("private")));
+  ASSERT_TRUE(private_window->rss_panel()); EXPECT_TRUE(private_window->rss_panel()->reader()->feeds().empty());
+  const auto private_path = private_profile->GetPath();
+  std::string private_disk_before;
+  { base::ScopedAllowBlockingForTesting allow; base::ReadFileToString(private_path.AppendASCII("ZitterRSS.json"), &private_disk_before); }
+  private_window->rss_panel()->reader()->Add(embedded_test_server()->GetURL("/rss-delayed"));
+  EXPECT_TRUE(private_window->PinTab(1, "", ""));
+  private_window.reset();
+  ProfileDestroyer::DestroyOTRProfileWhenAppropriate(private_profile);
+  base::RunLoop().RunUntilIdle(); base::ThreadPoolInstance::Get()->FlushForTesting();
+  { base::ScopedAllowBlockingForTesting allow;
+    std::string after; base::ReadFileToString(private_path.AppendASCII("ZitterRSS.json"), &after);
+    EXPECT_EQ(private_disk_before, after);
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderAdoptionMovementAndProfileSwitch) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->tools_ready(); }));
+  window_->ShowRss(); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* original = window_->contents("work"); auto* original_view = window_->rss_panel();
+  ASSERT_TRUE(original_view); auto* reader = original_view->reader();
+  ASSERT_TRUE(base::test::RunUntil([&] { return reader->ready(); }));
+  auto copied = original->Clone();
+  copied->GetController().LoadIfNecessary(); ASSERT_TRUE(content::WaitForLoadStop(copied.get()));
+  ASSERT_TRUE(IsRssTabUrl(copied->GetVisibleURL()));
+  bool blocked = false;
+  auto* adopted = original->GetDelegate()->AddNewContents(original, std::move(copied), GURL(kRssTabUrl),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB, blink::mojom::WindowFeatures(), true, &blocked);
+  ASSERT_TRUE(adopted); EXPECT_FALSE(blocked);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->contents("work") == adopted; }));
+  ASSERT_TRUE(window_->rss_panel()); EXPECT_NE(original_view, window_->rss_panel());
+  EXPECT_EQ(reader, window_->rss_panel()->reader()); EXPECT_EQ(window_->widget(), window_->rss_panel()->view()->GetWidget());
+  window_->CloseActiveTab(); EXPECT_EQ(original, window_->contents("work"));
+  ASSERT_TRUE(window_->AddWorkspace("Reading", "work-profile"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto target = window_->active_id();
+  ASSERT_TRUE(window_->MoveTabToSpace(original, target, 1));
+  window_->ShowRss(); EXPECT_EQ(original, window_->contents(target)); EXPECT_EQ(original_view, window_->rss_panel());
+  EXPECT_FALSE(window_->MoveTabToSpace(original, "personal", 1));
+  ASSERT_TRUE(window_->Select("work")); window_->ShowRss();
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  EXPECT_NE(original_view, window_->rss_panel()); EXPECT_EQ(reader, window_->rss_panel()->reader());
+  reader->Add(embedded_test_server()->GetURL("/rss-delayed")); EXPECT_TRUE(reader->busy());
+  ASSERT_TRUE(window_->Select(target));
+  views::ViewTracker old_view(window_->rss_panel()->view());
+  ASSERT_TRUE(window_->AssignProfile(target, "personal-profile"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_FALSE(old_view.view());
+  window_->ShowRss(); ASSERT_TRUE(content::WaitForLoadStop(window_->contents(target)));
+  ASSERT_TRUE(window_->rss_panel()); EXPECT_NE(reader, window_->rss_panel()->reader());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->rss_panel()->reader()->ready() && !reader->busy(); }));
+  EXPECT_TRUE(window_->rss_panel()->reader()->feeds().empty());
+  ASSERT_EQ(1u, reader->feeds().size()); EXPECT_EQ(1u, reader->feeds()[0].articles.size());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderNativeSplitFocusAndIndependentViews) {
+  EnableNativeUIControls();
+#if BUILDFLAG(IS_MAC)
+  // The standalone browser-test executable has Chrome's menu, whereas the
+  // product routes Cmd+W through Zitter's AppKit target and Runtime.
+  auto native_menu = InstallReaderMenuForTesting(base::BindRepeating([](WorkspaceWindow* window) {
+    window->RunShortcut("close_tab");
+  }, base::Unretained(window_.get())));
+#endif
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->tools_ready(); }));
+  window_->ShowRss(); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* original = window_->contents("work"); auto* first = window_->rss_panel(); ASSERT_TRUE(first);
+  ASSERT_TRUE(window_->SplitTab(1));
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* second = window_->rss_panel(); ASSERT_TRUE(second); ASSERT_NE(first, second);
+  EXPECT_EQ(first->reader(), second->reader()); EXPECT_TRUE(first->view()->IsDrawn()); EXPECT_TRUE(second->view()->IsDrawn());
+  auto* second_page = window_->contents("work"); ASSERT_NE(original, second_page);
+  auto* reader = first->reader();
+  ASSERT_TRUE(base::test::RunUntil([&] { return reader->ready(); }));
+  reader->Add(embedded_test_server()->GetURL("/rss.xml"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  const auto read_name = TF(u"Czytaj: {}", {base::UTF8ToUTF16(reader->feeds()[0].articles[0].title)});
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(first->view(), read_name) && FindButton(second->view(), read_name); }));
+  second->Select(embedded_test_server()->GetURL("/rss.xml"), "first");
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(second->view(), T(u"Wróć do wpisów")); }));
+  auto* first_read = FindButton(first->view(), read_name); ASSERT_TRUE(first_read); first_read->RequestFocus();
+  EXPECT_EQ(original, window_->contents("work"));
+  ASSERT_TRUE(SendPrimaryKey(window_->widget()->GetNativeWindow(), ui::VKEY_RETURN, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(first->view(), T(u"Wróć do wpisów")); }));
+  EXPECT_TRUE(FindButton(second->view(), T(u"Wróć do wpisów")));
+  ASSERT_TRUE(SendPrimaryKey(window_->widget()->GetNativeWindow(), ui::VKEY_SPACE, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(first->view(), read_name); }));
+  EXPECT_TRUE(FindButton(second->view(), T(u"Wróć do wpisów")));
+  auto* button = FindButton(second->view(), T(u"Wróć do wpisów")); ASSERT_TRUE(button);
+  window_->FocusAddressBar();
+  EXPECT_FALSE(first->AcceleratorPressed(ui::Accelerator(ui::VKEY_RETURN, ui::EF_NONE)));
+  EXPECT_FALSE(second->AcceleratorPressed(ui::Accelerator(ui::VKEY_RETURN, ui::EF_NONE)));
+  window_->shell()->CloseOverlays(true);
+  window_->FocusPane(0); EXPECT_EQ(original, window_->contents("work"));
+  button->RequestFocus(); EXPECT_EQ(second_page, window_->contents("work"));
+  // Native input on noninteractive content must activate its pane too.
+  window_->FocusPane(0); EXPECT_EQ(original, window_->contents("work"));
+  window_->widget()->LayoutRootViewIfNecessary();
+  auto point = second->view()->GetBoundsInScreen().origin() + gfx::Vector2d(35, 35);
+  base::test::TestFuture<void> moved, clicked;
+  ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), moved.GetCallback(), window_->widget()->GetNativeWindow())); ASSERT_TRUE(moved.Wait());
+  ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, ui_controls::DOWN|ui_controls::UP, clicked.GetCallback(), ui_controls::kNoAccelerator, window_->widget()->GetNativeWindow())); ASSERT_TRUE(clicked.Wait());
+  EXPECT_EQ(second_page, window_->contents("work"));
+  ASSERT_TRUE(window_->widget()->IsActive());
+  EXPECT_EQ("close_tab", window_->shell()->ShortcutFor(ui::Accelerator(ui::VKEY_W, kPrimaryModifier)));
+  ASSERT_TRUE(SendPrimaryKey(window_->widget()->GetNativeWindow(), ui::VKEY_W, false, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->tab_count("work") == 2; })) << window_->tab_count("work");
+  EXPECT_EQ(original, window_->contents("work")); EXPECT_EQ(first, window_->rss_panel());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderSettingsScreenAndReturn) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->tools_ready(); }));
+  window_->ShowRss(); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* panel = window_->rss_panel(); ASSERT_TRUE(panel);
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->reader()->ready(); }));
+  auto* gear = FindButton(panel->view(), T(u"Ustawienia RSS")); ASSERT_TRUE(gear); ASSERT_TRUE(gear->IsDrawn());
+  ClickControl(gear);
+  ASSERT_TRUE(base::test::RunUntil([&] { auto* back = FindButton(panel->view(), T(u"Wróć do czytnika")); return back && back->IsDrawn(); }));
+  auto find_field = [&](auto&& self, views::View* view) -> views::View* {
+    if (view->GetViewAccessibility().GetCachedRole() == ax::mojom::Role::kTextField && view->IsDrawn()) return view;
+    for (const auto& child : view->children()) if (auto* field = self(self, child.get())) return field;
+    return nullptr;
+  };
+  auto* field = find_field(find_field, panel->view()); ASSERT_TRUE(field); EXPECT_TRUE(field->HasFocus());
+  ui::AXActionData set; set.action = ax::mojom::Action::kSetValue; set.value = embedded_test_server()->GetURL("/rss.xml").spec();
+  ASSERT_TRUE(field->HandleAccessibleAction(set));
+  ClickControl(FindButton(panel->view(), T(u"Subskrybuj")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->reader()->feeds().size() == 1 && !panel->reader()->busy(); }));
+  EXPECT_TRUE(FindButton(panel->view(), T(u"Usuń")));
+  EXPECT_FALSE(find_field(find_field, panel->view()));
+  const auto name = TF(u"Czytaj: {}", {base::UTF8ToUTF16(panel->reader()->feeds()[0].articles[0].title)});
+  EXPECT_FALSE(FindButton(panel->view(), name));
+  ClickControl(FindButton(panel->view(), T(u"Wróć do czytnika")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), name); }));
+  EXPECT_EQ(window_->widget()->GetFocusManager()->GetFocusedView(), gear);
+  ClickControl(FindButton(panel->view(), name));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), T(u"Otwórz artykuł")); }));
+  ClickControl(gear);
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), T(u"Usuń")); }));
+  EXPECT_FALSE(FindButton(panel->view(), T(u"Otwórz artykuł")));
+  ClickControl(FindButton(panel->view(), T(u"Wróć do czytnika")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), T(u"Otwórz artykuł")); }));
+  ClickControl(gear);
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), T(u"Usuń")); }));
+  ClickControl(FindButton(panel->view(), T(u"Usuń")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->reader()->feeds().empty() && find_field(find_field, panel->view()); }));
+  EXPECT_EQ(window_->widget()->GetFocusManager()->GetFocusedView(), find_field(find_field, panel->view()));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderLifecycleDiscoveryAndVisuals) {
@@ -2505,19 +2739,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderLifecycleDiscoveryAnd
   ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
   ASSERT_EQ(reader->feeds()[0].title,"Field notes");
   const auto read_name = TF(u"Czytaj: {}", {base::UTF8ToUTF16(reader->feeds()[0].articles[0].title)});
-  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),read_name)!=nullptr;}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->view(),read_name)!=nullptr;}));
   auto visible_text = [&](std::u16string_view text) {
     auto find=[&](auto&& self,views::View* view)->bool {
       if (view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kStaticText && view->GetViewAccessibility().GetCachedName()==text && view->IsDrawn() && !view->GetVisibleBounds().IsEmpty() && view->GetVisibleBounds().height()==view->height()) return true;
       for (const auto& child:view->children()) if(self(self,child.get()))return true;
       return false;
     };
-    return panel->widget() && find(find,panel->widget()->GetContentsView());
+    return panel->widget() && find(find,panel->view());
   };
+  ASSERT_TRUE(window_->PinTab(1, "", ""));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->SetPinned(true); shell->ShowSidebar();
   const auto output = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-rss-render-dir");
-  auto capture = [&](std::string name) {
+  auto capture = [&](std::string name, views::Widget* captured_widget = nullptr) {
     if (output.empty()) return;
-    auto* widget = panel->widget(); widget->LayoutRootViewIfNecessary();
+    auto* widget = captured_widget ? captured_widget : panel->widget(); widget->LayoutRootViewIfNecessary();
     base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(350)); settle.Run();
     base::test::TestFuture<scoped_refptr<base::RefCountedMemory>> snapshot;
     auto bounds = gfx::Rect(widget->GetWindowBoundsInScreen().size());
@@ -2533,7 +2770,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderLifecycleDiscoveryAnd
     auto encoded = gfx::PNGCodec::EncodeBGRASkBitmap(cropped,false); ASSERT_TRUE(encoded);
     base::ScopedAllowBlockingForTesting allow; ASSERT_TRUE(base::CreateDirectory(output)); ASSERT_TRUE(base::WriteFile(output.AppendASCII(name),*encoded));
   };
-  auto* read_button = FindButton(panel->widget()->GetContentsView(),read_name); ASSERT_TRUE(read_button);
+  auto source_picker = [&]() -> views::View* {
+    auto find = [&](auto&& self, views::View* view) -> views::View* {
+      if (view->GetViewAccessibility().GetCachedName() == T(u"Źródło wpisów")) return view;
+      for (const auto& child : view->children()) if (auto* found = self(self, child.get())) return found;
+      return nullptr;
+    };
+    return find(find, panel->view());
+  };
+  auto* read_button = FindButton(panel->view(),read_name); ASSERT_TRUE(read_button);
 #if BUILDFLAG(IS_MAC)
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(panel->widget()->GetNativeWindow()));
 #endif
@@ -2544,35 +2789,82 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderLifecycleDiscoveryAnd
   ASSERT_FALSE(read_button->GetVisibleBounds().IsEmpty());
   ASSERT_NO_FATAL_FAILURE(capture("rss-focus-list.png"));
   ASSERT_TRUE(SendPrimaryKey(panel->widget()->GetNativeWindow(),ui::VKEY_RETURN,false,false));
-  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),T(u"Wróć do wpisów"))!=nullptr;}));
-  auto* back=FindButton(panel->widget()->GetContentsView(),T(u"Wróć do wpisów")); EXPECT_EQ(focus->GetFocusedView(),back);
+  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->view(),T(u"Wróć do wpisów"))!=nullptr;}));
+  auto* back=FindButton(panel->view(),T(u"Wróć do wpisów")); EXPECT_EQ(focus->GetFocusedView(),back);
   panel->widget()->LayoutRootViewIfNecessary(); back->ScrollViewToVisible(); ASSERT_FALSE(back->GetVisibleBounds().IsEmpty());
   ASSERT_TRUE(SendPrimaryKey(panel->widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false));
-  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),read_name)!=nullptr;}));
-  EXPECT_EQ(focus->GetFocusedView(),FindButton(panel->widget()->GetContentsView(),read_name));
+  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->view(),read_name)!=nullptr;}));
+  EXPECT_EQ(focus->GetFocusedView(),FindButton(panel->view(),read_name));
+  auto* clickable_title = FindButton(panel->view(), read_name); ASSERT_TRUE(clickable_title);
+  const auto title_point = clickable_title->GetBoundsInScreen().origin() + gfx::Vector2d(16, clickable_title->height()/2);
+  base::test::TestFuture<void> title_moved, title_clicked;
+  ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(title_point.x(), title_point.y(), title_moved.GetCallback(), panel->widget()->GetNativeWindow())); ASSERT_TRUE(title_moved.Wait());
+  ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, ui_controls::DOWN|ui_controls::UP, title_clicked.GetCallback(), ui_controls::kNoAccelerator, panel->widget()->GetNativeWindow())); ASSERT_TRUE(title_clicked.Wait());
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), T(u"Wróć do wpisów")); }));
+  ClickControl(FindButton(panel->view(), T(u"Wróć do wpisów")));
+  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), read_name); }));
   for (auto mode : {ThemeMode::kDark, ThemeMode::kLight}) {
     shell->SetThemeMode(mode); ASSERT_TRUE(base::test::RunUntil([&]{return panel->widget()->color_mode_override()==window_->widget()->color_mode_override();}));
-    panel->widget()->Hide(); shell->SetThemeMode(mode == ThemeMode::kDark ? ThemeMode::kLight : ThemeMode::kDark); window_->ShowRss(); shell->SetThemeMode(mode);
+    window_->SelectTab(0); shell->SetThemeMode(mode == ThemeMode::kDark ? ThemeMode::kLight : ThemeMode::kDark); window_->ShowRss(); shell->SetThemeMode(mode);
     ASSERT_TRUE(base::test::RunUntil([&]{return panel->widget()->color_mode_override()==window_->widget()->color_mode_override();}));
     const std::string suffix = mode == ThemeMode::kDark ? "-dark.png" : "-light.png";
-    panel->widget()->SetSize(gfx::Size(820,760)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-list")+suffix));
-    panel->widget()->SetSize(gfx::Size(460,640)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-narrow-list")+suffix));
-    panel->widget()->SetSize(gfx::Size(820,760));
+    panel->widget()->SetSize(gfx::Size(1060,840));
+    ASSERT_TRUE(base::test::RunUntil([&] { panel->widget()->LayoutRootViewIfNecessary(); return source_picker() && source_picker()->width() > 100; }));
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-list")+suffix));
+    auto* hover_title = FindButton(panel->view(), read_name); ASSERT_TRUE(hover_title);
+    auto* refresh = FindButton(panel->view(), T(u"Odśwież źródła")); ASSERT_TRUE(refresh); refresh->RequestFocus();
+    const auto hover_point = hover_title->GetBoundsInScreen().origin() + gfx::Vector2d(16, hover_title->height()/2);
+    base::test::TestFuture<void> hover_moved;
+    ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(hover_point.x(), hover_point.y(), hover_moved.GetCallback(), panel->widget()->GetNativeWindow())); ASSERT_TRUE(hover_moved.Wait());
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-title-hover")+suffix));
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-pinned-sidebar")+suffix, shell->sidebar_widget()));
+    ClickControl(FindButton(panel->view(), T(u"Ustawienia RSS")));
+    ASSERT_TRUE(base::test::RunUntil([&] { auto* back = FindButton(panel->view(), T(u"Wróć do czytnika")); return back && back->IsDrawn(); }));
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-settings")+suffix));
+    ClickControl(FindButton(panel->view(), T(u"Wróć do czytnika")));
+    ASSERT_TRUE(base::test::RunUntil([&] { return source_picker() != nullptr; }));
+    panel->widget()->SetSize(gfx::Size(620,740)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-narrow-list")+suffix));
+    panel->widget()->SetSize(gfx::Size(1060,840));
     panel->Select(embedded_test_server()->GetURL("/rss.xml"), "first");
     ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-article")+suffix));
-    panel->widget()->SetSize(gfx::Size(460,640)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-narrow")+suffix));
+    panel->widget()->SetSize(gfx::Size(620,740)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-narrow")+suffix));
     auto find_viewport=[&](auto&& self,views::View* view)->PanelViewport*{if(auto* viewport=PanelViewportForView(view))return viewport;for(const auto& child:view->children())if(auto* viewport=self(self,child.get()))return viewport;return nullptr;};
-    auto* viewport=find_viewport(find_viewport,panel->widget()->GetContentsView());ASSERT_TRUE(viewport);ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(viewport->maximum());
+    auto* viewport=find_viewport(find_viewport,panel->view());ASSERT_TRUE(viewport);ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(viewport->maximum());
     ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-scrolled")+suffix));EXPECT_TRUE(visible_text(u"Czytnik RSS")); if(MetalPresents()) EXPECT_TRUE(panel->contains_for_testing("Czytnik RSS"));
-    panel->widget()->CloseNow(); window_->ShowRss(); panel = window_->rss_panel();
+    auto* list_back = FindButton(panel->view(), T(u"Wróć do wpisów")); ASSERT_TRUE(list_back); ClickControl(list_back);
+    ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(panel->view(), read_name); }));
+    panel->widget()->SetSize(gfx::Size(920,840));
+    ASSERT_TRUE(window_->SplitTab(0));
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      panel->widget()->LayoutRootViewIfNecessary();
+      return panel->view()->width() >= 250 && panel->view()->width() <= 350;
+    }));
+    auto fully_visible = [&](std::u16string name) {
+      auto* control = name == T(u"Źródło wpisów") ? source_picker() : FindButton(panel->view(), name);
+      return control && control->IsDrawn() && !control->GetBoundsInScreen().IsEmpty() &&
+          panel->view()->GetBoundsInScreen().Contains(control->GetBoundsInScreen());
+    };
+    ASSERT_TRUE(base::test::RunUntil([&] { return fully_visible(T(u"Wszystkie")) && fully_visible(T(u"Nieprzeczytane")) &&
+        fully_visible(T(u"Zapisane")) && fully_visible(T(u"Źródło wpisów")) && fully_visible(T(u"Ustawienia RSS")); }));
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-split-narrow-list")+suffix));
+    ClickControl(FindButton(panel->view(), T(u"Ustawienia RSS")));
+    ASSERT_TRUE(base::test::RunUntil([&] { return fully_visible(T(u"Wróć do czytnika")) && fully_visible(T(u"Dodaj źródło")); }));
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-split-narrow-settings")+suffix));
+    ClickControl(FindButton(panel->view(), T(u"Dodaj źródło")));
+    ASSERT_TRUE(base::test::RunUntil([&] { return fully_visible(T(u"Subskrybuj")); }));
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-split-narrow-add")+suffix));
+    ClickControl(FindButton(panel->view(), T(u"Wróć do czytnika")));
+    ASSERT_TRUE(base::test::RunUntil([&] { return fully_visible(T(u"Ustawienia RSS")); }));
+    window_->Unsplit(1);
+    window_->CloseActiveTab(); window_->ShowRss(); panel = window_->rss_panel();
   }
   reader->Add(embedded_test_server()->GetURL("/rss-delayed")); EXPECT_TRUE(reader->busy());
-  panel->widget()->CloseNow(); window_->Select("personal"); window_->ShowRss(); panel = window_->rss_panel();
+  window_->CloseActiveTab(); window_->Select("personal"); window_->ShowRss(); panel = window_->rss_panel();
   ASSERT_TRUE(base::test::RunUntil([&] { return panel->reader()->ready() && !reader->busy(); }));
   EXPECT_TRUE(panel->reader()->feeds().empty()); EXPECT_FALSE(panel->contains_for_testing("Arrived safely"));
   EXPECT_EQ(reader->feeds().back().articles.size(), 1u);
   reader->Remove(embedded_test_server()->GetURL("/rss-delayed")); EXPECT_EQ(reader->feeds().size(), 2u);
-  SetUiLanguageForTesting("en"); panel->widget()->CloseNow(); window_->ShowRss(); ASSERT_TRUE(base::test::RunUntil([&]{return visible_text(u"Your sources, in one place");}));
+  SetUiLanguageForTesting("en"); window_->CloseActiveTab(); window_->ShowRss(); panel = window_->rss_panel(); ASSERT_TRUE(base::test::RunUntil([&]{return visible_text(u"Your sources, in one place");}));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperToolsVisuals) {
