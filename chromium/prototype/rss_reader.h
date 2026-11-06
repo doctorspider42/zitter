@@ -116,6 +116,8 @@ class RssPanel final : public ProfileObserver, public views::WidgetObserver, pub
   void Subscribe();
   void OpenSettings(bool add = false);
   void BackToReader();
+  void ApplyColors();
+  void RenderArticle(views::View* parent, const RssFeed& feed, const RssArticle& article, bool wide);
   views::View* Text(views::View* parent, std::string text, int style = 5);
   views::View* Action(views::View* parent, std::u16string text, base::RepeatingClosure callback, int kind = 3);
   raw_ptr<RssReader> reader_ = nullptr;
@@ -126,6 +128,8 @@ class RssPanel final : public ProfileObserver, public views::WidgetObserver, pub
   std::string selected_;
   std::u16string return_focus_name_;
   bool unread_ = false, saved_ = false, settings_ = false, screen_focus_pending_ = false, update_pending_ = false, adding_ = false;
+  // Two panes (list + reading pane) on a wide tab; one column otherwise.
+  bool wide_ = false, focus_reader_pending_ = false;
   size_t visible_limit_ = 100;
   std::vector<GURL> discovered_;
   raw_ptr<views::Widget> widget_ = nullptr;
@@ -133,9 +137,10 @@ class RssPanel final : public ProfileObserver, public views::WidgetObserver, pub
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<views::View> header_ = nullptr, title_ = nullptr, scroll_ = nullptr, tools_ = nullptr;
   raw_ptr<views::View> settings_button_ = nullptr, back_button_ = nullptr, refresh_button_ = nullptr;
-  raw_ptr<views::View> body_ = nullptr, add_row_ = nullptr, add_button_ = nullptr;
+  raw_ptr<views::View> body_ = nullptr, add_row_ = nullptr, add_button_ = nullptr, count_ = nullptr;
+  raw_ptr<views::View> panes_ = nullptr, list_pane_ = nullptr, reader_pane_ = nullptr, reader_body_ = nullptr;
   raw_ptr<EditorControl> address_ = nullptr;
-  raw_ptr<PanelViewport> viewport_ = nullptr;
+  raw_ptr<PanelViewport> viewport_ = nullptr, reader_viewport_ = nullptr;
   size_t discovery_generation_ = 0;
   base::WeakPtrFactory<RssPanel> weak_{this};
 };

@@ -19,11 +19,13 @@ against the design, and fixed until it matches.
    ```bash
    zsh .claude/skills/verify-ui/scripts/build_app.sh
    ```
-   It stages this checkout into `.chromium/src/zitter_ui_lab`, builds `zitter_ui_lab`,
-   `sidebar_scene_unittests` and `zitter_prototype_ui_lab` with Chromium's ninja, and
-   packages `build/ZitterRustMetal.app`. Signing needs `ZITTER_CODESIGN_IDENTITY` (from
-   `.zitter-signing.json` in the main checkout) or the package step fails. Only the
-   packaged app has the design system's fonts; test binaries fall back to system fonts.
+   It runs `ZITTER_BUILD_TESTS=1 ./build.sh` (see `docs/local-releases.md`): the
+   `.chromium/src/zitter` overlay, `zitter` and `zitter_prototype`, the license audit
+   and the package `build/ZitterRustMetal.app`. Then it builds
+   `sidebar_scene_unittests`. Signing reads `.zitter-signing.json`. Never stage
+   into `.chromium/src/zitter_ui_lab`: it is a frozen benchmark reference, and its
+   targets cannot see the vendored ad-blocking crates. Only the packaged app has the
+   design system's fonts; test binaries fall back to system fonts.
 
 2. **Run the tests that cover the change**: Rust tests, plus browser tests named with
    `--gtest_filter`. Count them first with `--gtest_list_tests`. A broad pattern like

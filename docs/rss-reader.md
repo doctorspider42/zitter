@@ -35,6 +35,35 @@ Click a title (or focus it and press Enter/Space) to read its text preview; use
 to navigate to the original in a normal tab. Selecting a preview marks it read.
 The preview also supports saving and marking unread.
 
+### Layout
+
+The layout follows the "Zitter RSS Reader Redesign" canvas
+(https://claude.ai/artifact/BXaWK2sQxpGe5wNvJQJRva). From a tab width of 760 px the
+reader shows two panes. On the left is a 320 px list column on `bg-base` with the
+filters, the source picker and the entries. On the right is a reading pane on
+`bg-raised`, whose column is at most 680 px wide and centred. Narrower tabs, including
+most Split View panes, keep one column: the preview replaces the list, and **Back to
+articles** returns to it.
+
+- Entries are grouped under eyebrow day labels (Today, Yesterday, then the date).
+  Each row shows the source and time, the title and a short excerpt. An unread entry
+  has an `accent` dot and a `body-strong` title; a read title is muted. In two panes
+  the open entry sits on `accent-soft`.
+- The preview header shows the source, the date and an estimated reading time, then
+  the title in `display-l` (Instrument Serif italic). A note in `ok` says the preview is
+  text only, with no images, scripts or tracking. The actions are **Open article**
+  (primary), save and mark unread. **Back to articles** sits above the preview in
+  both layouts.
+- With no entry selected, the reading pane invites you to choose one.
+- The header shows the unread count beside the title in wide layouts.
+- Opening an entry moves focus to the preview's **Back to articles**, which then
+  returns focus to that entry, in both layouts.
+
+Not yet implemented from the design: the source rail with per-feed counts (the
+source picker stays), J/K keyboard navigation, the zing "new" badge, the refresh
+loader, and the larger 15/16 px reading type. Each of these needs a design-system
+text style or scene primitive that the panel scene does not have yet.
+
 ## State and isolation
 
 Subscriptions, cached previews, and read/saved flags belong to the browsing

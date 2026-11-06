@@ -12,7 +12,7 @@
 
 ## UI tests
 
-- Run the **full** browser UI suite (`zitter_prototype_ui_lab` without a narrow
+- Run the **full** browser UI suite (`out/ZitterOptimized/zitter_prototype` without a narrow
   `--gtest_filter`) only after the user explicitly agrees, each time. It shows and
   focuses a browser window over and over for ~12 minutes, so the Mac is unusable
   meanwhile. Say how long it takes when you ask.
@@ -28,9 +28,10 @@ differs, and only then hand over the final screenshot.
 
 ## Shared build directory
 
-Several sessions stage into `.chromium/src/zitter_ui_lab` and build in
+Several sessions stage into `.chromium/src/zitter` (through `./build.sh`) and build in
 `.chromium/src/out/ZitterOptimized`. Before staging or running ninja there, make sure
 no other session is building, and agree on the window with the sessions that use it.
+Never stage into `.chromium/src/zitter_ui_lab`: it is a frozen benchmark reference.
 
 ## Windows
 

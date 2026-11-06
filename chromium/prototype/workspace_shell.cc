@@ -4787,7 +4787,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|history|extensions|extension-popup|fingerprint|shield|ad-blocking|menu|app-menu|dialog|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|history|rss|extensions|extension-popup|fingerprint|shield|ad-blocking|menu|app-menu|dialog|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -4810,6 +4810,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "downloads") shell->callbacks_.run_shortcut.Run("downloads");
         else if (panel == "passwords") shell->callbacks_.run_shortcut.Run("passwords");
                 else if (panel == "history") shell->callbacks_.run_shortcut.Run("history");
+                else if (panel == "rss") shell->callbacks_.run_shortcut.Run("rss");
                 else if (panel == "site"||panel == "site-data"||panel == "permission") {
                   // Open the page's origin first, then show its panel (or ask) once it loads.
                   const std::string id=panel=="permission"?"permission_demo":"site_demo";
@@ -12982,4 +12983,6 @@ void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visib
     if (time_machine_widget_) time_machine_widget_->Hide();
   } else if (widget == widget_ && visible && pinned_) ShowSidebar();
 }
+// The workspace color of `view`'s window, for panels built outside this file.
+SkColor WorkspaceColorForView(const views::View* view) { return WindowWorkspaceColor(view); }
 }

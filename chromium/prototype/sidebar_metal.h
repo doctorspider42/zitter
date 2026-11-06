@@ -27,6 +27,8 @@ std::optional<size_t> SceneSelectIndex(views::View* view);
 void SetSceneSelectIndex(views::View* view, size_t index);
 void SetSceneSelectLabels(views::View* view, const std::vector<std::u16string>& labels);
 void SetSceneSelectCallback(views::View* view, base::RepeatingClosure callback);
+// The workspace color tinting `view`'s window (design_palette's second argument).
+uint32_t WorkspaceColorForView(const views::View* view);
 
 class EditorControl;
 class PanelScene {
