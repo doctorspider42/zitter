@@ -1,4 +1,5 @@
 #include "chromium/app/runtime.h"
+#include <algorithm>
 #include "chromium/app/performance_probe.h"
 
 #include "base/check.h"
@@ -16,6 +17,7 @@
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_destroyer.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
@@ -70,7 +72,7 @@ void Runtime::PreMainMessageLoopRun() {
       [](base::WeakPtr<Runtime> runtime, bool closing) {
         if (!runtime || !closing || runtime->closing_) return;
         runtime->downloads_confirmed_ = true;
-        runtime->RequestClose();
+        runtime->RequestQuitAll();
       }, weak_factory_.GetWeakPtr()));
 #endif
 #if BUILDFLAG(IS_MAC)
@@ -83,6 +85,7 @@ void Runtime::PreMainMessageLoopRun() {
   auto* manager = g_browser_process->profile_manager();
   window_ = std::make_unique<prototype::WorkspaceWindow>(manager->user_data_dir());
   window_->SetCloseCallback(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
+  window_->SetNewPrivateWindowCallback(base::BindRepeating(&Runtime::OpenPrivateWindow, weak_factory_.GetWeakPtr()));
   window_->SetReadyCallback(base::BindOnce(&Runtime::WindowReady, weak_factory_.GetWeakPtr()));
 }
 
@@ -132,6 +135,53 @@ void Runtime::WindowReady() {
   }
 }
 
+prototype::WorkspaceWindow* Runtime::ActiveWindow() const {
+  for (const auto& window : private_windows_) {
+    if (window->widget()->IsActive()) return window.get();
+    for (const auto& owned : views::Widget::GetAllOwnedWidgets(window->widget()->GetNativeView()))
+      if (owned->IsActive()) return window.get();
+  }
+  return window_.get();
+}
+
+void Runtime::OpenPrivateWindow() {
+  if (closing_ || !window_ || !window_->configuration_ready()) return;
+  if (!private_profile_) {
+    auto* parent = window_->active_profile();
+    if (!parent) return;
+    parent = parent->GetOriginalProfile();
+    private_parent_lease_ = ScopedProfileKeepAlive::TryAcquire(parent, ProfileKeepAliveOrigin::kBrowserWindow);
+    if (!private_parent_lease_) return;
+    // A unique OTR context disables extensions and prevents a new session from
+    // reusing a context whose renderer shutdown is still pending.
+    private_profile_ = parent->GetOffTheRecordProfile(Profile::OTRProfileID::CreateUnique("ZitterPrivate"), true);
+  }
+  auto window = std::make_unique<prototype::WorkspaceWindow>(
+      g_browser_process->profile_manager()->user_data_dir(), false, private_profile_);
+  auto* pointer = window.get();
+  window->SetNewPrivateWindowCallback(base::BindRepeating(&Runtime::OpenPrivateWindow, weak_factory_.GetWeakPtr()));
+  window->SetCloseCallback(base::BindOnce([](base::WeakPtr<Runtime> runtime, prototype::WorkspaceWindow* window) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce(&Runtime::ClosePrivateWindow, runtime, window));
+  }, weak_factory_.GetWeakPtr(), pointer));
+  private_windows_.push_back(std::move(window));
+  pointer->widget()->Activate();
+  pointer->FocusAddressBar();
+}
+
+void Runtime::ClosePrivateWindow(prototype::WorkspaceWindow* window) {
+  std::erase_if(private_windows_, [window](const auto& entry) { return entry.get() == window; });
+  if (!private_windows_.empty()) { if (quit_requested_) RequestQuitAll(); return; }
+  if (private_profile_) {
+    auto* profile = private_profile_.get();
+    private_profile_ = nullptr;
+    ProfileDestroyer::DestroyOTRProfileWhenAppropriate(profile);
+    private_parent_lease_.reset();
+  }
+  if (quit_requested_) { RequestQuitAll(); return; }
+  if (window_ && !window_->widget()->IsVisible()) RequestClose();
+}
+
 void Runtime::OnBrowserCreated(BrowserWindowInterface* browser) {
   // DevTools, app and popup windows keep their upstream behavior.
   if (browser->GetType() != BrowserWindowInterface::TYPE_NORMAL) return;
@@ -150,6 +200,18 @@ void Runtime::OnBrowserClosed(BrowserWindowInterface* browser) {
 void Runtime::ReplaceStockWindow(BrowserWindowInterface* browser) {
   if (!stock_windows_.contains(browser)) return;  // Already gone.
   stock_windows_.erase(browser);
+  if (browser->GetProfile()->IsOffTheRecord()) {
+    OpenPrivateWindow();
+    if (!private_windows_.empty()) {
+      if (auto* tabs = TabListInterface::From(browser))
+        for (int i = 0; i < tabs->GetTabCount(); ++i) {
+          const auto url = tabs->GetTab(i)->GetContents()->GetVisibleURL();
+          if (url.SchemeIsHTTPOrHTTPS()) private_windows_.back()->NavigateFromBar(url, true);
+        }
+    }
+    if (auto* window = browser->GetWindow()) window->Close();
+    return;
+  }
   // Extensions open tabs (chrome.tabs.create, a welcome page after install)
   // through a stock window of their profile; those pages move into Zitter.
   if (auto* tabs = window_ && !closing_ ? TabListInterface::From(browser) : nullptr) {
@@ -169,18 +231,15 @@ void Runtime::ReplaceStockWindow(BrowserWindowInterface* browser) {
     }
   }
   if (auto* window = browser->GetWindow()) window->Close();
-  if (window_ && !closing_) window_->widget()->Activate();
+  if (window_ && !closing_) { window_->widget()->Show(); window_->widget()->Activate(); }
 }
 
 #if BUILDFLAG(IS_MAC)
-void Runtime::RequestQuit() {
-  if (ui_lab_) { RequestClose(); return; }
-  if (window_ && !closing_) window_->RequestClose();
-}
+void Runtime::RequestQuit() { RequestQuitAll(); }
 
 void Runtime::RaiseWindow() {
   if (ui_lab_) { ui_lab_->Raise(); return; }
-  if (window_ && !closing_) window_->widget()->Activate();
+  if (window_ && !closing_) { window_->widget()->Show(); window_->widget()->Activate(); }
 }
 
 void Runtime::OpenUrl(const GURL& url) {
@@ -192,34 +251,53 @@ void Runtime::OpenUrl(const GURL& url) {
 
 void Runtime::RunCommand(AppCommand command) {
   if (!window_ || closing_) return;
-  auto* shell = window_->shell();
-  window_->widget()->Activate();
+  auto* target = ActiveWindow();
+  auto* shell = target->shell();
+  target->widget()->Activate();
   switch (command) {
-    case AppCommand::kNewTab: window_->ClosePeek(); shell->OpenAddress(true); break;
-    case AppCommand::kOpenAddress: window_->FocusAddressBar(); break;
-    case AppCommand::kCommandPalette: window_->OpenCommandPalette(); break;
-    case AppCommand::kDownloads: window_->ShowDownloads(); break;
-    case AppCommand::kImport: window_->RunShortcut("import"); break;
-    case AppCommand::kCloseTab: window_->CloseActiveTab(); break;
-    case AppCommand::kReload: window_->RunPageCommand(prototype::PageCommand::kReload); break;
+    case AppCommand::kNewPrivateWindow: OpenPrivateWindow(); break;
+    case AppCommand::kNewTab: target->ClosePeek(); shell->OpenAddress(true); break;
+    case AppCommand::kOpenAddress: target->FocusAddressBar(); break;
+    case AppCommand::kCommandPalette: target->OpenCommandPalette(); break;
+    case AppCommand::kDownloads: target->ShowDownloads(); break;
+    case AppCommand::kImport: target->RunShortcut("import"); break;
+    case AppCommand::kCloseTab: target->CloseActiveTab(); break;
+    case AppCommand::kReload: target->RunPageCommand(prototype::PageCommand::kReload); break;
     case AppCommand::kToggleSidebar: shell->ToggleSidebar(); break;
-    case AppCommand::kHistory: window_->RunShortcut("history"); break;
-    case AppCommand::kTimeline: window_->RunShortcut("timeline"); break;
-    case AppCommand::kFind: window_->RunShortcut("find"); break;
-    case AppCommand::kPrint: window_->RunShortcut("print"); break;
+    case AppCommand::kHistory: target->RunShortcut("history"); break;
+    case AppCommand::kTimeline: target->RunShortcut("timeline"); break;
+    case AppCommand::kFind: target->RunShortcut("find"); break;
+    case AppCommand::kPrint: target->RunShortcut("print"); break;
     case AppCommand::kSettings: shell->OpenGeneralSettings(); break;
     case AppCommand::kWorkspaceWork:
-      if (!window_->workspaces().empty()) window_->Select(window_->workspaces()[0].id);
+      if (!target->workspaces().empty()) target->Select(target->workspaces()[0].id);
       break;
     case AppCommand::kWorkspacePersonal:
-      if (window_->workspaces().size() > 1) window_->Select(window_->workspaces()[1].id);
+      if (target->workspaces().size() > 1) target->Select(target->workspaces()[1].id);
       break;
   }
 }
 #endif
 
+void Runtime::RequestQuitAll() {
+  if (closing_) return;
+  quit_requested_ = true;
+  // Each window gets its existing beforeunload check before being released.
+  if (!private_windows_.empty()) { private_windows_.back()->RequestClose(); return; }
+#if BUILDFLAG(IS_MAC)
+  if (ui_lab_) { RequestClose(); return; }
+#endif
+  if (window_) window_->RequestClose();
+}
+
 void Runtime::RequestClose() {
   if (closing_) return;
+  if (!quit_requested_ && window_ && window_->widget()->IsVisible() &&
+      std::any_of(private_windows_.begin(), private_windows_.end(), [](const auto& w) { return w->widget()->IsVisible(); })) {
+    window_->widget()->Hide();
+    window_->SetCloseCallback(base::BindOnce(&Runtime::RequestClose, weak_factory_.GetWeakPtr()));
+    return;
+  }
   closing_ = true;
   // Never destroy a Widget or its close callback on its own event stack.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
@@ -263,6 +341,13 @@ void Runtime::ReleaseProfiles() {
   ui_lab_.reset();
 #endif
   performance_probe_.reset();
+  private_windows_.clear();
+  if (private_profile_) {
+    auto* profile = private_profile_.get();
+    private_profile_ = nullptr;
+    ProfileDestroyer::DestroyOTRProfileWhenAppropriate(profile);
+  }
+  private_parent_lease_.reset();
   window_.reset();
 
 }

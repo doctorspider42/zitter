@@ -55,6 +55,7 @@
 #include "sql/statement.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "chromium/prototype/workspace_window.h"
 #include "chromium/prototype/image_link_preview.h"
 #include "chromium/prototype/time_machine_view.h"
@@ -143,6 +144,7 @@
 #include "net/cookies/cookie_util.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "ui/views/controls/button/toggle_button.h"
@@ -192,6 +194,8 @@
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_destroyer.h"
+#include "chromium/prototype/content_blocking.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -6083,6 +6087,117 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SplitViewSessionRestore) {
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_FALSE(window_->split());
   EXPECT_EQ(2u, window_->tab_count("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PrivateWindowsIsolateShareAndForgetSiteData) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth());
+  auto* normal = window_->contents("work");
+  ASSERT_EQ("normal", content::EvalJs(normal, "writeMarker('normal')"));
+  auto* profile = work_->GetOffTheRecordProfile(Profile::OTRProfileID::CreateUnique("ZitterPrivateTest"), true);
+  const auto id = profile->GetOTRProfileID();
+  ASSERT_TRUE(profile->IsOffTheRecord());
+  auto one = std::make_unique<WorkspaceWindow>(work_->GetPath().DirName(), false, profile);
+  auto two = std::make_unique<WorkspaceWindow>(work_->GetPath().DirName(), false, profile);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html?private-secret");
+  auto* first = one->contents("private");
+  auto* second = two->contents("private");
+  ASSERT_TRUE(content::NavigateToURL(first, url));
+  ASSERT_TRUE(content::NavigateToURL(second, url));
+  EXPECT_NE(normal->GetBrowserContext()->GetDefaultStoragePartition(), profile->GetDefaultStoragePartition());
+  EXPECT_TRUE(profile->GetDefaultStoragePartition()->GetConfig().in_memory());
+  EXPECT_TRUE(one->extensions_bar()->GetVisible());
+  EXPECT_EQ("|||", content::EvalJs(first, "readMarker()"));
+  ASSERT_EQ("private", content::EvalJs(first, "writeMarker('private')"));
+  EXPECT_EQ("private|private|private|", content::EvalJs(second, "readMarker()"));
+  EXPECT_EQ("normal|normal|normal|normal", content::EvalJs(normal, "readMarker()"));
+  // Script-created popup contents stay in their opener's OTR context.
+  ASSERT_TRUE(content::ExecJs(first, content::JsReplace("window.open($1, '_blank')", url.spec())));
+  ASSERT_TRUE(base::test::RunUntil([&] { return one->tab_count("private") == 2; }));
+  auto* popup = one->contents("private");
+  ASSERT_TRUE(content::WaitForLoadStop(popup));
+  EXPECT_EQ(profile, popup->GetBrowserContext());
+  EXPECT_EQ("private", content::EvalJs(popup, "localStorage.getItem('zitter')"));
+  base::CancelableTaskTracker history_tasks;
+  history::QueryOptions options;
+  base::test::TestFuture<history::QueryResults> visits;
+  HistoryServiceFactory::GetForProfile(work_, ServiceAccessType::EXPLICIT_ACCESS)->QueryHistory(
+      u"private-secret", options, visits.GetCallback(), &history_tasks);
+  EXPECT_TRUE(visits.Take().empty());
+  one.reset();
+  EXPECT_EQ("private|private|private|", content::EvalJs(second, "readMarker()"));
+  two.reset();
+  ProfileDestroyer::DestroyOTRProfileWhenAppropriate(profile);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !work_->HasOffTheRecordProfile(id); }));
+  profile = work_->GetOffTheRecordProfile(Profile::OTRProfileID::CreateUnique("ZitterPrivateTest"), true);
+  auto fresh = std::make_unique<WorkspaceWindow>(work_->GetPath().DirName(), false, profile);
+  ASSERT_TRUE(content::NavigateToURL(fresh->contents("private"), url));
+  EXPECT_EQ("|||", content::EvalJs(fresh->contents("private"), "readMarker()"));
+  EXPECT_EQ("normal|normal|normal|normal", content::EvalJs(normal, "readMarker()"));
+  fresh.reset();
+  ProfileDestroyer::DestroyOTRProfileWhenAppropriate(profile);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PrivateWindowsNeverPersistOrRestore) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved() && window_->shell()->appearance_ready() && window_->shell()->appearance_saved(); }));
+  // Drain the regular window's final save before taking the disk snapshot.
+  window_.reset();
+  base::RunLoop().RunUntilIdle();
+  const auto directory = work_->GetPath().DirName();
+  auto read = [&] {
+    base::ScopedAllowBlockingForTesting allow;
+    std::vector<std::string> values;
+    for (const char* name : {"ZitterWorkspaces.json", "ZitterSession.json", "ZitterTimeline.jsonl", "ZitterTools.json", "ZitterAppearance.json", "ZitterAssistantSessions.json"}) {
+      std::string data;
+      base::ReadFileToString(directory.AppendASCII(name), &data);
+      values.push_back(std::move(data));
+    }
+    return values;
+  };
+  // The writer uses a sequenced thread pool runner; flush its shutdown-blocking work.
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  const auto before = read();
+  auto* profile = work_->GetOffTheRecordProfile(Profile::OTRProfileID::CreateUnique("ZitterPrivateTest"), true);
+  auto private_window = std::make_unique<WorkspaceWindow>(directory, false, profile);
+  ASSERT_TRUE(base::test::RunUntil([&] { return private_window->shell()->appearance_ready() && private_window->shell()->tools_ready(); }));
+  ASSERT_EQ(1u, private_window->tab_count("private"));
+  EXPECT_TRUE(private_window->contents("private")->GetVisibleURL().is_empty() || private_window->contents("private")->GetVisibleURL().IsAboutBlank());
+  const auto secret = embedded_test_server()->GetURL("/storage_probe.html?private-secret-never-save");
+  ASSERT_TRUE(private_window->NavigateFromBar(secret, true));
+  ASSERT_TRUE(content::WaitForLoadStop(private_window->contents("private")));
+  private_window->CloseTab(1);
+  EXPECT_FALSE(private_window->ReopenClosedTab());
+  EXPECT_EQ(0u, private_window->timeline_frames_for_testing());
+  AssistantSettings settings; settings.enabled = true;
+  private_window->SetAssistantSettings(settings);
+  private_window->ShowAssistant(); private_window->EnsureAssistant();
+  EXPECT_FALSE(private_window->assistant());
+  base::test::TestFuture<std::optional<base::DictValue>> conversations;
+  private_window->LoadAssistantSessions(conversations.GetCallback());
+  EXPECT_FALSE(conversations.Get().has_value());
+  private_window->SaveAssistantSessions(base::DictValue().Set("secret", secret.spec()));
+  private_window->shell()->RecordCommandUse("new_tab", secret.spec());
+  private_window->shell()->SetPinned(true);
+  ContentBlocking::SetSiteAllowed(profile, ContentBlocking::SiteKey(secret), true);
+  EXPECT_FALSE(ContentBlocking::EnabledFor(profile, secret));
+  EXPECT_TRUE(ContentBlocking::EnabledFor(work_, secret));
+  // Filter-list refreshes must also rebuild engines already used by OTR pages.
+  ContentBlocking::SetSiteAllowed(profile, ContentBlocking::SiteKey(secret), false);
+  ContentBlocking::Get().SetListsForTesting({"||private-ad.test^"});
+  ASSERT_TRUE(base::test::RunUntil([&] { return ContentBlocking::Get().ReadyForTesting(profile); }));
+  EXPECT_EQ(ContentBlocking::Verdict::kBlock, ContentBlocking::Get().Check(
+      profile, GURL("https://private-ad.test/banner.js"), secret, "script"));
+  private_window.reset();
+  ProfileDestroyer::DestroyOTRProfileWhenAppropriate(profile);
+  base::ThreadPoolInstance::Get()->FlushForTesting();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(before, read());
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_FALSE(window_->is_private());
+  EXPECT_EQ(nullptr, window_->contents("private"));
+  for (const auto& workspace : window_->workspaces())
+    if (auto* page = window_->contents(workspace.id))
+      EXPECT_EQ(std::string::npos, page->GetVisibleURL().spec().find("private-secret"));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, StorageIsolationAndSwitching) {

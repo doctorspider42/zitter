@@ -69,7 +69,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
                               public find_in_page::FindResultObserver {
  public:
   WorkspaceWindow(Profile* work, Profile* personal);
-  explicit WorkspaceWindow(base::FilePath data_directory, bool offer_import = true);
+  explicit WorkspaceWindow(base::FilePath data_directory, bool offer_import = true, Profile* private_profile = nullptr);
+  bool is_private() const { return private_profile_ != nullptr; }
+  Profile* active_profile() const;
+  void SetNewPrivateWindowCallback(base::RepeatingClosure callback) { new_private_window_ = std::move(callback); }
   ~WorkspaceWindow() override;
   WorkspaceWindow(const WorkspaceWindow&) = delete;
   WorkspaceWindow& operator=(const WorkspaceWindow&) = delete;
@@ -474,6 +477,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   base::OnceClosure pending_profile_action_;
   std::string pending_profile_id_;
   std::vector<std::string> deleted_directories_;
+  // Owned by Runtime; all private windows release their pages before it dies.
+  raw_ptr<Profile> private_profile_ = nullptr;
+  base::RepeatingClosure new_private_window_;
   base::FilePath data_directory_;
   std::string restored_active_;
   bool configuration_invalid_ = false;

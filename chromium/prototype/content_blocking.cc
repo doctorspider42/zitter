@@ -387,7 +387,6 @@ void ContentBlocking::SetListsForTesting(std::vector<std::string> texts) {
 
 ContentBlocking::ProfileState* ContentBlocking::StateFor(Profile* profile, bool build) {
   if (!profile) return nullptr;
-  profile = profile->GetOriginalProfile();
   auto* state = static_cast<ProfileState*>(profile->GetUserData(kStateKey));
   if (!state && build) {
     Start();
@@ -422,8 +421,11 @@ void ContentBlocking::Rebuild(Profile* profile) {
 void ContentBlocking::RebuildAll() {
   // Every profile with an engine; the others build on first use.
   for (auto* profile : g_browser_process && g_browser_process->profile_manager() ?
-                       g_browser_process->profile_manager()->GetLoadedProfiles() : std::vector<Profile*>())
+                       g_browser_process->profile_manager()->GetLoadedProfiles() : std::vector<Profile*>()) {
     if (StateFor(profile, false)) Rebuild(profile);
+    for (auto* private_profile : profile->GetAllOffTheRecordProfiles())
+      if (StateFor(private_profile, false)) Rebuild(private_profile);
+  }
   Notify();
 }
 bool ContentBlocking::ReadyForTesting(Profile* profile) {
@@ -449,7 +451,7 @@ bool ContentBlocking::SiteAllowed(Profile* profile, const GURL& page) {
 void ContentBlocking::SetSiteAllowed(Profile* profile, const std::string& site, bool allowed) {
   const auto key = Normalize(site);
   if (!profile || key.empty()) return;
-  ScopedListPrefUpdate update(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingAllowedSitesPref);
+  ScopedListPrefUpdate update(profile->GetPrefs(), kAdBlockingAllowedSitesPref);
   update->EraseIf([&](const base::Value& value) { return value.is_string() && Normalize(value.GetString()) == key; });
   if (allowed) update->Append(key);
 }
@@ -459,12 +461,12 @@ bool ContentBlocking::ListEnabled(Profile* profile, const std::string& id) {
   if (source->kind == ListKind::kRequired) return true;
   const bool fallback = source->kind != ListKind::kDefaultOff;
   if (!profile) return fallback;
-  return profile->GetOriginalProfile()->GetPrefs()->GetDict(kAdBlockingListsPref).FindBool(id).value_or(fallback);
+  return profile->GetPrefs()->GetDict(kAdBlockingListsPref).FindBool(id).value_or(fallback);
 }
 void ContentBlocking::SetListEnabled(Profile* profile, const std::string& id, bool enabled) {
   const auto source = std::ranges::find_if(kLists, [&](const ListSource& list) { return list.id == id; });
   if (!profile || source == std::end(kLists) || source->kind == ListKind::kRequired) return;
-  ScopedDictPrefUpdate(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingListsPref)->Set(id, enabled);
+  ScopedDictPrefUpdate(profile->GetPrefs(), kAdBlockingListsPref)->Set(id, enabled);
 }
 bool ContentBlocking::Wanted(size_t index) {
   if (index >= lists_.size() || lists_[index].builtin) return false;
@@ -475,11 +477,11 @@ bool ContentBlocking::Wanted(size_t index) {
   return false;
 }
 std::vector<std::string> ContentBlocking::AllowedSites(Profile* profile) {
-  return profile ? StringList(profile->GetOriginalProfile()->GetPrefs()->GetList(kAdBlockingAllowedSitesPref)) : std::vector<std::string>();
+  return profile ? StringList(profile->GetPrefs()->GetList(kAdBlockingAllowedSitesPref)) : std::vector<std::string>();
 }
 
 std::vector<std::string> ContentBlocking::Rules(Profile* profile) {
-  return profile ? StringList(profile->GetOriginalProfile()->GetPrefs()->GetList(kAdBlockingRulesPref)) : std::vector<std::string>();
+  return profile ? StringList(profile->GetPrefs()->GetList(kAdBlockingRulesPref)) : std::vector<std::string>();
 }
 std::string ContentBlocking::RuleError(const std::string& rule) {
   const auto check = adblock::check_rule(rule);
@@ -502,18 +504,18 @@ bool ContentBlocking::AddRules(Profile* profile, const std::vector<std::string>&
   }
   if (added.empty()) return true;
   {
-    ScopedDictPrefUpdate misses(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref);
+    ScopedDictPrefUpdate misses(profile->GetPrefs(), kAdBlockingRuleMissesPref);
     for (const auto& rule : added) misses->Remove(rule);
   }
-  ScopedListPrefUpdate update(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRulesPref);
+  ScopedListPrefUpdate update(profile->GetPrefs(), kAdBlockingRulesPref);
   if (!comment.empty()) update->Append("! " + comment);
   for (auto& rule : added) update->Append(std::move(rule));
   return true;
 }
 void ContentBlocking::RemoveRule(Profile* profile, const std::string& rule) {
   if (!profile) return;
-  ScopedDictPrefUpdate(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref)->Remove(rule);
-  ScopedListPrefUpdate update(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRulesPref);
+  ScopedDictPrefUpdate(profile->GetPrefs(), kAdBlockingRuleMissesPref)->Remove(rule);
+  ScopedListPrefUpdate update(profile->GetPrefs(), kAdBlockingRulesPref);
   auto& list = update.Get();
   for (size_t i = 0; i < list.size(); ++i) {
     if (!list[i].is_string() || list[i].GetString() != rule) continue;
@@ -545,14 +547,14 @@ std::vector<std::string> ContentBlocking::SiteHidingRules(Profile* profile, cons
 }
 void ContentBlocking::RecordRuleHits(Profile* profile, const std::vector<std::pair<std::string, int>>& hits) {
   if (!profile || hits.empty()) return;
-  ScopedDictPrefUpdate misses(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref);
+  ScopedDictPrefUpdate misses(profile->GetPrefs(), kAdBlockingRuleMissesPref);
   for (const auto& [rule, count] : hits) {
     if (count > 0) misses->Remove(rule);
     else misses->Set(rule, std::min(misses->FindInt(rule).value_or(0) + 1, 99));
   }
 }
 bool ContentBlocking::RuleStale(Profile* profile, const std::string& rule) {
-  return profile && profile->GetOriginalProfile()->GetPrefs()->GetDict(kAdBlockingRuleMissesPref).FindInt(rule).value_or(0) >= kStaleLoads;
+  return profile && profile->GetPrefs()->GetDict(kAdBlockingRuleMissesPref).FindInt(rule).value_or(0) >= kStaleLoads;
 }
 std::string ContentBlocking::RuleSite(const std::string& rule) {
   auto first_host = [](std::string_view list, char separator) {
@@ -593,18 +595,18 @@ bool ContentBlocking::SetRulesText(Profile* profile, const std::string& text) {
   }
   // Counters of rules that are gone go with them.
   {
-    ScopedDictPrefUpdate misses(profile->GetOriginalProfile()->GetPrefs(), kAdBlockingRuleMissesPref);
+    ScopedDictPrefUpdate misses(profile->GetPrefs(), kAdBlockingRuleMissesPref);
     std::vector<std::string> gone;
     for (const auto [rule, value] : *misses) if (!kept.contains(rule)) gone.push_back(rule);
     for (const auto& rule : gone) misses->Remove(rule);
   }
-  profile->GetOriginalProfile()->GetPrefs()->SetList(kAdBlockingRulesPref, std::move(rules));
+  profile->GetPrefs()->SetList(kAdBlockingRulesPref, std::move(rules));
   return true;
 }
 std::vector<std::string> ContentBlocking::StaleRules(Profile* profile, const GURL& page) {
   std::vector<std::string> stale;
   if (!profile) return stale;
-  const auto& misses = profile->GetOriginalProfile()->GetPrefs()->GetDict(kAdBlockingRuleMissesPref);
+  const auto& misses = profile->GetPrefs()->GetDict(kAdBlockingRuleMissesPref);
   for (const auto& rule : SiteHidingRules(profile, page))
     if (misses.FindInt(rule).value_or(0) >= kStaleLoads) stale.push_back(rule);
   return stale;
@@ -697,8 +699,7 @@ class BlockingFactory final : public network::mojom::URLLoaderFactory {
                             const network::ResourceRequest& request, mojo::PendingRemote<network::mojom::URLLoaderClient> client,
                             const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) override {
     // Never the page itself: a blocked top-level document would show only an
-    // error. The state lives on the original profile, which `profile_` is, and
-    // goes with it.
+    // error. The weak state belongs to this browser context and expires with it.
     ContentBlockingTabHelper* helper = nullptr;
     if (auto* frame = content::RenderFrameHost::FromID(frame_))
       if (auto* contents = content::WebContents::FromRenderFrameHost(frame)) helper = ContentBlockingTabHelper::FromWebContents(contents);
@@ -739,7 +740,7 @@ void ContentBlocking::WillCreateURLLoaderFactory(content::BrowserContext* contex
   if (type != Type::kNavigation && type != Type::kDocumentSubResource && type != Type::kWorkerMainResource &&
       type != Type::kWorkerSubResource && type != Type::kServiceWorkerScript && type != Type::kServiceWorkerSubResource) return;
   auto* profile = Profile::FromBrowserContext(context);
-  if (!profile || !(profile->IsRegularProfile() || profile->IsIncognitoProfile())) return;
+  if (!profile || !(profile->IsRegularProfile() || profile->IsOffTheRecord())) return;
   // The top-level page: what $domain=, third-party and the site switch see.
   GURL page;
   if (isolation.top_frame_origin() && !isolation.top_frame_origin()->opaque()) page = isolation.top_frame_origin()->GetURL();
@@ -750,7 +751,7 @@ void ContentBlocking::WillCreateURLLoaderFactory(content::BrowserContext* contex
   auto* state = ContentBlocking::Get().StateFor(profile, true);
   if (!state) return;
   auto [receiver, target] = builder.Append();
-  new BlockingFactory(profile->GetOriginalProfile(), state->weak_factory.GetWeakPtr(), std::move(page),
+  new BlockingFactory(profile, state->weak_factory.GetWeakPtr(), std::move(page),
                       frame ? frame->GetGlobalId() : content::GlobalRenderFrameHostId(), std::move(receiver), std::move(target));
 }
 

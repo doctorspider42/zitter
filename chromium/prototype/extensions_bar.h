@@ -36,6 +36,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   METADATA_HEADER(ExtensionsBar, views::View)
  public:
   struct Callbacks {
+    bool private_mode = false;
     // Opens an extension page (options, chrome://extensions, the Web Store, a
     // popup link) as a new tab of a space that uses `profile`.
     base::RepeatingCallback<void(Profile*, const GURL&)> open_page;

@@ -116,6 +116,7 @@ NSMenu* BuildMainMenu() {
   ]);
   Submenu(bar, Text(u"Plik"), @[
     Command(Text(u"Nowa karta"), AppCommand::kNewTab, @"t", kCmd),
+    Command(Text(u"Nowe okno prywatne"), AppCommand::kNewPrivateWindow, @"n", kCmdShift),
     Command(Text(u"Otwórz adres…"), AppCommand::kOpenAddress, @"l", kCmd),
     Command(@"Command Center…", AppCommand::kCommandPalette, @"k", kCmd),
     Command(Text(u"Importuj z przeglądarki…"), AppCommand::kImport, @"", 0),

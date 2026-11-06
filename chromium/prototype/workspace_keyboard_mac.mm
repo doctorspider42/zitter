@@ -107,7 +107,7 @@ void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts) {
   // Menu titles are translated (chromium/app/app_shell_mac.mm); match them alike.
   auto title = [](std::u16string_view polish) { return base::UTF16ToUTF8(T(polish)); };
   const std::map<std::string, std::string> commands = {
-      {title(u"Nowa karta"), "new_tab"}, {title(u"Otwórz adres…"), "address"},
+      {title(u"Nowa karta"), "new_tab"}, {title(u"Nowe okno prywatne"), "private_window"}, {title(u"Otwórz adres…"), "address"},
       {"Command Center…", "palette"}, {title(u"Historia…"), "history"}, {"Time Machine…", "timeline"}, {title(u"Pobrania…"), "downloads"}, {title(u"Znajdź na stronie…"), "find"}, {title(u"Drukuj…"), "print"}, {title(u"Zamknij kartę"), "close_tab"},
       {title(u"Pokaż lub ukryj karty"), "sidebar"}, {title(u"Odśwież stronę"), "reload"},
       {title(u"Ustawienia…"), "settings"}, {title(u"Pierwsza przestrzeń"), "space1"}, {title(u"Druga przestrzeń"), "space2"}};

@@ -45,6 +45,7 @@ WEB_CONTENTS_USER_DATA_KEY_IMPL(ExtensionTabEvents);
 
 // static
 void ExtensionTabEvents::Attach(content::WebContents* contents) {
+  if (contents->GetBrowserContext()->IsOffTheRecord()) return;
   if (!FromWebContents(contents)) CreateForWebContents(contents);
 }
 

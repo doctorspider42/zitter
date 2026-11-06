@@ -509,13 +509,14 @@ class ZitterExtensionWindow final : public extensions::WindowController {
 class WorkspaceWindow::ExtensionTabs final : public extensions::ExtensionTabUtil::EmbedderTabs {
  public:
   explicit ExtensionTabs(WorkspaceWindow* window) : window_(window) {
-    extensions::ExtensionTabUtil::SetEmbedderTabs(this);
+    if (!window_->is_private()) extensions::ExtensionTabUtil::SetEmbedderTabs(this);
   }
   ~ExtensionTabs() override {
     if (extensions::ExtensionTabUtil::GetEmbedderTabs() == this) extensions::ExtensionTabUtil::SetEmbedderTabs(nullptr);
   }
   // One window per profile in use; each page knows its window id.
   void Sync() {
+    if (window_->is_private()) return;
     std::set<Profile*> profiles;
     for (const auto& host : window_->hosts_) if (host.profile) profiles.insert(host.profile);
     std::erase_if(windows_, [&](const auto& entry) { return !profiles.contains(entry.first); });
@@ -643,8 +644,8 @@ WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
   CHECK_EQ(work->GetPath().DirName(), personal->GetPath().DirName());
 }
 
-WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_import)
-    : controller_(model_, *this), data_directory_(std::move(data_directory)), offer_import_(offer_import) {
+WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_import, Profile* private_profile)
+    : controller_(model_, *this), private_profile_(private_profile), data_directory_(std::move(data_directory)), offer_import_(offer_import && !private_profile) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   // The UI language is fixed for the run, before any text is built.
   ApplyUiLanguage(g_browser_process->GetApplicationLocale());
@@ -653,7 +654,9 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   timeline_ = std::make_unique<TimelineStore>();
   config_runner_ = base::ThreadPool::CreateSequencedTaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE, base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
+  CHECK(!private_profile_ || private_profile_->IsOffTheRecord());
   WorkspaceShell::Callbacks callbacks;
+  callbacks.private_mode = is_private();
   callbacks.preview_import = base::BindRepeating([](WorkspaceWindow* window, BrowserImportOptions options) {
     window->PreviewBrowserImport(options);
   }, base::Unretained(this));
@@ -755,6 +758,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_tabs_ = std::make_unique<ExtensionTabs>(this);
   // Design: Extensions. The bar follows the profile of the page on screen.
   ExtensionsBar::Callbacks extension_callbacks;
+  extension_callbacks.private_mode = is_private();
   extension_callbacks.open_page = base::BindRepeating([](WorkspaceWindow* window, Profile* profile, const GURL& url) {
     window->OpenExtensionPage(profile, url);
   }, base::Unretained(this));
@@ -801,7 +805,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
-  delegate_->SetTitle(u"Zitter");
+  delegate_->SetTitle(is_private() ? T(u"Zitter — tryb prywatny") : u"Zitter");
   delegate_->SetHasWindowSizeControls(true);
   delegate_->SetContentsView(std::move(root));
   delegate_->SetClientViewFactory(WorkspaceShell::ClientViewFactory());
@@ -824,12 +828,22 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
 #endif
   widget_->Init(std::move(params));
 #if BUILDFLAG(IS_WIN)
-  SetWorkspaceCommandHandler(widget_.get(), base::BindRepeating(
+  if (!is_private()) SetWorkspaceCommandHandler(widget_.get(), base::BindRepeating(
       [](base::WeakPtr<WorkspaceWindow> window, std::string command) { if (window) window->RunExternalCommand(std::move(command)); },
       weak_factory_.GetWeakPtr()), data_directory_);
 #endif
   shell_->Attach(widget_.get(), this);
   widget_->Show();
+  if (is_private()) {
+    profiles_.push_back({{"private-profile", base::UTF16ToUTF8(T(u"Tryb prywatny")), "", ""}, nullptr});
+    model_.Add({"private", "private-profile", base::UTF16ToUTF8(T(u"Tryb prywatny"))});
+    restored_active_ = "private";
+    onboarding_complete_ = true;
+    assistant_settings_.enabled = false;
+    shell_->SetAssistantAllowed(false);
+    FinishConfiguration();
+    return;
+  }
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce([](base::FilePath path) {
         std::string json;
@@ -1132,7 +1146,7 @@ void WorkspaceWindow::UpdateShell() {
 #if BUILDFLAG(IS_WIN)
     std::vector<std::pair<std::string, std::string>> listed;
     for (const auto& space : state.workspaces) listed.emplace_back(space.id, space.name);
-    if (listed != jump_list_spaces_) {
+    if (!is_private() && listed != jump_list_spaces_) {
       jump_list_spaces_ = listed;
       std::vector<JumpListSpace> spaces;
       for (const auto& [id, name] : listed) spaces.push_back({id, base::UTF8ToUTF16(name)});
@@ -1311,6 +1325,8 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
        index(kMinimumFontSizes, service->GetInteger(prefs::kWebKitMinimumFontSize)));
   if (auto* zoom = profile->GetZoomLevelPrefs())
     read("zoom", prefs::kPartitionDefaultZoomLevel, index(kZoomPercentages, static_cast<int>(std::lround(zoom->GetDefaultZoomFactor() * 100))));
+  if (is_private()) for (auto& [key, value] : result)
+    value.editable = key == "fingerprint_protection" && value.editable;
   return result;
 }
 std::u16string WorkspaceWindow::DownloadDirectory() const {
@@ -1341,6 +1357,13 @@ void WorkspaceWindow::FileSelected(const ui::SelectedFileInfo& file, int) {
 }
 void WorkspaceWindow::FileSelectionCanceled() { download_directory_profile_.clear(); }
 bool WorkspaceWindow::WritePreference(std::string key, int value) {
+  if (is_private()) {
+    auto* profile = active_profile();
+    if (key != "fingerprint_protection" || !profile || (value != 0 && value != 1) ||
+        !profile->GetPrefs()->FindPreference(kFingerprintProtectionPref)->IsUserModifiable()) return false;
+    profile->GetPrefs()->SetBoolean(kFingerprintProtectionPref, value != 0);
+    return true;
+  }
   auto current = ReadPreferences();
   auto it = current.find(key);
   if (it == current.end() || !it->second.editable) return false;
@@ -1521,6 +1544,7 @@ void WorkspaceWindow::ShowSitePanel() {
 }
 
 void WorkspaceWindow::ShowHistory() {
+  if (is_private()) return;
   if (!model_.active()) return;
   auto* profile = ProfileFor(model_.active()->profile_id);
   if (!profile) return;
@@ -1563,6 +1587,7 @@ void WorkspaceWindow::ShowHistory() {
 // Design: Menedżer haseł — Zitter's own window over the active profile's
 // password store.
 void WorkspaceWindow::ShowPasswords() {
+  if (is_private()) return;
   if (!model_.active()) return;
   auto* profile = ProfileFor(model_.active()->profile_id);
   if (!profile) return;
@@ -1873,7 +1898,7 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
     if (candidate.id != active_id() && results.size() < 16 && matches(label, GURL()))
       results.push_back({label, ResultDetail(2, label), GURL(), std::nullopt, candidate.id, "", true});
   }
-  auto* service = HistoryServiceFactory::GetForProfile(ProfileFor(profile_id), ServiceAccessType::EXPLICIT_ACCESS);
+  auto* service = is_private() ? nullptr : HistoryServiceFactory::GetForProfile(ProfileFor(profile_id), ServiceAccessType::EXPLICIT_ACCESS);
   shell_->SetSearchResults(query, profile_id, results, /*complete=*/!service);
   if (!service) return;
   history::QueryOptions options;
@@ -1921,6 +1946,7 @@ void WorkspaceWindow::SelectTab(size_t index) {
 
 void WorkspaceWindow::CloseTab(size_t index) { CloseWorkspaceTab(active_id(), index); }
 void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t index) {
+  if (is_private() && hosts_.size() == 1 && hosts_[0].tabs.size() == 1 && index == 0) { RequestClose(); return; }
   for (auto& host : hosts_) {
     if (host.workspace_id != workspace_id || index >= host.tabs.size() || host.tabs.size() < 2) {
       continue;
@@ -2402,6 +2428,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 }
 
 bool WorkspaceWindow::RunShortcut(std::string id) {
+  if (id == "private_window") { if (new_private_window_) new_private_window_.Run(); return true; }
   if (id == "assistant") { ShowAssistant(); return true; }
   if (id == "assistant_hover") { ShowAssistant(true); return true; }
   if (id.empty()) return false;
@@ -2555,7 +2582,12 @@ bool WorkspaceWindow::CanHandleAccelerators() const {
   return widget_ && widget_->IsVisible();
 }
 
+Profile* WorkspaceWindow::active_profile() const {
+  return model_.active() ? ProfileFor(model_.active()->profile_id) : nullptr;
+}
+
 Profile* WorkspaceWindow::ProfileFor(std::string_view id) const {
+  if (is_private()) return id == "private-profile" ? private_profile_.get() : nullptr;
   for (const auto& entry : profiles_) {
     if (entry.info.id == id && entry.lease) return entry.lease->profile();
   }
@@ -2563,6 +2595,7 @@ Profile* WorkspaceWindow::ProfileFor(std::string_view id) const {
 }
 
 bool WorkspaceWindow::AddWorkspace(std::string name, std::string profile_id) {
+  if (is_private()) return false;
   auto* profile = ProfileFor(profile_id);
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy() || name.empty() || !profile) return false;
   const auto id = base::Uuid::GenerateRandomV4().AsLowercaseString();
@@ -2674,6 +2707,7 @@ bool WorkspaceWindow::RestoreRemovedWorkspace(std::string id) {
 }
 
 void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
+  if (is_private()) { if (done) std::move(done).Run(true); return; }
   if (!configuration_ready_ || configuration_invalid_) { if (done) std::move(done).Run(false); return; }
   base::DictValue dict;
   dict.Set("image_link_previews", image_link_previews_);
@@ -2760,6 +2794,7 @@ std::vector<ProfileInfo> WorkspaceWindow::profiles() const {
 }
 
 bool WorkspaceWindow::CreateProfile(std::string name, std::string workspace_id) {
+  if (is_private()) return false;
   name = TrimName(std::move(name));
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy() || name.empty()) return false;
   for (const auto& entry : profiles_) {
@@ -2811,6 +2846,7 @@ void WorkspaceWindow::ProfileCreated(ProfileInfo info, std::string workspace_id,
 }
 
 bool WorkspaceWindow::RenameProfile(std::string id, std::string name) {
+  if (is_private()) return false;
   name = TrimName(std::move(name));
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy() || name.empty()) return false;
   ProfileEntry* selected = nullptr;
@@ -2843,6 +2879,7 @@ bool WorkspaceWindow::RenameProfile(std::string id, std::string name) {
 }
 
 void WorkspaceWindow::SaveSelection() {
+  if (is_private()) return;
   if (configuration_invalid_) return;
   ++pending_config_writes_;
   // Changing a dot only persists its ID; serializing all imported pins stays off
@@ -2871,6 +2908,7 @@ bool WorkspaceWindow::CanRemoveProfile(std::string_view id) const {
 }
 
 bool WorkspaceWindow::RemoveProfile(std::string id) {
+  if (is_private()) return false;
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy() || !CanRemoveProfile(id)) return false;
   auto it = std::find_if(profiles_.begin(), profiles_.end(), [&](const auto& entry) { return entry.info.id == id; });
   CHECK(it != profiles_.end());
@@ -3020,6 +3058,7 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
 }
 
 bool WorkspaceWindow::StartupProfilesReady() const {
+  if (is_private()) return true;
   return !profiles_.empty() && std::all_of(profiles_.begin(), profiles_.end(),
       [](const auto& entry) { return entry.lease != nullptr; });
 }
@@ -3482,6 +3521,7 @@ void WorkspaceWindow::SaveFolderEdit(std::string workspace, std::vector<PinnedIt
 }
 
 void WorkspaceWindow::PreviewArcImport(base::FilePath directory) {
+  if (is_private()) return;
   PreviewBrowserImport(BrowserImportOptions(), std::move(directory));
 }
 void WorkspaceWindow::InvalidateImportPreview() {
@@ -3491,6 +3531,7 @@ void WorkspaceWindow::InvalidateImportPreview() {
   import_loading_ = false;
 }
 void WorkspaceWindow::PreviewBrowserImport(BrowserImportOptions options, base::FilePath directory) {
+  if (is_private()) return;
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return;
   if (directory.empty()) directory = DefaultBrowserDirectory(options.browser);
   shell_->BeginImportPreview(options);
@@ -3694,11 +3735,13 @@ void WorkspaceWindow::DismissImport() {
 }
 
 void WorkspaceWindow::ScheduleSessionSave() {
+  if (is_private()) return;
   if (!configuration_ready_ || configuration_invalid_ || restoring_session_ || closing_ || profiles_busy_) return;
   session_timer_.Start(FROM_HERE, base::Milliseconds(350),
       base::BindOnce(&WorkspaceWindow::SaveSession, weak_factory_.GetWeakPtr()));
 }
 void WorkspaceWindow::SaveSession() {
+  if (is_private()) return;
   session_timer_.Stop();
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return;
   base::DictValue session;

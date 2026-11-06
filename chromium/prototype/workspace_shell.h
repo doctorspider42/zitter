@@ -124,6 +124,7 @@ class WorkspaceShell final : public ui::EventHandler,
                              public ui::NativeThemeObserver {
  public:
   struct Callbacks {
+    bool private_mode = false;
     Callbacks();
     Callbacks(Callbacks&&);
     Callbacks& operator=(Callbacks&&);

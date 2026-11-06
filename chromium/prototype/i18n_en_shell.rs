@@ -3,6 +3,13 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Nowe okno prywatne", "New Private Window"),
+    ("Tryb prywatny", "Private browsing"),
+    ("Zitter — tryb prywatny", "Zitter — Private browsing"),
+    ("Tryb prywatny — sesja znika po zamknięciu wszystkich prywatnych okien. Nie zapewnia anonimowości w sieci.", "Private browsing — the session is cleared when all private windows close. Does not make you anonymous online."),
+    ("Włącz ochronę", "Turn on protection"),
+    ("Ochrona przed fingerprintingiem w trybie prywatnym: włączona", "Fingerprint protection in private browsing: on"),
+    ("Ochrona przed fingerprintingiem w trybie prywatnym: wyłączona", "Fingerprint protection in private browsing: off"),
     ("Odepnij kartę", "Unpin tab"),
     ("Edytuj przypięty adres…", "Edit Pinned URL…"),
     ("Wróć do przypiętego adresu", "Back to Pinned URL"),

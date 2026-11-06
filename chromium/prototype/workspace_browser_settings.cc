@@ -34,6 +34,7 @@ void PrepareSettingsDialog(views::View* view) {
 }  // namespace
 
 bool WorkspaceWindow::WriteTextPreference(std::string key, std::string value) {
+  if (is_private()) return false;
   if (!configuration_ready_ || profiles_busy_ || !model_.active()) return false;
   auto* profile = ProfileFor(model_.active()->profile_id);
   return profile && WriteChromiumTextPreference(profile, g_browser_process->local_state(), key, std::move(value));
@@ -104,6 +105,7 @@ void WorkspaceWindow::RequestClearBrowsingData(BrowsingDataSelection selection) 
   prompt->Show();
 }
 bool WorkspaceWindow::ClearBrowsingData(std::string profile_id, BrowsingDataSelection selection) {
+  if (is_private()) return false;
   const bool time_machine = selection.time_machine.value_or(selection.history);
   if (!configuration_ready_ || profiles_busy_ || data_remover_ || selection.period < 0 || selection.period > 4 ||
       (!selection.history && !selection.cookies && !selection.cache && !selection.downloads && !selection.passwords &&

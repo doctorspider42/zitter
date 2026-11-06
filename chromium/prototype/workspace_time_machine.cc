@@ -182,6 +182,7 @@ void WorkspaceWindow::LoadTimeline(std::string data) {
   if (pruned || lines != stats.frames + stats.marks) RewriteTimeline();
 }
 void WorkspaceWindow::AppendTimeline(std::string lines) {
+  if (is_private()) return;
   ++pending_config_writes_;
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, std::string lines) {
     base::File file(path, base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_APPEND);
@@ -192,6 +193,7 @@ void WorkspaceWindow::AppendTimeline(std::string lines) {
   }, weak_factory_.GetWeakPtr()));
 }
 void WorkspaceWindow::RewriteTimeline() {
+  if (is_private()) return;
   // Marks first: loading replays frames and marks independently.
   std::string data;
   for (const auto& mark : timeline_->current->timeline_marks()) data += MarkLine(mark);
@@ -205,6 +207,7 @@ void WorkspaceWindow::RewriteTimeline() {
   }, weak_factory_.GetWeakPtr()));
 }
 void WorkspaceWindow::RecordTimeline(bool force, std::string_view workspace_id) {
+  if (is_private()) return;
   if (!timeline_enabled_ || !configuration_ready_ || configuration_invalid_ || restoring_session_ || profiles_busy_) return;
   std::string lines;
   const int64_t now = Milliseconds(Now());

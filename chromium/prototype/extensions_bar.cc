@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/extensions_bar.h"
+#include "ui/views/controls/label.h"
 #include "chromium/prototype/assistant_visuals.h"
 
 #include <algorithm>
@@ -571,6 +572,29 @@ class Divider final : public views::View {
 BEGIN_METADATA(Divider)
 END_METADATA
 
+// A compact private-mode marker, with details available on hover.
+class PrivateModeBadge final : public views::View {
+  METADATA_HEADER(PrivateModeBadge, views::View)
+ public:
+  explicit PrivateModeBadge(base::RepeatingCallback<sidebar::DesignPalette()> palette)
+      : palette_(std::move(palette)) {
+    SetPreferredSize(gfx::Size(kButton, kButton));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kImage);
+    GetViewAccessibility().SetName(T(u"Tryb prywatny"));
+    SetTooltipText(T(u"Tryb prywatny — sesja znika po zamknięciu wszystkich prywatnych okien. Nie zapewnia anonimowości w sieci."));
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = palette_.Run();
+    FillRound(canvas, gfx::RectF(GetLocalBounds()), 8, p.accent_soft);
+    constexpr char mask[] = "M2 7h12M4 7l1-4h6l1 4M3 10a2 2 0 1 0 4 0 2 2 0 1 0-4 0M9 10a2 2 0 1 0 4 0 2 2 0 1 0-4 0M7 10h2";
+    StrokeIcon(canvas, mask, gfx::RectF(6, 6, 16, 16), p.accent_ink);
+  }
+ private:
+  base::RepeatingCallback<sidebar::DesignPalette()> palette_;
+};
+BEGIN_METADATA(PrivateModeBadge)
+END_METADATA
+
 // Fingerprint protection in the bar, before the pinned actions: an IconButton
 // like theirs, shown while the profile's protection is on.
 class FingerprintButton final : public views::Button {
@@ -1106,7 +1130,8 @@ class ExtensionsBar::FingerprintPanel final : public views::BubbleDialogDelegate
       return row;
     };
     add_row(T(u"Zmień odcisk"), kTurnIcon, &ExtensionsBar::NewFingerprint);
-    add_row(T(u"Wyłącz ochronę"), kShieldOffIcon, &ExtensionsBar::TurnOffFingerprintProtection);
+    const bool enabled = bar_->profile()->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
+    add_row(enabled ? T(u"Wyłącz ochronę") : T(u"Włącz ochronę"), kShieldOffIcon, &ExtensionsBar::TurnOffFingerprintProtection);
     add_row(T(u"Ustawienia prywatności"), kGearIcon, &ExtensionsBar::OpenPrivacySettings)->SetRing(true);
     SetContentsView(std::move(body));
     Refresh();
@@ -1241,6 +1266,7 @@ ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbac
   GetViewAccessibility().SetRole(ax::mojom::Role::kToolbar);
   GetViewAccessibility().SetName(T(u"Rozszerzenia"));
   SetVisible(false);
+  if (callbacks_.private_mode) Rebuild();
 }
 
 ExtensionsBar::~ExtensionsBar() {
@@ -1265,7 +1291,7 @@ SkColor ExtensionsBar::workspace_color() const {
 }
 
 void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
-  if (profile && profile->IsOffTheRecord()) profile = nullptr;
+  if (profile && profile->IsOffTheRecord() && !callbacks_.private_mode) profile = nullptr;
   const bool profile_changed = profile != profile_;
   const bool page_changed = page != page_.get();
   if (page_changed) { ClosePopup(); CloseMenus(); }
@@ -1276,7 +1302,7 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
     model_observation_.Reset();
     profile_ = profile;
     ObserveFingerprintProtection();
-    if (auto* model = profile_ ? ToolbarActionsModel::Get(profile_) : nullptr) model_observation_.Observe(model);
+    if (auto* model = profile_ && !callbacks_.private_mode ? ToolbarActionsModel::Get(profile_) : nullptr) model_observation_.Observe(model);
     Rebuild();
     return;
   }
@@ -1302,6 +1328,7 @@ void ExtensionsBar::SetAssistantState(AssistantState state) {
   if (auto* button = views::AsViewClass<AssistantButton>(assistant_button_.get())) button->SetState(state);
 }
 void ExtensionsBar::Rebuild() {
+  if (callbacks_.private_mode && fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
   DestroyAssistantPanel();
   RemoveAllChildViews();
   buttons_.clear();
@@ -1310,8 +1337,23 @@ void ExtensionsBar::Rebuild() {
   fingerprint_button_ = nullptr;
   assistant_button_ = nullptr;
   shield_button_ = nullptr;
-  auto* model = profile_ ? ToolbarActionsModel::Get(profile_) : nullptr;
-  SetVisible(model != nullptr);
+  auto* model = profile_ && !callbacks_.private_mode ? ToolbarActionsModel::Get(profile_) : nullptr;
+  SetVisible(callbacks_.private_mode || model != nullptr);
+  if (callbacks_.private_mode) {
+    auto palette = base::BindRepeating(&ExtensionsBar::palette, base::Unretained(this));
+    AddChildView(std::make_unique<PrivateModeBadge>(palette));
+    if (profile_) {
+      const bool enabled = profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
+      fingerprint_button_ = AddChildView(std::make_unique<FingerprintButton>(
+          base::BindRepeating(&ExtensionsBar::ToggleFingerprintPanel, base::Unretained(this)), palette));
+      static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(enabled);
+      fingerprint_button_->SetTooltipText(enabled ? T(u"Ochrona przed fingerprintingiem w trybie prywatnym: włączona")
+                                                : T(u"Ochrona przed fingerprintingiem w trybie prywatnym: wyłączona"));
+    }
+    PreferredSizeChanged();
+    SchedulePaint();
+    return;
+  }
   const bool protection = model && profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
   if (!protection && fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
   const bool blocking = model && profile_->GetPrefs()->GetBoolean(kAdBlockingPref);
@@ -1459,7 +1501,7 @@ void ExtensionsBar::ShowActionMenu(const std::string& id, views::View* source, u
 }
 
 void ExtensionsBar::SetPinned(const std::string& id, bool pinned) {
-  if (auto* model = profile_ ? ToolbarActionsModel::Get(profile_) : nullptr; model && model->HasAction(id))
+  if (auto* model = profile_ && !callbacks_.private_mode ? ToolbarActionsModel::Get(profile_) : nullptr; model && model->HasAction(id))
     model->SetActionVisibility(id, pinned);
 }
 
@@ -1558,7 +1600,8 @@ void ExtensionsBar::ToggleFingerprintPanel() {
 void ExtensionsBar::DestroyFingerprintPanel() {
   fingerprint_widget_.reset();
   fingerprint_panel_.reset();
-  if (fingerprint_button_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(false);
+  if (fingerprint_button_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(
+      callbacks_.private_mode && profile_ && profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref));
 }
 
 void ExtensionsBar::NewFingerprint() {
@@ -1568,8 +1611,11 @@ void ExtensionsBar::NewFingerprint() {
 }
 
 void ExtensionsBar::TurnOffFingerprintProtection() {
-  // The pref observer removes the button and closes this panel.
-  if (profile_) profile_->GetPrefs()->SetBoolean(kFingerprintProtectionPref, false);
+  // Private mode keeps its control available even while protection is off.
+  if (!profile_) return;
+  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  profile_->GetPrefs()->SetBoolean(kFingerprintProtectionPref,
+      callbacks_.private_mode && !profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref));
 }
 
 void ExtensionsBar::OpenPrivacySettings() {

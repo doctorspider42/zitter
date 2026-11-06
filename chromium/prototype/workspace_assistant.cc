@@ -773,6 +773,7 @@ WorkspaceWindow::AssistantBackgroundPage& WorkspaceWindow::AssistantBackgroundPa
 WorkspaceWindow::AssistantBackgroundPage::~AssistantBackgroundPage() = default;
 
 void WorkspaceWindow::SetAssistantSettings(AssistantSettings settings) {
+  if (is_private()) return;
   const bool changed=assistant_settings_.encrypted_api_key!=settings.encrypted_api_key||
       !std::ranges::equal(assistant_settings_.models,settings.models,[](const auto& a,const auto& b){return a.provider==b.provider&&a.id==b.id&&a.visible==b.visible;});
   if(changed){++assistant_connection_generation_;assistant_checks_pending_.clear();assistant_backend_status_.clear();}
@@ -789,6 +790,7 @@ void WorkspaceWindow::SetAssistantSettings(AssistantSettings settings) {
   shell_->RefreshAssistantPreferences();
 }
 base::DictValue WorkspaceWindow::AssistantSettingsForShell() {
+  if (is_private()) return base::DictValue().Set("enabled", false);
   if (!assistant_status_pending_ && assistant_backend_status_.empty()) {
     assistant_status_pending_ = true;
     base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
@@ -897,6 +899,7 @@ void WorkspaceWindow::CheckAssistantConnection(std::string provider){
 }
 // Settings rows send small commands, validated here.
 void WorkspaceWindow::WriteAssistantSettings(base::DictValue value) {
+  if (is_private()) return;
   if (configuration_invalid_ || !assistant_settings_.enabled) return;
   auto settings = assistant_settings_;
   const auto* command = value.FindString("command");
@@ -1139,6 +1142,7 @@ void WorkspaceWindow::NewAssistantConversation() {
   if (existed && assistant_settings_.enabled) assistant_->StartNewConversation();
 }
 void WorkspaceWindow::ShowAssistant(bool hover) {
+  if (is_private()) return;
   if (!assistant_settings_.enabled) return;
   if (!assistant_) {
     auto panel = std::make_unique<AssistantPanel>(this);
@@ -1182,6 +1186,7 @@ base::DictValue WorkspaceWindow::AssistantContext(const AssistantPermissions& pe
   return context;
 }
 void WorkspaceWindow::LoadAssistantSessions(base::OnceCallback<void(std::optional<base::DictValue>)> done) {
+  if (is_private()) { std::move(done).Run(std::nullopt); return; }
   // The writer's sequence: a load never reads a half-written file.
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path) -> std::optional<base::DictValue> {
     std::string json;
@@ -1190,6 +1195,7 @@ void WorkspaceWindow::LoadAssistantSessions(base::OnceCallback<void(std::optiona
   }, assistant_sessions_path()), std::move(done));
 }
 void WorkspaceWindow::SaveAssistantSessions(base::DictValue sessions) {
+  if (is_private()) return;
   std::string json;
   if (!base::JSONWriter::Write(sessions, &json)) return;
   config_runner_->PostTask(FROM_HERE, base::BindOnce([](base::FilePath path, std::string json) {
@@ -1197,6 +1203,7 @@ void WorkspaceWindow::SaveAssistantSessions(base::DictValue sessions) {
   }, assistant_sessions_path(), std::move(json)));
 }
 void WorkspaceWindow::EnsureAssistant() {
+  if (is_private()) return;
   if (assistant_ || !assistant_settings_.enabled) return;
   auto panel = std::make_unique<AssistantPanel>(this);
   assistant_ = panel.get();

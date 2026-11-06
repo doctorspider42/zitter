@@ -2,6 +2,8 @@
 #define ZITTER_CHROMIUM_APP_RUNTIME_H_
 
 #include <memory>
+#include <vector>
+#include "base/memory/raw_ptr.h"
 
 #include "base/containers/flat_set.h"
 #include "base/callback_list.h"
@@ -50,7 +52,11 @@ class Runtime final : public ChromeBrowserMainExtraParts,
  private:
   void ReplaceStockWindow(BrowserWindowInterface* browser);
   void WindowReady();
+  void OpenPrivateWindow();
+  void ClosePrivateWindow(prototype::WorkspaceWindow* window);
+  prototype::WorkspaceWindow* ActiveWindow() const;
   void RequestClose();
+  void RequestQuitAll();
   void Close();
 #if !BUILDFLAG(IS_MAC)
   // Answer to the in-progress downloads prompt; quitting resumes Close().
@@ -59,6 +65,9 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   void ReleaseProfiles();
   std::unique_ptr<ScopedKeepAlive> keep_alive_;
   std::unique_ptr<prototype::WorkspaceWindow> window_;
+  std::vector<std::unique_ptr<prototype::WorkspaceWindow>> private_windows_;
+  raw_ptr<Profile> private_profile_ = nullptr;
+  std::unique_ptr<ScopedProfileKeepAlive> private_parent_lease_;
   std::unique_ptr<AppPerformanceProbe> performance_probe_;
 #if BUILDFLAG(IS_WIN)
   std::unique_ptr<WindowsUpdater> updater_;
@@ -70,6 +79,7 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   // Stock windows awaiting closure; dropped if they close first.
   base::flat_set<BrowserWindowInterface*> stock_windows_;
   bool closing_ = false;
+  bool quit_requested_ = false;
 #if !BUILDFLAG(IS_MAC)
   bool downloads_confirmed_ = false;
   base::CallbackListSubscription closing_all_browsers_;

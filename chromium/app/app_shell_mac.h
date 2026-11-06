@@ -7,6 +7,7 @@ namespace zitter {
 
 enum class AppCommand {
   kNewTab = 1,
+  kNewPrivateWindow,
   kOpenAddress,
   kCommandPalette,
   kImport,

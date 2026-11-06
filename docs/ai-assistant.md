@@ -403,3 +403,10 @@ Provider interfaces: [OpenAI function calling](https://developers.openai.com/api
 [Codex CLI](https://learn.chatgpt.com/docs/non-interactive-mode),
 [Claude CLI](https://code.claude.com/docs/en/cli-reference),
 [Ollama chat](https://docs.ollama.com/api/chat).
+
+## Private browsing
+
+The assistant is unavailable in private windows. Zitter does not load saved
+conversations or scheduled tasks into those windows, create background assistant
+pages there, or save private browsing content into assistant sessions. Open a
+regular window to use the assistant.

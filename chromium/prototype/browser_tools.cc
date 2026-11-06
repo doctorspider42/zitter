@@ -43,6 +43,7 @@ std::vector<Shortcut> ArcShortcuts() {
   const int p = Primary();
   add("address", T(u"Adres i wyszukiwanie"), ui::VKEY_L, p);
   add("new_tab", T(u"Nowa karta"), ui::VKEY_T, p);
+  add("private_window", T(u"Nowe okno prywatne"), ui::VKEY_N, p | ui::EF_SHIFT_DOWN);
   add("palette", T(u"Command Center"), ui::VKEY_K, p);
   add("close_tab", T(u"Zamknij kartę / Peek"), ui::VKEY_W, p);
   add("close_other_tabs", T(u"Zamknij pozostałe karty"), ui::VKEY_K, p | ui::EF_SHIFT_DOWN);
@@ -258,7 +259,7 @@ BrowserTools BrowserTools::FromValue(const base::DictValue& dict) {
       if (found != proposed.end()) found->accelerator = *parsed;
     }
     // A new default must never invalidate an older user's custom bindings.
-    for (const std::string added : {"downloads", "find", "print", "print_system"}) {
+    for (const std::string added : {"downloads", "find", "print", "print_system", "private_window"}) {
       if (saved.contains(added)) continue;
       auto shortcut = std::find_if(proposed.begin(), proposed.end(), [&](const auto& item) { return item.id == added; });
       if (shortcut != proposed.end() && std::any_of(proposed.begin(), proposed.end(), [&](const auto& other) {

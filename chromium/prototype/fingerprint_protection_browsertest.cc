@@ -21,6 +21,8 @@
 #include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_destroyer.h"
+#include "components/prefs/pref_service.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -106,6 +108,44 @@ class ZitterFingerprintProtectionBrowserTest : public InProcessBrowserTest {
   base::test::ScopedFeatureList network_sandbox_;
 #endif
 };
+
+IN_PROC_BROWSER_TEST_F(ZitterFingerprintProtectionBrowserTest, PrivateControlWorksWhenRegularProtectionIsOff) {
+  ASSERT_TRUE(window_->WritePreference("fingerprint_protection", 0));
+  const auto plain = Probe("a.test");
+  auto* profile = work_->GetOffTheRecordProfile(Profile::OTRProfileID::CreateUnique("ZitterPrivateTest"), true);
+  const auto id = profile->GetOTRProfileID();
+  auto one = std::make_unique<WorkspaceWindow>(work_->GetPath().DirName(), false, profile);
+  auto two = std::make_unique<WorkspaceWindow>(work_->GetPath().DirName(), false, profile);
+  const auto url = embedded_test_server()->GetURL("a.test", "/fingerprint_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(one->contents("private"), url));
+  ASSERT_TRUE(content::NavigateToURL(two->contents("private"), url));
+  auto* bar = one->extensions_bar();
+  ASSERT_EQ(profile, bar->profile());
+  ASSERT_TRUE(bar->fingerprint_button_for_testing());
+  EXPECT_TRUE(one->ReadPreferences().at("fingerprint_protection").editable);
+  EXPECT_NE(window_->shell()->active_workspace_color(), one->shell()->active_workspace_color());
+  bar->ToggleFingerprintPanel();
+  ASSERT_TRUE(bar->fingerprint_panel_for_testing());
+  // The same popover offers turning protection on when the regular profile is off.
+  bar->RunFingerprintCommandForTesting(1);
+  EXPECT_TRUE(profile->GetPrefs()->GetBoolean(kFingerprintProtectionPref));
+  EXPECT_FALSE(work_->GetPrefs()->GetBoolean(kFingerprintProtectionPref));
+  EXPECT_TRUE(page()->GetMutableRendererPrefs()->zitter_fingerprint_key.empty());
+  EXPECT_EQ(FingerprintProtection::SessionKey(profile), one->contents("private")->GetMutableRendererPrefs()->zitter_fingerprint_key);
+  EXPECT_EQ(FingerprintProtection::SessionKey(profile), two->contents("private")->GetMutableRendererPrefs()->zitter_fingerprint_key);
+  auto noisy = content::EvalJs(one->contents("private"), "probe()");
+  ASSERT_TRUE(noisy.is_dict());
+  ExpectAllDiffer(plain, noisy.ExtractDict());
+  ASSERT_TRUE(two->WritePreference("fingerprint_protection", 0));
+  EXPECT_TRUE(one->contents("private")->GetMutableRendererPrefs()->zitter_fingerprint_key.empty());
+  EXPECT_TRUE(bar->fingerprint_button_for_testing());
+  one.reset(); two.reset();
+  ProfileDestroyer::DestroyOTRProfileWhenAppropriate(profile);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !work_->HasOffTheRecordProfile(id); }));
+  profile = work_->GetOffTheRecordProfile(Profile::OTRProfileID::CreateUnique("ZitterPrivateTest"), true);
+  EXPECT_FALSE(profile->GetPrefs()->GetBoolean(kFingerprintProtectionPref));
+  ProfileDestroyer::DestroyOTRProfileWhenAppropriate(profile);
+}
 
 IN_PROC_BROWSER_TEST_F(ZitterFingerprintProtectionBrowserTest, OffByDefaultLeavesReadsUntouched) {
   EXPECT_EQ(0, window_->ReadPreferences().at("fingerprint_protection").value);

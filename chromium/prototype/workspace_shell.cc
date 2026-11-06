@@ -3895,7 +3895,8 @@ WorkspaceShell::WorkspaceShell(base::FilePath path, Callbacks callbacks)
       io_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
   workspace_swipe_ = std::make_unique<WorkspaceSwipeState>();
-  state_.workspace_id = "work";
+  state_.workspace_id = callbacks_.private_mode ? "private" : "work";
+  if (callbacks_.private_mode) { theme_mode_ = ThemeMode::kDark; general_dirty_.insert("theme"); }
   sidebar_tree_.SetDefaultCollapsed(true);
   InstallMenuStyle();
   ui::NativeTheme::GetInstanceForNativeUi()->AddObserver(this);
@@ -8609,6 +8610,7 @@ void WorkspaceShell::ApplyPinnedFoldersCollapsed(bool collapsed) {
 void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search,
     std::optional<bool> animations, std::optional<bool> workspace_names, std::optional<bool> folders_collapsed,
     std::optional<std::pair<bool, int>> time_machine) {
+  if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed, time_machine),
@@ -9427,6 +9429,7 @@ void WorkspaceShell::RecordCommandUse(std::string id, std::string target) {
   SaveTools();
 }
 void WorkspaceShell::SaveTools() {
+  if (callbacks_.private_mode) return;
   // One sequenced file contains both sections; startup dirty guards prevent a
   // delayed read from rolling back edits made immediately after launch.
   std::string json; if (!base::JSONWriter::Write(tools_.ToValue(), &json)) return;
@@ -9940,6 +9943,7 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
   }
   add("new_tab", T(u"Command Center…"), kMenuNewTabIcon);
+  add("private_window", T(u"Nowe okno prywatne"), kMenuNewTabIcon);
   add("address", T(u"Otwórz adres…"), kMenuAddressIcon);
   model->AddSeparator(ui::NORMAL_SEPARATOR);
   // Design: Find & Print, the |z⟩ menu.
@@ -10043,6 +10047,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
   ApplyAppearance();
   if (pinned_) ShowSidebar();
   else if (sidebar_visible()) sidebar_hover_timer_.Start(FROM_HERE, base::Milliseconds(40), this, &WorkspaceShell::PollSidebar);
+  if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
@@ -10068,6 +10073,7 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
   PositionPanels();
   if (!done) return;
   sidebar_resizing_ = false;
+  if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
@@ -10083,6 +10089,7 @@ void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   if (key == kDraftWorkspace) { ApplyAppearance(); return; }
   color_dirty_.insert(key);
   ApplyAppearance();
+  if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
@@ -10097,6 +10104,10 @@ std::u16string WorkspaceShell::workspace_emoji(std::string_view id) const {
   return it == emoji_.end() ? std::u16string() : it->second;
 }
 void WorkspaceShell::RefreshWorkspaceHeading() {
+  if (callbacks_.private_mode) {
+    static_cast<WorkspaceHeading*>(workspace_name_.get())->SetText(T(u"Tryb prywatny"));
+    return;
+  }
   if (swipe_overlay_ && workspace_swipe_->tracking() && !swipe_workspace_ids_.empty()) {
     const auto index = workspace_swipe_->target(state_.workspaces.size());
     const auto& workspace = state_.workspaces[index];
@@ -10129,6 +10140,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
   RefreshWorkspaceHeading();
   ApplyAppearance();
   if (key == state_.workspace_id && emoji_input_ && emoji_input_->GetText() != emoji) emoji_input_->SetText(emoji);
+  if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
@@ -10142,7 +10154,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
 }
 SkColor WorkspaceShell::workspace_color(std::string_view id) const {
   auto it = colors_.find(std::string(id));
-  return it == colors_.end() ? kDefaultWorkspaceColor : it->second;
+  return it == colors_.end() ? (callbacks_.private_mode ? 0xFF2B1646 : kDefaultWorkspaceColor) : it->second;
 }
 namespace {
 SkColor ProfileAvatarColor(std::string_view id);
