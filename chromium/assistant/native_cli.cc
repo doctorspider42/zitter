@@ -124,6 +124,11 @@ std::string PerformCLI(std::string id, const base::DictValue& request) {
   const auto schema_text = base::WriteJson(*schema).value();
   base::CommandLine command(executable);
   base::LaunchOptions options;
+#if BUILDFLAG(IS_WIN)
+  options.environment[L"ZITTER_OPENAI_API_KEY"]=L"";
+#else
+  options.environment["ZITTER_OPENAI_API_KEY"]="";
+#endif
   options.current_directory = temp.GetPath();
   std::string stdin_text;
   if (codex) {

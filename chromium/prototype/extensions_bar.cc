@@ -96,6 +96,7 @@ constexpr char kPuzzleIcon[] = "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.
 constexpr char kPinIcon[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
 constexpr char kWarnIcon[] = "M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1";
 constexpr char kGearIcon[] = "M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.8 3.8l1 1M11.2 11.2l1 1M3.8 12.2l1-1M11.2 4.8l1-1";
+constexpr char kPlusIcon[] = "M8 3v10M3 8h10";
 constexpr char kStoreIcon[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
 // Fingerprint protection: ridges, a turn arrow, a crossed-out shield.
 constexpr char kFingerprintIcon[] = "M4.2 4.2a5.5 5.5 0 0 1 7.6 0M3 11.5V9.5a5 5 0 0 1 10 0v1M5.5 13.5V9.5a2.5 2.5 0 0 1 5 0V12M8 9v5";
@@ -1214,18 +1215,20 @@ class ExtensionsBar::AssistantActions final : public views::BubbleDialogDelegate
     body->SetBackground(views::CreateSolidBackground(palette.bg_raised));
     body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
     body->AddChildView(std::make_unique<MenuHeader>(palette, T(u"Działaj na tej stronie")));
-    const std::array<std::u16string, 6> labels = {
+    const std::array<std::u16string, 7> labels = {
       T(u"Podsumuj najważniejsze informacje"), T(u"Dodaj wyszukiwarkę tej strony"),
       T(u"Zablokuj reklamy z asystentem"), T(u"Sprawdź fakty i źródła"),
-      T(u"Wyciągnij dane i porównaj"), T(u"Otwórz rozmowę")};
-    for (size_t i = 0; i < labels.size(); ++i) {
-      if (i == 5) body->AddChildView(std::make_unique<MenuSeparator>(palette.line));
+      T(u"Wyciągnij dane i porównaj"), T(u"Nowa rozmowa"), T(u"Ustawienia AI")};
+    constexpr std::array<int, 7> order = {0, 1, 3, 4, 2, 5, 6};
+    for (const int command : order) {
+      if (command == 5) body->AddChildView(std::make_unique<MenuSeparator>(palette.line));
       auto* row = body->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
         [](base::WeakPtr<ExtensionsBar> bar, int command) { if (bar) bar->RunAssistantCommand(command); },
-        bar->weak_factory_.GetWeakPtr(), static_cast<int>(i)), palette, kFooterHeight));
-      row->SetGlyph(i == 2 ? kShieldIcon : kAssistantSparkIcon); row->Init();
-      row->SetText(labels[i], {}, false, 16);
-      row->SetEnabled(i == 5 || (bar->page() && bar->page()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()));
+        bar->weak_factory_.GetWeakPtr(), command), palette, kFooterHeight));
+      row->SetGlyph(command == 2 ? kShieldIcon : command == 5 ? kPlusIcon : command == 6 ? kGearIcon : kAssistantSparkIcon);
+      row->SetRing(command == 6); row->Init();
+      row->SetText(labels[command], {}, false, 16);
+      row->SetEnabled(command >= 5 || (bar->page() && bar->page()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()));
     }
     SetContentsView(std::move(body));
   }
@@ -1700,8 +1703,8 @@ void ExtensionsBar::ToggleAssistantPanel() {
 }
 void ExtensionsBar::DestroyAssistantPanel() { assistant_widget_.reset(); assistant_panel_.reset(); }
 void ExtensionsBar::RunAssistantCommand(int command) {
-  if (!assistant_state_.enabled || command < 0 || command > 5) return;
-  if (command != 5 && (!page_ || !page_->GetLastCommittedURL().SchemeIsHTTPOrHTTPS())) return;
+  if (!assistant_state_.enabled || command < 0 || command > 6) return;
+  if (command < 5 && (!page_ || !page_->GetLastCommittedURL().SchemeIsHTTPOrHTTPS())) return;
   if (assistant_widget_ && !assistant_widget_->IsClosed()) assistant_widget_->Close();
   if (command == 5) { if (callbacks_.toggle_assistant) callbacks_.toggle_assistant.Run(); }
   else if (callbacks_.assistant_action) callbacks_.assistant_action.Run(command);

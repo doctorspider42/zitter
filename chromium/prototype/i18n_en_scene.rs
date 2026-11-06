@@ -564,4 +564,6 @@ pub static EN: &[(&str, &str)] = &[
     ("Listy, wyjątki i Twoje reguły", "Lists, exceptions and your rules"),
     ("Listy aktualizują się same co kilka dni. Twoje reguły, także te od asystenta, działają tylko w tym profilu.", "The lists update themselves every few days. Your rules, including those from the assistant, apply only to this profile."),
     ("Mniej reklam i śledzenia, bez rozszerzeń.", "Fewer ads and less tracking, no extensions needed."),
+    ("Połączenia AI", "AI connections"),
+    ("Połącz wybraną usługę i sprawdź, czy odpowiada. Zielony status oznacza udany test połączenia.", "Connect a service and check that it responds. Green indicates a successful connection test."),
 ];

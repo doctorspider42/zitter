@@ -133,6 +133,20 @@ class NativeAssistantTests(unittest.TestCase):
         cls.thread.join(timeout=2)
         cls.provider_home.cleanup()
 
+    def test_connection_check_isolated_and_reports_failure(self):
+        env = dict(os.environ, ZITTER_OLLAMA_URL=f'http://127.0.0.1:{self.model.server_port}')
+        result = subprocess.run([str(BINARY), '--check-provider=ollama', '--check-model=probe'], env=env, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(json.loads(result.stdout), {'ok': True})
+        with Model.lock:
+            request = Model.requests[-1]
+        self.assertIn('Connection test.', json.dumps(request))
+        self.assertNotIn('browsing_history', json.dumps(request))
+        env['ZITTER_OLLAMA_URL'] = 'http://127.0.0.1:1'
+        failed = subprocess.run([str(BINARY), '--check-provider=ollama', '--check-model=probe'], env=env, capture_output=True, timeout=30)
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(json.loads(failed.stdout), {'ok': False})
+
     @classmethod
     def rpc(cls, path, value=None, method='POST', headers=None, raw=None, port=None):
         connection = http.client.HTTPConnection('127.0.0.1', port or cls.port, timeout=15)
@@ -188,7 +202,7 @@ class NativeAssistantTests(unittest.TestCase):
         request = self.request()
         request['config']['provider'] = 'openai'
         result = self.rpc('/turn', request)[1]
-        self.assertIn('OPENAI_API_KEY', result['error'])
+        self.assertIn('API key', result['error'])
         self.assertNotIn('fixture-key', result['error'])
         self.assertEqual(self.rpc('/health', method='GET')[1], {'ready': True})
 

@@ -491,8 +491,8 @@ string, one rule per line.
 Why native consent instead of `ask_user`: `ask_user` runs through the model,
 which could skip it or misreport the answer. Saving rules changes the user's
 browser for good, so it gets the same unforgeable consent as a click, with the
-tool's own question in the bubble (`prompt` in the tool result). "Allow for
-this task" and unconfirmed background work behave as they do for clicks; the
+tool's own question in the bubble (`prompt` in the tool result). Session-wide
+consent and unconfirmed background work behave as they do for clicks; the
 "confirm clicks" setting never skips it.
 
 The shield's **Zablokuj więcej z asystentem** sends "Zablokuj reklamy na tej

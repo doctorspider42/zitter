@@ -27,6 +27,7 @@
 #include "base/timer/timer.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/resize_area.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
 #include "ui/gfx/animation/animation.h"
@@ -704,18 +705,27 @@ class ConsentBubble final : public views::View {
       :title_(std::move(title)),detail_(std::move(detail)){
     GetViewAccessibility().SetRole(ax::mojom::Role::kAlertDialog);GetViewAccessibility().SetName(title_);GetViewAccessibility().SetDescription(detail_);
     SetPaintToLayer();layer()->SetFillsBoundsOpaquely(false);
-    allow_=AddChildView(CreateAssistantPill(std::move(allow),T(u"Zezwól"),0,std::nullopt,u"↵"));
+    allow_=AddChildView(CreateAssistantPill(base::BindRepeating(
+        [](ConsentBubble* self,base::RepeatingClosure allow,base::RepeatingClosure allow_session){
+          if(self->remember_&&self->remember_->GetChecked())allow_session.Run();else allow.Run();
+        },base::Unretained(this),std::move(allow),allow_all),T(u"Zezwól"),0,std::nullopt,u"↵"));
     skip_=AddChildView(CreateAssistantPill(std::move(skip),T(u"Pomiń"),1,std::nullopt,u"Esc"));
-    if(allow_all)all_=AddChildView(CreateAssistantPill(std::move(allow_all),T(u"Do końca zadania"),2));
+    if(allow_all){
+      remember_=AddChildView(std::make_unique<views::Checkbox>(T(u"Nie pytaj do końca sesji")));
+    }
+  }
+  void OnThemeChanged() override {
+    views::View::OnThemeChanged();
+    if(remember_)remember_->SetEnabledTextColors(Theme(this).muted);
   }
   views::View* allow() const {return allow_;}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
-    const int buttons=40+allow_->GetPreferredSize().width()+6+skip_->GetPreferredSize().width()+(all_?12+all_->GetPreferredSize().width():0)+10;
-    return {std::clamp(std::max(buttons,40+gfx::GetStringWidth(title_,Type(13,600))+14),260,460),88};
+    const int buttons=40+allow_->GetPreferredSize().width()+6+skip_->GetPreferredSize().width()+10;
+    return {std::clamp(std::max({buttons,40+gfx::GetStringWidth(title_,Type(13,600))+14,remember_?50+remember_->GetPreferredSize().width():0}),260,460),remember_?116:88};
   }
   void Layout(PassKey) override {
     int x=40;for(auto* b:{allow_.get(),skip_.get()}){const auto s=b->GetPreferredSize();b->SetBounds(x,50,s.width(),28);x+=s.width()+6;}
-    if(all_){const auto s=all_->GetPreferredSize();all_->SetBounds(std::max(x,width()-10-s.width()),50,s.width(),28);}
+    if(remember_)remember_->SetBounds(40,84,std::max(0,width()-52),24);
   }
   void OnPaint(gfx::Canvas* canvas) override {
     const auto c=Theme(this);auto rect=gfx::RectF(GetLocalBounds());rect.Inset(.5f);
@@ -724,7 +734,7 @@ class ConsentBubble final : public views::View {
     canvas->DrawStringRectWithFlags(title_,Type(13,600),c.ink,gfx::Rect(40,8,std::max(0,width()-52),19),gfx::Canvas::TEXT_ALIGN_LEFT);
     canvas->DrawStringRectWithFlags(detail_,Type(12),c.muted,gfx::Rect(40,27,std::max(0,width()-52),16),gfx::Canvas::TEXT_ALIGN_LEFT);
   }
- private:std::u16string title_,detail_;raw_ptr<views::View> allow_=nullptr,skip_=nullptr,all_=nullptr;
+ private:std::u16string title_,detail_;raw_ptr<views::View> allow_=nullptr,skip_=nullptr;raw_ptr<views::Checkbox> remember_=nullptr;
 };
 BEGIN_METADATA(ConsentBubble)
 END_METADATA

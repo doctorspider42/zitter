@@ -2,6 +2,15 @@
 #include "chromium/prototype/workspace_window.h"
 
 #include <map>
+#if BUILDFLAG(IS_POSIX)
+#include <unistd.h>
+#endif
+#include "chrome/browser/browser_process.h"
+#include "components/os_crypt/async/browser/os_crypt_async.h"
+#include "components/os_crypt/async/common/encryptor.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/process/launch.h"
+#include "base/process/kill.h"
 #include "chromium/prototype/assistant_panel.h"
 #include "assistant_page_script.h"
 #include <algorithm>
@@ -744,12 +753,12 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
   }
   PageOp(page, std::move(args), std::move(done));
 }
-BackendProbe ProbeBackends() {
+BackendProbe ProbeBackends(bool saved_key) {
   auto env = base::Environment::Create();
   auto set = [&](base::cstring_view name) { const auto value = env->GetVar(name); return value && !value->empty(); };
   auto file = [&](base::cstring_view name) { const auto value = env->GetVar(name); return value && base::PathExists(base::FilePath::FromUTF8Unsafe(*value)); };
   BackendProbe probe;
-  probe.openai = set("OPENAI_API_KEY");
+  probe.openai = saved_key || set("OPENAI_API_KEY");
   probe.codex = file("ZITTER_CODEX_PATH") || OnPath("codex");
   probe.claude = file("ZITTER_CLAUDE_PATH") || OnPath("claude");
   const GURL ollama(env->GetVar("ZITTER_OLLAMA_URL").value_or("http://127.0.0.1:11434"));
@@ -764,6 +773,9 @@ WorkspaceWindow::AssistantBackgroundPage& WorkspaceWindow::AssistantBackgroundPa
 WorkspaceWindow::AssistantBackgroundPage::~AssistantBackgroundPage() = default;
 
 void WorkspaceWindow::SetAssistantSettings(AssistantSettings settings) {
+  const bool changed=assistant_settings_.encrypted_api_key!=settings.encrypted_api_key||
+      !std::ranges::equal(assistant_settings_.models,settings.models,[](const auto& a,const auto& b){return a.provider==b.provider&&a.id==b.id&&a.visible==b.visible;});
+  if(changed){++assistant_connection_generation_;assistant_checks_pending_.clear();assistant_backend_status_.clear();}
   assistant_settings_ = std::move(settings);
   if (assistant_settings_.models.empty()) assistant_settings_.models = AssistantSettings().models;
   SaveConfiguration();
@@ -780,21 +792,25 @@ base::DictValue WorkspaceWindow::AssistantSettingsForShell() {
   if (!assistant_status_pending_ && assistant_backend_status_.empty()) {
     assistant_status_pending_ = true;
     base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-        base::BindOnce(&ProbeBackends), base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, BackendProbe probe) {
+        base::BindOnce(&ProbeBackends,!assistant_settings_.encrypted_api_key.empty()), base::BindOnce([](base::WeakPtr<WorkspaceWindow> window,uint64_t generation, BackendProbe probe) {
           if (!window) return;
           window->assistant_status_pending_ = false;
-          // tone: 1 ready, 2 needs setup, 0 neutral.
+          if(generation!=window->assistant_connection_generation_){window->shell_->RefreshAssistantPreferences();return;}
           auto row = [](int tone, std::u16string state, std::u16string detail) {
             return base::DictValue().Set("tone", tone).Set("state", base::UTF16ToUTF8(state)).Set("detail", base::UTF16ToUTF8(detail));
           };
           base::ListValue status;
-          status.Append(probe.openai ? row(1, T(u"Gotowy"), T(u"OPENAI_API_KEY ze środowiska")) : row(2, T(u"Brak klucza"), T(u"Ustaw OPENAI_API_KEY przed uruchomieniem Zittera")));
-          status.Append(probe.codex ? row(1, T(u"Gotowy"), T(u"Natywny Codex CLI · zaloguj się w Codex")) : row(2, T(u"Nie znaleziono"), T(u"Zainstaluj natywny Codex CLI albo ustaw ZITTER_CODEX_PATH")));
-          status.Append(probe.claude ? row(1, T(u"Gotowy"), T(u"claude w PATH")) : row(2, T(u"Nie znaleziono"), T(u"Zainstaluj Claude Code albo ustaw ZITTER_CLAUDE_PATH")));
-          status.Append(row(0, T(u"Lokalny"), base::UTF8ToUTF16(probe.ollama)));
-          window->assistant_backend_status_ = std::move(status);
+          status.Append(probe.openai ? row(0,T(u"Do sprawdzenia"),T(u"Klucz API jest skonfigurowany. Sprawdź połączenie.")) : row(2,T(u"Brak klucza API"),T(u"Dodaj klucz, aby połączyć konto OpenAI.")));
+          status.Append(probe.codex ? row(0,T(u"Do sprawdzenia"),T(u"Wykryto Codex. Test sprawdzi logowanie i odpowiedź modelu.")) : row(2,T(u"Wymaga konfiguracji"),T(u"Zainstaluj Codex i zaloguj się na swoje konto.")));
+          status.Append(probe.claude ? row(0,T(u"Do sprawdzenia"),T(u"Wykryto Claude Code. Test sprawdzi logowanie i odpowiedź modelu.")) : row(2,T(u"Wymaga konfiguracji"),T(u"Zainstaluj Claude Code i zaloguj się na swoje konto.")));
+          status.Append(row(0,T(u"Do sprawdzenia"),T(u"Uruchom Ollama i pobierz wybrany model, a potem sprawdź połączenie.")));
+          for(size_t i=0;i<status.size();++i){
+            if(i<window->assistant_backend_status_.size()&&window->assistant_backend_status_[i].GetDict().FindBool("checked").value_or(false))continue;
+            if(i<window->assistant_backend_status_.size())window->assistant_backend_status_[i]=std::move(status[i]);
+            else window->assistant_backend_status_.Append(std::move(status[i]));
+          }
           window->shell_->RefreshAssistantPreferences();
-        }, weak_factory_.GetWeakPtr()));
+        }, weak_factory_.GetWeakPtr(),assistant_connection_generation_));
   }
   base::ListValue models;
   for (const auto& model : assistant_settings_.models)
@@ -805,7 +821,79 @@ base::DictValue WorkspaceWindow::AssistantSettingsForShell() {
     backends.Append(base::DictValue().Set("provider", kAssistantProviders[i]).Set("label", base::UTF16ToUTF8(AssistantProviderLabel(kAssistantProviders[i])))
         .Set("enabled", assistant_settings_.backends[i]));
   return base::DictValue().Set("enabled", assistant_settings_.enabled && !configuration_invalid_).Set("backends", std::move(backends))
-      .Set("status", assistant_backend_status_.Clone()).Set("models", std::move(models)).Set("default_model", assistant_settings_.default_model);
+      .Set("has_saved_key",!assistant_settings_.encrypted_api_key.empty()).Set("status", assistant_backend_status_.Clone()).Set("models", std::move(models)).Set("default_model", assistant_settings_.default_model);
+}
+// Credentials are decrypted only for a provider operation, never exposed to settings,
+// transcripts, model prompts, command-line arguments or diagnostic output.
+void WorkspaceWindow::WithAssistantApiKey(base::OnceCallback<void(std::string)> callback){
+  const auto encrypted=assistant_settings_.encrypted_api_key;
+  if(encrypted.empty()){std::move(callback).Run("");return;}
+  g_browser_process->os_crypt_async()->GetInstance(base::BindOnce(
+      [](base::OnceCallback<void(std::string)> callback,std::string encrypted,scoped_refptr<os_crypt_async::Encryptor> encryptor){
+        std::string ciphertext,plain;
+        if(!base::Base64Decode(encrypted,&ciphertext)||!encryptor->DecryptString(ciphertext,&plain))plain.clear();
+        std::move(callback).Run(std::move(plain));
+      },std::move(callback),encrypted));
+}
+namespace {
+bool CheckProviderProcess(std::string provider,std::string model,std::string api_key){
+  base::FilePath exe;base::PathService::Get(base::DIR_EXE,&exe);
+#if BUILDFLAG(IS_WIN)
+  base::CommandLine command(exe.AppendASCII("zitter_assistant.exe"));
+#else
+  base::CommandLine command(exe.AppendASCII("zitter_assistant"));
+#endif
+  command.AppendSwitchASCII("check-provider",provider);command.AppendSwitchASCII("check-model",model);
+  base::ScopedTempDir temp;if(!temp.CreateUniqueTempDir())return false;
+  const auto output_path=temp.GetPath().AppendASCII("result");
+  base::File output(output_path,base::File::FLAG_CREATE_ALWAYS|base::File::FLAG_WRITE);
+  base::LaunchOptions options;
+#if BUILDFLAG(IS_WIN)
+  base::File diagnostics(base::FilePath(L"NUL"),base::File::FLAG_OPEN|base::File::FLAG_WRITE);
+  options.start_hidden=true;options.stdout_handle=output.GetPlatformFile();options.stderr_handle=diagnostics.GetPlatformFile();
+  options.handles_to_inherit={output.GetPlatformFile(),diagnostics.GetPlatformFile()};
+  for(auto handle:options.handles_to_inherit)::SetHandleInformation(handle,HANDLE_FLAG_INHERIT,HANDLE_FLAG_INHERIT);
+  if(!api_key.empty())options.environment[L"ZITTER_OPENAI_API_KEY"]=base::UTF8ToWide(api_key);
+#else
+  base::File diagnostics(base::FilePath("/dev/null"),base::File::FLAG_OPEN|base::File::FLAG_WRITE);
+  options.fds_to_remap={{output.GetPlatformFile(),STDOUT_FILENO},{diagnostics.GetPlatformFile(),STDERR_FILENO}};
+  if(!api_key.empty())options.environment["ZITTER_OPENAI_API_KEY"]=api_key;
+#endif
+  if(!output.IsValid()||!diagnostics.IsValid())return false;
+  auto process=base::LaunchProcess(command,options);if(!process.IsValid())return false;
+  int code=1;
+  if(!process.WaitForExitWithTimeout(base::Seconds(25),&code)){process.Terminate(1,true);return false;}
+  std::string result;if(code!=0||!base::ReadFileToStringWithMaxSize(output_path,&result,1024))return false;
+  auto parsed=base::JSONReader::ReadDict(result,base::JSON_PARSE_RFC);
+  return parsed&&parsed->FindBool("ok").value_or(false);
+}
+}
+void WorkspaceWindow::CheckAssistantConnection(std::string provider){
+  const auto found=std::ranges::find(kAssistantProviders,provider);
+  if(found==kAssistantProviders.end()||!assistant_checks_pending_.insert(provider).second)return;
+  const size_t index=found-kAssistantProviders.begin();
+  std::string model;
+  for(const auto& item:assistant_settings_.models)if(item.provider==provider&&item.visible){model=item.id;break;}
+  if(model.empty()){assistant_checks_pending_.erase(provider);return;}
+  while(assistant_backend_status_.size()<4)assistant_backend_status_.Append(base::DictValue());
+  assistant_backend_status_[index]=base::Value(base::DictValue().Set("tone",0).Set("checked",true).Set("checking",true)
+      .Set("state",base::UTF16ToUTF8(T(u"Sprawdzam połączenie…"))).Set("detail",base::UTF16ToUTF8(T(u"Czekam na odpowiedź modelu"))));
+  shell_->RefreshAssistantPreferences();
+  WithAssistantApiKey(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window,std::string provider,std::string model,size_t index,uint64_t generation,std::string key){
+    if(!window||window->assistant_connection_generation_!=generation)return;
+    base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,{base::MayBlock(),base::WithBaseSyncPrimitives(),base::TaskPriority::USER_VISIBLE},
+        base::BindOnce(&CheckProviderProcess,provider,model,std::move(key)),
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> window,std::string provider,std::string model,size_t index,uint64_t generation,bool ok){
+          if(!window||window->assistant_connection_generation_!=generation)return;window->assistant_checks_pending_.erase(provider);
+          const auto detail=ok?TF(u"Model {} odpowiedział poprawnie",{base::UTF8ToUTF16(model)}):
+            provider=="openai"?T(u"Sprawdź klucz API, dostęp do modelu i połączenie z internetem."):
+            provider=="ollama"?T(u"Sprawdź, czy Ollama działa i wybrany model jest pobrany."):
+            T(u"Sprawdź instalację, logowanie, dostęp do modelu i połączenie z internetem.");
+          window->assistant_backend_status_[index]=base::Value(base::DictValue().Set("tone",ok?1:2).Set("checked",true)
+              .Set("state",base::UTF16ToUTF8(ok?T(u"Połączono"):T(u"Nie udało się połączyć"))).Set("detail",base::UTF16ToUTF8(detail)));
+          window->shell_->RefreshAssistantPreferences();
+        },window,provider,model,index,generation));
+  },weak_factory_.GetWeakPtr(),provider,model,index,assistant_connection_generation_));
 }
 // Settings rows send small commands, validated here.
 void WorkspaceWindow::WriteAssistantSettings(base::DictValue value) {
@@ -819,7 +907,25 @@ void WorkspaceWindow::WriteAssistantSettings(base::DictValue value) {
     return nullptr;
   };
   if (!command) return;
-  if (*command == "backend" && provider) {
+  if(*command=="check"&&provider){CheckAssistantConnection(*provider);return;}
+  if(*command=="save_key"){
+    const auto* supplied=value.FindString("key");if(!supplied)return;
+    const std::string key(base::TrimWhitespaceASCII(*supplied,base::TRIM_ALL));
+    if(key.empty()||key.size()>4096||key.find_first_of("\r\n")!=std::string::npos)return;
+    g_browser_process->os_crypt_async()->GetInstance(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window,std::string key,scoped_refptr<os_crypt_async::Encryptor> encryptor){
+      if(!window||!window->assistant_settings_.enabled)return;
+      std::string encrypted;
+      if(!encryptor->IsEncryptionAvailable()||!encryptor->EncryptString(key,&encrypted)){
+        window->shell_->ShowToast(T(u"Nie udało się bezpiecznie zapisać klucza API"),{}, {});return;
+      }
+      auto settings=window->assistant_settings_;settings.encrypted_api_key=base::Base64Encode(encrypted);
+      if(window->assistant_)window->assistant_->CredentialsChanged();
+      window->assistant_backend_status_.clear();window->SetAssistantSettings(std::move(settings));
+    },weak_factory_.GetWeakPtr(),key));return;
+  }
+  if(*command=="remove_key"){
+    settings.encrypted_api_key.clear();if(assistant_)assistant_->CredentialsChanged();assistant_backend_status_.clear();
+  } else if (*command == "backend" && provider) {
     for (size_t i = 0; i < kAssistantProviders.size(); ++i)
       if (*provider == kAssistantProviders[i]) settings.backends[i] = value.FindBool("enabled").value_or(true);
   } else if (*command == "visible") {
@@ -1026,6 +1132,11 @@ std::string WorkspaceWindow::WriteAdBlocking(base::DictValue command) {
       return base::UTF16ToUTF8(TF(u"Tej reguły nie da się użyć: {}", {base::UTF8ToUTF16(ContentBlocking::RuleError(*rule))}));
   }
   return {};
+}
+void WorkspaceWindow::NewAssistantConversation() {
+  const bool existed = assistant_ != nullptr;
+  ShowAssistant();
+  if (existed && assistant_settings_.enabled) assistant_->StartNewConversation();
 }
 void WorkspaceWindow::ShowAssistant(bool hover) {
   if (!assistant_settings_.enabled) return;

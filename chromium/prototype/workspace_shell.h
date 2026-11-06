@@ -238,6 +238,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool assistant_edge_visible_for_testing() const;
   void RefreshAssistantPreferences();
   void OpenAssistantSettings();
+  void ShowAssistantKeyDialog();
   void OpenAdBlockingSettings();
   // Lists, sites or rules changed: the Settings card rebuilds after the click
   // that changed them has finished.

@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include <csignal>
+#include <iostream>
 #include <cstdlib>
 #include <map>
 #include <set>
@@ -223,6 +224,22 @@ int main(int argc, const char** argv) {
   base::AtExitManager exit;
   base::CommandLine::Init(argc, argv);
   const auto* command = base::CommandLine::ForCurrentProcess();
+  if(command->HasSwitch("check-provider")){
+    if(!InitializeAssistantICU())return 3;
+    base::SingleThreadTaskExecutor tasks(base::MessagePumpType::IO);
+    base::ThreadPoolInstance::CreateAndStartWithDefaultParams("ZitterConnectionCheck");
+    const auto provider=command->GetSwitchValueASCII("check-provider");
+    const auto model=command->GetSwitchValueASCII("check-model");
+    if(provider!="openai"&&provider!="codex"&&provider!="claude"&&provider!="ollama")return 2;
+    zitter::assistant::BeginOperation("connection-check");
+    auto body=base::DictValue().Set("id","connection-check").Set("prompt","Connection test. Reply OK without using tools.")
+        .Set("config",base::DictValue().Set("provider",provider).Set("model",model)).Set("permissions",base::DictValue());
+    auto result=base::JSONReader::ReadDict(std::string(zitter::assistant::runtime_request("/turn",base::WriteJson(body).value())),base::JSON_PARSE_RFC);
+    const bool ok=result&&!result->FindString("error")&&result->FindString("answer")&&!result->FindString("answer")->empty();
+    zitter::assistant::EndOperation("connection-check");
+    std::cout<<(ok?"{\"ok\":true}":"{\"ok\":false}")<<std::endl;
+    return ok?0:1;
+  }
   int port = 0, pid = 0;
   const auto token = command->GetSwitchValueASCII("token");
   if (!base::StringToInt(command->GetSwitchValueASCII("port"), &port) ||

@@ -12,10 +12,11 @@ also counts as inside while the pointer is over it. Drag the grip on its left ed
 between 360 and 760 DIP; narrow windows constrain the effective width. The chosen
 width survives hiding and pin changes within the window.
 The header has no close button: unpin the panel to let it hide automatically.
-Use **Stop** to stop the current task. Once enabled for this window, the right
-edge opens the panel again. No assistant process or
-provider request starts until **Send**. Suggestions only fill a draft; they do not
-send it or grant browser access.
+Use **Stop** to stop the current task. The right edge opens the panel whenever
+the assistant is enabled, including before the first conversation. Hovering never
+starts a provider request: requests follow **Send**, an explicit connection test,
+or a configured scheduled task. Suggestions only fill a draft; they do not send
+it or grant browser access.
 
 ## Settings
 
@@ -25,9 +26,12 @@ send it or grant browser access.
   edge, Command Center shows only “AI Assistant is turned off” (which opens this
   page), no assistant process starts and background pages close. The other values
   are kept.
-- **Backends.** Each backend shows its setup status (an API key in the
-  environment, the native Codex CLI, `claude` on PATH, the Ollama address) and a
-  switch that hides it from the panel. API keys are never typed into Zitter.
+- **AI connections.** Each service has a setup status, a visibility switch and
+  **Test connection**. Detected installations remain unverified until a selected
+  model answers a short test message: green means success, red means failure.
+  The test shares no pages or browsing history and times out after 20 seconds.
+  Add, replace or remove an OpenAI API key directly here. Keys are encrypted
+  through Chromium's operating-system credential protection before being saved.
 - **Models in the panel.** Visible models make up the panel's model menu. The
   default one starts every new session. Models can be added by backend and ID,
   hidden or removed.
@@ -106,8 +110,8 @@ browser actions and permission checks remain in the browser process.
 
 | Backend | Setup | Model field |
 | --- | --- | --- |
-| OpenAI API | Set `OPENAI_API_KEY` in Zitter's launch environment. Requests use the Responses API with `store: false`. | A model supporting structured JSON output. |
-| Codex CLI | Install and authenticate the native Codex executable. Put it on PATH or set `ZITTER_CODEX_PATH` to its absolute path. | A Codex-compatible model ID. |
+| OpenAI API | Add your key in **Settings → AI Assistant → AI connections**. `OPENAI_API_KEY` remains an optional fallback. Requests use the Responses API with `store: false`. | A model supporting structured JSON output. |
+| Codex CLI | Install and authenticate the native Codex executable. Put it on PATH or set `ZITTER_CODEX_PATH` to its absolute path. | Current defaults: `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`, `gpt-6-luna`. Custom IDs remain supported. |
 | Claude CLI | Install and authenticate native Claude Code. Put it on PATH or set `ZITTER_CLAUDE_PATH` to its absolute path. | A Claude CLI alias or exact model ID. |
 | Ollama | Start local Ollama and pull the chosen model. Optional `ZITTER_OLLAMA_URL` changes the loopback HTTP endpoint; the default is `http://127.0.0.1:11434`. | An installed model with reliable structured output. |
 
@@ -119,7 +123,10 @@ binary instead. The same native executable requirement applies to Claude.
 Do not install npm packages into an app bundle. Chromium's own build toolchain
 and the independent network audit scripts are outside this runtime migration.
 
-API keys are never entered into page fields or stored in browser preferences.
+API keys are never entered into page fields or saved as plaintext. The settings
+file contains only an OS-encrypted value; plaintext is passed privately to the
+native helper through its process environment and is never added to prompts,
+transcripts, status payloads or command-line arguments.
 Provider failures do not forward raw diagnostics into the conversation.
 Codex runs in a temporary isolated home and working directory with shell tools,
 web search, user MCP configuration and network tools disabled. Its existing
@@ -202,9 +209,11 @@ multi-line editor (it can submit a form), Enter with a modifier (it sends messag
 in mail and chat apps), and accepting a confirm, prompt or leave dialog.
 
 By default each such action on the visible page needs consent: a small prompt appears
-beside the element (**Allow** with Enter, **Skip** with Escape, or **Until the task
-ends**). Skipping tells the model the user declined that click. The model cannot
-change this choice or supply native consent.
+beside the element (**Allow** with Enter or **Skip** with Escape). The checkbox
+**Don’t ask again for this session** takes effect with **Allow** and covers later
+turns in the same conversation while the app remains open. A new conversation
+asks again. Skipping tells the model the user declined that click. The model
+cannot change this choice or supply native consent.
 
 ## Background work
 
@@ -305,12 +314,13 @@ Clicking it opens a local menu without starting a model or sharing page content:
 
 - **Summarize the key points**: claims, figures, conclusions and next steps.
 - **Add this site’s search**: discover its search URL and propose a keyword.
-- **Block ads with the assistant**: inspect, test and preview additional rules.
 - **Check facts and sources**: compare the page's claims with independent and
   primary sources after reading the current page, including authorized signed-in content.
 - **Extract data and compare**: build a table of prices, terms, differences and
   missing information from the page.
-- **Open conversation**: open the existing assistant panel.
+- **Block ads with the assistant**: inspect, test and preview additional rules.
+- **New conversation**: open a fresh assistant session and preserve the previous draft.
+- **AI settings**: go directly to AI connections and model configuration.
 
 Page actions create a fresh session with the current page reference. Existing
 work and an earlier draft stay intact. If the saved permission defaults already

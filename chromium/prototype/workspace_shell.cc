@@ -235,6 +235,7 @@ class SceneParentNodes final {
 
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFolderNameField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantApiKeyField);
 // Color roles. The values only name a role: Tone() resolves each one from the
 // design system palette (design.rs) for the view's scheme and workspace color.
 constexpr SkColor kInk = 0xFF1B1A22;
@@ -2815,11 +2816,30 @@ BrowserImportOptions ImportServiceOptions(const sidebar::ImportSelection& s){Bro
 std::vector<sidebar::ProfileOption> ProfileOptions(const ShellState& state){std::vector<sidebar::ProfileOption> out;out.reserve(state.profiles.size());for(const auto& p:state.profiles)out.push_back({p.id,p.name});return out;}
 std::vector<sidebar::ProfileUse> ProfileUses(const ShellState& state){std::vector<sidebar::ProfileUse> out;out.reserve(state.workspaces.size());for(const auto& w:state.workspaces)out.push_back({w.id,w.name,w.profile_id});return out;}
 
-class EdgeView final : public views::View {
+class EdgeView final : public views::View, public views::WidgetObserver {
   METADATA_HEADER(EdgeView, views::View)
  public:
-  explicit EdgeView(base::RepeatingClosure show) : show_(std::move(show)) {}
+  explicit EdgeView(base::RepeatingClosure show, bool watch_pointer = false)
+      : show_(std::move(show)), watch_pointer_(watch_pointer) {}
+  void AddedToWidget() override {
+    views::View::AddedToWidget();
+    if (watch_pointer_) widget_observation_.Observe(GetWidget());
+    SyncPointerWatch();
+  }
+  void RemovedFromWidget() override {
+    pointer_timer_.Stop(); widget_observation_.Reset();
+    views::View::RemovedFromWidget();
+  }
+  void VisibilityChanged(views::View* view, bool visible) override {
+    views::View::VisibilityChanged(view, visible); SyncPointerWatch();
+  }
+  void OnWidgetActivationChanged(views::Widget*, bool) override { SyncPointerWatch(); }
+  void OnWidgetVisibilityChanged(views::Widget*, bool) override { SyncPointerWatch(); }
+  void OnWidgetDestroying(views::Widget*) override {
+    pointer_timer_.Stop(); widget_observation_.Reset();
+  }
   void OnMouseEntered(const ui::MouseEvent&) override { show_.Run(); }
+  void OnMouseMoved(const ui::MouseEvent&) override { show_.Run(); }
   void OnPaint(gfx::Canvas* canvas) override {
     // Amber and taller while a background task waits for consent.
     if (attention) FillRound(canvas, gfx::Rect(1, std::max(0, height() / 2 - 28), 5, 56), 3, SkColorSetRGB(0xff, 0xbe, 0x55));
@@ -2828,7 +2848,26 @@ class EdgeView final : public views::View {
   SkColor color = kDefaultWorkspaceColor;
   bool attention = false;
  private:
+  bool CanWatchPointer() const {
+    const auto* widget = GetWidget();
+    return watch_pointer_ && IsDrawn() && widget && widget->IsVisible() && widget->IsActive();
+  }
+  void SyncPointerWatch() {
+    if (!CanWatchPointer()) { pointer_timer_.Stop(); return; }
+    if (pointer_timer_.IsRunning()) return;
+    // Like the visible panel's auto-hide watcher, this survives native page
+    // views and resize borders swallowing mouse events. No polling while the
+    // handle is hidden, the assistant is disabled, or the window is inactive.
+    pointer_timer_.Start(FROM_HERE, base::Milliseconds(150), base::BindRepeating(
+        [](EdgeView* edge) {
+          if (!edge->CanWatchPointer()) { edge->pointer_timer_.Stop(); return; }
+          if (edge->GetBoundsInScreen().Contains(display::Screen::Get()->GetCursorScreenPoint())) edge->show_.Run();
+        }, base::Unretained(this)));
+  }
   base::RepeatingClosure show_;
+  const bool watch_pointer_;
+  base::RepeatingTimer pointer_timer_;
+  base::ScopedObservation<views::Widget, views::WidgetObserver> widget_observation_{this};
 };
 BEGIN_METADATA(EdgeView)
 END_METADATA
@@ -3563,15 +3602,16 @@ class AssistantActivityView final : public views::View {
       SkColor4f::FromColor(0xff5ff0dc),SkColor4f::FromColor(0xff6d8bff),SkColor4f::FromColor(0xffa78bfa)};
     const std::array<SkScalar,7> stops={0,.38f,.48f,.51f,.56f,.70f,1};
     const auto shader=cc::PaintShader::MakeSweepGradient(cx,cy,spectrum.data(),stops.data(),spectrum.size(),SkTileMode::kClamp,0,360,{},0,&rotation);
-    // Four nested strokes produce a soft inward aurora with a sharp light core.
-    // Geometry stays inside browser chrome, never over the page's input layer.
-    for(int pass=0;pass<4;++pass){
-      constexpr std::array<float,4> widths={38,20,8,2.5f};
-      constexpr std::array<float,4> opacity={.30f,.48f,.85f,1.f};
+    // A continuous inward fade, one third of the former 38 px band.
+    constexpr float band=38.f/3.f;
+    constexpr int samples=64;
+    for(int pass=0;pass<samples;++pass){
+      const float t=(pass+.5f)/samples,depth=t*band;
       cc::PaintFlags glow;glow.setAntiAlias(true);glow.setStyle(cc::PaintFlags::kStroke_Style);
-      glow.setStrokeWidth(widths[pass]);glow.setShader(shader);glow.setAlphaf(opacity[pass]*breath);
-      gfx::RectF frame(GetLocalBounds());frame.Inset(widths[pass]/2.f+.5f);
-      canvas->DrawRoundRect(frame,std::max(4.f,18.f-widths[pass]/3.f),glow);
+      glow.setStrokeWidth(band/samples+.15f);glow.setShader(shader);
+      glow.setAlphaf((1.f-t)*(1.f-t)*breath);
+      gfx::RectF frame(GetLocalBounds());frame.Inset(depth+.5f);
+      canvas->DrawRoundRect(frame,std::max(4.f,18.f-depth),glow);
     }
     if(!pill_)return;
     const int pill_width=std::min(224,std::max(0,width()-24));
@@ -3606,6 +3646,7 @@ class ShellRoot final : public views::View {
       if (assistant) assistant->SetVisible(false);
       content->SetBoundsRect(GetLocalBounds());
       edge->SetVisible(false);
+      if (assistant_edge) assistant_edge->SetVisible(false);
       LayoutSuperclass<views::View>(this);
       return;
     }
@@ -3683,7 +3724,7 @@ class ShellRoot final : public views::View {
     }
     if (assistant_edge) {
       assistant_edge->SetBounds(width() - kGap, top, kGap, std::max(0, height() - top));
-      assistant_edge->SetVisible(assistant_allowed && assistant && !assistant->GetVisible());
+      assistant_edge->SetVisible(assistant_allowed && (!assistant || !assistant->GetVisible()));
     }
     edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
     LayoutSuperclass<views::View>(this);
@@ -3923,14 +3964,16 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
 #endif
   root->content = content_host_;
   root->edge = edge_;
+  root->assistant_edge = root->AddChildView(std::make_unique<EdgeView>(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->callbacks_.run_shortcut.Run("assistant_hover"); }, weak_factory_.GetWeakPtr()), true));
   return root;
 }
 
 void WorkspaceShell::SetAssistantView(views::View* view) {
   auto* root = static_cast<ShellRoot*>(root_.get());
   root->assistant = root->AddChildView(std::unique_ptr<views::View>(view));
-  root->assistant_edge = root->AddChildView(std::make_unique<EdgeView>(base::BindRepeating(
-      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->callbacks_.run_shortcut.Run("assistant_hover"); }, weak_factory_.GetWeakPtr())));
+  root->ReorderChildView(root->assistant_edge, root->children().size() - 1);
+  root->InvalidateLayout();
 }
 void WorkspaceShell::SetAssistantActivity(bool active) {
   if (!root_) return;
@@ -8270,20 +8313,36 @@ void WorkspaceShell::BuildAssistantPreferences() {
   assistant_backends_list_->RemoveAllChildViews();
   const auto* backends=data.FindList("backends");const auto* status=data.FindList("status");
   for(size_t i=0;backends&&i<backends->size();++i){
-    const auto& backend=(*backends)[i].GetDict();
-    auto* line=assistant_backends_list_->AddChildView(std::make_unique<views::View>());
-    auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
+    const auto& backend=(*backends)[i].GetDict();const auto provider=*backend.FindString("provider");
+    const base::DictValue* state=status&&i<status->size()?&(*status)[i].GetDict():nullptr;
+    const int tone=state?state->FindInt("tone").value_or(0):0;
+    const bool checking=state&&state->FindBool("checking").value_or(false);
+    auto* card=assistant_backends_list_->AddChildView(std::make_unique<views::View>());
+    SetSidebarPanelLayout(card,true,gfx::Insets::TLBR(6,0,14,0),8);
+    auto* line=card->AddChildView(std::make_unique<views::View>());
+    auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),4);
     AddPreferenceCopy(labels,text(backend,"label"),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
-    std::u16string detail=T(u"Sprawdzam…");
-    if(status&&i<status->size()){const auto& s=(*status)[i].GetDict();detail=text(s,"state")+u" · "+text(s,"detail");}
-    AddPreferenceCopy(labels,detail,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    AddPreferenceCopy(labels,u"●  "+(state?text(*state,"state"):T(u"Sprawdzam…")),tone==1?kOk:tone==2?kError:kMuted,-1,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
     auto* toggle=PreferenceToggle(line,TF(u"Pokazuj {} w panelu",{text(backend,"label")}));
     SetToggleOn(toggle,backend.FindBool("enabled").value_or(true));toggle->SetEnabled(enabled);
     SetActionCallback(toggle,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string provider,views::View* toggle){
       write(shell,base::DictValue().Set("command","backend").Set("provider",provider).Set("enabled",ToggleOn(toggle)));
-    },write,weak,*backend.FindString("provider"),base::Unretained(toggle)));
+    },write,weak,provider,base::Unretained(toggle)));
     SetSidebarPanelLayout(line,false,gfx::Insets(),16,labels,true);
+    if(state)AddPreferenceCopy(card,text(*state,"detail"),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+    auto* actions=card->AddChildView(std::make_unique<views::View>());
+    auto* check=PreferenceAction(actions,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string provider,const ui::Event&){
+      write(shell,base::DictValue().Set("command","check").Set("provider",provider));
+    },write,weak,provider),checking?T(u"Sprawdzam…"):T(u"Sprawdź połączenie"));
+    check->GetViewAccessibility().SetName(TF(u"Sprawdź połączenie z {}",{text(backend,"label")}));check->SetEnabled(enabled&&!checking);
+    if(provider=="openai"){
+      const bool saved=data.FindBool("has_saved_key").value_or(false);
+      auto* key=PreferenceAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::Event&){if(shell)shell->ShowAssistantKeyDialog();},weak),saved?T(u"Zmień klucz API"):T(u"Dodaj klucz API"));key->SetEnabled(enabled);
+      if(saved){auto* remove=PreferenceAction(actions,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const ui::Event&){write(shell,base::DictValue().Set("command","remove_key"));},write,weak),T(u"Usuń klucz"));remove->SetEnabled(enabled);}
+    }
+    SetSidebarPanelLayout(actions,false,gfx::Insets(),8);
   }
+  AddPreferenceCopy(assistant_backends_list_,T(u"Test wysyła krótką wiadomość do wybranego modelu. Nie udostępnia stron ani historii przeglądania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
   assistant_models_list_->RemoveAllChildViews();
   const auto* default_model=data.FindString("default_model");
   const auto* models=data.FindList("models");
@@ -8326,6 +8385,23 @@ void WorkspaceShell::BuildAssistantPreferences() {
   assistant_add_backend_->SetEnabled(enabled);assistant_add_model_->view()->SetEnabled(enabled);assistant_add_button_->SetEnabled(enabled);
   RefreshChoiceViewports(assistant_backends_list_->parent());RefreshChoiceViewports(assistant_models_list_->parent());
   if(general_widget_)general_widget_->GetContentsView()->InvalidateLayout();
+}
+void WorkspaceShell::ShowAssistantKeyDialog(){
+  ui::DialogModel::Builder builder;auto* model=builder.model();
+  auto dialog=builder.SetTitle(T(u"Połącz OpenAI"))
+      .AddParagraph(ui::DialogModelLabel(T(u"Wklej klucz API ze swojego konta OpenAI. Zitter zapisze go w postaci zaszyfrowanej przy użyciu zabezpieczeń systemu.")))
+      .AddPasswordField(kAssistantApiKeyField,T(u"Klucz API"),T(u"Klucz API OpenAI"),T(u"Wpisz klucz API"))
+      .SetInitiallyFocusedField(kAssistantApiKeyField)
+      .AddOkButton(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,ui::DialogModel* model){
+        if(!shell)return true;
+        const auto key=base::UTF16ToUTF8(base::TrimWhitespace(model->GetPasswordFieldByUniqueId(kAssistantApiKeyField)->text(),base::TRIM_ALL));
+        if(key.empty()||key.size()>4096||key.find_first_of("\r\n")!=std::string::npos)return false;
+        if(shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(base::DictValue().Set("command","save_key").Set("key",key));
+        return true;
+      },weak_factory_.GetWeakPtr(),base::Unretained(model)),ui::DialogModel::Button::Params().SetLabel(T(u"Zapisz klucz")))
+      .AddCancelButton(base::DoNothing(),ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj"))).Build();
+  auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(std::move(dialog),ui::mojom::ModalType::kWindow),general_widget_->GetNativeWindow(),general_widget_->GetNativeView());
+  prompt->SetColorModeOverride(general_widget_->color_mode_override());prompt->Show();
 }
 void WorkspaceShell::OpenAssistantSettings() {
   OpenGeneralSettings();

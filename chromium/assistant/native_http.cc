@@ -156,9 +156,11 @@ class Fetch final : public net::URLRequest::Delegate {
       request_->set_upload(net::ElementsUploadDataStream::CreateWithReader(
           net::UploadOwnedBytesElementReader::CreateWithString(upload_)));
       if (kind_ == "openai") {
-        auto key = base::Environment::Create()->GetVar("OPENAI_API_KEY");
+        auto env=base::Environment::Create();
+        auto key=env->GetVar("ZITTER_OPENAI_API_KEY");
+        if(!key||key->empty())key=env->GetVar("OPENAI_API_KEY");
         if (!key || key->empty() || !net::HttpUtil::IsValidHeaderValue(*key)) {
-          result_.error = "Set OPENAI_API_KEY before starting Zitter.";
+          result_.error = "Add your OpenAI API key in Settings → AI assistant.";
           return result_;
         }
         request_->SetExtraRequestHeaderByName("Authorization", "Bearer " + *key,

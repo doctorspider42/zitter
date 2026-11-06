@@ -765,12 +765,13 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
     window->shell_->OpenPrivacySettings();
   }, base::Unretained(this));
   extension_callbacks.toggle_assistant = base::BindRepeating([](WorkspaceWindow* window) {
-    window->ShowAssistant();
+    window->NewAssistantConversation();
   }, base::Unretained(this));
   extension_callbacks.open_ad_blocking_settings = base::BindRepeating([](WorkspaceWindow* window) {
     window->shell_->OpenAdBlockingSettings();
   }, base::Unretained(this));
   extension_callbacks.assistant_action = base::BindRepeating([](WorkspaceWindow* window, int command) {
+    if(command==6){window->shell_->OpenAssistantSettings();return;}
     const std::array<std::u16string, 5> prompts = {
       T(u"Podsumuj tę stronę: główne tezy, liczby, wnioski i to, co warto zrobić dalej. Oddziel treść strony od własnej interpretacji."),
       T(u"Dodaj wyszukiwarkę tej strony. Odczytaj formularz wyszukiwania, ustal poprawny URL z parametrem zapytania i zaproponuj krótki keyword. Użyj add_search_engine."),

@@ -49,6 +49,7 @@ struct AssistantSettings {
   bool enabled = true;
   std::array<bool, 4> backends{true, true, true, true};
   std::vector<AssistantModel> models;
+  std::string encrypted_api_key;  // OS-encrypted, base64 encoded; never sent to the UI.
   std::string default_model;  // "<provider>/<id>"
   AssistantPermissions defaults;
   bool background = true, confirm_background = true;
@@ -99,10 +100,12 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // An unpinned panel follows pointer departure regardless of how it opens.
   // Keyboard opening stays visible until the mouse moves; edge opening arms immediately.
   void Show(bool from_edge = false);
+  void StartNewConversation();
   // Stops the selected conversation; background tasks keep running.
   void Stop();
   void StopAll();
   void RevokeAccess();
+  void CredentialsChanged() { StopAll(); ResetRuntime(); }
   void Collapse();
   // Escape skips a pending click on the visible page, otherwise stops it.
   bool HandleEscape();
@@ -189,8 +192,10 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     std::vector<Message> messages;
     std::u16string composer_draft;
     std::vector<AssistantChip> composer_chips;
+    // In-memory consent for this conversation; never persisted.
+    bool auto_confirm = false;
     // Runtime of the current turn.
-    bool busy = false, background = false, finished = false, auto_confirm = false, page_control = false;
+    bool busy = false, background = false, finished = false, page_control = false;
     uint64_t epoch = 0;
     std::unique_ptr<network::SimpleURLLoader> loader;
     std::optional<base::DictValue> request;
@@ -272,6 +277,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void ShowPartial();
   void Send(bool background);
   void StartTurn(Session& session);
+  void StartRuntime(std::string key, uint64_t epoch, std::string api_key);
   void PollRuntime(std::string key, uint64_t epoch, int attempts);
   void Request(Session& session, std::string path, base::DictValue body, base::OnceCallback<void(base::DictValue)> done);
   void OnTurn(std::string key, uint64_t epoch, base::DictValue reply);

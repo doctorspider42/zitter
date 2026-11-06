@@ -416,7 +416,7 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
       if (request.relative_url == "/api/chat") {
         auto response = std::make_unique<net::test_server::BasicHttpResponse>();
         response->set_code(net::HTTP_OK); response->set_content_type("application/json");
-        if (request.content.find("untrusted_tool_results") == std::string::npos)
+        if (request.content.find("untrusted_tool_results") == std::string::npos && request.content.find("Connection test.")==std::string::npos)
           response->set_content(R"({"message":{"content":"{\"answer\":\"\",\"actions\":[{\"tool\":\"list_tabs\",\"args\":\"{}\"}]}"}})");
         else response->set_content(R"({"message":{"content":"{\"answer\":\"Integration complete\",\"actions\":[]}"}})");
         return response;
@@ -736,6 +736,97 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantActsLikeAUserWithCons
   EXPECT_TRUE(space.GetDict().FindBool("ok").value_or(false))<<space.DebugString();
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantConsentCheckboxLastsForConversation) {
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html")));
+  auto* page=window_->contents("work");
+  ASSERT_TRUE(content::ExecJs(page,"document.body.innerHTML='<button onclick=\"window.clicks++\">Count</button>';window.clicks=0;"));
+  window_->ShowAssistant();
+  auto* panel=window_->assistant();
+  const AssistantPermissions access{true,true,true,false,false,true};
+  panel->ConfigureForTesting("ollama","test-local",access);
+  base::test::TestFuture<base::Value> read;
+  window_->AssistantTool("read_page",base::DictValue().Set("tab","@current"),access,read.GetCallback());
+  const auto elements=read.Take();
+  std::string id;
+  for(const auto& item:*elements.GetDict().FindList("elements"))
+    if(*item.GetDict().FindString("label")=="Count")id=*item.GetDict().FindString("id");
+  ASSERT_FALSE(id.empty());
+  auto click=[&]{return base::DictValue().Set("tool","click").Set("args",base::DictValue().Set("tab","@current").Set("element",id));};
+  auto bubble=[&]{return window_->shell()->assistant_consent_for_testing();};
+  panel->RunActionsForTesting(base::ListValue().Append(click()));
+  ASSERT_TRUE(base::test::RunUntil([&]{return bubble()!=nullptr;}));
+  views::Checkbox* remember=nullptr;
+  for(const auto& child:bubble()->children())if(auto* check=views::AsViewClass<views::Checkbox>(child.get()))remember=check;
+  ASSERT_TRUE(remember);EXPECT_FALSE(remember->GetChecked());
+  ClickControl(remember);
+  EXPECT_EQ(content::EvalJs(page,"window.clicks"),0);
+  ClickControl(AssistantConsentAllowButton(bubble()));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"window.clicks").ExtractInt()==1;}));
+  panel->Stop();
+  // A later turn in the same conversation keeps the explicit session grant.
+  panel->RunActionsForTesting(base::ListValue().Append(click()));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page,"window.clicks").ExtractInt()==2;}));
+  EXPECT_FALSE(panel->waiting_for_consent_for_testing());
+  panel->Stop();
+  panel->SeedExchangeForTesting("Count clicks","Done");
+  panel->NewSessionForTesting();
+  panel->ConfigureForTesting("ollama","test-local",access);
+  panel->RunActionsForTesting(base::ListValue().Append(click()));
+  ASSERT_TRUE(base::test::RunUntil([&]{return bubble()!=nullptr;}));
+  EXPECT_EQ(content::EvalJs(page,"window.clicks"),2);
+  panel->ConsentForTesting(false);panel->Stop();
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantConnectionsAndEncryptedKey) {
+  base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL",embedded_test_server()->base_url().spec());
+  auto* shell=window_->shell();shell->OpenAssistantSettings();
+  window_->AssistantSettingsForShell();
+  window_->WriteAssistantSettings(base::DictValue().Set("command","check").Set("provider","ollama"));
+  ASSERT_TRUE(base::test::RunUntil([&]{
+    auto data=window_->AssistantSettingsForShell();const auto* list=data.FindList("status");
+    return list&&list->size()==4&&(*list)[3].GetDict().FindBool("checked").value_or(false)&&!(*list)[3].GetDict().FindBool("checking").value_or(false);
+  }));
+  auto status=window_->AssistantSettingsForShell();
+  EXPECT_EQ((*status.FindList("status"))[3].GetDict().FindInt("tone"),1);
+  const std::string key="sk-zitter-encryption-fixture";
+  window_->WriteAssistantSettings(base::DictValue().Set("command","save_key").Set("key",key));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->assistant_settings().encrypted_api_key.empty();}));
+  EXPECT_EQ(base::WriteJson(window_->assistant_settings().ToValue())->find(key),std::string::npos);
+  const auto settings=window_->AssistantSettingsForShell();
+  EXPECT_FALSE(settings.FindString("encrypted_api_key"));EXPECT_FALSE(settings.FindString("key"));
+  base::test::TestFuture<std::string> decoded;window_->WithAssistantApiKey(decoded.GetCallback());EXPECT_EQ(decoded.Take(),key);
+  window_->WriteAssistantSettings(base::DictValue().Set("command","remove_key"));EXPECT_TRUE(window_->assistant_settings().encrypted_api_key.empty());
+  base::ScopedEnvironmentVariableOverride unavailable("ZITTER_OLLAMA_URL","http://127.0.0.1:1");
+  window_->WriteAssistantSettings(base::DictValue().Set("command","check").Set("provider","ollama"));
+  ASSERT_TRUE(base::test::RunUntil([&]{
+    auto data=window_->AssistantSettingsForShell();const auto* list=data.FindList("status");
+    return list&&list->size()==4&&(*list)[3].GetDict().FindBool("checked").value_or(false)&&!(*list)[3].GetDict().FindBool("checking").value_or(false);
+  }));
+  status=window_->AssistantSettingsForShell();EXPECT_EQ((*status.FindList("status"))[3].GetDict().FindInt("tone"),2);
+  const auto output=base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-assistant-render-dir");
+  if(!output.empty()){
+    base::ScopedAllowBlockingForTesting allow;ASSERT_TRUE(base::CreateDirectory(output));
+    for(auto mode:{ThemeMode::kDark,ThemeMode::kLight}){
+      shell->SetThemeMode(mode);auto* widget=shell->general_widget();widget->LayoutRootViewIfNecessary();
+      auto* view=widget->GetContentsView();const auto saved=view->bounds();view->SetBoundsRect(gfx::Rect(view->size()));
+      auto png=gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(view),false);view->SetBoundsRect(saved);ASSERT_TRUE(png);
+      ASSERT_TRUE(base::WriteFile(output.AppendASCII(mode==ThemeMode::kDark?"ai-connections-dark.png":"ai-connections-light.png"),*png));
+    }
+  }
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantCodexDefaultsMigrateWithoutLosingCustomModels) {
+  auto previous=base::DictValue().Set("models",base::ListValue()
+      .Append(base::DictValue().Set("provider","codex").Set("id","gpt-5.4").Set("visible",false))
+      .Append(base::DictValue().Set("provider","codex").Set("id","my-custom-model")))
+      .Set("default_model","codex/gpt-5.4");
+  auto settings=AssistantSettings::FromValue(&previous);
+  EXPECT_EQ(settings.default_model,"codex/gpt-6.1-sol");EXPECT_EQ(settings.models.size(),5u);
+  EXPECT_EQ(settings.models[0].id,"gpt-6.1-sol");EXPECT_FALSE(settings.models[0].visible);
+  EXPECT_EQ(settings.models[1].id,"my-custom-model");
+  const auto serialized=settings.ToValue();const auto again=AssistantSettings::FromValue(&serialized);
+  EXPECT_EQ(again.models.size(),settings.models.size());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRoundTrip) {
   base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL", embedded_test_server()->base_url().spec());
   window_->ShowAssistant();
@@ -759,7 +850,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraft
     base::ScopedAllowBlockingForTesting allow;ASSERT_TRUE(base::CreateDirectory(output));
     auto* widget=bar->assistant_menu_for_testing();
     widget->LayoutRootViewIfNecessary();
-    auto* menu=widget->widget_delegate()->GetContentsView();ASSERT_EQ(menu->children().size(),8u);
+    auto* menu=widget->widget_delegate()->GetContentsView();ASSERT_EQ(menu->children().size(),9u);
     const bool had_layer=menu->layer()!=nullptr;
     if(!had_layer){menu->SetPaintToLayer();menu->layer()->SetFillsBoundsOpaquely(false);}
     const auto saved=menu->bounds();menu->SetBoundsRect(gfx::Rect(menu->size()));
@@ -779,6 +870,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraft
   EXPECT_EQ(panel->draft_for_testing(),u"Keep my draft");
   bar->ToggleAssistantPanel();
   ASSERT_TRUE(bar->assistant_menu_for_testing());
+  bar->RunAssistantCommandForTesting(6);
+  ASSERT_TRUE(window_->shell()->general_widget());
+  EXPECT_TRUE(window_->shell()->general_widget()->IsVisible());
+  EXPECT_EQ(window_->shell()->preference_category_for_testing(),10u);
   auto settings=window_->assistant_settings();settings.enabled=false;window_->SetAssistantSettings(settings);
   EXPECT_FALSE(bar->assistant_button_for_testing());
   EXPECT_FALSE(bar->assistant_menu_for_testing());
@@ -1168,6 +1263,49 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
   panel->SendForTesting("Read page");ASSERT_TRUE(panel->busy());
   panel->Collapse();EXPECT_FALSE(panel->GetVisible());EXPECT_TRUE(panel->busy());
   panel->Show();panel->RevokeAccess();EXPECT_FALSE(panel->busy());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantEdgeOpensBeforeFirstConversation) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE,base::Seconds(8));
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  ASSERT_FALSE(window_->assistant());
+  window_->widget()->LayoutRootViewIfNecessary();
+  auto* shell=window_->shell();EXPECT_TRUE(shell->assistant_edge_visible_for_testing());
+  const auto bounds=shell->content_host()->parent()->GetBoundsInScreen();
+  const auto middle=bounds.CenterPoint();
+  auto edge=[&]{const auto current=shell->content_host()->parent()->GetBoundsInScreen();return gfx::Point(current.right()-4,current.CenterPoint().y());};
+  const auto native=window_->widget()->GetNativeWindow();
+  auto move=[&](gfx::Point point){base::test::TestFuture<void> moved;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),native)&&moved.Wait();};
+  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->assistant()&&window_->assistant()->GetVisible();}));
+  auto* panel=window_->assistant();panel->TypeForTesting(u"Keep the edge draft");
+  ASSERT_TRUE(move(middle));panel->Collapse();window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(shell->assistant_edge_visible_for_testing());
+  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));
+  EXPECT_EQ(display::Screen::Get()->GetCursorScreenPoint(),edge());
+  EXPECT_TRUE(window_->widget()->IsActive());
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->GetVisible();}));
+  EXPECT_EQ(panel->draft_for_testing(),u"Keep the edge draft");
+  auto settings=window_->assistant_settings();settings.enabled=false;window_->SetAssistantSettings(settings);
+  window_->widget()->LayoutRootViewIfNecessary();EXPECT_FALSE(shell->assistant_edge_visible_for_testing());
+  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));EXPECT_FALSE(panel->GetVisible());
+  ASSERT_TRUE(move(middle));
+}
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantToolbarStartsFreshConversationAndPreservesDraft) {
+  window_->ShowAssistant();auto* panel=window_->assistant();
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
+  panel->SeedExchangeForTesting("Earlier conversation","Earlier answer");
+  panel->TypeForTesting(u"Unsent message");const auto initial=panel->sessions_for_testing();
+  auto* bar=window_->extensions_bar();bar->ToggleAssistantPanel();
+  ASSERT_TRUE(bar->assistant_menu_for_testing());
+  EXPECT_TRUE(FindButton(bar->assistant_menu_for_testing()->widget_delegate()->GetContentsView(),u"Nowa rozmowa"));
+  bar->RunAssistantCommandForTesting(5);
+  EXPECT_TRUE(panel->GetVisible());EXPECT_EQ(panel->sessions_for_testing(),initial+1);
+  EXPECT_TRUE(panel->draft_for_testing().empty());EXPECT_TRUE(panel->chips_for_testing().empty());EXPECT_FALSE(panel->busy());
+  // An existing blank conversation must not absorb an explicit New conversation.
+  bar->RunAssistantCommandForTesting(5);EXPECT_EQ(panel->sessions_for_testing(),initial+2);
+  panel->SelectSessionForTesting(initial-1);EXPECT_EQ(panel->draft_for_testing(),u"Unsent message");
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideTracksPointerAndPreservesDraft) {

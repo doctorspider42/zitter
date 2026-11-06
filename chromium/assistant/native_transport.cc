@@ -67,7 +67,7 @@ rust::String request_key(rust::Str input) {
 bool cancelled(rust::Str id) {
   auto op = FindOperation(std::string_view(id));
   return !op || op->stopped ||
-         base::TimeTicks::Now() - op->started > base::Minutes(10);
+         base::TimeTicks::Now() - op->started > (std::string_view(id)=="connection-check"?base::Seconds(20):base::Minutes(10));
 }
 void publish_progress(rust::Str id, rust::Str text) {
   if (auto op = FindOperation(std::string_view(id)); op && !op->stopped) {

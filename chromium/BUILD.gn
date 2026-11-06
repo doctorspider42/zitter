@@ -312,6 +312,8 @@ source_set("shell") {
     "//services/network/public/mojom",
     "//third_party/blink/public/common",
     "//chrome/browser/password_manager",
+    "//components/os_crypt/async/browser",
+    "//components/os_crypt/async/common",
     "//chrome/browser/ui/autofill",
     "//components/history/content/browser",
     "//components/history/core/browser",

@@ -129,6 +129,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowHistory();
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
   void ShowAssistant(bool hover = false);
+  void NewAssistantConversation();
   // Creates the panel hidden, so its scheduled tasks run.
   void EnsureAssistant();
   // The panel's state changed: the toolbar button follows it.
@@ -156,6 +157,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // Settings rows for backends and models (Settings → Asystent AI).
   base::DictValue AssistantSettingsForShell();
   void WriteAssistantSettings(base::DictValue value);
+  void WithAssistantApiKey(base::OnceCallback<void(std::string)> callback);
+  void CheckAssistantConnection(std::string provider);
   // Invisible pages of the assistant profile share its cookies and logins.
   // Starting from a visible tab moves that tab, with its page state, away from the user.
   bool AssistantStartBackground(const std::string& key, const std::string& from_tab, const GURL& url);
@@ -438,6 +441,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::map<std::string, AssistantBackgroundPage> assistant_background_;
   base::ListValue assistant_backend_status_;
   bool assistant_status_pending_ = false;
+  std::set<std::string> assistant_checks_pending_;
+  uint64_t assistant_connection_generation_=0;
   WorkspaceController controller_;
   std::vector<Host> hosts_;
   std::vector<LinkRule> link_rules_;

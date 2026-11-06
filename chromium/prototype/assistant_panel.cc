@@ -56,7 +56,7 @@
 
 namespace zitter::prototype {
 namespace {
-constexpr std::array<const char16_t*, 4> kProviderLabels = {u"OpenAI API", u"Codex CLI", u"Claude CLI", u"Ollama"};
+constexpr std::array<const char16_t*, 4> kProviderLabels = {u"OpenAI", u"Codex", u"Claude Code", u"Ollama"};
 // Letter tiles for pages take a stable color from their host.
 constexpr std::array<uint32_t, 6> kPageColors = {0xffff8a66, 0xff5cc8ff, 0xffffc35c, 0xffff7eb6, 0xff5fe0b8, 0xffb4a6ff};
 std::u16string Fold(std::u16string_view text) { return base::i18n::ToLower(text); }
@@ -219,7 +219,7 @@ std::u16string AssistantProviderLabel(std::string_view provider) {
   return base::UTF8ToUTF16(provider);
 }
 AssistantSettings::AssistantSettings()
-    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"openai", "gpt-5.4"}, {"openai", "gpt-5.4-mini"}, {"codex", "gpt-5.4"}, {"ollama", "qwen3:8b"}}),
+    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"openai", "gpt-5.4"}, {"openai", "gpt-5.4-mini"}, {"codex", "gpt-6.1-sol"}, {"codex", "gpt-6.1-terra"}, {"codex", "gpt-6-astra"}, {"codex", "gpt-6-luna"}, {"ollama", "qwen3:8b"}}),
       default_model("claude/sonnet") {}
 AssistantSettings::AssistantSettings(const AssistantSettings&) = default;
 AssistantSettings& AssistantSettings::operator=(const AssistantSettings&) = default;
@@ -238,12 +238,13 @@ base::DictValue AssistantSettings::ToValue() const {
   for (const auto& model : models) list.Append(base::DictValue().Set("provider", model.provider).Set("id", model.id).Set("visible", model.visible));
   for (bool backend : backends) enabled_backends.Append(backend);
   return base::DictValue().Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
-      .Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
+      .Set("catalog_version", 2).Set("encrypted_api_key", encrypted_api_key).Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
       .Set("confirm_background", confirm_background).Set("concurrency", concurrency);
 }
 AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
   AssistantSettings result;
   if (!value) return result;
+  if (const auto* key=value->FindString("encrypted_api_key")) result.encrypted_api_key=*key;
   result.enabled = value->FindBool("enabled").value_or(true);
   if (const auto* list = value->FindList("backends"); list && list->size() == result.backends.size())
     for (size_t i = 0; i < list->size(); ++i) result.backends[i] = (*list)[i].GetIfBool().value_or(true);
@@ -260,6 +261,13 @@ AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
     if (!models.empty()) result.models = std::move(models);
   }
   if (const auto* model = value->FindString("default_model")) result.default_model = *model;
+  if(value->FindInt("catalog_version").value_or(0)<2){
+    bool migrated=false;
+    for(auto& model:result.models)if(model.provider=="codex"&&model.id=="gpt-5.4"){model.id="gpt-6.1-sol";migrated=true;}
+    if(migrated)for(const char* id:{"gpt-6.1-terra","gpt-6-astra","gpt-6-luna"})
+      if(result.models.size()<32&&std::ranges::none_of(result.models,[&](const auto& m){return m.provider=="codex"&&m.id==id;}))result.models.push_back({"codex",id});
+    if(result.default_model=="codex/gpt-5.4")result.default_model="codex/gpt-6.1-sol";
+  }
   if (const auto* permissions = value->FindDict("permissions")) {
     auto flag = [&](const char* key, bool fallback) { return permissions->FindBool(key).value_or(fallback); };
     result.defaults = {flag("tabs", false), flag("pages", false), flag("actions", false), flag("history", false), flag("web", true), flag("confirm_clicks", true)};
@@ -334,12 +342,11 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   },base::Unretained(this)),AssistantGlyph::kAt,T(u"Wstaw kartę lub narzędzie")));
   // The tools are toggles: they insert or remove the same chips as @.
   research_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("research")),AssistantGlyph::kSpark,T(u"Deep research")));
-  background_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("background")),AssistantGlyph::kLayers,T(u"W tle · Alt+Enter")));
-  auto* spacer=tools_->AddChildView(std::make_unique<views::View>());
+  background_chip_=tools_->AddChildView(CreateAssistantChip(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("background")),AssistantGlyph::kLayers,T(u"W tle")));
   model_chip_=tools_->AddChildView(CreateAssistantChip(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kModel)),AssistantGlyph::kSpark,u""));
   send_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->Send(false);},base::Unretained(this)),AssistantGlyph::kArrow,T(u"Wyślij"),true));
   stop_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::Stop,base::Unretained(this)),AssistantGlyph::kStop,T(u"Stop"),true));
-  SetSidebarPanelLayout(tools_,false,gfx::Insets(),4,spacer,true);
+  SetSidebarPanelLayout(tools_,false,gfx::Insets(),4,model_chip_,true);
   SetSidebarPanelLayout(this,true,gfx::Insets(16),10,viewport);
   resize_handle_=AddChildView(CreateAssistantResizeGrip(this));
   resize_handle_->SetProperty(views::kViewIgnoredByLayoutKey,true);
@@ -437,6 +444,17 @@ void AssistantPanel::OpenSettings() {
 // Sessions ---------------------------------------------------------------
 bool AssistantPanel::Started(const Session& session) {
   return session.busy || std::ranges::any_of(session.messages, [](const Message& m) { return m.kind == 1; });
+}
+void AssistantPanel::StartNewConversation() {
+  if (!window_->assistant_settings().enabled) return;
+  const auto previous = selected().key;
+  selected().composer_draft = prompt_->GetText();
+  selected().composer_chips = chips_;
+  if (busy()) Stop();
+  CreateSession(true);
+  if (selected().key != previous) { prompt_->SetText(u""); viewport_->ScrollTo(0); }
+  UpdatePageControl();
+  prompt_->RequestFocus();
 }
 void AssistantPanel::NewSession() { CreateSession(false); }
 void AssistantPanel::CreateSession(bool preserve_previous) {
@@ -634,7 +652,7 @@ void AssistantPanel::StopSession(Session& session) {
   // Disconnecting the RPC aborts its provider request. Pending native callbacks
   // carry the old epoch, so cancellation cannot dispatch another mutation.
   session.busy = false; session.queue.clear(); session.results.clear(); session.confirmation.reset();
-  session.request.reset(); session.page_control = false; session.auto_confirm = false;
+  session.request.reset(); session.page_control = false;
   session.thinking = false; session.tool_running = false; session.partial.clear();
   session.asking = false; session.picks.clear();
   if (was_busy) session.status = T(u"Zatrzymane");
@@ -648,12 +666,13 @@ void AssistantPanel::ResetRuntime() {
   process_job_.Close();
 #endif
   // Discard all backend contexts, including cached provider conversation IDs.
-  for(auto& session:sessions_)session->id=base::Uuid::GenerateRandomV4().AsLowercaseString();
+  for(auto& session:sessions_){session->id=base::Uuid::GenerateRandomV4().AsLowercaseString();session->auto_confirm=false;}
 }
 void AssistantPanel::RevokeAccess() {
   CloseMenu();
   StopAll();
   selected().permissions={false,false,false,false,false,true};
+  selected().auto_confirm=false;
   ResetRuntime();UpdateControls();
   Append(selected(),base::UTF16ToUTF8(T(u"Dostęp odebrany. Zadania zatrzymane.")));
 }
@@ -1156,6 +1175,9 @@ void AssistantPanel::RenderChips() {
   InvalidateLayout(); scene_->Schedule();
 }
 void AssistantPanel::ToggleTool(const std::string& kind) {
+  if (kind == "background" && !selected().permissions.actions) {
+    ToggleMenu(Menu::kAccess); return;
+  }
   // During a task the background button moves that task out of view.
   if (kind == "background" && busy()) { MoveToBackground(); return; }
   const auto found = std::ranges::find_if(chips_, [&](const auto& chip) { return chip.kind == kind; });
@@ -1328,6 +1350,12 @@ void AssistantPanel::StartTurn(Session& session) {
   ++session.epoch; session.busy = true; session.finished = false;
   session.status = session.background ? T(u"Pracuję w tle…") : T(u"Pracuję nad tym…");
   UpdateControls(); RenderBackground(); RenderConversation();
+  if(process_.IsValid()){PollRuntime(session.key,session.epoch,0);return;}
+  window_->WithAssistantApiKey(base::BindOnce(&AssistantPanel::StartRuntime,weak_factory_.GetWeakPtr(),session.key,session.epoch));
+}
+void AssistantPanel::StartRuntime(std::string key,uint64_t epoch,std::string api_key){
+  auto* current=Find(key,epoch);if(!current||!current->busy)return;
+  auto& session=*current;
   if (!process_.IsValid()) {
     base::FilePath exe; base::PathService::Get(base::DIR_EXE, &exe);
 #if BUILDFLAG(IS_WIN)
@@ -1341,6 +1369,11 @@ void AssistantPanel::StartTurn(Session& session) {
     command.AppendSwitchASCII("token", token_);
     command.AppendSwitchASCII("parent", base::NumberToString(base::GetCurrentProcId()));
     base::LaunchOptions options;
+#if BUILDFLAG(IS_WIN)
+    if(!api_key.empty())options.environment[L"ZITTER_OPENAI_API_KEY"]=base::UTF8ToWide(api_key);
+#else
+    if(!api_key.empty())options.environment["ZITTER_OPENAI_API_KEY"]=api_key;
+#endif
 #if BUILDFLAG(IS_WIN)
     options.start_hidden = true;
     process_job_.Set(::CreateJobObject(nullptr, nullptr));
@@ -1464,7 +1497,7 @@ void AssistantPanel::OnTurn(std::string key, uint64_t epoch, base::DictValue rep
   if (!session) return;
   session->thinking = false; session->partial.clear();
   auto finish = [&](std::u16string status) {
-    session->busy = false; session->finished = true; session->auto_confirm = false; session->page_control = false;
+    session->busy = false; session->finished = true; session->page_control = false;
     if (!session->task_id.empty()) TaskFinished(*session, status == T(u"Gotowe"));
     session->status = std::move(status);
     UpdateControls(); UpdatePageControl(); RenderBackground();
@@ -1614,7 +1647,7 @@ void AssistantPanel::RunNext(Session& session) {
   session.tool_running = true;
   if (&session == &selected()) RenderConversation();
   UpdatePageControl(); RenderBackground();
-  // Native consent: a whole-task approval, or a background session that clicks without asking.
+  // Session consent lasts across turns, in memory only; background defaults also apply.
   const bool confirmed = session.auto_confirm || (session.background && !session.confirm_background);
   window_->AssistantTool(tool, action.GetDict().FindDict("args")->Clone(), session.permissions,
       base::BindOnce(&AssistantPanel::ToolFinished, weak_factory_.GetWeakPtr(), session.key, session.epoch),
@@ -2285,10 +2318,12 @@ void AssistantPanel::UpdateControls() {
   const bool background = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; });
   UpdateAssistantButton(research_chip_, T(u"Deep research"), research);
   const bool movable = session.busy && !session.background;
-  UpdateAssistantButton(background_chip_, movable ? T(u"Przenieś zadanie do tła") : T(u"W tle · Alt+Enter"), background || session.background);
+  UpdateAssistantButton(background_chip_, movable ? T(u"Dokończ w tle") : T(u"W tle"), background || session.background);
   research_chip_->SetEnabled(idle && session.permissions.web);
-  background_chip_->SetVisible(settings.background && session.permissions.actions);
-  background_chip_->SetEnabled(idle || movable);
+  background_chip_->SetVisible(true);
+  background_chip_->SetEnabled(settings.background && (idle || movable));
+  background_chip_->SetTooltipText(!settings.background ? T(u"Włącz pracę w tle w Ustawieniach → Asystent AI") :
+      !session.permissions.actions ? T(u"Nadaj tej sesji dostęp do działań, aby uruchomić zadanie w tle") : T(u"W tle · Alt+Enter"));
   UpdateAssistantButton(model_chip_, session.model.empty() ? T(u"Wybierz model") : base::UTF8ToUTF16(session.model), menu_ == Menu::kModel);
   model_chip_->SetTooltipText(T(u"Zmień model"));
   model_chip_->GetViewAccessibility().SetName(TF(u"Model: {}. Zmień model", {base::UTF8ToUTF16(session.model)}));

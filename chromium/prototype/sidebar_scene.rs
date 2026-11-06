@@ -1181,7 +1181,7 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     clear.button=t("Wyczyść").into();rows.push(clear);
     rows.push(preference_spec(1,K::ShortcutHint,"",t("Szybciej z klawiaturą"),t("⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"),vec![],"",A::None));
     rows.push(preference_spec(10,K::Toggle,"assistant_enabled",t("Włącz asystenta"),t("Wyłączony asystent nie otwiera panelu przy krawędzi okna, znika z Command Center i nie uruchamia procesu. Dotyczy całej aplikacji."),vec![],"",A::None));
-    rows.push(preference_spec(10,K::AssistantBackends,"",t("Backendy"),t("Klucze API czytamy ze środowiska uruchomienia Zittera. Nie wpisujesz ich tutaj i nie trafiają do profilu."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::AssistantBackends,"",t("Połączenia AI"),t("Połącz wybraną usługę i sprawdź, czy odpowiada. Zielony status oznacza udany test połączenia."),vec![],"",A::None));
     rows.push(preference_spec(10,K::AssistantModels,"",t("Modele w panelu"),t("Widoczne modele trafiają do menu modelu w panelu. Domyślny startuje każdą nową sesję."),vec![],"",A::None));
     rows.push(preference_spec(10,K::Toggle,"assistant_tabs",t("Otwarte i przypięte karty"),t("Tytuły i adresy bez parametrów, potrzebne do podpowiedzi po @."),vec![],"",A::None));
     rows.push(preference_spec(10,K::Toggle,"assistant_pages",t("Treść i kontrolki stron"),t("Czytanie tekstu i elementów wskazanych kart; może obejmować dane osobowe."),vec![],"",A::None));
