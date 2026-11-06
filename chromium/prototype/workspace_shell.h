@@ -232,6 +232,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // actions, and a consent bubble beside the element (screen coordinates).
   void SetAssistantCapsule(std::unique_ptr<views::View> capsule);
   void SetAssistantConsent(std::unique_ptr<views::View> bubble, std::optional<gfx::Rect> anchor);
+  bool AssistantConsentContains(const gfx::Point& screen_point) const;
   views::View* assistant_capsule_for_testing() const;
   views::View* assistant_consent_for_testing() const;
   bool assistant_edge_visible_for_testing() const;

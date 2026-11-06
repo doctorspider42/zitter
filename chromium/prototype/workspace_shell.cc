@@ -12,6 +12,7 @@
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
 #include "chromium/prototype/assistant_panel.h"
+#include "chromium/prototype/assistant_visuals.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/i18n.h"
 
@@ -809,7 +810,7 @@ class SceneSearchIcon final : public views::View {
   METADATA_HEADER(SceneSearchIcon,views::View)
  public:
   explicit SceneSearchIcon(base::RepeatingCallback<bool()> visible):visible_(std::move(visible)) {
-    SetTooltipText(T(u"Szukaj"));GetViewAccessibility().SetName(T(u"Szukaj"));GetViewAccessibility().SetRole(ax::mojom::Role::kImage);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kImage);SetTooltipText(T(u"Szukaj"));GetViewAccessibility().SetName(T(u"Szukaj"));
     SetFocusBehavior(FocusBehavior::NEVER);SetCanProcessEventsWithinSubtree(false);
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {const auto r=sidebar::action_preferred_size(false,false);return gfx::Size(r.width,r.height);}
@@ -843,7 +844,7 @@ class RustActionView : public views::View {
  public:
   RustActionView(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring,rust::Box<sidebar::ActionControl> state=sidebar::new_action_control())
       :callback_(std::move(callback)),glyph_(glyph),icon_(icon),visible_(std::move(visible)),changed_(std::move(changed)),state_(std::move(state)){
-    SetTooltipText(name);auto& ax=GetViewAccessibility();ax.SetName(name);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);if(native_focus_ring)views::FocusRing::Install(this);
+    auto& ax=GetViewAccessibility();ax.SetRole(ax::mojom::Role::kButton);SetTooltipText(name);ax.SetName(name);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);if(native_focus_ring)views::FocusRing::Install(this);
   }
   void OnTooltipTextChanged(const std::u16string& previous) override{views::View::OnTooltipTextChanged(previous);auto& ax=GetViewAccessibility();if((ax.GetCachedName().empty()||ax.GetCachedName()==previous)&&!GetTooltipText().empty())ax.SetName(GetTooltipText());}
   uint64_t LogicalNodeId() const{return state_->action_node_id();}
@@ -1769,6 +1770,7 @@ struct RowRecipe {
     std::u16string title;
     std::u16string detail;
     raw_ptr<const gfx::VectorIcon> icon = nullptr;  // Palette chip / action glyph.
+    bool assistant_icon = false;
     std::u16string monogram;                // Tab favicon stand-in.
     SkColor monogram_color = kMonogramColors[0];
     bool active = false;
@@ -1915,7 +1917,7 @@ class RustRowView final : public views::View {
   using Watch=base::RepeatingCallback<void(views::View*,base::RepeatingClosure)>;
   RustRowView(views::Button::PressedCallback callback,Spec spec,base::RepeatingClosure changed,Watch watch,rust::Box<sidebar::ActionControl> state,SidebarNodeBinding close_binding)
       :spec_(std::move(spec)),callback_(std::move(callback)),changed_(std::move(changed)),watch_(std::move(watch)),state_(std::move(state)){
-    SetNotifyEnterExitOnChild(true);SetTooltipText(spec_.title);auto& ax=GetViewAccessibility();ax.SetName(spec_.title);ax.SetRole(ax::mojom::Role::kButton);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);views::FocusRing::Install(this);state_->action_on(spec_.active);if(spec_.chip)ax.SetDescription(spec_.detail);
+    SetNotifyEnterExitOnChild(true);auto& ax=GetViewAccessibility();ax.SetRole(ax::mojom::Role::kButton);SetTooltipText(spec_.title);ax.SetName(spec_.title);ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);SetFocusBehavior(views::PlatformStyle::kDefaultFocusBehavior);views::FocusRing::Install(this);state_->action_on(spec_.active);if(spec_.chip)ax.SetDescription(spec_.detail);
     if(spec_.close){close_=AddChildView(CreateSceneAction(std::move(spec_.close),T(u"Zamknij kartę"),ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,std::move(close_binding)));UpdateClose();}
     if(state_->sidebar_visual().valid){SyncSidebarAX();ClearSidebarVisuals(spec_);}
   }
@@ -1929,7 +1931,7 @@ class RustRowView final : public views::View {
     auto same=[](const std::u16string& value,const rust::Vec<uint16_t>& units){return value.size()==units.size()&&std::equal(value.begin(),value.end(),units.begin());};
     if(child.cancel_input)CancelInput();
     if(!same(spec_.title,child.title))SetTitle(text(child.title));if(!same(spec_.detail,child.detail))SetDetail(text(child.detail));
-    spec_.highlighted=child.highlighted;spec_.icon=child.icon==2?&vector_icons::kSettingsIcon:child.icon==1?&vector_icons::kArrowForwardIcon:&vector_icons::kSearchIcon;
+    spec_.highlighted=child.highlighted;spec_.assistant_icon=child.icon==3;spec_.icon=child.icon==2?&vector_icons::kSettingsIcon:child.icon==1?&vector_icons::kArrowForwardIcon:&vector_icons::kSearchIcon;
     if(spec_.height!=child.height){spec_.height=child.height;PreferredSizeChanged();}
     GetViewAccessibility().SetName(spec_.title);GetViewAccessibility().SetDescription(spec_.detail);SchedulePaint();
   }
@@ -2012,7 +2014,8 @@ class RustRowView final : public views::View {
     if(spec_.chip&&!spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();
       if(!spec_.header.empty())PaintSceneRecipe(canvas,PaletteHeaderItem(this,spec_,bounds,bounds),Font(0),true);
       PaintSceneRecipe(canvas,PaletteRowItem(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);
-      if(spec_.icon){const auto p=Palette(this);const auto body=gfx::ToEnclosingRect(PaletteRowBody(spec_,bounds));PaintIcon(canvas,*spec_.icon,gfx::Rect(12,body.y(),16,body.height()),16,spec_.highlighted?p.accent_ink:p.ink_muted);}return;}
+      if(spec_.assistant_icon){const auto p=Palette(this);const auto body=PaletteRowBody(spec_,bounds);PaintAssistantSpark(canvas,gfx::RectF(12,body.CenterPoint().y()-8,16,16),spec_.highlighted?p.accent_ink:p.ink_muted);}
+      else if(spec_.icon){const auto p=Palette(this);const auto body=gfx::ToEnclosingRect(PaletteRowBody(spec_,bounds));PaintIcon(canvas,*spec_.icon,gfx::Rect(12,body.y(),16,body.height()),16,spec_.highlighted?p.accent_ink:p.ink_muted);}return;}
     if(spec_.kbd){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();for(const auto& item:CommandRowItems(this,spec_,bounds,bounds,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()))PaintSceneRecipe(canvas,item,Font(0),true);return;}
     gfx::ScopedCanvas tremor(canvas);canvas->Translate(gfx::Vector2d(tremor_dx_,0));
     if(spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();PaintSceneRecipe(canvas,AddressRowItem(this,spec_,bounds,bounds,scene_title_width(),v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed,HasFocus()),Font(0),true);return;}const auto v=state_->action_snapshot().visual;RowRecipe::PaintDecorations(canvas,GetLocalBounds(),spec_,this,v==sidebar::RowVisual::Hovered||v==sidebar::RowVisual::Pressed);
@@ -2764,7 +2767,7 @@ END_METADATA
 class SceneCard final : public views::View {
   METADATA_HEADER(SceneCard,views::View)
  public:
-  explicit SceneCard(bool danger=false):danger_(danger){}
+  explicit SceneCard(bool danger=false):danger_(danger){GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);}
   void SetCopy(std::u16string title,std::u16string detail){title_=std::move(title);detail_=std::move(detail);GetViewAccessibility().SetName(title_+u". "+detail_);SchedulePaint();}
   void OnPaint(gfx::Canvas* canvas) override{
     const auto p=Palette(this);const int radius=Metrics().radius_md;
@@ -3576,11 +3579,8 @@ class AssistantActivityView final : public views::View {
     FillRound(canvas,pill+gfx::Vector2d(0,2),15,SkColorSetARGB(35,0,0,0));
     FillRound(canvas,pill,15,SkColorSetARGB(235,24,25,33));
     StrokeRound(canvas,pill,15,SkColorSetARGB(48,201,190,246));
-    for(int i=0;i<3;++i){
-      const float pulse=animate_?.5f+.5f*std::sin((phase*3-i*.12)*6.2831853):.7f;
-      cc::PaintFlags dot;dot.setAntiAlias(true);dot.setColor(SkColorSetARGB(static_cast<int>(100+155*pulse),183,165,255));
-      canvas->DrawCircle(gfx::Point(pill.x()+16+i*7,pill.CenterPoint().y()),2,dot);
-    }
+    PaintAssistantSpark(canvas,gfx::RectF(pill.x()+14,pill.CenterPoint().y()-8,16,16),
+      SkColorSetARGB(static_cast<int>(255*breath),183,165,255));
     canvas->DrawStringRectWithFlags(T(u"Asystent działa"),DesignFont(2,12,500,false),SkColorSetRGB(236,234,246),
       gfx::Rect(pill.x()+44,pill.y(),std::max(0,pill_width-84),30),gfx::Canvas::TEXT_ALIGN_LEFT);
     const gfx::Rect key(pill.right()-35,pill.y()+6,27,18);
@@ -3978,6 +3978,10 @@ void WorkspaceShell::SetAssistantConsent(std::unique_ptr<views::View> bubble, st
 }
 views::View* WorkspaceShell::assistant_capsule_for_testing() const {
   return root_ ? static_cast<ShellRoot*>(root_.get())->assistant_capsule.get() : nullptr;
+}
+bool WorkspaceShell::AssistantConsentContains(const gfx::Point& screen_point) const {
+  auto* consent = root_ ? static_cast<ShellRoot*>(root_.get())->assistant_consent.get() : nullptr;
+  return consent && consent->IsDrawn() && consent->GetBoundsInScreen().Contains(screen_point);
 }
 views::View* WorkspaceShell::assistant_consent_for_testing() const {
   return root_ ? static_cast<ShellRoot*>(root_.get())->assistant_consent.get() : nullptr;
@@ -5590,7 +5594,7 @@ void WorkspaceShell::UpdateMetalPalette() {
     items.push_back(PaletteRowItem(row,spec,rect,clip,RowHovered(row),row->HasFocus()));
     const auto p=Palette(row);const auto body=PaletteRowBody(spec,rect);
     sidebar::Item icon{};icon.kind=13;icon.x=body.x();icon.y=body.y();icon.width=body.width();icon.height=body.height();icon.clip={clip.x(),clip.y(),clip.width(),clip.height()};icon.ink=spec.highlighted?p.accent_ink:p.ink_muted;
-    icon.glyph=spec.icon==&vector_icons::kSettingsIcon?2:spec.icon==&vector_icons::kArrowForwardIcon?1:0;items.push_back(std::move(icon));
+    icon.glyph=spec.assistant_icon?3:spec.icon==&vector_icons::kSettingsIcon?2:spec.icon==&vector_icons::kArrowForwardIcon?1:0;items.push_back(std::move(icon));
   }
   if(scroller.visible){auto rect=scroller.thumb;rect.Offset(-bounds.x(),-bounds.y());auto clip=scroller.bounds;clip.Offset(-bounds.x(),-bounds.y());sidebar::Item thumb{};thumb.kind=6;thumb.x=rect.x();thumb.y=rect.y();thumb.width=rect.width();thumb.height=rect.height();thumb.fill=scroller.color;thumb.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};items.push_back(std::move(thumb));}
   metal_palette_->Update(address_widget_->GetNativeWindow(),bounds,items,Tone(palette_root_,kCard));
@@ -7599,7 +7603,7 @@ void WorkspaceShell::RebuildSuggestions() {
       base::ListValue identity;identity.Append(state_.profile_id);identity.Append(state_.workspace_id);identity.Append(base::UTF16ToUTF8(suggestions_text_));identity.Append(command_palette_);identity.Append(new_tab_);
       identity.Append(item.url.possibly_invalid_spec());identity.Append(item.tab?base::NumberToString(*item.tab):std::string());identity.Append(item.workspace_id);identity.Append(item.pin_id);identity.Append(item.workspace_only);identity.Append(item.command_id);identity.Append(item.target_workspace_id);identity.Append(item.command_page_id);
       std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));
-      std::string name;CHECK(base::JSONWriter::Write(identity,&name));const uint32_t icon=!item.command_id.empty()?2:(item.tab||item.workspace_only||!item.pin_id.empty()||item.title==T(u"Otwórz"))?1:0;items.push_back({std::move(name),units(item.title),units(item.detail),icon});
+      std::string name;CHECK(base::JSONWriter::Write(identity,&name));const uint32_t icon=(item.command_id=="assistant"||item.command_id=="assistant_settings")?3:!item.command_id.empty()?2:(item.tab||item.workspace_only||!item.pin_id.empty()||item.title==T(u"Otwórz"))?1:0;items.push_back({std::move(name),units(item.title),units(item.detail),icon});
     }
     CHECK(palette_node_graph_->graph->reconcile_palette(std::move(items)).admitted)<<"Invalid palette scene projection";scene=palette_node_graph_->graph->palette_scene();CHECK_NE(scene.root,0u);
     std::set<uint64_t> wanted;for(const auto& child:scene.children){CHECK_EQ(child.parent,scene.root);wanted.insert(child.id);}
@@ -7628,6 +7632,7 @@ void WorkspaceShell::RebuildSuggestions() {
     spec.highlighted=i==palette->selected();
     spec.sidebar_row=metal_palette_!=nullptr;
     spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_palette_visible();},weak_factory_.GetWeakPtr());
+    spec.assistant_icon = item.command_id=="assistant"||item.command_id=="assistant_settings";
     spec.icon = !item.command_id.empty() ? &vector_icons::kSettingsIcon
               : (item.tab || item.workspace_only || !item.pin_id.empty()) ? &vector_icons::kArrowForwardIcon
               : item.title == T(u"Otwórz") ? &vector_icons::kArrowForwardIcon

@@ -2563,7 +2563,7 @@ impl ActionGraph {
     fn reconcile_palette(&mut self,items:Vec<ffi::PaletteSceneInput>)->ffi::ActionNodePlan{
         let group=(11,0,0,"palette.results".to_owned());
         if self.nodes.get(&group).is_some_and(|n|n.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::PaletteRoot(_)))){return self.rejected();}
-        if items.iter().any(|item|item.icon>2||self.nodes.get(&(6,0,0,item.key.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::Palette(_))))){return self.rejected();}
+        if items.iter().any(|item|item.icon>3||self.nodes.get(&(6,0,0,item.key.clone())).is_some_and(|node|node.borrow().model.as_deref().is_some_and(|m|!matches!(m,NodeModel::Palette(_))))){return self.rejected();}
         let previous_by_id=self.nodes.iter().filter(|(key,_)|key.0==6).map(|(key,node)|(node.borrow().id,key.3.as_str())).collect::<BTreeMap<_,_>>();
         let order_changed=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).ne(items.iter().map(|i|i.key.as_str()));
         let mut keys=Vec::with_capacity(1+items.len());keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});for item in &items{keys.push(ffi::ActionNodeKey{kind:6,high:0,low:0,name:item.key.clone()});}
@@ -2957,6 +2957,13 @@ fn cycle_tab(current: usize, count: usize, backwards: bool) -> usize {
     if backwards { if current == 0 { count - 1 } else { current - 1 } }
     else if current + 1 == count { 0 } else { current + 1 }
 }
+// Four-point assistant identity, shared by analytic preference and palette scenes.
+// Coordinates match kAssistantSparkIcon in assistant_visuals.h.
+fn assistant_spark_samples(mut point:impl FnMut(f32,f32)) {
+    for (a,b,c) in [((0.0,-7.0),(1.0,-1.0),(7.0,0.0)),((7.0,0.0),(1.0,1.0),(0.0,7.0)),((0.0,7.0),(-1.0,1.0),(-7.0,0.0)),((-7.0,0.0),(-1.0,-1.0),(0.0,-7.0))] {
+        for n in 0..=32 {let t=n as f32/32.0;let u=1.0-t;point(u*u*a.0+2.0*u*t*b.0+t*t*c.0,u*u*a.1+2.0*u*t*b.1+t*t*c.1);}
+    }
+}
 // Navigation and dismiss icons use only clipped analytic rectangles/circles,
 // so Metal and the CPU recipe do not depend on native vector-icon painting.
 fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
@@ -2976,8 +2983,8 @@ fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
             4|7=>{rect(cx-7.0,cy-7.0,14.0,14.0,7.0,i.ink,1.25);rect(cx-3.0,cy-7.0,6.0,14.0,3.0,i.ink,1.0);rect(cx-6.0,cy-0.6,12.0,1.2,0.6,i.ink,0.0);},
             5=>{rect(cx-4.0,cy-7.0,8.0,10.0,4.0,i.ink,1.5);rect(cx-6.0,cy-1.0,12.0,9.0,2.0,i.ink,0.0);},
             6=>{rect(cx-0.75,cy-7.0,1.5,10.0,0.75,i.ink,0.0);for d in 0..5{let d=d as f32;rect(cx-d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);rect(cx+d-0.75,cy+4.0-d-0.75,1.5,1.5,0.5,i.ink,0.0);}rect(cx-6.0,cy+7.0,12.0,1.5,0.75,i.ink,0.0);},
-            // AI assistant: a spark, a thin cross around a small ring, and a second dot.
-            10=>{rect(cx-0.75,cy-7.0,1.5,14.0,0.75,i.ink,0.0);rect(cx-7.0,cy-0.75,14.0,1.5,0.75,i.ink,0.0);rect(cx-2.75,cy-2.75,5.5,5.5,2.75,i.ink,1.25);rect(cx+4.0,cy-7.0,3.0,3.0,1.5,i.ink,0.0);},
+            // Same outlined assistant star on both renderers.
+            10=>assistant_spark_samples(|x,y|rect(cx+x-0.75,cy+y-0.75,1.5,1.5,0.75,i.ink,0.0)),
             // Ad blocking: a shield, its straight top and sides meeting in a point.
             11=>{rect(cx-6.0,cy-7.0,12.0,1.5,0.75,i.ink,0.0);rect(cx-6.0,cy-7.0,1.5,7.0,0.75,i.ink,0.0);rect(cx+4.5,cy-7.0,1.5,7.0,0.75,i.ink,0.0);
                  for d in 0..7{let d=d as f32*0.85;rect(cx-6.0+d,cy-0.5+d,1.6,1.6,0.8,i.ink,0.0);rect(cx+4.4-d,cy-0.5+d,1.6,1.6,0.8,i.ink,0.0);}
@@ -3147,6 +3154,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     }
     if i.kind == 14 {emit(i.x,i.y,i.width,i.height,0.0,i.fill,"",0.0,false);return;}
     if i.kind == 13 {
+        if i.glyph==3 {assistant_spark_samples(|x,y|emit(i.x+20.0+x-0.75,i.y+i.height/2.0+y-0.75,1.5,1.5,0.75,i.ink,"",0.0,false));return;}
         let start=first_primitive;
         emit(i.x+12.0,i.y+(i.height-16.0)/2.0,16.0,16.0,0.0,i.ink,"",0.0,false);
         for p in out[start..].iter_mut(){p.shape=if i.glyph==1{3}else if i.glyph==2{6}else{7};}return;
@@ -4789,7 +4797,7 @@ mod tests {
         let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));let id=a.action_node_id();a.action_focus(true);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let plan=g.reconcile_palette(vec![palette_item("a","First",0),palette_item("b","Second",1)]);assert_eq!((plan.created,plan.retired),(0,0));assert_eq!(a.action_node_id(),id);assert!(a.action_snapshot().focused&&a.action_pending());assert!(g.palette_scene().children.iter().all(|n|!n.cancel_input));assert!(a.action_pointer(ffi::PointerPhase::Release,1,1,true,true,true).action==ffi::RowAction::Activate);
     }
     #[test] fn palette_target_resolves_current_index_after_reorder_without_rebinding(){
-        let mut g=palette_tree();let a=g.acquire(&node_named(6,"a"));let b=g.acquire(&node_named(6,"b"));let id=a.action_node_id();assert!(g.palette_target("a",id).valid);assert_eq!(g.palette_target("a",id).index,0);g.reconcile_palette(vec![palette_item("b","Second",1),palette_item("a","Updated",2)]);assert_eq!(a.action_node_id(),id);assert_eq!(g.palette_target("a",id).index,1);assert_eq!(g.palette_target("b",b.action_node_id()).index,0);assert_eq!(g.palette_scene().children[1].icon,2);
+        let mut g=palette_tree();let a=g.acquire(&node_named(6,"a"));let b=g.acquire(&node_named(6,"b"));let id=a.action_node_id();assert!(g.palette_target("a",id).valid);assert_eq!(g.palette_target("a",id).index,0);g.reconcile_palette(vec![palette_item("b","Second",1),palette_item("a","Updated",3)]);assert_eq!(a.action_node_id(),id);assert_eq!(g.palette_target("a",id).index,1);assert_eq!(g.palette_target("b",b.action_node_id()).index,0);assert_eq!(g.palette_scene().children[1].icon,3);
     }
     #[test] fn palette_batch_content_change_cancels_sibling_press_keeps_focus(){
         let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));let mut b=g.acquire(&node_named(6,"b"));a.action_focus(true);for row in [&mut a,&mut b]{row.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);}g.reconcile_palette(vec![palette_item("a","Renamed",2),palette_item("b","Second",1)]);let scene=g.palette_scene();assert!(scene.children[0].cancel_input&&scene.children[1].cancel_input);assert!(!a.action_pending()&&!b.action_pending());assert!(a.action_snapshot().focused);
@@ -4807,7 +4815,7 @@ mod tests {
         let mut g=palette_tree();let id=g.palette_scene().children[0].id;assert!(!g.palette_target("a",id).valid);let mut a=g.acquire(&node_named(6,"a"));assert!(g.palette_target("a",id).valid);for (key,id) in [("missing",id),("b",id),("a",0),("a",id+100)]{assert!(!g.palette_target(key,id).valid);}a.action_enabled(false);assert!(!g.palette_target("a",id).valid);a.action_enabled(true);assert!(g.palette_target("a",id).valid);g.reconcile_palette(vec![palette_item("b","Second",1)]);assert!(!g.palette_target("a",id).valid);g.reconcile_palette(vec![palette_item("a","New visit",0)]);let b=g.acquire(&node_named(6,"a"));assert_ne!(b.action_node_id(),id);assert!(!g.palette_target("a",id).valid);assert!(g.palette_target("a",b.action_node_id()).valid);
     }
     #[test] fn palette_invalid_projection_preserves_model_input_and_selection(){
-        let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let old=g.palette_scene();for items in [vec![palette_item("a","First",0),palette_item("a","Duplicate",1)],vec![palette_item("","Empty",0)],vec![palette_item("a","Wrong icon",3)]]{assert!(!g.reconcile_palette(items).admitted);assert!(a.action_pending());assert_eq!(g.palette_scene().children[0].title,old.children[0].title);assert_eq!(g.palette_selected(),0);assert!(g.palette_target("a",a.action_node_id()).valid);}
+        let mut g=palette_tree();let mut a=g.acquire(&node_named(6,"a"));a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);let old=g.palette_scene();for items in [vec![palette_item("a","First",0),palette_item("a","Duplicate",1)],vec![palette_item("","Empty",0)],vec![palette_item("a","Wrong icon",4)]]{assert!(!g.reconcile_palette(items).admitted);assert!(a.action_pending());assert_eq!(g.palette_scene().children[0].title,old.children[0].title);assert_eq!(g.palette_selected(),0);assert!(g.palette_target("a",a.action_node_id()).valid);}
     }
     #[test] fn palette_snapshots_preserve_raw_utf16_and_are_owned(){
         let mut g=new_palette_graph();let mut item=palette_item("a","日本語 🦀",2);item.title.push(0xd800);let title=item.title.clone();g.reconcile_palette(vec![item]);let mut snapshot=g.palette_scene();assert_eq!(snapshot.children[0].title,title);snapshot.children[0].title.clear();snapshot.children[0].detail.clear();assert_eq!(g.palette_scene().children[0].title,title);assert!(!g.palette_scene().children[0].detail.is_empty());

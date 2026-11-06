@@ -54,6 +54,8 @@ def select_files(runtime_deps):
         files.append(path)
     if "zitter.exe" not in files:
         raise ValueError("runtime_deps has no zitter.exe; is this a Zitter build directory?")
+    if "zitter_assistant.exe" not in files:
+        raise ValueError("runtime_deps has no native zitter_assistant.exe helper")
     return sorted(set(files))
 
 

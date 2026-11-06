@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/extensions_bar.h"
+#include "chromium/prototype/assistant_visuals.h"
 
 #include <algorithm>
 #include <array>
@@ -61,6 +62,7 @@
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/background.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/button/button.h"
@@ -101,7 +103,6 @@ constexpr char kTurnIcon[] = "M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3";
 constexpr char kShieldOffIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM2.5 2.5l11 11";
 // Ad blocking: a shield with a bar across, the assistant's spark.
 constexpr char kShieldIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM5.5 7.5h5";
-constexpr char kSparkIcon[] = "M8 2.5l1.3 3.7 3.7 1.3-3.7 1.3L8 12.5l-1.3-3.7L3 7.5l3.7-1.3z";
 
 // The subset of SVG path data the design icons use: M L H V A Z, absolute or
 // relative, with implicit repeats.
@@ -180,6 +181,7 @@ SkPath SvgPath(std::string_view d, const SkMatrix& transform) {
 }
 
 void StrokeIcon(gfx::Canvas* canvas, std::string_view d, gfx::RectF box, SkColor color) {
+  if (d == kAssistantSparkIcon) { PaintAssistantSpark(canvas, box, color); return; }
   const float scale = box.width() / kIcon;
   SkMatrix transform = SkMatrix::Translate(box.x(), box.y());
   transform.preScale(scale, scale);
@@ -470,7 +472,6 @@ namespace {
 // The puzzle at the end of the bar; it opens the extensions menu.
 // The assistant: its spark, an accent tile while the panel is open, a turning
 // arc while it works and a count of results not seen yet.
-constexpr char kAssistantIcon[] = "M8 1.8v3M8 11.2v3M1.8 8h3M11.2 8h3M3.6 3.6l2 2M10.4 10.4l2 2M12.4 3.6l-2 2M5.6 10.4l-2 2";
 class AssistantButton final : public views::Button {
   METADATA_HEADER(AssistantButton, views::Button)
  public:
@@ -483,7 +484,7 @@ class AssistantButton final : public views::Button {
   void SetState(ExtensionsBar::AssistantState state) {
     state_ = state;
     const auto name = state.unread ? TF(u"Asystent · nowe wyniki: {}", {base::NumberToString16(state.unread)})
-                    : state.working ? T(u"Asystent pracuje") : T(u"Asystent");
+                    : state.working ? T(u"Asystent pracuje") : T(u"Asystent · działania na stronie");
     GetViewAccessibility().SetName(name); SetTooltipText(name);
     timer_.Stop();
     if (state.working && !gfx::Animation::PrefersReducedMotion())
@@ -497,7 +498,7 @@ class AssistantButton final : public views::Button {
     if (state_.open || state_.working) { FillRound(canvas, box, 8, p.accent_soft); ink = p.accent_ink; }
     else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
     else if (state_.unread) ink = p.ink;
-    StrokeIcon(canvas, kAssistantIcon, gfx::RectF(box.CenterPoint().x() - 8, box.CenterPoint().y() - 8, 16, 16), ink);
+    StrokeIcon(canvas, kAssistantSparkIcon, gfx::RectF(box.CenterPoint().x() - 8, box.CenterPoint().y() - 8, 16, 16), ink);
     if (state_.working) {
       const double t = timer_.IsRunning() ? base::TimeTicks::Now().since_origin().InSecondsF() : 0.2;
       SkPathBuilder arc; arc.addArc(SkRect::MakeXYWH(box.x() + 4, box.y() + 4, box.width() - 8, box.height() - 8), std::fmod(t * 360.0, 360.0), 100);
@@ -1166,7 +1167,7 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
     };
     site_row_ = add_row(kShieldOffIcon, &ExtensionsBar::ToggleSiteBlocking);
     if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run() && bar_->callbacks_.block_with_assistant)
-      assistant_row_ = add_row(kSparkIcon, &ExtensionsBar::BlockWithAssistant);
+      assistant_row_ = add_row(kAssistantSparkIcon, &ExtensionsBar::BlockWithAssistant);
     auto* settings = add_row(kGearIcon, &ExtensionsBar::OpenAdBlockingSettings);
     settings->SetText(T(u"Ustawienia blokowania"), {}, false, 16);
     settings->SetRing(true);
@@ -1197,6 +1198,39 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
   raw_ptr<MenuRow> assistant_row_ = nullptr;
 };
 
+// A local action launcher: merely opening it never starts a model request.
+class ExtensionsBar::AssistantActions final : public views::BubbleDialogDelegate {
+ public:
+  AssistantActions(ExtensionsBar* bar, views::View* anchor)
+      : views::BubbleDialogDelegate(anchor, views::BubbleBorder::TOP_RIGHT) {
+    const auto palette = bar->palette();
+    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+    set_margins(gfx::Insets(4)); set_corner_radius(12); set_fixed_width(320);
+    SetBackgroundColor(palette.bg_raised); SetShowCloseButton(false);
+    SetAccessibleWindowRole(ax::mojom::Role::kDialog);
+    SetTitle(T(u"Asystent · działania na stronie")); SetShowTitle(false);
+    auto body = std::make_unique<views::View>();
+    body->SetBackground(views::CreateSolidBackground(palette.bg_raised));
+    body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
+    body->AddChildView(std::make_unique<MenuHeader>(palette, T(u"Działaj na tej stronie")));
+    const std::array<std::u16string, 6> labels = {
+      T(u"Podsumuj najważniejsze informacje"), T(u"Dodaj wyszukiwarkę tej strony"),
+      T(u"Zablokuj reklamy z asystentem"), T(u"Sprawdź fakty i źródła"),
+      T(u"Wyciągnij dane i porównaj"), T(u"Otwórz rozmowę")};
+    for (size_t i = 0; i < labels.size(); ++i) {
+      if (i == 5) body->AddChildView(std::make_unique<MenuSeparator>(palette.line));
+      auto* row = body->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+        [](base::WeakPtr<ExtensionsBar> bar, int command) { if (bar) bar->RunAssistantCommand(command); },
+        bar->weak_factory_.GetWeakPtr(), static_cast<int>(i)), palette, kFooterHeight));
+      row->SetGlyph(i == 2 ? kShieldIcon : kAssistantSparkIcon); row->Init();
+      row->SetText(labels[i], {}, false, 16);
+      row->SetEnabled(i == 5 || (bar->page() && bar->page()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()));
+    }
+    SetContentsView(std::move(body));
+  }
+};
+
 ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbacks)) {
   auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
@@ -1209,6 +1243,8 @@ ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbac
 ExtensionsBar::~ExtensionsBar() {
   // Bubbles report closing through weak pointers; this bar is going away.
   weak_factory_.InvalidateWeakPtrs();
+  assistant_widget_.reset();
+  assistant_panel_.reset();
   shield_widget_.reset();
   shield_panel_.reset();
   fingerprint_widget_.reset();
@@ -1229,7 +1265,7 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
   if (profile && profile->IsOffTheRecord()) profile = nullptr;
   const bool profile_changed = profile != profile_;
   const bool page_changed = page != page_.get();
-  if (page_changed) ClosePopup();
+  if (page_changed) { ClosePopup(); CloseMenus(); }
   page_ = page ? page->GetWeakPtr() : nullptr;
   if (page_changed) ObservePageCount();
   if (profile_changed) {
@@ -1263,6 +1299,7 @@ void ExtensionsBar::SetAssistantState(AssistantState state) {
   if (auto* button = views::AsViewClass<AssistantButton>(assistant_button_.get())) button->SetState(state);
 }
 void ExtensionsBar::Rebuild() {
+  DestroyAssistantPanel();
   RemoveAllChildViews();
   buttons_.clear();
   divider_ = nullptr;
@@ -1279,7 +1316,7 @@ void ExtensionsBar::Rebuild() {
   if (!model) { PreferredSizeChanged(); return; }
   auto palette = base::BindRepeating(&ExtensionsBar::palette, base::Unretained(this));
   if (assistant_state_.enabled && callbacks_.toggle_assistant) {
-    auto button = std::make_unique<AssistantButton>(callbacks_.toggle_assistant, palette);
+    auto button = std::make_unique<AssistantButton>(base::BindRepeating(&ExtensionsBar::ToggleAssistantPanel, base::Unretained(this)), palette);
     button->SetState(assistant_state_);
     assistant_button_ = AddChildView(std::move(button));
   }
@@ -1351,6 +1388,7 @@ void ExtensionsBar::DestroyMenu() {
 }
 
 void ExtensionsBar::CloseMenus() {
+  if (assistant_widget_ && !assistant_widget_->IsClosed()) assistant_widget_->Close();
   if (menu_widget_ && !menu_widget_->IsClosed()) menu_widget_->Close();
 }
 
@@ -1643,4 +1681,29 @@ content::WebContents* ExtensionsBar::popup_contents_for_testing() const {
 BEGIN_METADATA(ExtensionsBar)
 END_METADATA
 
+}  // namespace zitter::prototype
+
+namespace zitter::prototype {
+void ExtensionsBar::ToggleAssistantPanel() {
+  if (assistant_widget_) { if (!assistant_widget_->IsClosed()) assistant_widget_->Close(); return; }
+  if (!assistant_state_.enabled || !assistant_button_ || !GetWidget()) return;
+  CloseMenus(); ClosePopup();
+  if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
+  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  assistant_panel_ = std::make_unique<AssistantActions>(this, assistant_button_);
+  assistant_widget_ = views::BubbleDialogDelegate::CreateBubble(assistant_panel_.get(), base::BindOnce(
+    [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce(&ExtensionsBar::DestroyAssistantPanel, bar));
+    }, weak_factory_.GetWeakPtr()));
+  assistant_widget_->Show();
+}
+void ExtensionsBar::DestroyAssistantPanel() { assistant_widget_.reset(); assistant_panel_.reset(); }
+void ExtensionsBar::RunAssistantCommand(int command) {
+  if (!assistant_state_.enabled || command < 0 || command > 5) return;
+  if (command != 5 && (!page_ || !page_->GetLastCommittedURL().SchemeIsHTTPOrHTTPS())) return;
+  if (assistant_widget_ && !assistant_widget_->IsClosed()) assistant_widget_->Close();
+  if (command == 5) { if (callbacks_.toggle_assistant) callbacks_.toggle_assistant.Run(); }
+  else if (callbacks_.assistant_action) callbacks_.assistant_action.Run(command);
+}
 }  // namespace zitter::prototype

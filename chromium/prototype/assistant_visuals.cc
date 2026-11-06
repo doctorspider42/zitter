@@ -2,6 +2,7 @@
 #include "chromium/prototype/assistant_visuals.h"
 #include <algorithm>
 #include <array>
+#include "third_party/skia/include/utils/SkParsePath.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/i18n.h"
 #include "base/functional/bind.h"
@@ -41,6 +42,14 @@
 #include "ui/views/focus/focus_manager.h"
 
 namespace zitter::prototype {
+void PaintAssistantSpark(gfx::Canvas* canvas, const gfx::RectF& box, SkColor color) {
+  cc::PaintFlags flags; flags.setAntiAlias(true); flags.setColor(color);
+  flags.setStyle(cc::PaintFlags::kStroke_Style); flags.setStrokeWidth(1.5f * box.width() / 16.f);
+  flags.setStrokeCap(cc::PaintFlags::kRound_Cap); flags.setStrokeJoin(cc::PaintFlags::kRound_Join);
+  auto transform = SkMatrix::Translate(box.x(), box.y());
+  transform.preScale(box.width() / 16.f, box.height() / 16.f);
+  canvas->DrawPath(SkParsePath::FromSVGString(kAssistantSparkIcon)->makeTransform(transform), flags);
+}
 namespace {
 struct Colors { SkColor bg, card, ink, muted, line, accent, raised, strong, warn, ok, danger, on_accent; bool dark; };
 Colors Theme(const views::View* view) {
@@ -79,7 +88,7 @@ void Glyph(gfx::Canvas* canvas, AssistantGlyph glyph, float x, float y, SkColor 
     case AssistantGlyph::kPin: line(5,3,11,3);line(6,3,6,7);line(10,3,10,7);line(6,7,3.5,10);line(10,7,12.5,10);line(3.5,10,12.5,10);line(8,10,8,14);break;
     case AssistantGlyph::kShield: { SkPathBuilder p; p.moveTo(8,2);p.lineTo(13,4);p.lineTo(12,10);p.quadTo(10,13,8,14);p.quadTo(6,13,4,10);p.lineTo(3,4);p.close();canvas->DrawPath(p.detach(),f);line(5.5,7.5,7.5,9.5);line(7.5,9.5,11,6);break; }
     case AssistantGlyph::kPage: Round(canvas,gfx::RectF(3,2,10,12),2,color,1.5);line(6,6,10,6);line(6,9,10,9);break;
-    case AssistantGlyph::kSpark: { SkPathBuilder p; p.moveTo(8,1);p.quadTo(9,7,15,8);p.quadTo(9,9,8,15);p.quadTo(7,9,1,8);p.quadTo(7,7,8,1);p.close();canvas->DrawPath(p.detach(),f);break; }
+    case AssistantGlyph::kSpark: PaintAssistantSpark(canvas,gfx::RectF(0,0,16,16),color);break;
     case AssistantGlyph::kLayers: Round(canvas,gfx::RectF(5.5f,2.5f,8,7),1.5f,color,1.5f);line(3,6,3,12);line(3,12.5f,10.5f,12.5f);break;
     case AssistantGlyph::kCheck: line(3.5f,8.5f,6.5f,11.5f);line(6.5f,11.5f,12.5f,4.5f);break;
     case AssistantGlyph::kGear: canvas->DrawCircle(gfx::PointF(8,8),2.2f,f);

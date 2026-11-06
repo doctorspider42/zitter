@@ -3,13 +3,17 @@
 Open **Command Center → AI Assistant** (`Ctrl+K`, then type `>assistant`).
 The assistant opens on the right with a quiet welcome screen, draft suggestions
 and a composer anchored at the bottom. The pin icon reserves page space or uses
-an overlay. An unpinned panel hides 650 ms after the pointer leaves it; pinned
-panels stay visible. Open menus, an active resize and a focused nonempty draft
-keep it visible; a running task keeps working while the panel is hidden. Drag the grip on its left edge to resize it
+an overlay. An unpinned panel hides after the pointer remains outside for about
+650–750 ms; pinned panels stay visible. Drafts, open menus and pending questions
+survive hiding, and a running task keeps working. Pointer monitoring continues
+across child views and resumes after resizing. A panel opened with the keyboard
+stays visible while the mouse is stationary. The adjacent click-consent bubble
+also counts as inside while the pointer is over it. Drag the grip on its left edge to resize it
 between 360 and 760 DIP; narrow windows constrain the effective width. The chosen
 width survives hiding and pin changes within the window.
-Closing the panel stops its current task; background tasks keep running. Once
-enabled for this window, the right edge opens it again. No assistant process or
+The header has no close button: unpin the panel to let it hide automatically.
+Use **Stop** to stop the current task. Once enabled for this window, the right
+edge opens the panel again. No assistant process or
 provider request starts until **Send**. Suggestions only fill a draft; they do not
 send it or grant browser access.
 
@@ -22,7 +26,7 @@ send it or grant browser access.
   page), no assistant process starts and background pages close. The other values
   are kept.
 - **Backends.** Each backend shows its setup status (an API key in the
-  environment, the bundled Codex SDK, `claude` on PATH, the Ollama address) and a
+  environment, the native Codex CLI, `claude` on PATH, the Ollama address) and a
   switch that hides it from the panel. API keys are never typed into Zitter.
 - **Models in the panel.** Visible models make up the panel's model menu. The
   default one starts every new session. Models can be added by backend and ID,
@@ -94,25 +98,28 @@ and remove the same chips. Pages reach the model as `@current`, `@tab:<id>` and
 
 ## Runtime setup
 
-Install Node.js 22 or later. It must be on the browser process's PATH, or set
-`ZITTER_NODE_PATH` to the absolute Node executable path before launching Zitter.
-The build copies the assistant scripts and locked package manifest into an
-`assistant` directory beside the executable. macOS packages carry it beside
-`Contents/MacOS/Chromium` too.
+Zitter builds and ships `zitter_assistant`, a native helper beside the browser
+executable (in `Contents/MacOS` on macOS). The assistant starts it on the first
+sent message. Node.js and npm are not required for any assistant backend.
+The helper uses a Rust orchestration core and Chromium's networking libraries;
+browser actions and permission checks remain in the browser process.
 
 | Backend | Setup | Model field |
 | --- | --- | --- |
-| OpenAI API | Set `OPENAI_API_KEY` in Zitter's launch environment. Requests use the Responses API with `store: false`. | A model supporting structured JSON output, for example `gpt-5.4`. |
-| Codex SDK | Run `npm ci --omit=dev` in the executable's `assistant` directory. Authenticate Codex normally first, or provide its supported API credentials. | A Codex-compatible model ID. |
-| Claude CLI | Install and authenticate Claude Code. Its native executable must be on PATH, or set `ZITTER_CLAUDE_PATH` to its executable. | A Claude CLI alias such as `sonnet`, or an exact model ID. |
-| Ollama | Start local Ollama and pull the chosen model. Optional `ZITTER_OLLAMA_URL` changes the loopback HTTP endpoint; the default is `http://127.0.0.1:11434`. | An installed model with reliable structured output, for example `qwen3:8b`. |
+| OpenAI API | Set `OPENAI_API_KEY` in Zitter's launch environment. Requests use the Responses API with `store: false`. | A model supporting structured JSON output. |
+| Codex CLI | Install and authenticate the native Codex executable. Put it on PATH or set `ZITTER_CODEX_PATH` to its absolute path. | A Codex-compatible model ID. |
+| Claude CLI | Install and authenticate native Claude Code. Put it on PATH or set `ZITTER_CLAUDE_PATH` to its absolute path. | A Claude CLI alias or exact model ID. |
+| Ollama | Start local Ollama and pull the chosen model. Optional `ZITTER_OLLAMA_URL` changes the loopback HTTP endpoint; the default is `http://127.0.0.1:11434`. | An installed model with reliable structured output. |
+
+Codex must support `exec --json`, `--output-schema`, `--ephemeral`,
+`--ignore-user-config` and `--ignore-rules`. An unsupported CLI fails that backend
+without falling back to Node or another provider. A launcher installed through
+npm may be a JavaScript script: point `ZITTER_CODEX_PATH` at the actual native
+binary instead. The same native executable requirement applies to Claude.
+Do not install npm packages into an app bundle. Chromium's own build toolchain
+and the independent network audit scripts are outside this runtime migration.
 
 API keys are never entered into page fields or stored in browser preferences.
-For a signed macOS app, install the SDK outside the app bundle and set
-`ZITTER_CODEX_SDK_PATH` to its absolute `node_modules/@openai/codex-sdk/dist/index.js`
-path. Do not modify a signed bundle with `npm ci`. Release maintainers can instead
-install the SDK into the build output's `assistant` directory before packaging
-and signing; the macOS packager carries that directory into the app.
 Provider failures do not forward raw diagnostics into the conversation.
 Codex runs in a temporary isolated home and working directory with shell tools,
 web search, user MCP configuration and network tools disabled. Its existing
@@ -235,15 +242,16 @@ progress turns (a spinner, its label breathing), finished steps get a check,
 failed ones a warning, and a pending consent a pulsing dot. The answer streams in
 as the model writes it, for every backend: Claude through the CLI's partial
 messages, OpenAI through Server-Sent Events, Ollama through its NDJSON stream and
-Codex through the SDK's item updates. The panel polls the runtime's `/progress`
-for it four times a second. While a consent prompt is waiting, an unpinned panel
-stays open, so reaching the prompt does not slide the panel away.
+Codex through CLI item updates. The panel polls the runtime's `/progress`
+for it four times a second. The pointer can move from the panel to a click-consent
+prompt without hiding it; leaving both areas hides an unpinned panel while the
+consent remains pending.
 
 The model can ask the user with `ask_user`: a question in the conversation with up
 to eight answers picked with one click (or several, then **Send answer**), or by
 pressing the answer's number while the field is empty. The user may also type
-their own answer in the field. The turn waits for the answer, and an unpinned
-panel stays open meanwhile. The model must use it before completing a purchase,
+their own answer in the field. The turn waits for the answer even if the unpinned
+panel hides; reopening it restores the question and draft. The model must use it before completing a purchase,
 payment, booking, sent message, deletion, publication or account change; native
 click consent covers only one click, not such an approval. It also uses it to
 choose between alternatives or to get details only the user knows. A question
@@ -292,11 +300,28 @@ as another keyword. The engine joins Settings → Search engines, so typing
 
 ## Toolbar button
 
-The extensions bar shows the assistant's spark next to the fingerprint protection
-button while the assistant is on in Settings. It shows or hides the panel, gets
-an accent tile while the panel is open, a turning arc while a conversation or
-task works, and a count of results not seen yet (task runs that finished while
-the panel was hidden). Opening the panel or the tasks view clears the count.
+The extensions bar shows the assistant's spark while the assistant is enabled.
+Clicking it opens a local menu without starting a model or sharing page content:
+
+- **Summarize the key points**: claims, figures, conclusions and next steps.
+- **Add this site’s search**: discover its search URL and propose a keyword.
+- **Block ads with the assistant**: inspect, test and preview additional rules.
+- **Check facts and sources**: compare the page's claims with independent and
+  primary sources after reading the current page, including authorized signed-in content.
+- **Extract data and compare**: build a table of prices, terms, differences and
+  missing information from the page.
+- **Open conversation**: open the existing assistant panel.
+
+Page actions create a fresh session with the current page reference. Existing
+work and an earlier draft stay intact. If the saved permission defaults already
+allow the required page access, research and actions, the shortcut sends its
+instruction immediately. Otherwise it prepares a draft and opens the access
+menu; permissions never expand automatically. The user can review access and
+send the draft. Page actions are unavailable on internal or unsupported pages.
+
+The spark keeps its activity arc, open-panel tint and unread-result count.
+Opening the quick-action menu alone does not mark results as read; opening the
+conversation does. Disabling the assistant removes both the button and menu.
 
 The model starts from what the user sees: a question about "this" or without a
 clear subject is taken to be about the current tab, and a request to find
@@ -337,22 +362,34 @@ history or browser operations. Caches are never written to the browsing profile.
 
 ## Validation
 
-Run `node --test chromium/assistant/*.test.mjs` for provider response,
-orchestration, access, network and RPC contracts. The targeted Chromium tests are
-`ZitterProfilesBrowserTest.AssistantPermissionsAndPageRedaction`,
-`ZitterProfilesBrowserTest.AssistantKeyboardTypesAtFocusButNotIntoSecrets`,
-`ZitterProfilesBrowserTest.AssistantPanelIsOptionalAndPinnable`,
-`ZitterProfilesBrowserTest.AssistantSwitchRemovesPanelAndCommand`,
-`ZitterProfilesBrowserTest.AssistantMentionsInsertRemovableChips` and
-`ZitterProfilesBrowserTest.AssistantBackgroundPageSharesProfileAndCanBeTakenOver`.
-`ZitterProfilesBrowserTest.AssistantRuntimeBrowserToolRoundTrip` exercises the
-actual Node loopback service, Ollama HTTP transport and native tab tool against
-a local model fixture; it requires Node on PATH.
+Build `//zitter:zitter_assistant`, `//zitter:assistant_engine_unittests_exe`
+and the test-only `//zitter:assistant_cli_fixture`. Run the resulting
+`assistant_engine_unittests` executable, then:
+
+```sh
+ZITTER_ASSISTANT_TEST_BINARY=/absolute/build/path/zitter_assistant \
+  python3 -m unittest discover -s tests -p test_native_assistant.py -v
+```
+
+The Python suite exercises the actual helper, local HTTP model fixtures and a
+native CLI fixture without Node, model accounts or external API calls. It covers
+RPC authentication, provider isolation flags, screenshot input, streaming,
+continuations, cache sharing, permissions, cancellation and unsafe research URLs.
+The Rust tests cover response decoding, partial JSON, model IDs, timestamps and
+stable model instructions.
+
+Run the Chromium `ZitterProfilesBrowserTest.Assistant*` cases for native
+permissions, redaction, keyboard input, panel state, background work, schedules,
+restoration and quick actions. `AssistantRuntimeBrowserToolRoundTrip` uses the
+actual native helper and a local Ollama fixture. The toolbar test checks menu
+opening without a model request; `AssistantQuickActionsKeepDraftsAndAccess`
+checks draft preservation and unchanged permissions.
+
 Use `--zitter-open-panel=assistant` for visual checks without mouse automation.
 Live provider checks require the corresponding installed runtime, credentials and
 model; offline tests do not prove account availability or model quality.
 
 Provider interfaces: [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling),
-[Codex SDK](https://developers.openai.com/codex/sdk/),
+[Codex CLI](https://learn.chatgpt.com/docs/non-interactive-mode),
 [Claude CLI](https://code.claude.com/docs/en/cli-reference),
 [Ollama chat](https://docs.ollama.com/api/chat).

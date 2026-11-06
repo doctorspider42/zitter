@@ -96,8 +96,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   enum class Menu { kNone, kSessions, kAccess, kModel, kMention, kTasks, kTaskEditor };
   explicit AssistantPanel(WorkspaceWindow* window);
   ~AssistantPanel() override;
-  // `from_edge`: shown by hovering the window edge, so it hides again even if
-  // the pointer never enters the panel.
+  // An unpinned panel follows pointer departure regardless of how it opens.
+  // Keyboard opening stays visible until the mouse moves; edge opening arms immediately.
   void Show(bool from_edge = false);
   // Stops the selected conversation; background tasks keep running.
   void Stop();
@@ -122,6 +122,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // Sends `text` as the user would, in the selected session; a session that
   // is busy or waiting for an answer keeps its work and only shows.
   void Ask(std::u16string text);
+  // Prepares a fresh page-scoped draft without changing permission grants.
+  void PreparePageAction(std::u16string text, bool needs_actions, bool needs_web);
   void SendForTesting(std::string text, bool background = false);
   void ConfigureForTesting(std::string provider, std::string model, AssistantPermissions permissions);
   bool ContainsForTesting(std::string_view text) const;
@@ -132,6 +134,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   views::View* menu_for_testing() const { return menu_view_; }
   gfx::Rect composer_bounds_for_testing() const;
   void TypeForTesting(std::u16string text);
+  std::u16string draft_for_testing() const;
+  void SelectSessionForTesting(size_t index) { SelectSession(index); }
   bool KeyForTesting(ui::KeyboardCode key, int flags = 0);
   std::vector<AssistantChip> chips_for_testing() const { return chips_; }
   size_t background_tasks_for_testing() const;
@@ -183,6 +187,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     AssistantPermissions permissions;
     bool confirm_background = true;
     std::vector<Message> messages;
+    std::u16string composer_draft;
+    std::vector<AssistantChip> composer_chips;
     // Runtime of the current turn.
     bool busy = false, background = false, finished = false, auto_confirm = false, page_control = false;
     uint64_t epoch = 0;
@@ -240,6 +246,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void ToggleTool(const std::string& kind);
   void PickModel(std::string provider, std::string model);
   void NewSession();
+  void CreateSession(bool preserve_previous);
   void SelectSession(size_t index);
   void DeleteSession(std::string key);
   // Conversations are saved shortly after they change, and read back once.
@@ -307,6 +314,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   std::optional<int> resize_start_width_;
   base::OneShotTimer hide_timer_;
   base::RepeatingTimer hover_check_;
+  gfx::Point last_pointer_position_;
+  bool pointer_exit_armed_ = false;
   // The panel plus the edge strip beside it: leaving it hides an unpinned panel.
   gfx::Rect HoverBounds() const;
   void WatchPointer();

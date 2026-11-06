@@ -49,8 +49,9 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     // only while `assistant_available` says so.
     base::RepeatingClosure block_with_assistant;
     base::RepeatingCallback<bool()> assistant_available;
-    // The assistant button: shows or hides the assistant panel.
+    // Opens the conversation from the quick-action menu.
     base::RepeatingClosure toggle_assistant;
+    base::RepeatingCallback<void(int)> assistant_action;
   };
   // What the assistant button shows: hidden while the assistant is off.
   struct AssistantState {
@@ -76,6 +77,9 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void ToggleFingerprintPanel();
   // The ad blocking panel under the shield (shown while the profile blocks ads).
   void ToggleShieldPanel();
+  void ToggleAssistantPanel();
+  void RunAssistantCommandForTesting(int command) { RunAssistantCommand(command); }
+  views::Widget* assistant_menu_for_testing() const { return assistant_widget_.get(); }
 
   Profile* profile() const { return profile_; }
   content::WebContents* page() const { return page_.get(); }
@@ -128,6 +132,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   class Popup;
   class FingerprintPanel;
   class ShieldPanel;
+  class AssistantActions;
 
  private:
   friend class ActionButton;
@@ -135,6 +140,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   friend class Popup;
   friend class FingerprintPanel;
   friend class ShieldPanel;
+  friend class AssistantActions;
   friend class ExtensionsContextMenu;
   sidebar::DesignPalette palette() const;
   void DestroyMenu();
@@ -162,6 +168,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void ObservePageCount();
   void RefreshShield();
   void DestroyShieldPanel();
+  void DestroyAssistantPanel();
+  void RunAssistantCommand(int command);
   void ToggleSiteBlocking();
   void BlockWithAssistant();
   void OpenAdBlockingSettings();
@@ -187,6 +195,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   base::CallbackListSubscription page_count_;
   // Compared only, never used: the page the count subscription is for.
   uintptr_t counted_page_ = 0;
+  std::unique_ptr<AssistantActions> assistant_panel_;
+  std::unique_ptr<views::Widget> assistant_widget_;
   std::unique_ptr<ShieldPanel> shield_panel_;
   std::unique_ptr<views::Widget> shield_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.
