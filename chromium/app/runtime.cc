@@ -262,6 +262,11 @@ void Runtime::RunCommand(AppCommand command) {
     case AppCommand::kDownloads: target->ShowDownloads(); break;
     case AppCommand::kImport: target->RunShortcut("import"); break;
     case AppCommand::kCloseTab: target->CloseActiveTab(); break;
+    case AppCommand::kDeveloper: target->RunShortcut("developer"); break;
+    case AppCommand::kDevTools: target->RunShortcut("devtools_panel"); break;
+    case AppCommand::kDevConsole: target->RunShortcut("devtools_console"); break;
+    case AppCommand::kDevInspect: target->RunShortcut("devtools_inspect"); break;
+    case AppCommand::kHardReload: target->RunShortcut("hard_reload"); break;
     case AppCommand::kReload: target->RunPageCommand(prototype::PageCommand::kReload); break;
     case AppCommand::kToggleSidebar: shell->ToggleSidebar(); break;
     case AppCommand::kHistory: target->RunShortcut("history"); break;

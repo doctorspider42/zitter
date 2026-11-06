@@ -8,6 +8,7 @@
 #include "zitter/core/browser_state.h"
 #include "zitter/core/command_history.h"
 #include "zitter/core/pin_tree.h"
+#include "zitter/core/mouse_gesture.h"
 
 namespace {
 void Expect(bool condition, const char* message) {
@@ -15,6 +16,35 @@ void Expect(bool condition, const char* message) {
     std::cerr << "FAIL: " << message << '\n';
     std::exit(EXIT_FAILURE);
   }
+}
+
+void MouseGestureContracts() {
+  zitter::MouseGesture gesture;
+  gesture.Begin(100, 100, 1);
+  Expect(gesture.End(130, 100, 1.1).empty(), "clicks and short drags never navigate");
+  gesture.Begin(100, 100, 1);
+  gesture.Move(40, 102, 1.1);
+  gesture.Move(10, 104, 1.2);
+  Expect(gesture.End(0, 102, 1.3) == "L", "jitter along a stroke does not introduce turns");
+  gesture.Begin(100, 100, 1);
+  gesture.Move(100, 30, 1.1);
+  Expect(gesture.End(100, 100, 1.2) == "UD", "two-stroke gesture keeps direction order");
+  gesture.Begin(0, 0, 1);
+  Expect(gesture.End(80, 80, 1.2).empty(), "ambiguous diagonal never selects a command");
+  gesture.Begin(0, 0, 1);
+  Expect(gesture.End(100, 0, 4).empty(), "long page drags expire");
+  gesture.Begin(0, 0, 1);
+  gesture.Move(100, 0, 1.1); gesture.Cancel();
+  Expect(gesture.End(200, 0, 1.2).empty(), "Escape and lost activation cannot execute a partial gesture");
+  gesture.Begin(0, 0, 1);
+  gesture.Move(80, 0, 1.1); gesture.Move(80, 80, 1.2);
+  gesture.Move(0, 80, 1.3); gesture.Move(0, 0, 1.4);
+  Expect(gesture.End(0, 0, 1.5).empty(), "complex page drawing does not become a gesture");
+  gesture.Begin(0, 0, 10);
+  Expect(gesture.End(100, 0, 9).empty(), "monotonic clock rollback cancels");
+  gesture.Begin(0, 0, 11);
+  Expect(gesture.End(100, 0, 11.1) == "R", "a canceled gesture does not poison the next one");
+  Expect(gesture.End(100, 0, 11.2).empty(), "a duplicate release cannot replay a completed gesture");
 }
 
 void CommandHistoryContracts() {
@@ -124,6 +154,7 @@ void PinTreeContracts() {
 }  // namespace
 
 int main() {
+  MouseGestureContracts();
   CommandHistoryContracts();
   PinTreeContracts();
   std::cout << "Product logic contracts passed\n";

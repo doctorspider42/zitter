@@ -318,7 +318,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   content::WebContents* AdoptPage(content::WebContents* source, std::unique_ptr<content::WebContents> page, bool background);
   bool RouteNavigation(content::NavigationHandle& navigation, const std::string& source_hint);
   content::WebContents* OpenPageLink(content::WebContents* source, const content::OpenURLParams& params);
-  void ShowPageMenu(content::WebContents* source, const content::ContextMenuParams& params);
+  void ShowPageMenu(content::WebContents* source, content::RenderFrameHost* frame, const content::ContextMenuParams& params);
   std::string WorkspaceForPage(content::WebContents* page) const;
   void UpdateShell();
   void SetPageFullscreen(content::WebContents* page, bool fullscreen);

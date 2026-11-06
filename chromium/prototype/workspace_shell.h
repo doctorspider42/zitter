@@ -271,7 +271,12 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetPeekTitle(std::u16string title);
   void HidePeek();
   void BuildLinkMenu(GURL url, std::string source_workspace);
-  void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point);
+  void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point, base::RepeatingClosure inspect = {});
+  void SetDeveloperPage(GURL url, bool allowed = true, bool compare = true);
+  void SetDeveloperMode(std::string mode);
+  void ShowDeveloperMenu();
+  ui::SimpleMenuModel* developer_menu_for_testing() const { return developer_menu_.get(); }
+  views::View* developer_control_for_testing() const { return developer_button_; }
   ui::SimpleMenuModel* link_menu() const { return link_menu_.get(); }
   void Detach();
   void Update(ShellState state);
@@ -372,6 +377,8 @@ class WorkspaceShell final : public ui::EventHandler,
   bool CaptureShortcut(const ui::Accelerator& accelerator);
   std::string ShortcutFor(const ui::Accelerator& accelerator) const;
   bool SetShortcut(std::string id, std::string chord);
+  void SetMouseGesturesEnabled(bool enabled);
+  bool SetMouseGesture(std::string_view direction, std::string command);
   bool UpsertSearchProvider(SearchProvider provider, std::string previous = {});
   bool RemoveSearchProvider(std::string keyword);
   bool SetDefaultSearchProvider(std::string keyword);
@@ -381,6 +388,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool tools_ready() const { return tools_ready_; }
   views::Widget* tools_widget() const { return tools_widget_.get(); }
   PanelViewport* tools_viewport_for_testing() const{return tools_scroll_;}
+  EditorControl* shortcut_search_for_testing() const { return shortcut_search_; }
   EditorControl* shortcut_input() const { return shortcut_chord_; }
   views::View* tools_selection() const { return tools_picker_; }
   views::View* tools_choice_for_testing(std::string_view key) const;
@@ -701,6 +709,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void BuildWorkspaceMenu(std::string id);
   void BuildFolderMenu(std::string parent = {});
   void BuildTabMenu(std::optional<size_t> tab,std::string pin = {});
+  ui::SimpleMenuModel* page_context_menu_for_testing() const { return link_menu_.get(); }
   ui::SimpleMenuModel* tab_context_menu_for_testing() const {return workspace_menu_.get();}
   void RequestNewFolder(std::string workspace, std::string parent = {});
   void RequestRenameFolder(std::string workspace, std::string folder);
@@ -781,6 +790,16 @@ class WorkspaceShell final : public ui::EventHandler,
   void ResetToolsForm();
   void RefreshTools();
   void BuildRustToolsForm();
+  void BuildShortcutFilters();
+  void FilterShortcutChoices();
+  void BuildMouseGestureControls();
+  void RefreshMouseGestureChoice();
+  void InputConfigurationAction(int action);
+  raw_ptr<EditorControl> shortcut_search_ = nullptr;
+  raw_ptr<views::View> shortcut_category_ = nullptr;
+  raw_ptr<views::View> gesture_choice_ = nullptr;
+  raw_ptr<views::View> gesture_command_ = nullptr;
+  std::vector<std::string> gesture_commands_;
   void BuildRustPreferenceRows(const sidebar::PreferenceCatalogue& catalogue);
   void RefreshToolsViewport();
   void RefreshKeyRegistrations();
@@ -790,7 +809,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool tools_ready_ = false;
   bool command_usage_dirty_ = false;
   std::vector<std::pair<std::pair<std::string, std::string>, base::Time>> pending_command_uses_;
-  bool keys_dirty_ = false, engines_dirty_ = false;
+  bool keys_dirty_ = false, gestures_dirty_ = false, engines_dirty_ = false;
   raw_ptr<ui::AcceleratorTarget> accelerator_target_ = nullptr;
   raw_ptr<views::View> tools_root_ = nullptr;
   raw_ptr<views::View> tools_body_ = nullptr;
@@ -1011,6 +1030,13 @@ class WorkspaceShell final : public ui::EventHandler,
   scoped_refptr<base::SequencedTaskRunner> io_runner_;
   raw_ptr<views::Widget> widget_ = nullptr;
   raw_ptr<views::View> root_ = nullptr;
+  GURL developer_url_;
+  bool developer_allowed_ = true, developer_compare_ = true;
+  bool developer_dirty_ = false;
+  raw_ptr<views::View> developer_button_ = nullptr;
+  base::RepeatingClosure inspect_element_;
+  std::unique_ptr<ui::SimpleMenuModel> developer_menu_;
+  std::unique_ptr<views::MenuRunner> developer_menu_runner_;
   raw_ptr<views::View> content_host_ = nullptr;
   raw_ptr<views::View> edge_ = nullptr;
   raw_ptr<views::View> general_root_ = nullptr;

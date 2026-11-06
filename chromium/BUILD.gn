@@ -162,6 +162,7 @@ source_set("core") {
     "zitter/core/browser_state.h",
     "zitter/core/command_history.cc",
     "zitter/core/command_history.h",
+    "zitter/core/mouse_gesture.h",
     "zitter/core/pin_tree.cc",
     "zitter/core/pin_tree.h",
     "zitter/core/workspace_model.cc",
@@ -420,6 +421,7 @@ source_set("profile_workspace_browser_tests") {
     ":shell",
     "//base/test:test_support",
     "//chrome/browser/preloading:prefs",
+    "//chrome/browser/devtools:test_support",
     "//chrome/browser/permissions:test_support",
     "//chrome/browser/extensions:test_support",
     "//chrome/browser/ui/views/extensions:extension_install_dialog_view",
@@ -442,6 +444,7 @@ source_set("profile_workspace_browser_tests") {
     "//ui/base:test_support",
     "//ui/base/clipboard:clipboard_test_support",
     "//ui/views:test_support",
+    "//ui/snapshot",
   ]
   if (is_win) {
     # Native input for the keyboard tests (aura::test::EnableUIControlsAuraWin).

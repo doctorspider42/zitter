@@ -1,3 +1,4 @@
+#include "ui/compositor/layer.h"
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/i18n.h"
@@ -409,7 +410,40 @@ class SceneEditor final : public views::View, public EditorControl,
     return sidebar::editor_scene(*state_,Slice(placeholder_),geometry_,style,rust::Slice<const sidebar::EditorSpan>(selected.data(),selected.size()),rust::Slice<const sidebar::EditorSpan>(composition.data(),composition.size()));
   }
   void Schedule(){if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneEditor::UpdateMetal,weak_factory_.GetWeakPtr()));SchedulePaint();}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();if(!SceneIsVisible(this)||GetVisibleBounds().IsEmpty()){if(surface_)surface_->Hide();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto scene=Scene();const bool was=metal_visible();auto bounds=GetBoundsInScreen();auto visible=GetVisibleBounds();bounds.Offset(visible.x(),visible.y());bounds.set_size(visible.size());for(auto& op:scene){const auto clip=gfx::IntersectRects(gfx::RectF(op.clip.x,op.clip.y,op.clip.width,op.clip.height),gfx::RectF(visible));op.x-=visible.x();op.y-=visible.y();op.clip={clip.x()-visible.x(),clip.y()-visible.y(),clip.width(),clip.height()};}surface_->UpdateScene(GetWidget()->GetNativeWindow(),bounds,UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Fill());if(was!=metal_visible())SchedulePaint();}
+  void UpdateMetal() {
+    pending_=false;
+    if(!GetWidget())return;
+    GetWidget()->LayoutRootViewIfNecessary();
+    const bool was=metal_visible();
+    const auto field_bounds=GetBoundsInScreen();
+    auto visible=GetVisibleBounds();
+    gfx::Rect screen_clip=visible;
+    screen_clip.Offset(field_bounds.x(),field_bounds.y());
+    // Native Metal surfaces are siblings of the compositor host, so ancestor
+    // layer masks do not clip them automatically. Enforce viewport masks in
+    // screen space, including transforms used by RustPanelViewport scrolling.
+    for(auto* ancestor=parent();ancestor;ancestor=ancestor->parent())
+      if(ancestor->layer()&&ancestor->layer()->GetMasksToBounds())
+        screen_clip.Intersect(ancestor->GetBoundsInScreen());
+    if(!SceneIsVisible(this)||screen_clip.IsEmpty()) {
+      if(surface_)surface_->Hide();
+      if(was)SchedulePaint();
+      return;
+    }
+    if(!surface_)surface_=CreateSidebarMetal();
+    if(!surface_)return;
+    visible=screen_clip;
+    visible.Offset(-field_bounds.x(),-field_bounds.y());
+    auto scene=Scene();
+    for(auto& op:scene) {
+      const auto clip=gfx::IntersectRects(gfx::RectF(op.clip.x,op.clip.y,op.clip.width,op.clip.height),gfx::RectF(visible));
+      op.x-=visible.x();op.y-=visible.y();
+      op.clip={clip.x()-visible.x(),clip.y()-visible.y(),clip.width(),clip.height()};
+    }
+    surface_->UpdateScene(GetWidget()->GetNativeWindow(),screen_clip,
+        UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(scene.data(),scene.size())),Fill());
+    if(was!=metal_visible())SchedulePaint();
+  }
   void StartBlink(){blink_visible_=true;if(!Editable()||!HasFocus())return;blink_.Start(FROM_HERE,base::Milliseconds(500),base::BindRepeating([](SceneEditor* self){self->blink_visible_=!self->blink_visible_;self->Schedule();},base::Unretained(this)));}
   void SyncLifecycle(){auto update=sidebar::editor_availability(*state_,GetEnabledInViewsSubtree(),read_only_);Apply(std::move(update));if(!Available()){++context_;CancelMenu();CancelNativeComposition();ClearCompositionText();Detach();blink_.Stop();OnMouseCaptureLost();if(surface_)surface_->Hide();}else if(HasFocus()){if(GetInputMethod())GetInputMethod()->SetFocusedTextInputClient(this);StartBlink();}if(GetInputMethod())GetInputMethod()->OnTextInputTypeChanged(this);Schedule();}
   void CancelMenu(){++menu_generation_;if(runner_)runner_->Cancel();}

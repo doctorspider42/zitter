@@ -140,6 +140,14 @@ NSMenu* BuildMainMenu() {
     Command(Text(u"Pokaż lub ukryj karty"), AppCommand::kToggleSidebar, @"s", kCmd),
     Command(Text(u"Odśwież stronę"), AppCommand::kReload, @"r", kCmd),
   ]);
+  Submenu(bar, Text(u"Narzędzia developerskie"), @[
+    Command(Text(u"Otwórz DevTools"), AppCommand::kDevTools, @"i", kCmdOption),
+    Command(Text(u"Otwórz konsolę"), AppCommand::kDevConsole, @"j", kCmdOption),
+    Command(Text(u"Zbadaj element"), AppCommand::kDevInspect, @"c", kCmdOption),
+    Command(Text(u"Odśwież bez pamięci podręcznej"), AppCommand::kHardReload, @"r", kCmdShift),
+    NSMenuItem.separatorItem,
+    Command(Text(u"Narzędzia developerskie…"), AppCommand::kDeveloper, @"", 0),
+  ]);
   NSMenuItem* window = Submenu(bar, Text(u"Okno"), @[
     Item(Text(u"Minimalizuj"), @selector(performMiniaturize:), @"m"),
     Item(Text(u"Powiększ"), @selector(performZoom:), @"", 0),

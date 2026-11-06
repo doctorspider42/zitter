@@ -20,6 +20,14 @@ struct Shortcut {
   std::u16string title;
   ui::Accelerator accelerator;
 };
+struct MouseGestureBinding {
+  std::string direction, command;
+  bool operator==(const MouseGestureBinding&) const = default;
+};
+std::vector<MouseGestureBinding> DefaultMouseGestures();
+bool ValidMouseGestureCommand(std::string_view command);
+// Stable category IDs, independent of the display language.
+std::string ShortcutCategory(std::string_view id);
 std::vector<SearchProvider> DefaultSearchProviders();
 std::vector<Shortcut> ArcShortcuts();
 bool ValidSearchProvider(const SearchProvider& provider);
@@ -28,7 +36,10 @@ std::string FormatShortcut(const ui::Accelerator& accelerator);
 std::string DisplayShortcut(const ui::Accelerator& accelerator);
 bool ValidShortcut(const ui::Accelerator& accelerator);
 GURL SearchDestination(const SearchProvider& provider, std::string query);
+// UI discovery only; never probes ports or changes network security.
+bool IsLocalProject(const GURL& url);
 struct BrowserTools {
+  std::string developer_mode = "auto";
   BrowserTools();
   BrowserTools(const BrowserTools&);
   BrowserTools& operator=(const BrowserTools&);
@@ -37,6 +48,9 @@ struct BrowserTools {
   ~BrowserTools();
   std::vector<SearchProvider> providers;
   std::vector<Shortcut> shortcuts;
+  bool mouse_gestures_enabled = false;
+  std::vector<MouseGestureBinding> mouse_gestures;
+  std::string MouseGestureCommand(std::string_view direction) const;
   std::string default_keyword;
   CommandHistory command_usage;
   void RecordCommandUse(std::string id, std::string target, base::Time now);

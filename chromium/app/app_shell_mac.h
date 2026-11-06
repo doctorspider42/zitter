@@ -22,6 +22,11 @@ enum class AppCommand {
   kTimeline,
   kFind,
   kPrint,
+  kDeveloper,
+  kDevTools,
+  kDevConsole,
+  kDevInspect,
+  kHardReload,
 };
 
 class AppShellDelegate {

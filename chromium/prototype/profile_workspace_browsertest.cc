@@ -1,3 +1,12 @@
+#include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
+#include "chrome/app/chrome_command_ids.h"
+#include "third_party/blink/public/common/context_menu_data/edit_flags.h"
+#include "chrome/browser/policy/developer_tools_policy_handler.h"
+#include "chrome/browser/devtools/devtools_window_testing.h"
+#include "chrome/browser/devtools/devtools_window.h"
+#include "ui/snapshot/snapshot.h"
+#include "content/public/browser/keyboard_event_processing_result.h"
+#include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "chromium/prototype/assistant_panel.h"
 #include "chromium/prototype/assistant_visuals.h"
 #include "base/environment.h"
@@ -2214,6 +2223,411 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, KeywordSearchProvidersAndPersi
   EXPECT_NE("probe", shell->browser_tools().default_keyword);
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperModeDetectionAndPersistence) {
+  for (const char* url : {"http://localhost:3000/", "https://app.localhost/", "http://localhost./", "http://127.0.0.2:8080/", "http://[::1]:5173/"}) EXPECT_TRUE(IsLocalProject(GURL(url))) << url;
+  for (const char* url : {"https://localhost.evil/", "https://evil-localhost/", "https://localhost@evil.test/", "http://128.0.0.1/", "file://localhost/a", "http://192.168.1.1/", "http://[::2]/"}) EXPECT_FALSE(IsLocalProject(GURL(url))) << url;
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  base::DictValue older; base::ListValue keys;
+  keys.Append(base::DictValue().Set("id", "reload").Set("chord", "F12"));
+  older.Set("shortcuts", std::move(keys));
+  const auto migrated = BrowserTools::FromValue(older);
+  for (const auto& key : migrated.shortcuts) {
+    if (key.id == "reload") EXPECT_EQ(ui::VKEY_F12, key.accelerator.key_code());
+    if (key.id == "devtools") EXPECT_EQ(ui::VKEY_UNKNOWN, key.accelerator.key_code());
+  }
+  EXPECT_EQ("auto", shell->browser_tools().developer_mode);
+  EXPECT_EQ("devtools", shell->ShortcutFor(ui::Accelerator(ui::VKEY_F12, 0)));
+  auto* control = shell->developer_control_for_testing(); ASSERT_TRUE(control);
+  const auto local = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), local));
+  ASSERT_TRUE(base::test::RunUntil([&]{return control->IsDrawn();}));
+  EXPECT_FALSE(DevToolsWindow::GetInstanceForInspectedWebContents(window_->contents("work")));
+  shell->SetDeveloperMode("off"); EXPECT_FALSE(control->IsDrawn());
+  ASSERT_TRUE(window_->RunShortcut("devtools_console"));
+  auto* tools = DevToolsWindow::GetInstanceForInspectedWebContents(window_->contents("work")); ASSERT_TRUE(tools);
+  base::test::TestFuture<void> loaded; tools->SetLoadCompletedCallback(loaded.GetCallback()); ASSERT_TRUE(loaded.Wait());
+  EXPECT_FALSE(DevToolsWindow::GetInTabWebContents(window_->contents("work"), nullptr));
+  EXPECT_TRUE(DevToolsWindowTesting::Get(tools)->browser());
+  auto* frontend = DevToolsWindowTesting::Get(tools)->main_web_contents(); ASSERT_TRUE(frontend);
+  EXPECT_TRUE(frontend->GetVisibleURL().SchemeIs("devtools"));
+  content::WebContentsDestroyedWatcher closed(frontend);
+  ASSERT_TRUE(window_->RunShortcut("devtools")); closed.Wait();
+  shell->SetDeveloperMode("on"); EXPECT_TRUE(control->IsDrawn());
+  shell->SetDeveloperMode("auto");
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !control->IsDrawn();}));
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return control->IsDrawn();}));
+  ASSERT_TRUE(window_->RunShortcut("project_split")); EXPECT_TRUE(window_->split());
+  auto* focused = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(focused));
+  ASSERT_TRUE(content::ExecJs(focused,"window.dev_reload_marker=42"));
+  { content::TestNavigationObserver reloaded(focused); ASSERT_TRUE(window_->RunShortcut("hard_reload")); reloaded.Wait(); }
+  EXPECT_EQ("undefined",content::EvalJs(focused,"typeof window.dev_reload_marker"));
+  DevToolsWindowCreationObserver created;
+  ASSERT_TRUE(window_->RunShortcut("devtools_panel")); created.WaitForLoad();
+  EXPECT_TRUE(DevToolsWindow::GetInstanceForInspectedWebContents(focused));
+  EXPECT_FALSE(DevToolsWindow::GetInstanceForInspectedWebContents(window_->pane_contents(false)));
+  created.CloseAllSync();
+  ASSERT_TRUE(window_->Select("personal")); EXPECT_FALSE(control->IsDrawn());
+  ASSERT_TRUE(window_->OpenPeek(local)); ASSERT_TRUE(content::WaitForLoadStop(window_->peek_contents()));
+  auto* peek = window_->peek_contents();
+  shell->ShowDeveloperMenu(); ASSERT_TRUE(shell->developer_menu_for_testing());
+  EXPECT_FALSE(shell->developer_menu_for_testing()->GetIndexOfCommandId(19004));
+  if(auto* controller=views::MenuController::GetActiveInstance())controller->Cancel(views::MenuController::ExitType::kAll);
+  DevToolsWindowCreationObserver peek_created;
+  ASSERT_TRUE(window_->RunShortcut("devtools_panel")); peek_created.WaitForLoad();
+  EXPECT_TRUE(DevToolsWindow::GetInstanceForInspectedWebContents(peek));
+  auto* peek_tools=DevToolsWindow::GetInstanceForInspectedWebContents(peek); ASSERT_TRUE(peek_tools);
+  content::WebContentsDestroyedWatcher detached(peek_tools->GetDevToolsWebContents());
+  window_->ClosePeek(); detached.Wait();
+  EXPECT_FALSE(control->IsDrawn());
+  ASSERT_TRUE(window_->Select("work")); EXPECT_TRUE(control->IsDrawn());
+  shell->ShowDeveloperMenu(); ASSERT_TRUE(shell->developer_menu_for_testing());
+  EXPECT_TRUE(shell->developer_menu_for_testing()->GetIndexOfCommandId(19004));
+  if(auto* controller=views::MenuController::GetActiveInstance())controller->Cancel(views::MenuController::ExitType::kAll);
+  shell->SetDeveloperMode("off"); ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
+  base::ScopedAllowBlockingForTesting allow;
+  std::string json; ASSERT_TRUE(base::ReadFileToString(g_browser_process->profile_manager()->user_data_dir().AppendASCII("ZitterTools.json"), &json));
+  auto dict = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC); ASSERT_TRUE(dict);
+  EXPECT_EQ("off", BrowserTools::FromValue(*dict).developer_mode);
+}
+
+// Build the exact upstream editable menu without its platform popup. The
+// production WebView deliberately falls through to that menu for edit fields.
+class DeveloperEditableMenuForTest : public RenderViewContextMenu {
+ public:
+  using RenderViewContextMenu::RenderViewContextMenu;
+  void Show() override {}
+};
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperInspectFrameAndEditableMenu) {
+  auto* shell=window_->shell(); ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  auto* page=window_->contents("work");
+  const auto local=embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(page,local));
+  ASSERT_TRUE(content::ExecJs(page, "document.body.innerHTML='<iframe srcdoc=\"<input id=inspect-target style=width:200px;height:100px>\"></iframe>'"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::ChildFrameAt(page->GetPrimaryMainFrame(),0)!=nullptr;}));
+  auto* frame=content::ChildFrameAt(page->GetPrimaryMainFrame(),0); ASSERT_TRUE(frame);
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  content::ContextMenuParams params; params.page_url=local; params.frame_url=frame->GetLastCommittedURL();params.is_editable=true;
+  // Context-menu points are in root CSS coordinates, even for a subframe.
+  params.x=content::EvalJs(page,"Math.round(document.querySelector('iframe').getBoundingClientRect().left + 20)").ExtractInt();
+  params.y=content::EvalJs(page,"Math.round(document.querySelector('iframe').getBoundingClientRect().top + 20)").ExtractInt();
+  params.edit_flags=blink::ContextMenuDataEditFlags::kCanCopy | blink::ContextMenuDataEditFlags::kCanPaste | blink::ContextMenuDataEditFlags::kCanSelectAll;
+  EXPECT_FALSE(page->GetDelegate()->HandleContextMenu(*frame,params));
+  DeveloperEditableMenuForTest editable(*frame,params,true,true); editable.Init();
+  EXPECT_TRUE(editable.menu_model().GetIndexOfCommandId(IDC_CONTENT_CONTEXT_COPY));
+  EXPECT_TRUE(editable.menu_model().GetIndexOfCommandId(IDC_CONTENT_CONTEXT_PASTE));
+  EXPECT_TRUE(editable.menu_model().GetIndexOfCommandId(IDC_CONTENT_CONTEXT_INSPECTELEMENT));
+  EXPECT_TRUE(editable.IsCommandIdEnabled(IDC_CONTENT_CONTEXT_INSPECTELEMENT));
+  DevToolsWindowCreationObserver created;
+  editable.ExecuteCommand(IDC_CONTENT_CONTEXT_INSPECTELEMENT,0); created.WaitForLoad();
+  auto* tools=DevToolsWindow::GetInstanceForInspectedWebContents(page); ASSERT_TRUE(tools);
+  auto* frontend=tools->GetDevToolsWebContents().get(); ASSERT_TRUE(frontend);
+  EXPECT_EQ("inspect-target",content::EvalJs(frontend,R"JS((async()=>{
+    const m=await import('./panels/elements/elements.js');
+    for(let i=0;i<100;i++) {
+      const node=m.ElementsPanel.ElementsPanel.instance().selectedDOMNode();
+      if(node?.getAttribute('id')==='inspect-target')return node.getAttribute('id');
+      await new Promise(r=>setTimeout(r,50));
+    }
+    return 'no selected target';
+  })())JS"));
+  created.CloseAllSync();
+  params.is_editable=false;
+  EXPECT_TRUE(page->GetDelegate()->HandleContextMenu(*frame,params));
+  auto* menu=shell->page_context_menu_for_testing();ASSERT_TRUE(menu);ASSERT_TRUE(menu->GetIndexOfCommandId(19010));
+  if(auto* controller=views::MenuController::GetActiveInstance())controller->Cancel(views::MenuController::ExitType::kAll);
+  // The custom menu binds the document, so a stale click after navigation is inert.
+  ASSERT_TRUE(content::NavigateToURL(page,local.Resolve("?replacement")));
+  menu->ActivatedAt(*menu->GetIndexOfCommandId(19010),0);base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(DevToolsWindow::GetInstanceForInspectedWebContents(page));
+  work_->GetPrefs()->SetInteger(prefs::kDevToolsAvailability,static_cast<int>(policy::DeveloperToolsAvailability::kDisallowed));
+  EXPECT_FALSE(window_->RunShortcut("devtools_panel"));
+  EXPECT_FALSE(DevToolsWindow::GetInstanceForInspectedWebContents(page));
+  work_->GetPrefs()->ClearPref(prefs::kDevToolsAvailability);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperMenuOriginAndDetach) {
+  auto* shell=window_->shell(); ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  shell->SetDeveloperPage(GURL("http://developer:sample-password@localhost:5173/private?token=sample#fragment"));
+  shell->ShowDeveloperMenu();
+  auto* menu=shell->developer_menu_for_testing(); ASSERT_TRUE(menu);
+  EXPECT_EQ(u"http://localhost:5173",menu->GetLabelAt(0));
+  ASSERT_TRUE(views::MenuController::GetActiveInstance());
+  window_.reset(); base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(views::MenuController::GetActiveInstance());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperToolsVisuals) {
+  auto* shell = window_->shell(); ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready() && shell->appearance_ready();}));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
+  auto* control = shell->developer_control_for_testing();
+  ASSERT_TRUE(base::test::RunUntil([&]{return control->IsDrawn();}));
+  shell->ShowSidebar();
+  const auto output = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-developer-render-dir");
+  auto capture = [&](views::Widget* widget, std::string name) {
+    if (output.empty()) return;
+    widget->LayoutRootViewIfNecessary();
+    base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(350)); settle.Run();
+    base::test::TestFuture<scoped_refptr<base::RefCountedMemory>> snapshot;
+    auto bounds = gfx::Rect(widget->GetWindowBoundsInScreen().size());
+#if BUILDFLAG(IS_MAC)
+    const auto screen=widget->GetWindowBoundsInScreen(); bounds=gfx::Rect(0,0,screen.right()+64,screen.bottom()+64);
+#endif
+    ui::GrabWindowSnapshotAsPNG(widget->GetNativeWindow(),bounds,snapshot.GetCallback());
+    auto png=snapshot.Take(); ASSERT_TRUE(png); ASSERT_GT(png->size(),1000u);
+    const auto bitmap=gfx::PNGCodec::Decode(base::span(*png)); ASSERT_FALSE(bitmap.isNull());
+    int left=bitmap.width(),top=bitmap.height(),right=0,bottom=0;
+    for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(SkColorGetA(bitmap.getColor(x,y))){left=std::min(left,x);top=std::min(top,y);right=std::max(right,x+1);bottom=std::max(bottom,y+1);}
+    ASSERT_LT(left,right);ASSERT_LT(top,bottom);
+    SkBitmap cropped;ASSERT_TRUE(bitmap.extractSubset(&cropped,SkIRect::MakeLTRB(left,top,right,bottom)));
+    if(widget==window_->widget()) {
+      const auto group=control->parent()->GetBoundsInScreen();const auto owner_screen=widget->GetWindowBoundsInScreen();
+      const float scale=widget->GetCompositor()->device_scale_factor();
+      const int x=std::lround((group.x()-owner_screen.x()+1)*scale),y=std::lround((group.y()-owner_screen.y()+1)*scale);
+      ASSERT_GE(x,0);ASSERT_GE(y,0);ASSERT_LT(x,cropped.width());ASSERT_LT(y,cropped.height());
+      const int frame_x=std::lround((group.x()-owner_screen.x()-4)*scale);
+      ASSERT_GE(frame_x,0);ASSERT_LT(frame_x,cropped.width());
+      // Compare the neighboring frame in the same capture: display color
+      // management can shift raw palette RGB values by a few levels.
+      const auto frame_pixel=cropped.getColor(frame_x,y),control_pixel=cropped.getColor(x,y);
+      EXPECT_LE(std::abs(int(SkColorGetR(frame_pixel))-int(SkColorGetR(control_pixel))),3)<<name;
+      EXPECT_LE(std::abs(int(SkColorGetG(frame_pixel))-int(SkColorGetG(control_pixel))),3)<<name;
+      EXPECT_LE(std::abs(int(SkColorGetB(frame_pixel))-int(SkColorGetB(control_pixel))),3)<<name;
+    }
+    const auto encoded=gfx::PNGCodec::EncodeBGRASkBitmap(cropped,false);ASSERT_TRUE(encoded);
+    base::ScopedAllowBlockingForTesting allow; ASSERT_TRUE(base::CreateDirectory(output)); ASSERT_TRUE(base::WriteFile(output.AppendASCII(name),*encoded));
+  };
+  for (auto mode : {ThemeMode::kDark, ThemeMode::kLight}) {
+    shell->SetThemeMode(mode); window_->widget()->LayoutRootViewIfNecessary();
+    const std::string suffix = mode == ThemeMode::kDark ? "-dark.png" : "-light.png";
+    ASSERT_NO_FATAL_FAILURE(capture(window_->widget(),"developer-header"+suffix));
+    shell->ShowDeveloperMenu();
+    auto* controller=views::MenuController::GetActiveInstance(); ASSERT_TRUE(controller);
+    auto* item=controller->GetSelectedMenuItem(); ASSERT_TRUE(item);
+    auto* submenu=item->GetRootMenuItem()->GetSubmenu(); ASSERT_TRUE(submenu); ASSERT_TRUE(submenu->GetWidget());
+    ASSERT_NO_FATAL_FAILURE(capture(submenu->GetWidget(),"developer-menu"+suffix));
+    controller->Cancel(views::MenuController::ExitType::kAll);
+    const auto old_bounds=window_->widget()->GetWindowBoundsInScreen();
+    auto narrow=old_bounds; narrow.set_width(560);window_->widget()->SetBounds(narrow);
+    shell->SetDeveloperPage(GURL("http://a-very-long-local-project-name.with-multiple-subdomains.localhost:5173/"));
+    window_->widget()->LayoutRootViewIfNecessary();
+    EXPECT_GT(control->GetVisibleBounds().width(),80);
+    ASSERT_NO_FATAL_FAILURE(capture(window_->widget(),"developer-narrow"+suffix));
+    window_->widget()->SetBounds(old_bounds);
+    shell->SetDeveloperPage(window_->contents("work")->GetVisibleURL());
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationPersistenceAndSafety) {
+  for (int i = 1; i <= 24; ++i) {
+    const std::string chord = "F" + std::to_string(i);
+    const auto parsed = ParseShortcut(chord); ASSERT_TRUE(parsed); EXPECT_EQ(chord, FormatShortcut(*parsed));
+    EXPECT_EQ(chord, DisplayShortcut(*parsed));
+    ASSERT_TRUE(ParseShortcut("Shift+" + chord));
+  }
+  EXPECT_FALSE(ParseShortcut("F25")); EXPECT_FALSE(ParseShortcut("A"));
+#if BUILDFLAG(IS_WIN)
+  EXPECT_FALSE(ParseShortcut("Alt+F4")); EXPECT_FALSE(ParseShortcut("Ctrl+Y"));
+#endif
+  BrowserTools tools; EXPECT_FALSE(tools.mouse_gestures_enabled);
+  tools.mouse_gestures_enabled = true; tools.mouse_gestures[0].command = "sidebar";
+  const auto restored = BrowserTools::FromValue(tools.ToValue());
+  EXPECT_EQ("sidebar", restored.MouseGestureCommand("L"));
+  EXPECT_TRUE(restored.MouseGestureCommand("unknown").empty());
+  auto malformed = tools.ToValue();
+  malformed.FindList("mouse_gestures")->front().GetDict().Set("command", "close_other_tabs");
+  EXPECT_EQ(DefaultMouseGestures(), BrowserTools::FromValue(malformed).mouse_gestures);
+  malformed = tools.ToValue(); malformed.FindList("mouse_gestures")->Append(malformed.FindList("mouse_gestures")->front().Clone());
+  EXPECT_EQ(DefaultMouseGestures(), BrowserTools::FromValue(malformed).mouse_gestures);
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth()); ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell(); ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  ASSERT_TRUE(shell->SetShortcut("sidebar", "F5")); EXPECT_EQ("sidebar", shell->ShortcutFor(*ParseShortcut("F5")));
+  ASSERT_TRUE(shell->SetShortcut("reload", "")); EXPECT_EQ("sidebar", shell->ShortcutFor(*ParseShortcut("F5")));
+  ASSERT_TRUE(shell->SetShortcut("sidebar", "")); EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut("F5")).empty());
+  ASSERT_TRUE(shell->SetShortcut("sidebar", "F5"));
+  EXPECT_FALSE(shell->SetShortcut("find", "F12"));  // DevTools owns the default.
+  ASSERT_TRUE(shell->SetShortcut("devtools", ""));
+  ASSERT_TRUE(shell->SetShortcut("find", "F12"));
+  ASSERT_TRUE(shell->SetMouseGesture("L", "sidebar")); EXPECT_FALSE(shell->SetMouseGesture("X", "sidebar"));
+  EXPECT_FALSE(shell->SetMouseGesture("L", "private_window"));
+  EnableNativeUIControls(); ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const bool key_before = shell->sidebar_visible();
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(), ui::VKEY_F5, false, false, false, false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return key_before != shell->sidebar_visible();}));
+  auto* page = window_->contents("work");
+  auto mouse = [&](blink::WebInputEvent::Type type, float x, int flags) {
+    blink::WebMouseEvent event(type, flags, base::TimeTicks::Now());
+    event.button = blink::WebMouseEvent::Button::kRight; event.SetPositionInWidget(x, 100);
+    return page->GetDelegate()->PreHandleMouseEvent(page, event);
+  };
+  using Type = blink::WebInputEvent::Type;
+  constexpr int alt = blink::WebInputEvent::kAltKey, right = blink::WebInputEvent::kRightButtonDown;
+  EXPECT_FALSE(mouse(Type::kMouseDown, 200, alt | right));
+  shell->SetMouseGesturesEnabled(true);
+  EXPECT_FALSE(mouse(Type::kMouseDown, 200, right));
+  const bool before = shell->sidebar_visible();
+  EXPECT_TRUE(mouse(Type::kMouseDown, 200, alt | right));
+  EXPECT_TRUE(mouse(Type::kMouseMove, 100, alt | right));
+  EXPECT_TRUE(mouse(Type::kMouseUp, 100, alt));
+  ASSERT_TRUE(base::test::RunUntil([&]{return before != shell->sidebar_visible();}));
+  EXPECT_TRUE(mouse(Type::kMouseDown, 200, alt | right));
+  EXPECT_TRUE(mouse(Type::kMouseMove, 100, alt | right));
+  input::NativeWebKeyboardEvent escape(Type::kRawKeyDown, 0, base::TimeTicks::Now()); escape.windows_key_code = ui::VKEY_ESCAPE;
+  EXPECT_EQ(content::KeyboardEventProcessingResult::HANDLED, page->GetDelegate()->PreHandleKeyboardEvent(page, escape));
+  EXPECT_TRUE(mouse(Type::kMouseUp, 100, alt)); base::RunLoop().RunUntilIdle();
+  EXPECT_NE(before, shell->sidebar_visible());
+  EXPECT_TRUE(mouse(Type::kMouseDown, 200, alt | right));
+  // Simulate a release lost outside this page, followed by a regular click.
+  EXPECT_FALSE(mouse(Type::kMouseDown, 200, right));
+  EXPECT_FALSE(mouse(Type::kMouseUp, 200, 0));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved() && window_->configuration_saved();}));
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_); shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  EXPECT_EQ("sidebar", shell->ShortcutFor(*ParseShortcut("F5")));
+  EXPECT_EQ("find", shell->ShortcutFor(*ParseShortcut("F12")));
+  EXPECT_EQ("sidebar", shell->browser_tools().MouseGestureCommand("L"));
+  window_.reset(); window_ = std::make_unique<WorkspaceWindow>(work_, personal_); shell = window_->shell();
+  // An edit made before the asynchronous initial read must not replace the
+  // independent keyboard catalogue with the startup defaults.
+  shell->SetMouseGesturesEnabled(false);
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  EXPECT_FALSE(shell->browser_tools().mouse_gestures_enabled);
+  EXPECT_EQ("find", shell->ShortcutFor(*ParseShortcut("F12")));
+  EXPECT_EQ("sidebar", shell->ShortcutFor(*ParseShortcut("F5")));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved() && window_->configuration_saved();}));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationFiltersRecorderAndLifecycle) {
+  auto* shell = window_->shell(); ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  // Keep exercising F12 capture after explicitly releasing its new default.
+  ASSERT_TRUE(shell->SetShortcut("devtools", ""));
+  auto click = [&](std::u16string title) {
+    auto* control = FindButton(shell->tools_widget()->GetContentsView(), title); ASSERT_TRUE(control);
+    ClickControl(control); base::RunLoop().RunUntilIdle();
+  };
+  for (int i = 0; i < 3; ++i) {
+    shell->OpenTools(1); ASSERT_TRUE(shell->shortcut_search_for_testing());
+    shell->ActivateToolsChoiceForTesting("category", 1);
+    EXPECT_EQ(5u, shell->tools_choice_count_for_testing("selection"));
+    auto* search = shell->shortcut_search_for_testing();
+    search->input_client()->InsertText(u"reload", ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+    EXPECT_EQ(1u, shell->tools_choice_count_for_testing("selection"));
+    ASSERT_NO_FATAL_FAILURE(click(u"Nagraj kombinację…"));
+    EXPECT_TRUE(shell->CaptureShortcut(ui::Accelerator(ui::VKEY_F12, 0)));
+    EXPECT_EQ(u"F12", shell->shortcut_input()->GetText());
+    ASSERT_NO_FATAL_FAILURE(click(u"Zapisz skrót"));
+    EXPECT_EQ("reload", shell->ShortcutFor(ui::Accelerator(ui::VKEY_F12, 0)));
+    EXPECT_EQ(u"reload", shell->shortcut_search_for_testing()->GetText());
+    ASSERT_NO_FATAL_FAILURE(click(u"Przywróć domyślny skrót wybranej akcji"));
+    EXPECT_EQ("reload", shell->ShortcutFor(*ParseShortcut(Chord("R")))) ;
+    shell->OpenTools(2); EXPECT_FALSE(shell->shortcut_search_for_testing());
+    EXPECT_FALSE(shell->tools_choice_for_testing("gesture"));
+  }
+  shell->OpenTools(1);
+  const auto output = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-input-render-dir");
+  if (!output.empty()) {
+    base::ScopedAllowBlockingForTesting allow; ASSERT_TRUE(base::CreateDirectory(output));
+    SkBitmap fixed_regions;
+    auto capture = [&](std::string name) {
+      auto* widget = shell->tools_widget(); widget->LayoutRootViewIfNecessary();
+      // Native theme and Metal updates are queued independently of Views paint.
+      base::RunLoop settled;
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settled.QuitClosure(), base::Milliseconds(300));
+      settled.Run();
+      base::test::TestFuture<void> presented;
+      widget->GetCompositor()->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
+          [](base::OnceClosure done, const viz::FrameTimingDetails&) { std::move(done).Run(); }, presented.GetCallback()));
+      widget->GetCompositor()->ScheduleFullRedraw(); ASSERT_TRUE(presented.Wait());
+      base::test::TestFuture<scoped_refptr<base::RefCountedMemory>> snapshot;
+      auto capture_bounds = gfx::Rect(widget->GetWindowBoundsInScreen().size());
+#if BUILDFLAG(IS_MAC)
+      // ScreenCaptureKit can offset a frameless panel inside its own capture.
+      // Include its desktop extent, then trim transparent margins below.
+      const auto screen = widget->GetWindowBoundsInScreen();
+      capture_bounds = gfx::Rect(0, 0, screen.right() + 64, screen.bottom() + 64);
+#endif
+      ui::GrabWindowSnapshotAsPNG(widget->GetNativeWindow(), capture_bounds, snapshot.GetCallback());
+      const auto png = snapshot.Take(); ASSERT_TRUE(png); ASSERT_GT(png->size(), 1000u);
+      const auto bitmap = gfx::PNGCodec::Decode(base::span(*png)); ASSERT_FALSE(bitmap.isNull());
+      int left = bitmap.width(), top = bitmap.height(), right = 0, bottom = 0;
+      for (int y = 0; y < bitmap.height(); ++y) for (int x = 0; x < bitmap.width(); ++x) {
+        if (SkColorGetA(bitmap.getColor(x, y)) == 0) continue;
+        left = std::min(left, x); top = std::min(top, y);
+        right = std::max(right, x + 1); bottom = std::max(bottom, y + 1);
+      }
+      ASSERT_LT(left, right); ASSERT_LT(top, bottom);
+      SkBitmap panel; ASSERT_TRUE(bitmap.extractSubset(&panel, SkIRect::MakeLTRB(left, top, right, bottom)));
+      const float scale = widget->GetCompositor()->device_scale_factor();
+      EXPECT_NEAR(widget->GetWindowBoundsInScreen().width() * scale, panel.width(), 2);
+      EXPECT_NEAR(widget->GetWindowBoundsInScreen().height() * scale, panel.height(), 2);
+      const auto viewport_screen=shell->tools_viewport_for_testing()->view()->GetBoundsInScreen();
+      const auto widget_screen=widget->GetWindowBoundsInScreen();
+      const int viewport_top=std::lround((viewport_screen.y()-widget_screen.y())*scale);
+      const int viewport_bottom=std::lround((viewport_screen.bottom()-widget_screen.y())*scale);
+      if(fixed_regions.isNull())fixed_regions=panel;
+      else {
+        ASSERT_EQ(fixed_regions.dimensions(),panel.dimensions());
+        size_t changed=0;
+        for(int y=0;y<panel.height();++y) {
+          if(y>=viewport_top&&y<viewport_bottom)continue;
+          for(int x=0;x<panel.width();++x)if(panel.getColor(x,y)!=fixed_regions.getColor(x,y))++changed;
+        }
+        EXPECT_EQ(0u,changed)<<"Scrolling painted over the fixed header or footer: "<<name;
+      }
+      const auto palette=sidebar::design_palette(shell->theme_mode()==ThemeMode::kDark,shell->workspace_color(window_->active_id()));
+      for(auto* editor:{shell->shortcut_search_for_testing(),shell->shortcut_input()}) {
+        ASSERT_TRUE(editor);
+        const auto editor_screen=editor->view()->GetBoundsInScreen();
+        auto visible_screen=editor_screen;visible_screen.Intersect(viewport_screen);
+        if(visible_screen.IsEmpty()) {
+          if(MetalPresents())EXPECT_FALSE(editor->metal_visible())<<name;
+          continue;
+        }
+        const int x=std::lround((visible_screen.x()-widget_screen.x()+4)*scale);
+        const int y=std::lround((visible_screen.CenterPoint().y()-widget_screen.y())*scale);
+        ASSERT_GE(x,0);ASSERT_LT(x,panel.width());ASSERT_GE(y,0);ASSERT_LT(y,panel.height());
+        // The framed editor must paint its tinted fill after theme and scroll
+        // updates, rather than disappear into the panel's neutral background.
+        EXPECT_NE(palette.bg_raised,panel.getColor(x,y));
+      }
+      const auto encoded = gfx::PNGCodec::EncodeBGRASkBitmap(panel, false); ASSERT_TRUE(encoded);
+      ASSERT_TRUE(base::WriteFile(output.AppendASCII(name), *encoded));
+    };
+    for (auto mode : {ThemeMode::kDark, ThemeMode::kLight}) {
+      fixed_regions.reset();
+      shell->SetThemeMode(mode);
+      shell->tools_viewport_for_testing()->ScrollTo(0);
+      ASSERT_NO_FATAL_FAILURE(capture(mode == ThemeMode::kDark ? "input-dark.png" : "input-light.png"));
+      shell->tools_viewport_for_testing()->ScrollTo(shell->tools_viewport_for_testing()->maximum());
+      ASSERT_NO_FATAL_FAILURE(capture(mode == ThemeMode::kDark ? "gestures-dark.png" : "gestures-light.png"));
+    }
+    // Force partial and complete clipping even when the compact settings fit
+    // almost entirely in the usual panel. The normal review images stay intact.
+    auto* viewport=shell->tools_viewport_for_testing();
+    auto* spacer=viewport->contents()->AddChildView(std::make_unique<views::View>());
+    spacer->SetPreferredSize(gfx::Size(1,900));
+    auto panel_bounds=shell->tools_widget()->GetWindowBoundsInScreen();panel_bounds.set_height(360);
+    for(auto mode:{ThemeMode::kDark,ThemeMode::kLight}) {
+      fixed_regions.reset();shell->SetThemeMode(mode);
+      shell->tools_widget()->SetBounds(panel_bounds);shell->tools_widget()->LayoutRootViewIfNecessary();
+      ASSERT_EQ(360,shell->tools_widget()->GetWindowBoundsInScreen().height());
+      viewport->ScrollTo(0);
+      const std::string suffix=mode==ThemeMode::kDark?"-dark.png":"-light.png";
+      ASSERT_NO_FATAL_FAILURE(capture(std::string("clip-base")+suffix));
+      const auto field= shell->shortcut_search_for_testing()->view()->GetBoundsInScreen();
+      const int start=field.y()-viewport->view()->GetBoundsInScreen().y();
+      viewport->ScrollTo(start+field.height()/2);
+      ASSERT_NO_FATAL_FAILURE(capture(std::string("clip-partial")+suffix));
+      viewport->ScrollTo(start+field.height()+8);
+      ASSERT_NO_FATAL_FAILURE(capture(std::string("clip-hidden")+suffix));
+    }
+  }
+  shell->OpenTools(2); window_.reset();  // Detach after the filter's view was destroyed.
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ConfigurableNativeKeyboardShortcuts) {
   base::DictValue older;
   base::ListValue bindings;
@@ -2895,7 +3309,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixAndCall
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormStructureOrderAndNames) {
   auto* shell=window_->shell();
   const std::vector<std::vector<std::u16string>> expected={{},
-    {u"Akcja skrótu",u"Kombinacja, np. Cmd+Shift+J",u"Nagraj kombinację…",u"Zapisz skrót",u"Wyłącz wybrany skrót",u"Przywróć schemat Arc"},
+    {u"Szukaj akcji lub kombinacji",u"Kategoria skrótów",u"Akcja skrótu",u"Kombinacja, np. Cmd+Shift+J",u"Zapisz skrót",u"Nagraj kombinację…",u"Wyłącz wybrany skrót",u"Przywróć domyślny skrót wybranej akcji",u"Przywróć schemat Arc",u"Gest do edycji",u"Akcja gestu",u"Zapisz gest",u"Przywróć domyślne gesty"},
     {u"Wyszukiwarka do edycji",u"Nazwa wyszukiwarki",u"Prefiks (a–z, 0–9)",u"Adres z {query}",u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}};
   // Page 0 (snapshots) became the Time Machine view.
   for(int page=1;page<3;++page){SCOPED_TRACE(page);shell->OpenTools(page);
@@ -4994,7 +5408,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterSearchAndDispatch
   shell->OpenAddress(false); SetPaletteQuery(u"skroty");
   for (const auto& item : shell->suggestions()) EXPECT_TRUE(item.command_id.empty());
   shell->CloseOverlays();
-  const auto stale = window_->CommandResults(u"> reload");
+  auto stale = window_->CommandResults(u"> reload");
+  std::erase_if(stale, [](const auto& result) { return result.command_id != "reload"; });
   ASSERT_EQ(1u, stale.size());
   ASSERT_TRUE(window_->NavigateFromBar(url, true));
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
@@ -8879,7 +9294,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayC
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatchingClippingAndCancelledChildren) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
   const std::array<std::vector<std::u16string>,3> titles={{{u"Zapisz snapshot",u"Przywróć wybrany układ",u"Usuń wybrany snapshot",u"Przywróć wybraną kartę",u"Uśpij tę przestrzeń"},{u"Nagraj kombinację…",u"Zapisz skrót",u"Wyłącz wybrany skrót",u"Przywróć schemat Arc"},{u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}}};
-  const std::array<size_t,3> groups={4,1,1};
+  const std::array<size_t,3> groups={4,3,1};
   auto present=[&]{base::test::TestFuture<void> ready;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},ready.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(ready.Wait());};
   for(int page=1;page<3;++page){
     shell->OpenTools(page);ASSERT_EQ(groups[page],shell->tools_action_groups_for_testing());ASSERT_NO_FATAL_FAILURE(present());
@@ -8888,7 +9303,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatching
       auto* button=FindButton(shell->tools_widget()->GetContentsView(),title);ASSERT_TRUE(button);EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));EXPECT_TRUE(button->children().empty());
       if(!button->GetVisible())continue;
       button->ScrollRectToVisible(button->GetLocalBounds());
-      if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_visible_for_testing(button)&&shell->tools_actions_contains_scene_text_for_testing(base::UTF16ToUTF8(title));}));
+      if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_visible_for_testing(button)&&shell->tools_actions_contains_scene_text_for_testing(base::UTF16ToUTF8(title==u"Nagraj kombinację…"?u"Nagraj…":title==u"Wyłącz wybrany skrót"?u"Wyłącz":title==u"Przywróć schemat Arc"?u"Przywróć wszystkie":title));}));
       auto expected=[&]{auto* group=button->parent();auto bounds=group->GetVisibleBounds();bounds.Offset(group->GetBoundsInScreen().x(),group->GetBoundsInScreen().y());return bounds;};
       if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_bounds_for_testing(button)==expected();}));
     }
@@ -8899,7 +9314,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatching
   ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(first->OnMousePressed(press));auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
   scroll->ScrollTo(group->y()+first->bounds().bottom()+20);
-  ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty()&&!group->GetVisibleBounds().IsEmpty();}))<<"first="<<first->GetVisibleBounds().ToString()<<" group="<<group->GetVisibleBounds().ToString()<<" viewport="<<scroll->visible_rect().ToString();
+  ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty()&&group->GetVisibleBounds().IsEmpty();}))<<"first="<<first->GetVisibleBounds().ToString()<<" group="<<group->GetVisibleBounds().ToString()<<" viewport="<<scroll->visible_rect().ToString();
   first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,shell->shortcut_input()->input_client()->GetTextInputType());
   first->ScrollRectToVisible(first->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_visible_for_testing(first);}));
   ASSERT_TRUE(first->OnMousePressed(press));shell->tools_widget()->Hide();first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_FALSE(shell->tools_widget()->IsVisible());

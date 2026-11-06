@@ -11,6 +11,7 @@
 #include "chromium/prototype/page_dialogs.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "url/origin.h"
 #include "chromium/prototype/assistant_panel.h"
 #include "chromium/prototype/assistant_visuals.h"
 #include "chromium/prototype/time_machine_view.h"
@@ -1191,6 +1192,7 @@ class SceneActionGroup final : public views::View {
   SceneActionGroup(bool vertical,int spacing,bool intrinsic=false,bool dialog=false):nodes_(this,vertical,spacing,intrinsic,dialog) {}
   void Share(base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){shared_visible_=std::move(visible);shared_changed_=std::move(changed);nodes_.Share(bool(shared_visible_));SetSidebarPanelLayout(this,false,gfx::Insets(),nodes_.Style().spacing);}
   bool shared() const{return bool(shared_visible_);}
+  void UseFrameBackground(){frame_background_=true;Schedule();}
   void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto next=Items(origin.x(),origin.y(),gfx::RectF(clip));items.insert(items.end(),std::make_move_iterator(next.begin()),std::make_move_iterator(next.end()));}
   views::View* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){auto* button=AddChildView(nodes_.Make<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));if(shared())button->UseNativeMinimum();return button;}
   bool metal_visible() const{return shared()?shared_visible_.Run():surface_&&surface_->visible();}
@@ -1211,8 +1213,9 @@ class SceneActionGroup final : public views::View {
   sidebar::FormLayout Geometry(int width,int height,bool preferred=false) const {std::vector<sidebar::FormMeasure> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({nodes_.Id(child.get()),size.width(),size.height()});}auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);auto geometry=nodes_.Geometry(width,height,preferred,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),measured);CHECK(geometry.admitted);return geometry;}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->GetMirroredBounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
   void Schedule(){for(const auto& child:children())static_cast<SceneTextButton*>(child.get())->SyncViewportVisibility();if(shared()){shared_changed_.Run();return;}if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,nodes_.Style().dialog?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,frame_background_?FrameVoid(WindowWorkspaceColor(this),this):nodes_.Style().dialog?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   base::RepeatingCallback<bool()> shared_visible_;base::RepeatingClosure shared_changed_;
+  bool frame_background_=false;
   bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
@@ -1611,8 +1614,9 @@ class SceneSelect final : public RustActionView {
     if(tone_>=0){const auto p=Palette(this);item.glyph=1;item.font_size=12;item.active=true;
       if(tone_==1){item.fill=p.accent_soft;item.badge=p.accent_soft;item.ink=p.accent_ink;}
       else if(tone_==2){item.fill=SK_ColorTRANSPARENT;item.badge=Mix(p.danger,p.bg_raised,30);item.ink=p.danger;}
+      else if(tone_==3){item.glyph=0;item.font_size=13;item.active=false;item.fill=p.bg_raised;item.badge=enabled?p.line_strong:p.line;item.ink=enabled?p.ink:p.ink_faint;}
       else{item.fill=SK_ColorTRANSPARENT;item.badge=p.line;item.ink=p.ink_muted;}
-      if(input.focused)item.badge=colors->GetColor(ui::kColorFocusableBorderFocused);}
+      if(input.focused)item.badge=tone_==3?p.focus:colors->GetColor(ui::kColorFocusableBorderFocused);}
     item.clip={clip.x(),clip.y(),clip.width(),clip.height()};return item;}
   void Schedule(){SyncViewportVisibility();if((runner_||NodeControl().node_select_expanded())&&(!SceneIsVisible(this)||GetVisibleBounds().IsEmpty()))CancelMenu();if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneSelect::UpdateMetal,weak_factory_.GetWeakPtr()));}
   void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());std::vector<sidebar::Item> items;items.push_back(Scene(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size()))));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
@@ -3643,6 +3647,7 @@ class ShellRoot final : public views::View {
   gfx::Size GetMinimumSize() const override { return gfx::Size(560, 560); }
   void Layout(PassKey) override {
     if (content_fullscreen) {
+      if (developer) developer->SetVisible(false);
       if (assistant) assistant->SetVisible(false);
       content->SetBoundsRect(GetLocalBounds());
       edge->SetVisible(false);
@@ -3676,8 +3681,14 @@ class ShellRoot final : public views::View {
     }
     if (trailing && trailing->GetVisible()) {
       const int trailing_width = std::min(trailing->GetPreferredSize().width(),
-                                          std::max(0, trailing_end - header->bounds().right() - kGap));
+                                          std::max(0, trailing_end - header->bounds().right() - kGap - (developer && developer->GetVisible() ? 184 : 0)));
       trailing->SetBounds(trailing_end - trailing_width, kAxis - kHeaderButtonSize / 2, trailing_width, kHeaderButtonSize);
+    }
+    if (developer) {
+      const int end = trailing && trailing->GetVisible() ? trailing->x() - 8 : trailing_end;
+      const int start = header->bounds().right() + 12;
+      const int extent = std::min(240, std::max(0, end - start));
+      developer->SetBounds(start, kAxis - 14, extent, 28);
     }
     const int top = kShellHeaderHeight;
     edge->SetBounds(0, kShellHeaderHeight, kGap, std::max(0, height() - kShellHeaderHeight));
@@ -3746,6 +3757,7 @@ class ShellRoot final : public views::View {
     auto* target = GetEventHandlerForPoint(point);
     return target == this || target == header.get();
   }
+  raw_ptr<views::View> developer = nullptr;
   raw_ptr<views::View> header = nullptr;
   raw_ptr<views::View> trailing = nullptr;  // Extensions (design: Extensions).
   raw_ptr<views::View> caption = nullptr;   // Windows caption buttons.
@@ -3942,6 +3954,12 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
         commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},command_nodes[i]}));
   }
   for (auto& child : header->children()) child->SetPreferredSize(gfx::Size(kHeaderButtonSize, kHeaderButtonSize));
+  auto* developer = root->AddChildView(std::make_unique<SceneActionGroup>(false, 0));
+  developer->UseFrameBackground();
+  developer_button_ = developer->AddAction(base::BindRepeating(&WorkspaceShell::ShowDeveloperMenu, weak), T(u"Narzędzia developerskie"), ui::ButtonStyle::kText);
+  developer_button_->GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kMenu);
+  root->developer = developer;
+  developer->SetVisible(false);
   content_host_ = root->AddChildView(std::make_unique<PaneHost>(callbacks_.split_ratio,
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, size_t pane, views::View* anchor) {
         if (shell) shell->ShowSplitPaneMenu(pane, anchor->GetBoundsInScreen().bottom_left());
@@ -4715,7 +4733,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     return dict ? BrowserTools::FromValue(*dict) : BrowserTools();
   }, settings_path_.DirName().AppendASCII("ZitterTools.json")), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, BrowserTools loaded) {
     if (!shell) return;
+    if (!shell->developer_dirty_) shell->tools_.developer_mode = loaded.developer_mode;
+    shell->SetDeveloperPage(shell->developer_url_, shell->developer_allowed_, shell->developer_compare_);
     if (!shell->keys_dirty_) shell->tools_.shortcuts = std::move(loaded.shortcuts);
+    if (!shell->gestures_dirty_) {
+      shell->tools_.mouse_gestures_enabled = loaded.mouse_gestures_enabled;
+      shell->tools_.mouse_gestures = std::move(loaded.mouse_gestures);
+    }
     if (!shell->engines_dirty_) { shell->tools_.providers = std::move(loaded.providers); shell->tools_.default_keyword = std::move(loaded.default_keyword); }
     for (const auto& [key, time] : shell->pending_command_uses_)
       loaded.RecordCommandUse(key.first, key.second, time);
@@ -4819,6 +4843,7 @@ void WorkspaceShell::Detach() {
   pin_url_editor_ = nullptr; pin_url_dialog_.reset(); pin_url_dialog_delegate_.reset();
   rust_folder_dialog_.reset();rust_folder_dialog_delegate_.reset();
 
+  developer_menu_runner_.reset(); developer_menu_.reset(); inspect_element_.Reset();
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset(); add_menu_runner_.reset(); add_menu_.reset();
   workspace_menu_runner_.reset();
   workspace_menu_.reset();
@@ -4832,7 +4857,7 @@ void WorkspaceShell::Detach() {
   for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()})
     if (panel) panel->RemoveObserver(this);
   search_timer_.Stop();
-  for(auto* field:{shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
+  for(auto* field:{shortcut_chord_.get(),shortcut_search_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
     if(field)field->SetCallbacks({},{});
   address_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
@@ -4903,6 +4928,7 @@ void WorkspaceShell::Detach() {
   time_machine_check_ = nullptr; time_machine_days_picker_ = nullptr; time_machine_ = nullptr;
   time_machine_widget_.reset(); time_machine_delegate_.reset();
   sidebar_check_ = nullptr; animations_check_ = nullptr; workspace_names_check_ = nullptr; folders_collapsed_check_ = nullptr; language_picker_ = nullptr;
+  shortcut_search_ = nullptr; shortcut_category_ = nullptr; gesture_choice_ = nullptr; gesture_command_ = nullptr;
   tools_root_ = nullptr; tools_body_ = nullptr; tools_close_=nullptr; tools_title_ = nullptr; tools_status_ = nullptr;
   tools_scroll_ = nullptr; tools_picker_ = nullptr;
   shortcut_chord_ = nullptr;
@@ -4941,6 +4967,7 @@ void WorkspaceShell::Detach() {
   sidebar_delegate_.reset();
   widget_ = nullptr;
   root_ = nullptr;
+  developer_button_ = nullptr;
   content_host_ = nullptr;
   edge_ = nullptr;
 }
@@ -6625,8 +6652,10 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
   }
 }
 
-void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point) {
+void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point, base::RepeatingClosure inspect) {
   BuildLinkMenu(std::move(url), std::move(source_workspace));
+  inspect_element_ = std::move(inspect);
+  if (inspect_element_) { link_menu_->AddSeparator(ui::NORMAL_SEPARATOR); link_menu_->AddItem(19010, T(u"Zbadaj element")); }
   link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
   link_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft,
       ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
@@ -7035,6 +7064,7 @@ sidebar::WorkspaceMenuState WorkspaceShell::RustWorkspaceMenuState() const {
   return WorkspaceMenuStateFor(state_, context_workspace_id_, menu_profiles_, workspace_color(context_workspace_id_), workspace_emoji(context_workspace_id_));
 }
 bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
+  if (command_id >= 19020 && command_id <= 19022) return tools_.developer_mode == std::array<std::string,3>{"off","auto","on"}[command_id - 19020];
   if (metal_sidebar_ && sidebar::workspace_menu_command(command_id, menu_profiles_.size()))
     return sidebar::workspace_menu_checked(command_id, RustWorkspaceMenuState());
   if (command_id >= kColorBase && command_id < kColorBase + static_cast<int>(kWorkspacePresetCount))
@@ -7060,6 +7090,8 @@ std::string WorkspaceShell::ContextPinId() const {
   return std::any_of(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; }) ? pin : std::string();
 }
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
+  if (command_id >= 19000 && command_id <= 19002) return developer_allowed_;
+  if (command_id == 19004) return developer_compare_ && IsLocalProject(developer_url_);
   if (command_id >= kUnpinTab && command_id <= kResetPinnedUrl)
     return state_.configuration_ready && !state_.profiles_busy && !ContextPinId().empty();
   if(metal_sidebar_&&command_id>=kOpenSplit&&command_id<=kCloseSplitTabs)return RustTabCommandEnabled(command_id);
@@ -7418,6 +7450,18 @@ bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator*
   return false;
 }
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
+  if (command_id == 19010) {
+    if (inspect_element_) base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, inspect_element_);
+    return;
+  }
+  if (command_id >= 19000 && command_id <= 19022) {
+    if (!IsCommandIdEnabled(command_id)) return;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, int id) {
+      if (!shell) return;
+      if (id >= 19020) shell->SetDeveloperMode(std::array<std::string,3>{"off","auto","on"}[id - 19020]);
+      else if (id <= 19004) shell->callbacks_.run_shortcut.Run(std::array<std::string,5>{"devtools_panel","devtools_console","devtools_inspect","hard_reload","project_split"}[id - 19000]);
+    }, weak_factory_.GetWeakPtr(), command_id)); return;
+  }
   if (command_id >= kUnpinTab && command_id <= kResetPinnedUrl) {
     if (!IsCommandIdEnabled(command_id)) return;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
@@ -7814,9 +7858,12 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
       else surface->SetBorder(views::CreateRoundedRectBorder(1,radius,Hairline(surface)));}
     surface->SchedulePaint();
   }
-  for (auto* field : {shortcut_chord_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get()})
+  for (auto* field : {shortcut_chord_.get(), shortcut_search_.get(), provider_name_.get(), provider_keyword_.get(), provider_url_.get()})
     if (field) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   content_host_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
+  // The tools viewport owns a separate composited contents layer. Repaint it
+  // explicitly so a theme switch cannot leave dark ink/controls on a light card.
+  if (tools_body_) { tools_body_->SchedulePaint(); ScheduleToolsChrome(); }
   if (general_scroll_) general_scroll_->SetViewportBackground(Tone(root_, kCard));
   if (preferences_search_) preferences_search_->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
   for (const auto& [key, field] : preference_textfields_) field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_, kChip));
@@ -9312,6 +9359,14 @@ std::string WorkspaceShell::ShortcutFor(const ui::Accelerator& accelerator) cons
     auto original = std::find_if(defaults.begin(), defaults.end(), [&](const auto& item) { return item.id == id; });
     if (current != tools_.shortcuts.end() && current->accelerator == original->accelerator) return id;
   }
+#if BUILDFLAG(IS_WIN)
+  // Compatibility alias only while Reload retains its default. Explicit F5
+  // assignments win above; remapping or disabling Reload removes this alias.
+  if (accelerator == ui::Accelerator(ui::VKEY_F5, 0)) {
+    for (const auto& binding : tools_.shortcuts) if (binding.id == "reload" &&
+        binding.accelerator == ui::Accelerator(ui::VKEY_R, ui::EF_CONTROL_DOWN)) return "reload";
+  }
+#endif
   return {};
 }
 void WorkspaceShell::RefreshKeyRegistrations() {
@@ -9326,7 +9381,7 @@ void WorkspaceShell::RefreshKeyRegistrations() {
     panel->GetFocusManager()->UnregisterAccelerators(accelerator_target_);
     RegisterKeys(panel, accelerator_target_, tools_, panel != widget_, false);
     if (ToolsRecording() && panel == tools_widget_.get()) {
-      for (int code = 1; code < 256; ++code) for (int bits = 1; bits < 16; ++bits) {
+      for (int code = 1; code < 256; ++code) for (int bits = 0; bits < 16; ++bits) {
         const int mods = ((bits & 1) ? ui::EF_COMMAND_DOWN : 0) | ((bits & 2) ? ui::EF_CONTROL_DOWN : 0) |
             ((bits & 4) ? ui::EF_ALT_DOWN : 0) | ((bits & 8) ? ui::EF_SHIFT_DOWN : 0);
         ui::Accelerator chord(static_cast<ui::KeyboardCode>(code), mods);
@@ -9345,6 +9400,16 @@ bool WorkspaceShell::SetShortcut(std::string id, std::string chord) {
     if (item.id != id && item.accelerator == *parsed) return false;
   found->accelerator = *parsed; keys_dirty_ = true;
   RefreshKeyRegistrations(); SaveTools(); return true;
+}
+void WorkspaceShell::SetMouseGesturesEnabled(bool enabled) {
+  tools_.mouse_gestures_enabled = enabled; gestures_dirty_ = true; SaveTools();
+}
+bool WorkspaceShell::SetMouseGesture(std::string_view direction, std::string command) {
+  if (!ValidMouseGestureCommand(command)) return false;
+  for (auto& binding : tools_.mouse_gestures) if (binding.direction == direction) {
+    binding.command = std::move(command); gestures_dirty_ = true; SaveTools(); return true;
+  }
+  return false;
 }
 bool WorkspaceShell::CaptureShortcut(const ui::Accelerator& accelerator) {
   if (!ToolsRecording() || !tools_widget_ || !tools_widget_->IsVisible()) return false;
@@ -9428,23 +9493,73 @@ void WorkspaceShell::RecordCommandUse(std::string id, std::string target) {
   command_usage_dirty_ = true;
   SaveTools();
 }
+void WorkspaceShell::SetDeveloperPage(GURL url, bool allowed, bool compare) {
+  developer_allowed_ = allowed; developer_compare_ = compare;
+  developer_url_ = std::move(url);
+  if (!root_ || !developer_button_) return;
+  auto* group = static_cast<ShellRoot*>(root_.get())->developer.get();
+  const bool show = !content_fullscreen_ && (tools_.developer_mode == "on" ||
+      (tools_.developer_mode == "auto" && IsLocalProject(developer_url_)));
+  group->SetVisible(show);
+  std::string host(developer_url_.host());
+  if (developer_url_.has_port()) host += ":" + std::string(developer_url_.port());
+  const auto full = base::UTF8ToUTF16(host);
+  const auto short_host = gfx::ElideText(full, SceneTextButton::TextFont(), 130, gfx::ELIDE_MIDDLE);
+  static_cast<SceneTextButton*>(developer_button_.get())->SetText(show && !host.empty() ? u"Dev · " + short_host : T(u"Narzędzia developerskie"));
+  developer_button_->SetTooltipText(T(u"Narzędzia developerskie") + u" · " + full);
+  developer_button_->GetViewAccessibility().SetName(T(u"Narzędzia developerskie") + (full.empty() ? u"" : u" · " + full));
+  root_->InvalidateLayout();
+}
+void WorkspaceShell::SetDeveloperMode(std::string mode) {
+  if (mode != "off" && mode != "auto" && mode != "on") return;
+  tools_.developer_mode = std::move(mode); developer_dirty_ = true;
+  SetDeveloperPage(developer_url_, developer_allowed_, developer_compare_); SaveTools();
+}
+void WorkspaceShell::ShowDeveloperMenu() {
+  developer_menu_runner_.reset();
+  developer_menu_ = std::make_unique<DesignMenuModel>(this);
+  if (developer_url_.SchemeIsHTTPOrHTTPS()) developer_menu_->AddTitle(base::UTF8ToUTF16(url::Origin::Create(developer_url_).Serialize()));
+  for (const auto& [id, label] : std::array<std::pair<int, const char16_t*>,4>{{{19000,u"Otwórz DevTools"},{19001,u"Otwórz konsolę"},{19002,u"Zbadaj element"},{19003,u"Odśwież bez pamięci podręcznej"}}}) {
+    developer_menu_->AddItem(id, T(label));
+    const auto command = std::array<std::string,4>{"devtools_panel","devtools_console","devtools_inspect","hard_reload"}[id - 19000];
+    for (const auto& binding : tools_.shortcuts) if (binding.id == command && binding.accelerator.key_code() != ui::VKEY_UNKNOWN) {
+      const auto index = *developer_menu_->GetIndexOfCommandId(id);
+      developer_menu_->SetMinorText(index, base::UTF8ToUTF16(DisplayShortcut(binding.accelerator)));
+      developer_menu_->SetAccessibleNameAt(index, T(label) + u", " + base::UTF8ToUTF16(DisplayShortcut(binding.accelerator)));
+    }
+  }
+  if (developer_compare_ && IsLocalProject(developer_url_)) developer_menu_->AddItem(19004, T(u"Porównaj projekt w Split View"));
+  developer_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+  developer_menu_->AddRadioItem(19020, T(u"Tryb developerski: wyłączony"), 19);
+  developer_menu_->AddRadioItem(19021, T(u"Tryb developerski: Auto · projekty lokalne"), 19);
+  developer_menu_->AddRadioItem(19022, T(u"Tryb developerski: włączony · wszystkie strony"), 19);
+  developer_menu_runner_ = std::make_unique<views::MenuRunner>(developer_menu_.get(), kZitterMenuRun);
+  auto* owner = peek_widget_ && peek_widget_->IsVisible() ? peek_widget_.get() : widget_.get();
+  const auto bounds = owner != widget_ ? owner->GetWindowBoundsInScreen() : developer_button_->GetVisible() && developer_button_->parent()->GetVisible() ? developer_button_->GetBoundsInScreen() : header_view_->GetBoundsInScreen();
+  developer_menu_runner_->RunMenuAt(owner, nullptr, gfx::Rect(bounds.bottom_left(), gfx::Size()), views::MenuAnchorPosition::kTopLeft, ui::mojom::MenuSourceType::kKeyboard, gfx::NativeView(), ZitterMenuCorners());
+}
 void WorkspaceShell::SaveTools() {
   if (callbacks_.private_mode) return;
   // One sequenced file contains both sections; startup dirty guards prevent a
   // delayed read from rolling back edits made immediately after launch.
   std::string json; if (!base::JSONWriter::Write(tools_.ToValue(), &json)) return;
   ++pending_writes_;
-  io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, std::string data, bool keys, bool engines, bool usage) {
+  io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, std::string data, bool keys, bool gestures, bool engines, bool usage, bool developer) {
     std::string existing; base::ReadFileToString(path, &existing);
     auto original = base::JSONReader::ReadDict(existing, base::JSON_PARSE_RFC);
     auto patch = base::JSONReader::ReadDict(data, base::JSON_PARSE_RFC);
     base::DictValue merged = original ? std::move(*original) : base::DictValue();
+    if (developer) merged.Set("developer_mode", *patch->FindString("developer_mode"));
     if (usage) merged.Set("command_usage", patch->FindList("command_usage")->Clone());
     if (keys) merged.Set("shortcuts", patch->FindList("shortcuts")->Clone());
+    if (gestures) {
+      merged.Set("mouse_gestures_enabled", patch->FindBool("mouse_gestures_enabled").value_or(false));
+      merged.Set("mouse_gestures", patch->FindList("mouse_gestures")->Clone());
+    }
     if (engines) { merged.Set("providers", patch->FindList("providers")->Clone()); merged.Set("default", *patch->FindString("default")); }
     std::string output;
     return base::JSONWriter::Write(merged, &output) && base::ImportantFileWriter::WriteFileAtomically(path, output);
-  }, settings_path_.DirName().AppendASCII("ZitterTools.json"), std::move(json), keys_dirty_, engines_dirty_, command_usage_dirty_), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
+  }, settings_path_.DirName().AppendASCII("ZitterTools.json"), std::move(json), keys_dirty_, gestures_dirty_, engines_dirty_, command_usage_dirty_, developer_dirty_), base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
     if (!shell) return;
     --shell->pending_writes_; if (!ok && shell->tools_status_) SetPanelText(shell->tools_status_,shell->ToolsStatusText(0));
   }, weak_factory_.GetWeakPtr()));
@@ -9484,7 +9599,11 @@ void WorkspaceShell::OpenTools(int page) {
   if (tools_picker_) tools_picker_->RequestFocus();
 }
 views::View* WorkspaceShell::tools_choice_for_testing(std::string_view key) const{
-  if(key=="selection")return tools_picker_;return nullptr;
+  if(key=="selection")return tools_picker_;
+  if(key=="category")return shortcut_category_;
+  if(key=="gesture")return gesture_choice_;
+  if(key=="gesture_command")return gesture_command_;
+  return nullptr;
 }
 size_t WorkspaceShell::tools_choice_count_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerCount(picker):0;}
 std::optional<size_t> WorkspaceShell::tools_choice_selection_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerIndex(picker):std::nullopt;}
@@ -9519,6 +9638,10 @@ bool WorkspaceShell::tools_close_metal_visible_for_testing() const{
   auto* group=tools_close_?views::AsViewClass<ScenePreferenceControls>(tools_close_->parent()):nullptr;return group&&group->metal_visible();
 }
 void WorkspaceShell::RefreshToolsViewport(){ScheduleToolsChrome();if(tools_body_){RefreshChoiceViewports(tools_body_);
+  // Scrolling uses a layer transform, which does not notify descendant editors.
+  // Reapply their presentation to refresh the native Metal frame and clip too.
+  for(auto* field:{shortcut_search_.get(),shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
+    if(field)field->SetPresentation(gfx::FontList().GetFontSize(),8,true,Tone(root_,kChip));
   SyncSceneRowInput();
 }}
 void WorkspaceShell::BuildRustToolsForm(){
@@ -9529,11 +9652,11 @@ void WorkspaceShell::BuildRustToolsForm(){
   const auto plan=tools_form_->form->tools_form_plan();SetPanelText(tools_title_,text(plan.title));SetPanelText(tools_status_,text(plan.status));
   std::vector<raw_ptr<views::View>> hosts{tools_body_};
   auto form_picker=[&](views::View* parent,std::u16string name,const sidebar::ToolsFormChoices& projection)->views::View*{
-    auto* control=parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),text(choice.label));control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);return control;
+    auto* control=parent->AddChildView(MakeParentSceneControl<SceneSelect>(parent,std::vector<std::u16string>(),std::move(name),base::RepeatingClosure()));std::vector<std::pair<std::string,std::u16string>> choices;choices.reserve(projection.choices.size());for(const auto& choice:projection.choices)choices.emplace_back(std::string(choice.key),text(choice.label));control->SetOptions(choices);control->SetSelectedIndex(0);control->SetEnabled(projection.enabled);if(ToolsPage()==1)control->SetTone(3);return control;
   };
   for(const auto& node:plan.nodes){auto* parent=hosts.back().get();const auto label=text(node.text);views::View* control=nullptr;
     switch(node.kind){
-      case Kind::BeginActions:hosts.push_back(ActionGroup(parent,true,node.spacing));continue;
+      case Kind::BeginActions:hosts.push_back(ActionGroup(parent,ToolsPage()!=1,ToolsPage()==1?8:node.spacing));continue;
       case Kind::EndActions:CHECK_GT(hosts.size(),1u);hosts.pop_back();continue;
       case Kind::Hint:control=AddToolsCopy(parent,label,kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);break;
       case Kind::Heading:control=AddToolsCopy(parent,label,kSubtle,0,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);break;
@@ -9543,14 +9666,23 @@ void WorkspaceShell::BuildRustToolsForm(){
         break;
       }
       case Kind::Choice:{
-        if(node.role==Role::ShortcutChoice){rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& item:tools_.shortcuts)metadata.push_back({item.id,units(item.title),units(base::UTF8ToUTF16(FormatShortcut(item.accelerator)))});const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));control=form_picker(parent,label,projection);}
+        if(node.role==Role::ShortcutChoice){BuildShortcutFilters();rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& item:tools_.shortcuts)metadata.push_back({item.id,units(item.title),units(base::UTF8ToUTF16(FormatShortcut(item.accelerator)))});const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));control=form_picker(parent,label,projection);}
         else if(node.role==Role::ProviderChoice){rust::Vec<sidebar::ToolsProviderItem> metadata;for(const auto& item:tools_.providers)metadata.push_back({item.keyword,units(base::UTF8ToUTF16(item.name)),units(base::UTF8ToUTF16(item.keyword)),units(base::UTF8ToUTF16(item.url)),item.keyword==tools_.default_keyword});const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));control=form_picker(parent,label,projection);}
         else{std::vector<std::u16string> choices;for(const auto& value:node.choices)choices.push_back(base::UTF8ToUTF16(std::string(value)));control=ChoicePicker(parent,label,std::move(choices));SetPickerIndex(control,0);}
         switch(node.role){case Role::ShortcutChoice:case Role::ProviderChoice:tools_picker_=control;SetPickerCallback(control,base::BindRepeating(&WorkspaceShell::RefreshToolsChoiceFields,weak));break;default:CHECK(false);}
         break;
       }
       case Kind::Action:{
-        control=AddAction(parent,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,int action){if(shell)shell->PostToolsAction(action);},weak,node.action),label);
+        auto* action_parent = ToolsPage()==1 && node.action==13 ? ActionGroup(tools_body_,false,8) : parent;
+        control=AddAction(action_parent,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,int action){if(shell)shell->PostToolsAction(action);},weak,node.action),label);
+        if (ToolsPage()==1) {
+          auto* button=views::AsViewClass<SceneTextButton>(control);
+          if(node.action==11){button->SetPrimary();action_parent->ReorderChildView(control,0);}
+          if(node.action==10)button->SetText(T(u"Nagraj…"));
+          if(node.action==12){button->SetText(T(u"Wyłącz"));button->SetQuiet();}
+          if(node.action==13){button->SetText(T(u"Przywróć wszystkie"));button->SetQuiet();}
+          control->SetTooltipText(label);control->GetViewAccessibility().SetName(label);
+        }
         break;
       }
       default:CHECK(false);
@@ -9563,13 +9695,14 @@ void WorkspaceShell::RefreshTools() {
   ++tools_generation_;
   if(tools_root_)CancelChoiceInteractions(tools_root_);
   SetShortcutRecording(false);
-  for(auto* field:{shortcut_chord_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
+  for(auto* field:{shortcut_chord_.get(),shortcut_search_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
     if(field)field->SetCallbacks({},{});
   ResetToolsForm();
-  shortcut_chord_ = nullptr;
+  shortcut_chord_ = nullptr; shortcut_search_ = nullptr; shortcut_category_ = nullptr;
+  gesture_choice_ = nullptr; gesture_command_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr;
   tools_body_->RemoveAllChildViews();
-  if(tools_form_){BuildRustToolsForm();PreparePanelText(tools_widget_->GetRootView());tools_body_->InvalidateLayout();return;}
+  if(tools_form_){BuildRustToolsForm();if(ToolsPage()==1)BuildMouseGestureControls();PreparePanelText(tools_widget_->GetRootView());tools_body_->InvalidateLayout();return;}
   std::u16string form_title,form_intro,form_tail,form_status;
   std::vector<std::u16string> fields,pickers,headings,actions,form_choices;
   if(workspace_form_){
@@ -9670,6 +9803,135 @@ void WorkspaceShell::RefreshTools() {
   }
   PreparePanelText(tools_widget_->GetRootView()); tools_body_->InvalidateLayout();
 }
+void WorkspaceShell::BuildShortcutFilters() {
+  AddToolsCopy(tools_body_, T(u"Klawisze F1–F24 działają także bez modyfikatora."), kMuted, -1, static_cast<int>(gfx::Font::Weight::NORMAL), true);
+  auto weak = weak_factory_.GetWeakPtr();
+  shortcut_search_ = AddEditor(tools_body_);
+  const auto label = T(u"Szukaj akcji lub kombinacji");
+  shortcut_search_->GetViewAccessibility().SetName(label);
+  shortcut_search_->SetPlaceholderText(label);
+  shortcut_search_->view()->SetPreferredSize(gfx::Size(240, 36));
+  shortcut_search_->SetPresentation(gfx::FontList().GetFontSize(), 8, true, Tone(root_, kChip));
+  shortcut_search_->SetCallbacks(base::BindRepeating(&WorkspaceShell::FilterShortcutChoices, weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, const ui::KeyEvent& event) {
+        return shell && shell->HandleToolsEditorKey(shell->shortcut_search_, event);
+      }, weak));
+  shortcut_category_ = ChoicePicker(tools_body_, T(u"Kategoria skrótów"),
+      {T(u"Wszystkie akcje"), T(u"Nawigacja"), T(u"Karty"), T(u"Przestrzenie"), T(u"Split View"), T(u"Przeglądarka")});
+  views::AsViewClass<SceneSelect>(shortcut_category_)->SetTone(3);
+  SetPickerIndex(shortcut_category_, 0);
+  SetPickerCallback(shortcut_category_, base::BindRepeating(&WorkspaceShell::FilterShortcutChoices, weak));
+}
+void WorkspaceShell::FilterShortcutChoices() {
+  if (!tools_form_ || !shortcut_search_ || shortcut_search_->IsIMEComposing()) return;
+  auto* picker = views::AsViewClass<SceneSelect>(tools_picker_);
+  if (!picker) return;
+  SetShortcutRecording(false); RefreshKeyRegistrations();
+  const auto query = base::i18n::ToLower(base::TrimWhitespace(shortcut_search_->GetText(), base::TRIM_ALL));
+  const auto category = std::array{"", "navigation", "tabs", "workspaces", "split", "browser"}[
+      std::min<size_t>(5, PickerIndex(shortcut_category_).value_or(0))];
+  rust::Vec<sidebar::ToolsShortcutItem> metadata;
+  auto units=[](const std::u16string& text){rust::Vec<uint16_t> out;for(char16_t unit:text)out.push_back(unit);return out;};
+  for (const auto& binding : tools_.shortcuts) {
+    if (*category && ShortcutCategory(binding.id) != category) continue;
+    const auto searchable = base::i18n::ToLower(binding.title + u" " + base::UTF8ToUTF16(binding.id + " " + FormatShortcut(binding.accelerator) + " " + DisplayShortcut(binding.accelerator)));
+    if (!query.empty() && searchable.find(query) == std::u16string::npos) continue;
+    metadata.push_back({binding.id, units(binding.title), units(base::UTF8ToUTF16(FormatShortcut(binding.accelerator)))});
+  }
+  const auto previous = tools_form_->form->tools_choice_draft(picker->SelectedKey());
+  std::optional<size_t> selected;
+  for (size_t i = 0; i < metadata.size(); ++i) if (previous.valid && metadata[i].id == previous.target) selected = i;
+  const auto projection = tools_form_->form->tools_shortcut_choices(std::move(metadata));
+  std::vector<std::pair<std::string,std::u16string>> options;
+  for (const auto& choice : projection.choices) options.emplace_back(std::string(choice.key), std::u16string(choice.label.begin(), choice.label.end()));
+  picker->SetOptions(options); picker->SetSelectedIndex(selected.value_or(0)); picker->SetEnabled(projection.enabled);
+  if (shortcut_chord_) { shortcut_chord_->SetText(u""); shortcut_chord_->view()->SetEnabled(projection.enabled); }
+  RefreshToolsChoiceFields();
+  SetPanelText(tools_status_, projection.enabled ? T(u"Wybierz akcję, aby zmienić skrót.") : T(u"Brak pasujących akcji. Zmień wyszukiwanie lub kategorię."));
+}
+void WorkspaceShell::BuildMouseGestureControls() {
+  auto weak = weak_factory_.GetWeakPtr();
+  auto action = [&](views::View* parent, std::u16string label, int id) {
+    return AddAction(parent, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int id) {
+      if (!shell) return;
+      // Destruction of a clicked view must happen after its dispatch returns.
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+          base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, uint64_t generation, int id) {
+            if (shell && shell->tools_generation_ == generation) shell->InputConfigurationAction(id);
+          }, shell, shell->tools_generation_, id));
+    }, weak, id), std::move(label));
+  };
+  auto* keyboard_actions = tools_body_->children().empty() ? nullptr : views::AsViewClass<SceneActionGroup>(tools_body_->children().back());
+  auto* reset = action(keyboard_actions, T(u"Przywróć domyślny skrót wybranej akcji"), 30);
+  auto* reset_button=views::AsViewClass<SceneTextButton>(reset);reset_button->SetQuiet();reset_button->SetText(T(u"Przywróć wybrany"));
+  reset->SetTooltipText(T(u"Przywróć domyślny skrót wybranej akcji"));reset->GetViewAccessibility().SetName(T(u"Przywróć domyślny skrót wybranej akcji"));
+  keyboard_actions->ReorderChildView(reset,0);
+  AddToolsCopy(tools_body_, T(u"Gesty myszy"), kInk, 2, static_cast<int>(gfx::Font::Weight::SEMIBOLD), false);
+  AddToolsCopy(tools_body_, T(u"Przytrzymaj Alt i prawy przycisk myszy. Przesuń co najmniej 48 px w kierunku strzałek i puść przycisk. Escape anuluje gest. Zwykłe kliknięcia pozostają bez zmian. Gesty są domyślnie wyłączone."), kMuted, -1, static_cast<int>(gfx::Font::Weight::NORMAL), true);
+  auto* line = tools_body_->AddChildView(std::make_unique<views::View>());
+  auto* layout = line->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 16));
+  auto* copy = AddToolsCopy(line, T(u"Włącz gesty myszy"), kInk, 0, static_cast<int>(gfx::Font::Weight::NORMAL), false);
+  layout->SetFlexForView(copy, 1);
+  auto* toggle = PreferenceToggle(line, T(u"Włącz gesty myszy")); SetToggleOn(toggle, tools_.mouse_gestures_enabled);
+  SetActionCallback(toggle, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* toggle) {
+    if (!shell) return;
+    shell->SetMouseGesturesEnabled(ToggleOn(toggle));
+    SetPanelText(shell->tools_status_, shell->tools_.mouse_gestures_enabled ? T(u"Gesty myszy włączone.") : T(u"Gesty myszy wyłączone."));
+  }, weak, base::Unretained(toggle)));
+  gesture_choice_ = ChoicePicker(tools_body_, T(u"Gest do edycji"), {u"←", u"→", u"↑", u"↓", u"↑ ↓", u"↓ ↑", u"← →", u"→ ←"});
+  views::AsViewClass<SceneSelect>(gesture_choice_)->SetTone(3);
+  SetPickerIndex(gesture_choice_, 0);
+  std::vector<std::u16string> commands{T(u"Wyłącz ten gest")}; gesture_commands_ = {""};
+  for (const auto& binding : tools_.shortcuts) if (ValidMouseGestureCommand(binding.id)) {
+    gesture_commands_.push_back(binding.id); commands.push_back(binding.title);
+  }
+  gesture_command_ = ChoicePicker(tools_body_, T(u"Akcja gestu"), commands);
+  views::AsViewClass<SceneSelect>(gesture_command_)->SetTone(3);
+  SetPickerCallback(gesture_choice_, base::BindRepeating(&WorkspaceShell::RefreshMouseGestureChoice, weak));
+  RefreshMouseGestureChoice();
+  auto* actions = ActionGroup(tools_body_, false, 8);
+  action(actions, T(u"Zapisz gest"), 31);
+  auto* defaults=action(actions, T(u"Przywróć domyślne gesty"), 32);
+  auto* defaults_button=views::AsViewClass<SceneTextButton>(defaults);defaults_button->SetQuiet();defaults_button->SetText(T(u"Przywróć domyślne"));
+  defaults->SetTooltipText(T(u"Przywróć domyślne gesty"));defaults->GetViewAccessibility().SetName(T(u"Przywróć domyślne gesty"));
+}
+void WorkspaceShell::RefreshMouseGestureChoice() {
+  const auto index = PickerIndex(gesture_choice_).value_or(0);
+  if (index >= tools_.mouse_gestures.size()) return;
+  const auto found = std::find(gesture_commands_.begin(), gesture_commands_.end(), tools_.mouse_gestures[index].command);
+  SetPickerIndex(gesture_command_, found == gesture_commands_.end() ? 0 : found - gesture_commands_.begin());
+}
+void WorkspaceShell::InputConfigurationAction(int action) {
+  if (!tools_widget_ || !tools_widget_->IsVisible() || ToolsPage() != 1) return;
+  if (action == 30) {
+    auto* picker = views::AsViewClass<SceneSelect>(tools_picker_);
+    if (!picker) return;
+    const auto draft = tools_form_->form->tools_choice_draft(picker->SelectedKey());
+    if (!draft.valid) return;
+    for (const auto& binding : ArcShortcuts()) if (binding.id == std::string(draft.target)) {
+      const auto owner = ShortcutFor(binding.accelerator);
+      if (!owner.empty() && owner != binding.id) {
+        for (const auto& other : tools_.shortcuts) if (other.id == owner)
+          SetPanelText(tools_status_, TF(u"Ta kombinacja jest przypisana do: {}. Wyłącz ją dla tej akcji lub wybierz inną.", {other.title}));
+        return;
+      }
+      if (SetShortcut(binding.id, FormatShortcut(binding.accelerator))) {
+        FilterShortcutChoices(); SetPanelText(tools_status_, T(u"Przywrócono domyślny skrót."));
+      }
+      return;
+    }
+  }
+  if (action == 31) {
+    const auto gesture = PickerIndex(gesture_choice_).value_or(0), command = PickerIndex(gesture_command_).value_or(0);
+    if (gesture >= tools_.mouse_gestures.size() || command >= gesture_commands_.size()) return;
+    SetMouseGesture(tools_.mouse_gestures[gesture].direction, gesture_commands_[command]);
+    SetPanelText(tools_status_, T(u"Zapisano gesty myszy.")); return;
+  } else if (action == 32) {
+    tools_.mouse_gestures = DefaultMouseGestures(); RefreshMouseGestureChoice();
+  } else return;
+  gestures_dirty_ = true; SaveTools();
+  SetPanelText(tools_status_, T(u"Zapisano gesty myszy."));
+}
 void WorkspaceShell::RefreshToolsChoiceFields(){
   if(!tools_form_)return;auto* scene=views::AsViewClass<SceneSelect>(tools_picker_);if(!scene)return;
   const auto draft=tools_form_->form->tools_choice_select(scene->SelectedKey());if(!draft.valid)return;
@@ -9706,7 +9968,7 @@ void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_ke
       }
     }
     sidebar::ToolsActionContext context{};
-    context.shortcut_field=bool(shortcut_chord_);context.provider_field=bool(provider_name_);
+    context.shortcut_field=shortcut_chord_&&shortcut_chord_->view()->GetEnabledInViewsSubtree();context.provider_field=bool(provider_name_);
     context.shortcut_composing=shortcut_chord_&&shortcut_chord_->IsIMEComposing();
     for(auto* field:{provider_name_.get(),provider_keyword_.get(),provider_url_.get()})if(field&&field->IsIMEComposing())context.provider_composing=true;
     context.shortcut_selected=ToolsPage()==1&&valid_form_choice;context.provider_selected=ToolsPage()==2&&valid_form_choice;
@@ -9719,7 +9981,15 @@ void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_ke
     shortcut_chord_->RequestFocus();
     SetPanelText(tools_status_,record_status); return;
   } else if ((action == 11 || action == 12) && shortcut_chord_ && valid_form_choice) {
-    ok = SetShortcut(form_target, action == 12 ? "" : base::UTF16ToUTF8(shortcut_chord_->GetText()));
+    const auto chord = action == 12 ? std::string() : base::UTF16ToUTF8(shortcut_chord_->GetText());
+    const auto parsed = ParseShortcut(chord);
+    if (parsed && parsed->key_code() != ui::VKEY_UNKNOWN) {
+      for (const auto& binding : tools_.shortcuts) if (binding.id != form_target && binding.accelerator == *parsed) {
+        SetPanelText(tools_status_, TF(u"Ta kombinacja jest przypisana do: {}. Wyłącz ją dla tej akcji lub wybierz inną.", {binding.title}));
+        return;
+      }
+    }
+    ok = SetShortcut(form_target, chord);
   } else if (action == 13) {
     tools_.shortcuts = ArcShortcuts(); keys_dirty_ = true; RefreshKeyRegistrations(); SaveTools(); ok = true;
   } else if (action >= 20 && action <= 22 && provider_name_) {
@@ -9729,7 +9999,7 @@ void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_ke
     if (action == 22) ok = RemoveSearchProvider(previous);
   }
   auto outcome=tools_form_->form->tools_outcome(ok,false);
-  if(outcome.refresh){RefreshTools();if(callbacks_.operation_pending&&callbacks_.operation_pending.Run())outcome=tools_form_->form->tools_outcome(true,true);}
+  if(outcome.refresh){if(ToolsPage()==1)FilterShortcutChoices();else RefreshTools();if(callbacks_.operation_pending&&callbacks_.operation_pending.Run())outcome=tools_form_->form->tools_outcome(true,true);}
   SetPanelText(tools_status_,base::UTF8ToUTF16(std::string(outcome.status)));
 }
 
@@ -9873,6 +10143,7 @@ void WorkspaceShell::SetContentFullscreen(views::View* page) {
   content_fullscreen_ = page != nullptr;
   auto* root = static_cast<ShellRoot*>(root_.get());
   root->content_fullscreen = content_fullscreen_;
+  SetDeveloperPage(developer_url_, developer_allowed_, developer_compare_);
   for (auto* chrome : {root->header.get(), root->caption.get(), root->app_menu.get(), root->trailing.get()})
     if (chrome) chrome->SetVisible(!content_fullscreen_);
   static_cast<PaneHost*>(content_host_.get())->SetFullscreen(page);
@@ -9956,6 +10227,7 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   add("downloads", T(u"Pobrania…"), kMenuDownloadsIcon);
   add("import", T(u"Importuj z przeglądarki…"), kMenuImportIcon);
   add("settings", T(u"Ustawienia…"), kMenuSettingsIcon);
+  add("developer", T(u"Narzędzia developerskie…"), kMenuSettingsIcon);
   if (!state_.workspaces.empty()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     // Design: an eyebrow group label, in capitals.

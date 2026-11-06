@@ -110,6 +110,7 @@ void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts) {
       {title(u"Nowa karta"), "new_tab"}, {title(u"Nowe okno prywatne"), "private_window"}, {title(u"Otwórz adres…"), "address"},
       {"Command Center…", "palette"}, {title(u"Historia…"), "history"}, {"Time Machine…", "timeline"}, {title(u"Pobrania…"), "downloads"}, {title(u"Znajdź na stronie…"), "find"}, {title(u"Drukuj…"), "print"}, {title(u"Zamknij kartę"), "close_tab"},
       {title(u"Pokaż lub ukryj karty"), "sidebar"}, {title(u"Odśwież stronę"), "reload"},
+      {title(u"Otwórz DevTools"), "devtools_panel"}, {title(u"Otwórz konsolę"), "devtools_console"}, {title(u"Zbadaj element"), "devtools_inspect"}, {title(u"Odśwież bez pamięci podręcznej"), "hard_reload"},
       {title(u"Ustawienia…"), "settings"}, {title(u"Pierwsza przestrzeń"), "space1"}, {title(u"Druga przestrzeń"), "space2"}};
   auto update = [&](auto&& self, NSMenu* menu) -> void {
     for (NSMenuItem* item in menu.itemArray) {
@@ -120,7 +121,7 @@ void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts) {
       if (shortcut == shortcuts.end()) continue;
       std::string chord = FormatShortcut(shortcut->accelerator);
       const auto separator = chord.rfind('+');
-      std::string key = separator == std::string::npos ? "" : chord.substr(separator + 1);
+      std::string key = separator == std::string::npos ? chord : chord.substr(separator + 1);
       NSString* equivalent = base::SysUTF8ToNSString(base::ToLowerASCII(key));
       if (key == "Left") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSLeftArrowFunctionKey)];
       if (key == "Right") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSRightArrowFunctionKey)];
@@ -128,6 +129,16 @@ void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts) {
       if (key == "Down") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSDownArrowFunctionKey)];
       if (key == "Tab") equivalent = @"\t";
       if (key == "Space") equivalent = @" ";
+      const auto code = shortcut->accelerator.key_code();
+      if (code >= ui::VKEY_F1 && code <= ui::VKEY_F24)
+        equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(static_cast<int>(NSF1FunctionKey) + static_cast<int>(code) - static_cast<int>(ui::VKEY_F1))];
+      if (key == "Enter") equivalent = @"\r";
+      if (key == "Backspace") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSBackspaceCharacter)];
+      if (key == "Delete") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSDeleteFunctionKey)];
+      if (key == "Home") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSHomeFunctionKey)];
+      if (key == "End") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSEndFunctionKey)];
+      if (key == "PageUp") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSPageUpFunctionKey)];
+      if (key == "PageDown") equivalent = [NSString stringWithFormat:@"%C", static_cast<unichar>(NSPageDownFunctionKey)];
       item.keyEquivalent = equivalent;
       NSEventModifierFlags flags = 0;
       const int mods = shortcut->accelerator.modifiers();

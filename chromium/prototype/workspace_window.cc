@@ -1,3 +1,4 @@
+#include "zitter/core/mouse_gesture.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "ui/color/color_provider_key.h"
 #include "ui/views/background.h"
@@ -52,6 +53,9 @@
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/browser/preloading/preloading_prefs.h"
+#include "chrome/browser/devtools/devtools_window.h"
+#include "chrome/browser/devtools/devtools_toggle_action.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "ui/shell_dialogs/select_file_policy.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -205,7 +209,7 @@ class WorkspaceWebView final : public views::WebView {
           content::WebContents*, const input::NativeWebKeyboardEvent&)>;
 
   using OpenHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, const content::OpenURLParams&)>;
-  using MenuHandler = base::RepeatingCallback<void(content::WebContents*, const content::ContextMenuParams&)>;
+  using MenuHandler = base::RepeatingCallback<void(content::WebContents*, content::RenderFrameHost*, const content::ContextMenuParams&)>;
   using AdoptHandler = base::RepeatingCallback<content::WebContents*(content::WebContents*, std::unique_ptr<content::WebContents>, bool)>;
   using CreatedHandler = base::RepeatingCallback<void(content::WebContents*, content::WebContents*)>;
   using PeekHandler = base::RepeatingCallback<bool(content::WebContents*, const GURL&)>;
@@ -213,10 +217,12 @@ class WorkspaceWebView final : public views::WebView {
                    AdoptHandler adopt, CreatedHandler created, base::RepeatingClosure changed,
                     base::RepeatingCallback<void(views::WebView*)> interacted,
                     base::RepeatingCallback<void(content::WebContents*, bool)> fullscreen,
-                    base::RepeatingCallback<bool()> image_previews, PeekHandler peek)
+                    base::RepeatingCallback<bool()> image_previews, PeekHandler peek,
+                    base::RepeatingCallback<bool()> gestures_enabled,
+                    base::RepeatingCallback<void(content::WebContents*, std::string)> gesture)
       : views::WebView(profile), handler_(std::move(handler)), open_(std::move(open)), menu_(std::move(menu)),
         adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)), fullscreen_(std::move(fullscreen)),
-        image_previews_(std::move(image_previews)), peek_(std::move(peek)) {}
+        image_previews_(std::move(image_previews)), peek_(std::move(peek)), gestures_enabled_(std::move(gestures_enabled)), gesture_(std::move(gesture)) {}
   ~WorkspaceWebView() override { if (is_fullscreen_) fullscreen_.Run(web_contents(), false); }
   std::array<uint64_t,2> sidebar_identity() const {return {sidebar_identity_.GetHighForSerialization(),sidebar_identity_.GetLowForSerialization()};}
   void ResetImagePreview() { if (image_preview_) image_preview_->Reset(); }
@@ -249,6 +255,10 @@ class WorkspaceWebView final : public views::WebView {
       if (auto* native = page->GetRenderWidgetHostView()) native->SetBackgroundColor(color);
     }
   }
+  void OnBlur() override {
+    mouse_gesture_.Cancel();
+    views::WebView::OnBlur();
+  }
   void OnThemeChanged() override {
     views::WebView::OnThemeChanged();
     UpdateBlankBackground();
@@ -261,7 +271,7 @@ class WorkspaceWebView final : public views::WebView {
     image_preview_->Hover(url);
   }
   void VisibilityChanged(views::View* starting_from, bool visible) override {
-    if (!visible) ResetImagePreview();
+    if (!visible) { ResetImagePreview(); mouse_gesture_.Cancel(); }
     views::WebView::VisibilityChanged(starting_from, visible);
   }
   void RemovedFromWidget() override {
@@ -295,9 +305,51 @@ class WorkspaceWebView final : public views::WebView {
       content::WebContents* source,
       const input::NativeWebKeyboardEvent& event) override {
     ResetImagePreview();
+    if (mouse_gesture_.active() && event.windows_key_code == ui::VKEY_ESCAPE) {
+      mouse_gesture_.Cancel(); return content::KeyboardEventProcessingResult::HANDLED;
+    }
     return handler_.Run(source, event);
   }
 
+  bool PreHandleMouseEvent(content::WebContents* source, const blink::WebMouseEvent& event) override {
+    using Type = blink::WebInputEvent::Type;
+    const auto type = event.GetType();
+    const auto point = event.PositionInWidget();
+    const double now = base::TimeTicks::Now().since_origin().InSecondsF();
+    constexpr int modifiers = blink::WebInputEvent::kAltKey | blink::WebInputEvent::kShiftKey |
+        blink::WebInputEvent::kControlKey | blink::WebInputEvent::kMetaKey;
+    if (type == Type::kMouseDown && event.button == blink::WebMouseEvent::Button::kRight &&
+        (event.GetModifiers() & modifiers) == blink::WebInputEvent::kAltKey &&
+        gestures_enabled_.Run() && !is_fullscreen_ && source->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) {
+      interacted_.Run(this);
+      mouse_gesture_.Begin(point.x(), point.y(), now);
+      suppress_gesture_menu_until_ = base::TimeTicks::Now() + base::Seconds(3);
+      return true;
+    }
+    if (type == Type::kMouseDown && event.button == blink::WebMouseEvent::Button::kRight) {
+      // A fresh ordinary click also ends a drag whose release happened outside
+      // this renderer. Never swallow that click's matching release or menu.
+      mouse_gesture_.Cancel(); mouse_gesture_.End(point.x(), point.y(), now);
+      suppress_gesture_menu_until_ = base::TimeTicks(); return false;
+    }
+    if (!mouse_gesture_.active()) return false;
+    if (!gestures_enabled_.Run() || (event.GetModifiers() & modifiers) != blink::WebInputEvent::kAltKey)
+      mouse_gesture_.Cancel();
+    if (type == Type::kMouseUp && event.button == blink::WebMouseEvent::Button::kRight) {
+      auto direction = mouse_gesture_.End(point.x(), point.y(), now);
+      suppress_gesture_menu_until_ = base::TimeTicks::Now() + base::Milliseconds(300);
+      if (!direction.empty()) gesture_.Run(source, std::move(direction));
+      return true;
+    }
+    if (type == Type::kMouseMove) {
+      if (!(event.GetModifiers() & blink::WebInputEvent::kRightButtonDown)) {
+        mouse_gesture_.End(point.x(), point.y(), now); return false;
+      }
+      mouse_gesture_.Move(point.x(), point.y(), now); return true;
+    }
+    // A second button cancels; its own click still reaches the page.
+    mouse_gesture_.Cancel(); return false;
+  }
   content::WebContents* OpenURLFromTab(content::WebContents* source, const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)> callback) override {
     return open_.Run(source, params);
@@ -334,9 +386,15 @@ class WorkspaceWebView final : public views::WebView {
     auto* dialogs = PageDialogs::FromWebContents(source);
     *fire_unload = proceed && !(dialogs && dialogs->checking_before_unload());
   }
-  bool HandleContextMenu(content::RenderFrameHost&, const content::ContextMenuParams& params) override {
+  bool HandleContextMenu(content::RenderFrameHost& frame, const content::ContextMenuParams& params) override {
+    if (base::TimeTicks::Now() < suppress_gesture_menu_until_) {
+      // A normal secondary click immediately restores the regular menu.
+      return true;
+    }
+    // Editable fields retain Chromium's editing/spelling menu, which also
+    // includes its policy-aware, frame-targeted Inspect Element action.
     if (params.is_editable || (!params.link_url.SchemeIsHTTPOrHTTPS() && !GetWebContents()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS())) return false;
-    menu_.Run(GetWebContents(), params);
+    menu_.Run(GetWebContents(), &frame, params);
     return true;
   }
   content::WebContents* AddNewContents(content::WebContents* source, std::unique_ptr<content::WebContents> page,
@@ -374,6 +432,7 @@ class WorkspaceWebView final : public views::WebView {
   // URL and back/forward availability feed the sidebar's address pill.
   void NavigationStateChanged(content::WebContents* source,
                               content::InvalidateTypes flags) override {
+    mouse_gesture_.Cancel();
     views::WebView::NavigationStateChanged(source, flags);
     UpdateBlankBackground();
     changed_.Run();
@@ -396,6 +455,10 @@ class WorkspaceWebView final : public views::WebView {
   bool is_fullscreen_ = false;
   base::RepeatingCallback<bool()> image_previews_;
   PeekHandler peek_;
+  base::RepeatingCallback<bool()> gestures_enabled_;
+  base::RepeatingCallback<void(content::WebContents*, std::string)> gesture_;
+  MouseGesture mouse_gesture_;
+  base::TimeTicks suppress_gesture_menu_until_;
   std::unique_ptr<ImageLinkPreview> image_preview_;
   GURL hovered_link_;
   base::TimeTicks shift_link_click_;
@@ -929,6 +992,21 @@ views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* paren
               if (window) window->OpenPeek(url, workspace);
             }, window, url, workspace));
         return true;
+      }, weak_factory_.GetWeakPtr()),
+      base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
+        return window && window->shell_ && window->shell_->browser_tools().mouse_gestures_enabled &&
+            !window->closing_ && !window->profiles_busy_ && window->widget()->IsActive();
+      }, weak_factory_.GetWeakPtr()),
+      base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* source, std::string direction) {
+        if (!window) return;
+        const auto command = window->shell_->browser_tools().MouseGestureCommand(direction);
+        if (command.empty()) return;
+        // Run after input dispatch: closing a tab may destroy this WebView.
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+            base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, content::WebContents* source, std::string command) {
+              if (!window || window->closing_ || window->profiles_busy_ || (window->contents(window->active_id()) != source && window->peek_contents() != source)) return;
+              window->RunShortcut(std::move(command));
+            }, window, source, command));
       }, weak_factory_.GetWeakPtr())));
   view->set_allow_accelerators(true);
   view->SetVisible(false);
@@ -1107,6 +1185,7 @@ void WorkspaceWindow::UpdateShell() {
   // The find bar belongs to one page: another tab or space ends it.
   if (find_page_ && find_page_ != (peek_contents() ? peek_contents() : contents(active_id()))) shell_->ResetFind();
   ScheduleSessionSave();
+  if (auto* page = peek_contents() ? peek_contents() : contents(active_id())) shell_->SetDeveloperPage(page->GetVisibleURL(), DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(page->GetBrowserContext()), page), !peek_contents());
   if (peek_view_) {
     const auto* workspace = model_.Find(peek_workspace_id_);
     const auto& url = peek_contents()->GetVisibleURL();
@@ -1731,6 +1810,7 @@ bool WorkspaceWindow::OpenPeek(const GURL& url, std::string source_workspace) {
   ShowPage(peek_view_);
   peek_view_->GetWebContents()->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_LINK, std::string());
   peek_view_->RequestFocus();
+  UpdateShell();
   return true;
 }
 void WorkspaceWindow::ClosePeek() {
@@ -1745,6 +1825,7 @@ void WorkspaceWindow::ClosePeek() {
     widget_->Activate();
     if (auto* page = contents(active_id())) page->Focus();
   }
+  UpdateShell();
 }
 bool WorkspaceWindow::PromotePeek(bool split) {
   if (!peek_view_ || !configuration_ready_ || profiles_busy_) return false;
@@ -1823,9 +1904,15 @@ content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source
           params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB));
   return nullptr;
 }
-void WorkspaceWindow::ShowPageMenu(content::WebContents* source, const content::ContextMenuParams& params) {
+void WorkspaceWindow::ShowPageMenu(content::WebContents* source, content::RenderFrameHost* frame, const content::ContextMenuParams& params) {
   const auto url = params.link_url.SchemeIsHTTPOrHTTPS() ? params.link_url : source->GetLastCommittedURL();
-  shell_->ShowLinkMenu(url, WorkspaceForPage(source), source->GetContainerBounds().origin() + gfx::Vector2d(params.x, params.y));
+  shell_->ShowLinkMenu(url, WorkspaceForPage(source), source->GetContainerBounds().origin() + gfx::Vector2d(params.x, params.y),
+      DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(source->GetBrowserContext()), source) ? base::BindRepeating([](content::WeakDocumentPtr document, int x, int y) {
+        auto* target = document.AsRenderFrameHostIfValid();
+        if (!target) return;
+        auto* page = content::WebContents::FromRenderFrameHost(target);
+        if (DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(page->GetBrowserContext()), page)) DevToolsWindow::InspectElement(target, x, y);
+      }, frame->GetWeakDocumentPtr(), params.x, params.y) : base::RepeatingClosure());
 }
 
 void WorkspaceWindow::ActivatePaletteResult(PaletteResult result) {
@@ -2415,11 +2502,6 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
     if (auto* page = contents(active_id())) page->Focus();
     return true;
   }
-#if BUILDFLAG(IS_WIN)
-  if (accelerator.key_code() == ui::VKEY_F5 && accelerator.modifiers() == 0) {
-    RunPageCommand(PageCommand::kReload); return true;
-  }
-#endif
   const auto id = shell_->ShortcutFor(accelerator);
   if (id.empty()) return false;
   consumed_keys_.insert(accelerator.key_code()); suppress_shortcut_char_ = true;
@@ -2442,6 +2524,31 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     if (!page || !page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) return false;
     ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(page->GetLastCommittedURL().spec()));
     shell_->TremorAddress();
+    return true;
+  }
+  if (id == "developer") { shell_->ShowDeveloperMenu(); return true; }
+  if (id.starts_with("devtools") || id == "hard_reload" || id == "project_split") {
+    auto* page = peek_contents() ? peek_contents() : contents(active_id());
+    if (!page) return false;
+    if (id == "hard_reload") { page->GetController().Reload(content::ReloadType::BYPASSING_CACHE, true); return true; }
+    if (id == "project_split") {
+      if (peek_contents() || !IsLocalProject(page->GetVisibleURL())) return false;
+      for (const auto& host : hosts_) if (host.workspace_id == active_id()) return SplitTab(host.active_tab);
+      return false;
+    }
+    if (!DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(page->GetBrowserContext()), page)) return false;
+    if (id == "devtools") {
+      if (auto* existing = DevToolsWindow::GetInstanceForInspectedWebContents(page)) {
+        existing->GetDevToolsWebContents()->ClosePage();
+        return true;
+      }
+    }
+    // Chromium's WebContents overload finds no Browser dock for Zitter and
+    // owns an undocked TYPE_DEVTOOLS window, including target teardown.
+    const auto action = id == "devtools" ? DevToolsToggleAction::Toggle() :
+        id == "devtools_console" ? DevToolsToggleAction::ShowConsolePanel() :
+        id == "devtools_inspect" ? DevToolsToggleAction::Inspect() : DevToolsToggleAction::Show();
+    DevToolsWindow::OpenDevToolsWindow(page, action, DevToolsOpenedByAction::kMainMenuOrMainShortcut);
     return true;
   }
   if (id == "downloads") { ShowDownloads(); return true; }
@@ -2560,9 +2667,6 @@ content::KeyboardEventProcessingResult WorkspaceWindow::PreHandlePageKeyEvent(
   }
   const bool escape_fullscreen = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && fullscreen_page_;
   auto action = shell_->ShortcutFor(accelerator);
-#if BUILDFLAG(IS_WIN)
-  if (key == ui::VKEY_F5 && accelerator.modifiers() == 0) action = "reload";
-#endif
   if (escape_fullscreen) action = "exit_fullscreen";
   if (action.empty() && !escape_peek) return Result::NOT_HANDLED;
   consumed_keys_.insert(key); suppress_shortcut_char_ = true;
