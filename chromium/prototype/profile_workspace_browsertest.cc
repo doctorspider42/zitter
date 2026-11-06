@@ -745,6 +745,45 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRou
   EXPECT_TRUE(window_->assistant()->ContainsForTesting("Integration complete"));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraftsAndAccess) {
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html")));
+  window_->ShowAssistant();auto* panel=window_->assistant();ASSERT_TRUE(panel);
+  ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
+  panel->TypeForTesting(u"Keep my draft");
+  const auto before=panel->sessions_for_testing();
+  auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
+  bar->ToggleAssistantPanel();
+  ASSERT_TRUE(bar->assistant_menu_for_testing());
+  const auto output=base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-assistant-render-dir");
+  if(!output.empty()) {
+    base::ScopedAllowBlockingForTesting allow;ASSERT_TRUE(base::CreateDirectory(output));
+    auto* widget=bar->assistant_menu_for_testing();
+    widget->LayoutRootViewIfNecessary();
+    auto* menu=widget->widget_delegate()->GetContentsView();ASSERT_EQ(menu->children().size(),8u);
+    const bool had_layer=menu->layer()!=nullptr;
+    if(!had_layer){menu->SetPaintToLayer();menu->layer()->SetFillsBoundsOpaquely(false);}
+    const auto saved=menu->bounds();menu->SetBoundsRect(gfx::Rect(menu->size()));
+    const auto png=gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(menu),false);
+    menu->SetBoundsRect(saved);if(!had_layer)menu->DestroyLayer();ASSERT_TRUE(png);
+    ASSERT_TRUE(base::WriteFile(output.AppendASCII("assistant-toolbar-actions.png"),*png));
+  }
+  bar->RunAssistantCommandForTesting(0);
+  EXPECT_EQ(panel->sessions_for_testing(),before+1);
+  EXPECT_FALSE(panel->busy());
+  EXPECT_NE(panel->draft_for_testing(),u"Keep my draft");
+  EXPECT_FALSE(panel->permissions_for_testing().pages);
+  EXPECT_EQ(panel->open_menu_for_testing(),AssistantPanel::Menu::kAccess);
+  ASSERT_FALSE(panel->chips_for_testing().empty());
+  EXPECT_EQ(panel->chips_for_testing().front().ref,"@current");
+  panel->SelectSessionForTesting(before-1);
+  EXPECT_EQ(panel->draft_for_testing(),u"Keep my draft");
+  bar->ToggleAssistantPanel();
+  ASSERT_TRUE(bar->assistant_menu_for_testing());
+  auto settings=window_->assistant_settings();settings.enabled=false;window_->SetAssistantSettings(settings);
+  EXPECT_FALSE(bar->assistant_button_for_testing());
+  EXPECT_FALSE(bar->assistant_menu_for_testing());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPanelIsOptionalAndPinnable) {
   EXPECT_FALSE(window_->assistant());
   window_->ShowAssistant(); ASSERT_TRUE(window_->assistant());
@@ -983,11 +1022,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSchedulesTasksAddsSea
   EXPECT_EQ(next.hour,9);EXPECT_EQ(next.minute,15);
   AssistantTask none; none.kind=1; none.days=0;
   EXPECT_TRUE(AssistantTaskNextRun(none,thursday_nine).is_null());
-  // The toolbar has the assistant; it opens the panel.
+  // The toolbar opens local quick actions without creating an assistant session.
   auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
   window_->AssistantStateChanged();
   ASSERT_TRUE(base::test::RunUntil([&]{return bar->assistant_button_for_testing()!=nullptr;}));
   static_cast<views::Button*>(bar->assistant_button_for_testing())->button_controller()->NotifyClick();
+  ASSERT_TRUE(bar->assistant_menu_for_testing());
+  EXPECT_FALSE(window_->assistant());
+  bar->RunAssistantCommandForTesting(5);
   ASSERT_TRUE(window_->assistant());EXPECT_TRUE(window_->assistant()->GetVisible());
   auto* panel=window_->assistant();
   ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
@@ -1126,6 +1168,38 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
   panel->SendForTesting("Read page");ASSERT_TRUE(panel->busy());
   panel->Collapse();EXPECT_FALSE(panel->GetVisible());EXPECT_TRUE(panel->busy());
   panel->Show();panel->RevokeAccess();EXPECT_FALSE(panel->busy());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideTracksPointerAndPreservesDraft) {
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE,base::Seconds(8));
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  window_->ShowAssistant();auto* panel=window_->assistant();panel->SetPinned(true);
+  window_->widget()->LayoutRootViewIfNecessary();
+  const auto native=window_->widget()->GetNativeWindow();
+  auto move=[&](gfx::Point point){base::test::TestFuture<void> moved;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),native)&&moved.Wait();};
+  const auto inside=panel->GetBoundsInScreen().CenterPoint();
+  const auto outside=gfx::Point(panel->GetBoundsInScreen().x()-60,inside.y());
+  ASSERT_TRUE(move(inside));panel->SetPinned(false);
+  // A focused draft and a menu used to prevent collapse permanently.
+  panel->TypeForTesting(u"Keep this draft after pointer departure");
+  panel->ToggleMenuForTesting(AssistantPanel::Menu::kModel);
+  ASSERT_TRUE(move(outside));
+  EXPECT_EQ(display::Screen::Get()->GetCursorScreenPoint(),outside);
+  EXPECT_FALSE(panel->GetBoundsInScreen().Contains(outside)) << panel->GetBoundsInScreen().ToString();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !panel->GetVisible();}));
+  EXPECT_EQ(panel->draft_for_testing(),u"Keep this draft after pointer departure");
+  panel->Show();panel->ToggleMenuForTesting(AssistantPanel::Menu::kModel);
+  ASSERT_TRUE(move(inside));
+  // Finishing a resize outside must still hide, without another exit event.
+  panel->OnResize(20,false);ASSERT_TRUE(move(outside));
+  panel->Collapse();EXPECT_TRUE(panel->GetVisible());
+  panel->OnResize(20,true);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !panel->GetVisible();}));
+  panel->Show();EXPECT_EQ(panel->draft_for_testing(),u"Keep this draft after pointer departure");
+  // Opening by a command must also watch the pointer, even before entry.
+  const auto farther=gfx::Point(outside.x()-20,outside.y());ASSERT_TRUE(move(farther));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !panel->GetVisible();}));
 }
 
 // Opt in: timing runs must not silently turn functional verification into a

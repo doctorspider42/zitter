@@ -8,10 +8,14 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/range/range.h"
 #include "url/gurl.h"
+namespace gfx { class Canvas; class RectF; }
 namespace ui { class KeyEvent; }
 namespace views { class View; class Background; class Textarea; }
 namespace views { class ResizeAreaDelegate; }
 namespace zitter::prototype {
+// Shared assistant identity: the outlined four-point star used in the panel.
+inline constexpr char kAssistantSparkIcon[] = "M8 1Q9 7 15 8Q9 9 8 15Q7 9 1 8Q7 7 8 1Z";
+void PaintAssistantSpark(gfx::Canvas* canvas, const gfx::RectF& box, SkColor color);
 enum class AssistantGlyph { kSpark, kPlus, kHistory, kPin, kClose, kArrow, kStop, kAt, kSearch, kShield, kPage, kChevron, kRevoke,
                             kLayers, kCheck, kGear, kCopy, kTrash, kLock, kEye, kExpand, kGlobe, kCalendar, kRepeat, kBack };
 std::unique_ptr<views::Background> CreateAssistantBackground();

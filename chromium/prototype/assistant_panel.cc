@@ -56,7 +56,7 @@
 
 namespace zitter::prototype {
 namespace {
-constexpr std::array<const char16_t*, 4> kProviderLabels = {u"OpenAI API", u"Codex SDK", u"Claude CLI", u"Ollama"};
+constexpr std::array<const char16_t*, 4> kProviderLabels = {u"OpenAI API", u"Codex CLI", u"Claude CLI", u"Ollama"};
 // Letter tiles for pages take a stable color from their host.
 constexpr std::array<uint32_t, 6> kPageColors = {0xffff8a66, 0xff5cc8ff, 0xffffc35c, 0xffff7eb6, 0xff5fe0b8, 0xffb4a6ff};
 std::u16string Fold(std::u16string_view text) { return base::i18n::ToLower(text); }
@@ -289,6 +289,7 @@ AssistantPanel::Session::Session() = default;
 AssistantPanel::Session::~Session() = default;
 
 AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
+  GetViewAccessibility().SetRole(ax::mojom::Role::kComplementary);
   GetViewAccessibility().SetName(T(u"Asystent AI"));
   SetBackground(CreateAssistantBackground());
   SetPaintToLayer(); layer()->SetFillsBoundsOpaquely(false);
@@ -307,8 +308,6 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   access_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kAccess)),AssistantGlyph::kShield,T(u"Dostęp tej sesji")));
   header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::NewSession,weak)),AssistantGlyph::kPlus,T(u"Nowa sesja")));
   pin_action_=header_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->SetPinned(!self->pinned());},base::Unretained(this)),AssistantGlyph::kPin,T(u"Przypnij")));
-  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self){
-    if(!self)return;self->Stop();self->CloseMenu();self->SetVisible(false);self->window_->shell()->LayoutAssistant(false);},weak)),AssistantGlyph::kClose,T(u"Zamknij")));
   SetSidebarPanelLayout(header_,false,gfx::Insets(),4,identity,true);
 
   background_=AddChildView(std::make_unique<views::View>());
@@ -362,16 +361,34 @@ void AssistantPanel::Show(bool from_edge) {
   hide_timer_.Stop();SetVisible(true); window_->shell()->LayoutAssistant(pinned_); prompt_->RequestFocus();
   unread_ = 0; NotifyBar();
   hover_check_.Stop();
-  if (from_edge) WatchPointer();
+  last_pointer_position_ = display::Screen::Get()->GetCursorScreenPoint();
+  pointer_exit_armed_ = from_edge || HoverBounds().Contains(last_pointer_position_);
+  WatchPointer();
 }
 void AssistantPanel::WatchPointer() {
-  // Once the pointer is outside the panel and its edge strip, an unpinned panel
-  // hides; until then keep checking, wherever the pointer left from.
-  if (pinned_ || hover_check_.IsRunning()) return;
-  hover_check_.Start(FROM_HERE, base::Milliseconds(650), base::BindRepeating([](AssistantPanel* self) {
-    if (!self->GetVisible() || self->pinned_) { self->hover_check_.Stop(); return; }
-    if (self->HoverBounds().Contains(display::Screen::Get()->GetCursorScreenPoint())) return;
-    self->hover_check_.Stop(); self->Collapse();
+  // Keep watching while visible: child views, popovers and native capture can
+  // swallow exit events. A blocked collapse must be retried after capture ends.
+  if (pinned_ || !GetVisible() || hover_check_.IsRunning()) return;
+  hover_check_.Start(FROM_HERE, base::Milliseconds(100), base::BindRepeating([](AssistantPanel* self) {
+    if (!self->GetVisible() || self->pinned_) {
+      self->hide_timer_.Stop(); self->hover_check_.Stop(); return;
+    }
+    const auto point = display::Screen::Get()->GetCursorScreenPoint();
+    const bool moved = point != self->last_pointer_position_;
+    self->last_pointer_position_ = point;
+    if (self->HoverBounds().Contains(point) || self->window_->shell()->AssistantConsentContains(point)) {
+      self->pointer_exit_armed_ = true; self->hide_timer_.Stop(); return;
+    }
+    if (self->resize_start_width_) { self->hide_timer_.Stop(); return; }
+    if (!self->pointer_exit_armed_ && !moved) return;
+    self->pointer_exit_armed_ = true;
+    if (!self->hide_timer_.IsRunning())
+      self->hide_timer_.Start(FROM_HERE, base::Milliseconds(650), base::BindOnce([](base::WeakPtr<AssistantPanel> panel) {
+        if (!panel || !panel->GetVisible()) return;
+        const auto cursor = display::Screen::Get()->GetCursorScreenPoint();
+        if (!panel->HoverBounds().Contains(cursor) && !panel->window_->shell()->AssistantConsentContains(cursor))
+          panel->Collapse();
+      }, self->weak_factory_.GetWeakPtr()));
   }, base::Unretained(this)));
 }
 gfx::Rect AssistantPanel::HoverBounds() const {
@@ -381,21 +398,18 @@ gfx::Rect AssistantPanel::HoverBounds() const {
 }
 bool AssistantPanel::busy() const { return selected().busy && !selected().background; }
 gfx::Size AssistantPanel::CalculatePreferredSize(const views::SizeBounds&) const {return {preferred_width_,560};}
-void AssistantPanel::OnMouseEntered(const ui::MouseEvent&) {hide_timer_.Stop();hover_check_.Stop();}
-void AssistantPanel::OnMouseExited(const ui::MouseEvent& event) {
-  if(event.IsLeftMouseButton())return;
-  WatchPointer();
+void AssistantPanel::OnMouseEntered(const ui::MouseEvent&) {
+  pointer_exit_armed_ = true; hide_timer_.Stop(); WatchPointer();
 }
+void AssistantPanel::OnMouseExited(const ui::MouseEvent&) { pointer_exit_armed_ = true; WatchPointer(); }
 void AssistantPanel::Collapse() {
-  // A running task keeps working while the panel is hidden.
-  if(pinned_||resize_start_width_||menu_!=Menu::kNone)return;
-  // The consent prompt sits beside the panel: reaching it must not slide the panel away.
-  if(!sessions_.empty()&&(selected().confirmation||selected().asking)&&!selected().background)return;
-  // Keep a keyboard-authored draft visible until the user finishes editing it.
-  if((!prompt_->GetText().empty()||!chips_.empty())&&GetFocusManager()&&GetFocusManager()->GetFocusedView()&&prompt_->Contains(GetFocusManager()->GetFocusedView()))return;
-  hide_timer_.Stop();SetVisible(false);window_->shell()->LayoutAssistant(false);
+  // Hiding is presentation only. Drafts, open editors and pending questions
+  // remain intact, and a running task keeps working in the background.
+  if(pinned_||resize_start_width_)return;
+  hide_timer_.Stop();hover_check_.Stop();SetVisible(false);window_->shell()->LayoutAssistant(false);
 }
 void AssistantPanel::OnResize(int amount,bool done) {
+  pointer_exit_armed_ = true; WatchPointer();
   hide_timer_.Stop();
   if(!resize_start_width_)resize_start_width_=width();
   preferred_width_=std::clamp(*resize_start_width_-(base::i18n::IsRTL()?-amount:amount),360,760);
@@ -403,7 +417,12 @@ void AssistantPanel::OnResize(int amount,bool done) {
   if(done)resize_start_width_.reset();
 }
 void AssistantPanel::SetPinned(bool pinned) {
-  pinned_ = pinned; UpdateAssistantButton(pin_action_, pinned ? T(u"Odepnij") : T(u"Przypnij"),pinned);
+  pinned_ = pinned;
+  hide_timer_.Stop(); hover_check_.Stop();
+  last_pointer_position_ = display::Screen::Get()->GetCursorScreenPoint();
+  pointer_exit_armed_ = true;
+  WatchPointer();
+  UpdateAssistantButton(pin_action_, pinned ? T(u"Odepnij") : T(u"Przypnij"),pinned);
   window_->shell()->LayoutAssistant(pinned_);
 }
 AssistantPanel::Session* AssistantPanel::Find(const std::string& key, uint64_t epoch) {
@@ -419,24 +438,25 @@ void AssistantPanel::OpenSettings() {
 bool AssistantPanel::Started(const Session& session) {
   return session.busy || std::ranges::any_of(session.messages, [](const Message& m) { return m.kind == 1; });
 }
-void AssistantPanel::NewSession() {
+void AssistantPanel::NewSession() { CreateSession(false); }
+void AssistantPanel::CreateSession(bool preserve_previous) {
   CloseMenu();
   // An untouched conversation is reused instead of piling up empty ones.
   const auto profile = window_->AssistantProfileId();
-  for (size_t i = sessions_.size(); i-- > 0;) {
-    if (Started(*sessions_[i]) || sessions_[i]->profile != profile || window_->AssistantHasBackground(sessions_[i]->key)) continue;
+  for (size_t i = sessions_.size(); !preserve_previous && i-- > 0;) {
+    if (Started(*sessions_[i]) || !sessions_[i]->composer_draft.empty() || sessions_[i]->profile != profile || window_->AssistantHasBackground(sessions_[i]->key)) continue;
     if (i != selected_) { if (busy()) Stop(); selected_ = i; }
     chips_.clear(); RenderChips(); RenderConversation(); UpdateControls(); UpdatePageControl();
     if (prompt_) prompt_->RequestFocus();
     return;
   }
   // A conversation in the foreground stops; background tasks keep running.
-  if (!sessions_.empty() && busy()) Stop();
+  if (!preserve_previous && !sessions_.empty() && busy()) Stop();
   if (sessions_.size() >= 200) {
     // Forget the least recently used idle conversation without a background page.
     auto idle = sessions_.end();
     for (auto it = sessions_.begin(); it != sessions_.end(); ++it)
-      if (!(*it)->busy && !window_->AssistantHasBackground((*it)->key) && (idle == sessions_.end() || (*it)->updated < (*idle)->updated)) idle = it;
+      if (!(*it)->busy && (*it)->composer_draft.empty() && !window_->AssistantHasBackground((*it)->key) && (idle == sessions_.end() || (*it)->updated < (*idle)->updated)) idle = it;
     if (idle == sessions_.end()) { Append(selected(), "Session limit reached. Delete old conversations in the history."); return; }
     const size_t removed = idle - sessions_.begin();
     sessions_.erase(idle);
@@ -462,16 +482,19 @@ void AssistantPanel::SelectSession(size_t index) {
   CloseMenu();
   if (index >= sessions_.size() || index == selected_) return;
   if (busy()) Stop();
-  // Leaving an untouched conversation drops it.
+  selected().composer_draft = prompt_->GetText();
+  selected().composer_chips = chips_;
+  // Leaving an untouched conversation without a draft drops it.
   const auto left = sessions_[selected_]->key;
   selected_ = index;
   if (auto it = std::ranges::find_if(sessions_, [&](const auto& s) { return s->key == left; });
-      it != sessions_.end() && !Started(**it) && !window_->AssistantHasBackground(left)) {
+      it != sessions_.end() && !Started(**it) && (*it)->composer_draft.empty() && !window_->AssistantHasBackground(left)) {
     const size_t removed = it - sessions_.begin();
     sessions_.erase(it);
     if (selected_ > removed) --selected_;
   }
-  chips_.clear(); RenderChips();
+  prompt_->SetText(selected().composer_draft);
+  chips_ = selected().composer_chips; RenderChips();
   RenderConversation(); UpdateControls(); UpdatePageControl();
   if (GetWidget()) GetWidget()->LayoutRootViewIfNecessary();
   viewport_->ScrollTo(viewport_->maximum());
@@ -737,7 +760,7 @@ void AssistantPanel::BuildSessionsMenu(views::View* body) {
   const auto profile = window_->AssistantProfileId();
   // This profile's conversations with something written, newest first.
   std::vector<size_t> order;
-  for (size_t i = 0; i < sessions_.size(); ++i) if (sessions_[i]->profile == profile && Started(*sessions_[i])) order.push_back(i);
+  for (size_t i = 0; i < sessions_.size(); ++i) if (sessions_[i]->profile == profile && (Started(*sessions_[i]) || !sessions_[i]->composer_draft.empty())) order.push_back(i);
   std::ranges::sort(order, [&](size_t a, size_t b) { return sessions_[a]->updated > sessions_[b]->updated; });
   body->AddChildView(CreateAssistantEyebrow(T(u"Historia rozmów"), base::NumberToString16(order.size())));
   model_search_ = scene_->AddSearch(body, T(u"Szukaj w rozmowach"), T(u"Szukaj w rozmowach"));
@@ -779,7 +802,7 @@ void AssistantPanel::BuildSessionsMenu(views::View* body) {
     std::u16string detail;
     gfx::Range match;
     if (!query.empty()) {
-      const auto at = Fold(s.title).find(query);
+      const auto at = Fold(s.title.empty() ? s.composer_draft : s.title).find(query);
       if (at != std::u16string::npos) match = gfx::Range(at, at + query.size());
       for (const auto& m : s.messages) {
         if (m.kind > 1 || !match.is_empty()) continue;
@@ -801,7 +824,7 @@ void AssistantPanel::BuildSessionsMenu(views::View* body) {
       list->AddChildView(CreateAssistantEyebrow(age == 0 ? T(u"Dziś") : age == 1 ? T(u"Wczoraj") : age == 2 ? T(u"Ostatnie 7 dni") : T(u"Wcześniej")))->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(shown ? 6 : 0, 0, 0, 0));
     }
     AssistantRow row;
-    row.title = s.title.empty() ? T(u"Nowa sesja") : s.title;
+    row.title = s.title.empty() ? (s.composer_draft.empty() ? T(u"Nowa sesja") : s.composer_draft.substr(0,48)) : s.title;
     row.match = match;
     row.detail = detail;
     row.checked = i == selected_;
@@ -1147,6 +1170,25 @@ void AssistantPanel::Ask(std::u16string text) {
   prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size())); PromptChanged();
   Send(false);
 }
+std::u16string AssistantPanel::draft_for_testing() const { return std::u16string(prompt_->GetText()); }
+void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions, bool needs_web) {
+  // Keep the previous conversation and composer intact, including running work.
+  const auto previous = selected().key;
+  selected().composer_draft = prompt_->GetText();
+  selected().composer_chips = chips_;
+  CreateSession(true);
+  if (selected().key == previous) return;
+  prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size()));
+  InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
+  PromptChanged();
+  const auto& access = selected().permissions;
+  if (access.pages && (!needs_web || access.web) && (!needs_actions || access.actions) && !selected().provider.empty()) {
+    Send(false);
+  } else {
+    ToggleMenu(Menu::kAccess);
+    prompt_->RequestFocus();
+  }
+}
 void AssistantPanel::SendForTesting(std::string text, bool background) {
   prompt_->SetText(base::UTF8ToUTF16(text)); Send(background);
 }
@@ -1262,6 +1304,7 @@ void AssistantPanel::Send(bool background) {
   }
   in_background = in_background || (session.background && window_->AssistantHasBackground(session.key));
   auto chips = std::exchange(chips_, {});
+  session.composer_draft.clear(); session.composer_chips.clear();
   prompt_->SetText(u""); RenderChips();
   if (session.title.empty()) session.title = text.empty() ? chips.front().title : text.substr(0, 48);
   Append(session, "You: " + base::UTF16ToUTF8(text), chips);
@@ -1287,19 +1330,16 @@ void AssistantPanel::StartTurn(Session& session) {
   UpdateControls(); RenderBackground(); RenderConversation();
   if (!process_.IsValid()) {
     base::FilePath exe; base::PathService::Get(base::DIR_EXE, &exe);
-    auto env = base::Environment::Create();
-    auto node_path = env->GetVar("ZITTER_NODE_PATH");
-    base::FilePath node = node_path ? base::FilePath::FromUTF8Unsafe(*node_path) : base::FilePath(FILE_PATH_LITERAL("node"));
-    auto runtime = exe.AppendASCII("assistant");
-#if BUILDFLAG(IS_MAC)
-    // Signed app bundles keep scripts in Resources; unbundled tests use DIR_EXE.
-    if (exe.BaseName().value() == "MacOS" &&
-        exe.DirName().BaseName().value() == "Contents")
-      runtime = exe.DirName().AppendASCII("Resources").AppendASCII("assistant");
+#if BUILDFLAG(IS_WIN)
+    const auto runtime = exe.AppendASCII("zitter_assistant.exe");
+#else
+    const auto runtime = exe.AppendASCII("zitter_assistant");
 #endif
-    const auto script = runtime.AppendASCII("server.mjs");
     port_ = 49152 + static_cast<int>(base::RandGenerator(16384)); token_ = base::ToLowerASCII(base::HexEncode(base::RandBytesAsVector(24)));
-    base::CommandLine command(node); command.AppendArgPath(script); command.AppendArg(base::NumberToString(port_)); command.AppendArg(token_);
+    base::CommandLine command(runtime);
+    command.AppendSwitchASCII("port", base::NumberToString(port_));
+    command.AppendSwitchASCII("token", token_);
+    command.AppendSwitchASCII("parent", base::NumberToString(base::GetCurrentProcId()));
     base::LaunchOptions options;
 #if BUILDFLAG(IS_WIN)
     options.start_hidden = true;
@@ -1312,7 +1352,7 @@ void AssistantPanel::StartTurn(Session& session) {
     process_ = base::LaunchProcess(command, options);
     if (!process_.IsValid()) {
       StopSession(session);
-      Append(session, "Could not start Node.js. Install Node 22+ or set ZITTER_NODE_PATH, then restart Zitter."); return;
+      Append(session, "Could not start the native assistant helper. Check the Zitter installation."); return;
     }
   }
   PollRuntime(session.key, session.epoch, 0);
@@ -1325,11 +1365,11 @@ void AssistantPanel::PollRuntime(std::string key, uint64_t epoch, int attempts) 
     auto* session = self->Find(key, epoch);
     if (!session || !session->busy) return;
     if (!reply.FindBool("ready").value_or(false)) {
-      // A cold Node start (fresh files scanned by antivirus) can take a while.
+      // A cold helper start (fresh files scanned by antivirus) can take a while.
       if (attempts >= 300) {
         self->StopSession(*session);
         if (self->process_.IsValid()) { self->process_.Terminate(0, false); self->process_.Close(); }
-        self->Append(*session, "Assistant runtime did not start. Check Node 22+ and the assistant runtime beside the executable."); return;
+        self->Append(*session, "Assistant runtime did not start. Check the native helper beside the Zitter executable."); return;
       }
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
           base::BindOnce(&AssistantPanel::PollRuntime, self, key, epoch, attempts + 1), base::Milliseconds(100));

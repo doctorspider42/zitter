@@ -12,7 +12,7 @@ spec.loader.exec_module(packager)
 
 
 class PackageTests(unittest.TestCase):
-    def test_assistant_scripts_are_resources_before_signing(self):
+    def test_native_assistant_is_code_and_stale_scripts_are_removed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             out = root / 'out'
@@ -20,6 +20,7 @@ class PackageTests(unittest.TestCase):
             framework.mkdir(parents=True)
             (framework / 'Chromium Framework').write_bytes(b'framework')
             (out / 'zitter').write_bytes(b'app')
+            (out / 'zitter_assistant').write_bytes(b'native helper')
             runtime = out / 'assistant'
             runtime.mkdir()
             (runtime / 'server.mjs').write_text('console.log("runtime")')
@@ -30,8 +31,8 @@ class PackageTests(unittest.TestCase):
             (legacy / 'stale.mjs').write_text('old runtime')
             def verify_at_signing(*_):
                 self.assertFalse(legacy.exists())
-                self.assertEqual((runtime / 'server.mjs').read_bytes(),
-                                 (app / 'Contents/Resources/assistant/server.mjs').read_bytes())
+                self.assertFalse((app / 'Contents/Resources/assistant').exists())
+                self.assertEqual(b'native helper', (app / 'Contents/MacOS/zitter_assistant').read_bytes())
             with mock.patch.object(packager, 'sign_bundle', side_effect=verify_at_signing):
                 packager.package(out, app, register=False, identity='test')
 
@@ -59,6 +60,7 @@ class PackageTests(unittest.TestCase):
             framework.mkdir(parents=True)
             (framework / 'Chromium Framework').write_bytes(b'framework')
             (root / 'out/zitter').write_bytes(b'app')
+            (root / 'out/zitter_assistant').write_bytes(b'native helper')
             app = root / 'Zitter.app'
             def verify_at_signing(destination, identity, hardened_runtime):
                 info = plistlib.loads((destination / 'Contents/Info.plist').read_bytes())
@@ -81,6 +83,7 @@ class PackageTests(unittest.TestCase):
                 version.mkdir(parents=True)
                 (version / 'Chromium Framework').write_bytes(name.encode())
                 (out / 'zitter').write_bytes(name.encode())
+                (out / 'zitter_assistant').write_bytes(b'native helper')
                 (out / 'libcurrent.dylib').write_bytes(name.encode())
             old = root / 'component/libstale.dylib'
             old.write_bytes(b'old build')
@@ -108,6 +111,7 @@ class PackageTests(unittest.TestCase):
             (version / 'Chromium Framework').write_bytes(b'framework')
             (version.parent / 'Current').symlink_to('1.0')
             (out / 'zitter').write_bytes(b'browser')
+            (out / 'zitter_assistant').write_bytes(b'native helper')
             (out / 'libsandbox_mac_seatbelt.dylib').write_bytes(b'sandbox')
             app = root / 'Zitter.app'
             packager.package(out, app)
@@ -141,6 +145,7 @@ class PackageTests(unittest.TestCase):
                                'CFBundleIconName': 'AppIcon'}, stream)
             (version.parent / 'Current').symlink_to('1.0')
             (out / 'zitter').write_bytes(b'browser')
+            (out / 'zitter_assistant').write_bytes(b'native helper')
             app = root / 'Zitter.app'
             packager.package(out, app)
             packager.package(out, app)
@@ -165,6 +170,7 @@ class PackageTests(unittest.TestCase):
             version.mkdir(parents=True)
             (version / 'Chromium Framework').write_bytes(b'framework')
             (out / 'zitter').write_bytes(b'browser')
+            (out / 'zitter_assistant').write_bytes(b'native helper')
             (out / 'libcurrent.dylib').write_bytes(b'library')
             app = root / 'Zitter.app'
             # Migrate a legacy hard-linked package as well as a fresh one.
@@ -190,6 +196,7 @@ class PackageTests(unittest.TestCase):
             framework.mkdir(parents=True)
             (framework / 'Chromium Framework').write_bytes(b'framework')
             (out / 'zitter').write_bytes(b'app')
+            (out / 'zitter_assistant').write_bytes(b'native helper')
             notices = root / 'notices.txt'
             notices.write_text('reviewed third-party notices')
             app = root / 'Zitter.app'
@@ -250,6 +257,7 @@ class PackageTests(unittest.TestCase):
             version.mkdir(parents=True)
             (version / 'Chromium Framework').write_bytes(b'framework')
             (out / 'zitter').write_bytes(b'new-browser')
+            (out / 'zitter_assistant').write_bytes(b'native helper')
             app = root / 'Zitter.app'
             marker = app / 'Contents/zitter-development-bundle'
             marker.parent.mkdir(parents=True)
@@ -274,6 +282,7 @@ class PackageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'zitter').write_bytes(b'browser')
+            (root / 'zitter_assistant').write_bytes(b'native helper')
             app = root / 'Other.app'
             app.mkdir()
             with self.assertRaisesRegex(ValueError, 'unowned bundle'):

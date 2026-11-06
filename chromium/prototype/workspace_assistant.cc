@@ -669,7 +669,7 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
   if (tool == "screenshot") {
     // A tab the user is not looking at renders only while it is being captured.
     if (page->GetVisibility() == content::Visibility::VISIBLE || page->IsBeingCaptured()) { Capture(page->GetWeakPtr(), std::move(done)); return; }
-    auto keep = std::make_unique<base::ScopedClosureRunner>(page->IncrementCapturerCount(page->GetSize(), /*stay_hidden=*/true, /*stay_awake=*/true, /*is_activity=*/false));
+    auto keep = std::make_unique<base::ScopedClosureRunner>(page->IncrementCapturerCount(gfx::Size(), /*stay_hidden=*/true, /*stay_awake=*/true, /*is_activity=*/false));
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce(
         [](base::WeakPtr<content::WebContents> page, std::unique_ptr<base::ScopedClosureRunner> keep, base::OnceCallback<void(base::Value)> done) {
           Capture(page, base::BindOnce([](std::unique_ptr<base::ScopedClosureRunner>, base::OnceCallback<void(base::Value)> done, base::Value value) {
@@ -748,11 +748,9 @@ BackendProbe ProbeBackends() {
   auto env = base::Environment::Create();
   auto set = [&](base::cstring_view name) { const auto value = env->GetVar(name); return value && !value->empty(); };
   auto file = [&](base::cstring_view name) { const auto value = env->GetVar(name); return value && base::PathExists(base::FilePath::FromUTF8Unsafe(*value)); };
-  base::FilePath exe; base::PathService::Get(base::DIR_EXE, &exe);
   BackendProbe probe;
   probe.openai = set("OPENAI_API_KEY");
-  probe.codex = file("ZITTER_CODEX_SDK_PATH") || base::PathExists(exe.AppendASCII("assistant").AppendASCII("node_modules")
-      .AppendASCII("@openai").AppendASCII("codex-sdk").AppendASCII("package.json"));
+  probe.codex = file("ZITTER_CODEX_PATH") || OnPath("codex");
   probe.claude = file("ZITTER_CLAUDE_PATH") || OnPath("claude");
   const GURL ollama(env->GetVar("ZITTER_OLLAMA_URL").value_or("http://127.0.0.1:11434"));
   probe.ollama = ollama.is_valid() ? std::string(ollama.host()) + (ollama.has_port() ? ":" + std::string(ollama.port()) : std::string()) : "127.0.0.1:11434";
@@ -791,7 +789,7 @@ base::DictValue WorkspaceWindow::AssistantSettingsForShell() {
           };
           base::ListValue status;
           status.Append(probe.openai ? row(1, T(u"Gotowy"), T(u"OPENAI_API_KEY ze środowiska")) : row(2, T(u"Brak klucza"), T(u"Ustaw OPENAI_API_KEY przed uruchomieniem Zittera")));
-          status.Append(probe.codex ? row(1, T(u"Gotowy"), T(u"SDK w pakiecie · zaloguj się w Codex")) : row(2, T(u"Brak SDK"), T(u"Uruchom npm ci w katalogu assistant")));
+          status.Append(probe.codex ? row(1, T(u"Gotowy"), T(u"Natywny Codex CLI · zaloguj się w Codex")) : row(2, T(u"Nie znaleziono"), T(u"Zainstaluj natywny Codex CLI albo ustaw ZITTER_CODEX_PATH")));
           status.Append(probe.claude ? row(1, T(u"Gotowy"), T(u"claude w PATH")) : row(2, T(u"Nie znaleziono"), T(u"Zainstaluj Claude Code albo ustaw ZITTER_CLAUDE_PATH")));
           status.Append(row(0, T(u"Lokalny"), base::UTF8ToUTF16(probe.ollama)));
           window->assistant_backend_status_ = std::move(status);
@@ -872,7 +870,7 @@ bool WorkspaceWindow::AssistantStartBackground(const std::string& key, const std
       auto* contents = EnsurePage(page.view);
       page.view->SetBoundsRect(gfx::Rect(shell_->content_host()->size()));
       contents->Resize(gfx::Rect(shell_->content_host()->size()));
-      page.rendering = contents->IncrementCapturerCount(shell_->content_host()->size(), /*stay_hidden=*/true, /*stay_awake=*/true, /*is_activity=*/false);
+      page.rendering = contents->IncrementCapturerCount(gfx::Size(), /*stay_hidden=*/true, /*stay_awake=*/true, /*is_activity=*/false);
       contents->UpdateWebContentsVisibility(content::Visibility::HIDDEN);
       if (copy.SchemeIsHTTPOrHTTPS()) contents->GetController().LoadURL(copy, content::Referrer(), ui::PAGE_TRANSITION_TYPED, {});
       assistant_background_[key] = std::move(page);
@@ -896,7 +894,7 @@ bool WorkspaceWindow::AssistantStartBackground(const std::string& key, const std
   // Hidden, but sized like the page area so layout and visibility checks hold.
   page.view->SetBoundsRect(gfx::Rect(shell_->content_host()->size()));
   contents->Resize(gfx::Rect(shell_->content_host()->size()));
-  page.rendering = contents->IncrementCapturerCount(shell_->content_host()->size(), /*stay_hidden=*/true, /*stay_awake=*/true, /*is_activity=*/false);
+  page.rendering = contents->IncrementCapturerCount(gfx::Size(), /*stay_hidden=*/true, /*stay_awake=*/true, /*is_activity=*/false);
   contents->UpdateWebContentsVisibility(content::Visibility::HIDDEN);
   if (from_tab.empty() && url.SchemeIsHTTPOrHTTPS() && !url.has_username() && !url.has_password())
     contents->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_TYPED, {});

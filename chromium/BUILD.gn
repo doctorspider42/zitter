@@ -2,6 +2,64 @@
 import("//testing/test.gni")
 import("//build/rust/rust_static_library.gni")
 
+# Native assistant core. Uses Chromium's vendored crates and toolchain only.
+config("assistant_includes") {
+  include_dirs = [ "." ]
+}
+
+rust_static_library("assistant_engine") {
+  public_configs = [ ":assistant_includes" ]
+  crate_root = "chromium/assistant/runtime.rs"
+  sources = [ crate_root ]
+  inputs = [
+    "chromium/assistant/system.txt",
+    "chromium/assistant/help.txt",
+  ]
+  cxx_bindings = [ crate_root ]
+  allow_unsafe = true
+  build_native_rust_unit_tests = true
+  deps = [
+    ":assistant_transport",
+    "//third_party/rust/serde_json/v1:lib",
+  ]
+}
+
+source_set("assistant_transport") {
+  public_configs = [ ":assistant_includes" ]
+  sources = [
+    "chromium/assistant/native_cli.cc",
+    "chromium/assistant/native_http.cc",
+    "chromium/assistant/native_transport.cc",
+    "chromium/assistant/native_transport.h",
+  ]
+  deps = [
+    "//base",
+    "//crypto",
+    "//net",
+    "//third_party/re2",
+    "//third_party/rust/cxx/v1:lib",
+    "//url",
+  ]
+}
+
+executable("zitter_assistant") {
+  sources = [ "chromium/assistant/native_main.cc" ]
+  deps = [
+    ":assistant_engine",
+    ":assistant_transport",
+    "//base",
+    "//base:i18n",
+    "//net",
+    "//url",
+  ]
+}
+
+executable("assistant_cli_fixture") {
+  testonly = true
+  sources = [ "tests/fixtures/assistant_cli.cc" ]
+  deps = [ "//base" ]
+}
+
 # The Rust UI: scene, layout, controls and editor state. Portable on purpose.
 rust_static_library("sidebar_scene") {
   crate_root = "chromium/prototype/sidebar_scene.rs"
@@ -340,17 +398,8 @@ action("content_blocking_script") {
   args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingScript" ]
 }
 
-copy("assistant_runtime") {
-  sources = [
-    "chromium/assistant/server.mjs",
-    "chromium/assistant/engine.mjs",
-    "chromium/assistant/errors.mjs",
-    "chromium/assistant/providers.mjs",
-    "chromium/assistant/web.mjs",
-    "chromium/assistant/package.json",
-    "chromium/assistant/package-lock.json",
-  ]
-  outputs = [ "$root_out_dir/assistant/{{source_file_part}}" ]
+group("assistant_runtime") {
+  data_deps = [ ":zitter_assistant" ]
 }
 
 source_set("profile_workspace_browser_tests") {

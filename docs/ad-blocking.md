@@ -530,7 +530,7 @@ reguły**.
 - Rust (`adblock.rs`): parsing, network matching with types and third-party,
   exceptions, cosmetic selectors, `generichide`, rule validation and the
   site-scope check.
-- Node (`node --test` in `chromium/assistant`): the system prompt names both
+- Native Rust assistant tests (`assistant_engine_unittests`): the system prompt names both
   tools; the engine routes them to the browser.
 - Python (`tests/test_content_blocking_patch.py`): the Chromium patch installs
   the crates and prefs idempotently and refuses unowned files; the vendored

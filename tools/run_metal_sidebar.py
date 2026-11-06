@@ -8,7 +8,6 @@ import os
 import plistlib
 from pathlib import Path
 import subprocess
-import shutil
 import sys
 import threading
 from urllib.parse import urlencode
@@ -108,10 +107,10 @@ def main():
         launcher = [str(binary)]
         if not WINDOWS:
             launcher = ["/usr/bin/open", "-W", "-n"]
-            # LaunchServices does not inherit the shell's Homebrew/Node PATH.
-            node = os.environ.get("ZITTER_NODE_PATH") or shutil.which("node")
-            if node:
-                launcher += ["--env", f"ZITTER_NODE_PATH={node}"]
+            # LaunchServices does not inherit native provider executable paths.
+            for name in ("ZITTER_CODEX_PATH", "ZITTER_CLAUDE_PATH"):
+                if value := os.environ.get(name):
+                    launcher += ["--env", f"{name}={value}"]
             launcher += [str(args.app.resolve()), "--args"]
         return subprocess.call([*launcher, f"--user-data-dir={args.profile.resolve()}",
                                 "--no-first-run",

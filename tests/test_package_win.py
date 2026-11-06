@@ -13,19 +13,23 @@ spec.loader.exec_module(package)
 class WindowsPackageTest(unittest.TestCase):
     def test_keeps_what_runs_and_drops_symbols_sources_and_test_data(self):
         files = package.select_files([
-            "./zitter.exe", "./zitter.exe.pdb", "./base.dll", "chrome_elf.dll", "resources.pak",
+            "./zitter.exe", "./zitter_assistant.exe", "./zitter.exe.pdb", "./base.dll", "chrome_elf.dll", "resources.pak",
             "locales/pl.pak", "locales/pl.pak.info", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
             "v8_context_snapshot.bin", "gen/third_party/devtools-frontend/src/front_end/Tests.js",
             "pyproto/google/__init__.py", "angledata/foo.bin", "../../third_party/x.txt", "zitter.lib",
             "VkLayer_khronos_validation.dll", "msdia140.dll", "dbghelp.dll", "locales/en-XA.pak",
         ])
-        self.assertEqual(files, sorted(["zitter.exe", "base.dll", "chrome_elf.dll", "resources.pak",
+        self.assertEqual(files, sorted(["zitter.exe", "zitter_assistant.exe", "base.dll", "chrome_elf.dll", "resources.pak",
                                         "locales/pl.pak", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
                                         "v8_context_snapshot.bin"]))
 
     def test_refuses_a_build_without_zitter(self):
         with self.assertRaises(ValueError):
             package.select_files(["./chrome.exe", "./base.dll"])
+
+    def test_refuses_a_build_without_native_assistant(self):
+        with self.assertRaisesRegex(ValueError, 'zitter_assistant.exe'):
+            package.select_files(['zitter.exe', 'base.dll'])
 
     def test_version_comes_from_the_exe_resource(self):
         self.assertRegex(package.version(), r"^\d+\.\d+\.\d+$")

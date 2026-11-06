@@ -765,10 +765,21 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
     window->shell_->OpenPrivacySettings();
   }, base::Unretained(this));
   extension_callbacks.toggle_assistant = base::BindRepeating([](WorkspaceWindow* window) {
-    window->ToggleAssistantFromBar();
+    window->ShowAssistant();
   }, base::Unretained(this));
   extension_callbacks.open_ad_blocking_settings = base::BindRepeating([](WorkspaceWindow* window) {
     window->shell_->OpenAdBlockingSettings();
+  }, base::Unretained(this));
+  extension_callbacks.assistant_action = base::BindRepeating([](WorkspaceWindow* window, int command) {
+    const std::array<std::u16string, 5> prompts = {
+      T(u"Podsumuj tę stronę: główne tezy, liczby, wnioski i to, co warto zrobić dalej. Oddziel treść strony od własnej interpretacji."),
+      T(u"Dodaj wyszukiwarkę tej strony. Odczytaj formularz wyszukiwania, ustal poprawny URL z parametrem zapytania i zaproponuj krótki keyword. Użyj add_search_engine."),
+      T(u"Zablokuj reklamy na tej stronie, których nie blokują listy. Sprawdź istniejące reguły, przetestuj nowe i pokaż ich podgląd przed zapisaniem. Nie ukrywaj właściwej treści."),
+      T(u"Najpierw odczytaj bieżącą stronę, potem sprawdź jej najważniejsze twierdzenia w niezależnych i pierwotnych źródłach. Pokaż co potwierdzono, co jest sporne, daty i linki. Nie traktuj samej strony jako dowodu."),
+      T(u"Wyciągnij użyteczne dane z tej strony do czytelnej tabeli. Wskaż ceny, warunki, różnice i braki danych, jeśli występują. Nie dopowiadaj wartości, których nie znaleziono.")};
+    if (command < 0 || command >= static_cast<int>(prompts.size()) || !window->assistant_settings_.enabled) return;
+    window->ShowAssistant();
+    if (window->assistant_) window->assistant_->PreparePageAction(prompts[command], command == 1 || command == 2, command == 3);
   }, base::Unretained(this));
   extension_callbacks.assistant_available = base::BindRepeating([](WorkspaceWindow* window) {
     return window->assistant_settings_.enabled;
