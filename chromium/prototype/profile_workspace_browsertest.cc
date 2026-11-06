@@ -156,6 +156,7 @@
 #include "base/logging.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "ui/views/view_tracker.h"
+#include "ui/views/view_observer.h"
 #include "ui/views/scoped_paint_lock.h"
 #include "ui/views/controls/webview/webview.h"
 #include "base/json/json_reader.h"
@@ -1395,6 +1396,71 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceProductBoundary) {
   LOG(INFO) << "ZITTER_UI_RESOURCE {\"iterations\":" << iterations << ",\"pins\":" << pins
             << ",\"browser_cpu_ms\":" << (*cpu_end - *cpu_start).InMillisecondsF()
             << ",\"browser_footprint_bytes\":" << footprint << "}";
+}
+
+// A wide catalogue keeps unrelated branches present during local edits.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceSidebarSubtree) {
+  const auto* command = base::CommandLine::ForCurrentProcess();
+  if (!command->HasSwitch("zitter-benchmark")) GTEST_SKIP();
+  int iterations = 20, pins = 1000;
+  if (command->HasSwitch("zitter-perf-iterations"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-iterations"), &iterations));
+  if (command->HasSwitch("zitter-perf-pins"))
+    ASSERT_TRUE(base::StringToInt(command->GetSwitchValueASCII("zitter-perf-pins"), &pins));
+  ASSERT_GE(iterations, 1); ASSERT_LE(iterations, 400);
+  ASSERT_GE(pins, 100); ASSERT_LE(pins, 5000);
+  base::test::ScopedRunLoopTimeout timeout(FROM_HERE, base::Seconds(120));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready() && shell->tools_ready(); }));
+  shell->SetWorkspaceAnimations(false);
+  shell->SetPinned(true); shell->ShowSidebar();
+  const auto url = embedded_test_server()->GetURL("/performance_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  std::vector<PinnedItem> catalogue;
+  constexpr int kFolders = 24;
+  for (int i = 0; i < kFolders; ++i)
+    catalogue.push_back({"branch-" + std::to_string(i), "", "Folder", GURL(), true});
+  for (int i = 0; i < pins - kFolders; ++i)
+    catalogue.push_back({"leaf-" + std::to_string(i), "branch-" + std::to_string(i % kFolders), "Pin", url, false});
+  auto drain = [&] {
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    base::RunLoop().RunUntilIdle();
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    base::RunLoop().RunUntilIdle();
+  };
+  ASSERT_TRUE(window_->RestorePins("work", catalogue)); drain();
+  auto emit = [](std::string metric, int trial, base::TimeTicks start) {
+    if (trial >= 0) LOG(INFO) << "ZITTER_PERF {\"metric\":\"" << metric << "\",\"trial\":" << trial
+        << ",\"ms\":" << (base::TimeTicks::Now() - start).InMillisecondsF() << "}";
+  };
+  auto metrics = base::ProcessMetrics::CreateCurrentProcessMetrics();
+  std::optional<base::TimeDelta> cpu_start;
+  for (int trial = -3; trial < iterations; ++trial) {
+    if (trial == 0) { const auto cpu = metrics->GetCumulativeCPUUsage(); ASSERT_TRUE(cpu.has_value()); cpu_start = *cpu; }
+    auto start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->MovePin("leaf-0", "branch-1", {}));
+    emit("leaf_move_dispatch_ms", trial, start); drain(); emit("leaf_move_settled_ms", trial, start);
+    start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->MovePin("branch-2", "branch-3", {}));
+    emit("branch_move_dispatch_ms", trial, start); drain(); emit("branch_move_settled_ms", trial, start);
+    start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->RemovePinnedFolder("work", "branch-4", true));
+    emit("branch_delete_dispatch_ms", trial, start); drain(); emit("branch_delete_settled_ms", trial, start);
+    ASSERT_LT(window_->pinned_items("work").size(), catalogue.size());
+    start = base::TimeTicks::Now();
+    ASSERT_TRUE(window_->RestorePins("work", catalogue));
+    emit("catalogue_restore_dispatch_ms", trial, start); drain(); emit("catalogue_restore_settled_ms", trial, start);
+    ASSERT_EQ(catalogue, window_->pinned_items("work"));
+  }
+  const auto cpu_end = metrics->GetCumulativeCPUUsage(); ASSERT_TRUE(cpu_end.has_value());
+  const auto memory = metrics->GetMemoryInfo(); ASSERT_TRUE(memory.has_value());
+  uint64_t footprint = 0;
+#if BUILDFLAG(IS_APPLE)
+  footprint = memory->physical_footprint_bytes;
+#endif
+  LOG(INFO) << "ZITTER_UI_RESOURCE {\"iterations\":" << iterations << ",\"pins\":" << pins
+      << ",\"browser_cpu_ms\":" << (*cpu_end - *cpu_start).InMillisecondsF()
+      << ",\"browser_footprint_bytes\":" << footprint << "}";
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PerformanceRestoration) {
@@ -6043,6 +6109,131 @@ END_METADATA
 // Compiled only: metadata refresh must retain the physical folder container too.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeMetadataRefreshRetainsRowsAndGroupContainers) {
   ASSERT_TRUE(window_->Select("work"));auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;ASSERT_TRUE(window_->CreatePinnedFolder("work","","Metadata parent"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));const auto key=window_->pinned_items("work").back().id;ASSERT_TRUE(window_->CreatePinnedFolder("work",key,"Metadata child"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->SetPinned(true);shell->ShowSidebar();auto* parent=FindButton(shell->sidebar_view(),u"▾ Metadata parent");auto* child=FindButton(shell->sidebar_view(),u"▾ Metadata child");ASSERT_TRUE(parent);ASSERT_TRUE(child);auto* holder=parent->parent();auto* container=holder->parent();const auto index=container->GetIndexOf(holder);ASSERT_TRUE(index);ASSERT_LT(*index+1,container->children().size());auto* group=container->children()[*index+1].get();views::ViewTracker alive_group(group);const auto group_id=shell->sidebar_node_id_for_testing(group);const auto builds=shell->pinned_list_build_count();ASSERT_TRUE(window_->RenamePinnedFolder("work",key,"Renamed metadata parent"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));EXPECT_EQ(group,alive_group.view());EXPECT_EQ(parent,FindButton(shell->sidebar_view(),u"▾ Renamed metadata parent"));EXPECT_EQ(child,FindButton(shell->sidebar_view(),u"▾ Metadata child"));EXPECT_EQ(group_id,shell->scene_parent_id_for_testing(child));EXPECT_EQ(builds,shell->pinned_list_build_count());ActivateSidebarRow(parent);EXPECT_FALSE(child->IsDrawn());ActivateSidebarRow(parent);EXPECT_TRUE(child->IsDrawn());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeLocalEditsDoNotDetachUnchangedBranchesOrTabs) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false); shell->SetPinned(true); shell->ShowSidebar();
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  std::vector<PinnedItem> pins = {
+      {"a", "", "A", GURL(), true}, {"b", "", "B", GURL(), true},
+      {"c", "", "C", GURL(), true}, {"a1", "a", "A child", url, false},
+      {"a2", "a", "A survivor", url, false}, {"c1", "c", "Untouched", url, false}};
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* untouched = shell->pin_button("c1"); ASSERT_TRUE(untouched);
+  auto* moving = shell->pin_button("a1"); ASSERT_TRUE(moving);
+  auto* survivor = shell->pin_button("a2"); ASSERT_TRUE(survivor);
+  auto* group = untouched->parent()->parent();
+  auto* tab = shell->tab_button(0); ASSERT_TRUE(tab);
+  class AttachmentObserver final : public views::ViewObserver {
+   public:
+    explicit AttachmentObserver(views::View* view) : observation_(this) { observation_.Observe(view); }
+    void OnViewRemovedFromWidget(views::View*) override { ++detaches; }
+    void OnViewHierarchyChanged(views::View*, const views::ViewHierarchyChangedDetails&) override { ++hierarchy; }
+    int detaches = 0, hierarchy = 0;
+   private:
+    base::ScopedObservation<views::View, views::ViewObserver> observation_;
+  } row_observer(untouched), group_observer(group), tab_observer(tab);
+  untouched->RequestFocus();
+  const auto builds = shell->pinned_list_build_count();
+  {
+    AttachmentObserver moving_observer(moving), subtree_observer(survivor);
+    moving->RequestFocus();
+    ASSERT_TRUE(window_->MovePin("a1", "b", {}));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    EXPECT_EQ(moving, shell->pin_button("a1"));
+    EXPECT_EQ(moving, moving->GetFocusManager()->GetFocusedView());
+    EXPECT_EQ(shell->scene_parent_id_for_testing(moving),
+              shell->sidebar_node_id_for_testing(moving->parent()->parent()));
+    EXPECT_EQ(0, moving_observer.detaches);
+    ASSERT_TRUE(window_->MovePin("a", "b", {}));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    EXPECT_EQ(survivor, shell->pin_button("a2"));
+    EXPECT_EQ(0, subtree_observer.detaches);
+  }
+  untouched->RequestFocus();
+  // Deleting a folder without its contents must move survivors out before the
+  // old group is destroyed; unrelated groups and normal tabs stay attached.
+  ASSERT_TRUE(window_->RemovePinnedFolder("work", "a", false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ(survivor, shell->pin_button("a2"));
+  ASSERT_TRUE(window_->RemovePinnedFolder("work", "b", true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_FALSE(shell->pin_button("a1"));
+  pins = window_->pinned_items("work");
+  pins.push_back({"new", "", "New folder", GURL(), true});
+  pins.push_back({"new-child", "new", "New pin", url, false});
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_TRUE(shell->pin_button("new-child"));
+  EXPECT_EQ(untouched, shell->pin_button("c1"));
+  EXPECT_EQ(group, untouched->parent()->parent());
+  EXPECT_EQ(tab, shell->tab_button(0));
+  EXPECT_EQ(untouched, untouched->GetFocusManager()->GetFocusedView());
+  EXPECT_EQ(0, row_observer.detaches);
+  EXPECT_EQ(0, group_observer.detaches);
+  EXPECT_EQ(0, group_observer.hierarchy);
+  EXPECT_EQ(0, tab_observer.detaches);
+  EXPECT_EQ(builds, shell->pinned_list_build_count());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeFocusFollowsARowMovedOutsideTheViewport) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetWorkspaceAnimations(false); shell->SetPinned(true); shell->ShowSidebar();
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  std::vector<PinnedItem> pins = {{"a", "", "First folder", GURL(), true},
+                                {"focused", "a", "Focused pin", url, false}};
+  for (int i = 0; i < 100; ++i)
+    pins.push_back({"filler-" + std::to_string(i), "a", "Other pin", url, false});
+  pins.push_back({"b", "", "Last folder", GURL(), true});
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* row = shell->pin_button("focused"); ASSERT_TRUE(row);
+  row->ScrollViewToVisible(); row->RequestFocus();
+  ASSERT_FALSE(row->GetVisibleBounds().IsEmpty());
+  ASSERT_TRUE(window_->MovePin("focused", "b", {}));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(row, shell->pin_button("focused"));
+  EXPECT_EQ(row, row->GetFocusManager()->GetFocusedView());
+  EXPECT_FALSE(row->GetVisibleBounds().IsEmpty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeBulkResetAttachesTheNewTreeOnce) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  shell->SetPinned(true); shell->ShowSidebar();
+  std::vector<PinnedItem> pins = {{"keep", "", "Retained folder", GURL(), true}};
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  auto* keep = shell->pin_button("keep"); ASSERT_TRUE(keep);
+  auto* root = keep->parent()->parent()->parent();
+  class HierarchyCounter final : public views::ViewObserver {
+   public:
+    explicit HierarchyCounter(views::View* view) : observation_(this) { observation_.Observe(view); }
+    void OnViewHierarchyChanged(views::View*, const views::ViewHierarchyChangedDetails&) override { ++changes; }
+    int changes = 0;
+   private:
+    base::ScopedObservation<views::View, views::ViewObserver> observation_;
+  } counter(root);
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  for (int i = 0; i < 250; ++i)
+    pins.push_back({"new-" + std::to_string(i), "keep", "New pin", url, false});
+  keep->RequestFocus();
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ(pins, window_->pinned_items("work"));
+  EXPECT_EQ(keep, shell->pin_button("keep"));
+  EXPECT_EQ(keep, keep->GetFocusManager()->GetFocusedView());
+  // A reset must not issue hundreds of live hierarchy mutations. Construction
+  // off the widget delivers the completed subtree in a bounded number of steps.
+  EXPECT_LT(counter.changes, 16);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinTreeTopologyChangeRetainsFolderGroupsAndListContainer) {

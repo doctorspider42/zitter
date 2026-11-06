@@ -13,7 +13,7 @@ import statistics
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-TESTS = {"interaction": "PerformanceUiInteraction", "boundary": "PerformanceProductBoundary"}
+TESTS = {"interaction": "PerformanceUiInteraction", "boundary": "PerformanceProductBoundary", "subtree": "PerformanceSidebarSubtree"}
 BACKENDS = {"compositor": [], "metal": ["--zitter-rust-raster=metal"]}
 
 
@@ -24,6 +24,12 @@ def digest(path):
 
 def describe_binary(path):
     result = {"path": str(path), "sha256": digest(path)}
+    receipt = path.with_name(path.name + ".source.json")
+    if receipt.is_file():
+        evidence = json.loads(receipt.read_text())
+        if evidence.get("binary_sha256") != result["sha256"]:
+            raise ValueError(f"Binary no longer matches its source receipt: {path}")
+        result["build_receipt"] = evidence
     source = path.parents[2] / ("zitter_" + path.name.removeprefix("zitter_prototype_"))
     if source.is_dir():
         files = [p for p in sorted(source.rglob("*")) if p.is_file() and not p.name.startswith(".zitter")]
@@ -73,7 +79,7 @@ def run(binary, test, backend, iterations, tabs, pins, log):
     grouped = {}
     for sample in samples:
         grouped.setdefault(sample["metric"], []).append(sample)
-    expected = 9 if test == "interaction" else 7
+    expected = {"interaction": 9, "boundary": 7, "subtree": 8}[test]
     if len(grouped) != expected or len(resources) != 1:
         raise RuntimeError(f"Unexpected metric/resource count: {log}")
     for metric, values in grouped.items():

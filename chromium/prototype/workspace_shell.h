@@ -37,7 +37,7 @@
 #include "ui/views/view_tracker.h"
 #include "url/gurl.h"
 
-namespace zitter::sidebar { struct Item; struct Timeline; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
+namespace zitter::sidebar { struct Item; struct Timeline; struct SidebarPinTree; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; }
 namespace gfx { class Canvas; }
 namespace views {
@@ -861,6 +861,8 @@ class WorkspaceShell final : public ui::EventHandler,
     uint64_t pair_id = 0;  // Rust sidebar.pair node the native pair adapter projects.
     std::string active_pin;
   };
+  struct PinProjection;
+  bool PatchPinnedItems(TabListCache& cache, const sidebar::SidebarPinTree& previous);
   void ReconcileSidebarNodes(TabListCache& cache, std::string_view workspace, const std::vector<PinnedItem>& pins, const std::vector<ShellTab>& tabs,
                              const std::vector<size_t>& split_tabs = {}, bool split = false);
   void ApplyPinnedFoldersCollapsed(bool collapsed);
@@ -876,7 +878,8 @@ class WorkspaceShell final : public ui::EventHandler,
                          TabListCache& cache, const std::string& workspace,
                          std::map<std::string,std::unique_ptr<views::View>>* retained=nullptr,
                          std::map<uint64_t,std::unique_ptr<views::View>>* retained_groups=nullptr,
-                         std::map<std::string,std::unique_ptr<views::View>>* retained_holders=nullptr);
+                         std::map<std::string,std::unique_ptr<views::View>>* retained_holders=nullptr,
+                         PinProjection* projection=nullptr);
   void ReconcileChromeNodes();
   void RebuildWorkspaceDots();
   void ShowContextMenuForViewImpl(views::View*, const gfx::Point&, ui::mojom::MenuSourceType) override;

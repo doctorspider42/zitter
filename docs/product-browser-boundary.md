@@ -116,3 +116,7 @@ or input-to-presentation performance result.
 
 The [2026-11-05 matched UI benchmark](product-boundary-performance-2026-11-05.md)
 measures the before/after effects and profiles the remaining native UI costs.
+
+The [2026-11-06 incremental sidebar benchmark](sidebar-subtree-performance-2026-11-06.md)
+measures retained native subtree updates, with before/after artifacts and remaining
+paint, text and initial-population costs.
