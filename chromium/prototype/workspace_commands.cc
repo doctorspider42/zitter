@@ -112,6 +112,7 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result, bool record_us
   if (id == "import") { shell_->OpenImport(); return true; }
   if (id == "downloads") { ShowDownloads(); return true; }
   if (id == "history") { ShowHistory(); return true; }
+  if (id == "rss") { ShowRss(); return true; }
   if (id == "passwords") { ShowPasswords(); return true; }
   if (id == "save_snapshot") {
     if (!SaveSnapshot("Command Center")) return false;

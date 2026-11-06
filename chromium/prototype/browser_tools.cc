@@ -61,6 +61,7 @@ std::vector<Shortcut> ArcShortcuts() {
   add("close_other_tabs", T(u"Zamknij pozostałe karty"), ui::VKEY_K, p | ui::EF_SHIFT_DOWN);
   add("reopen", T(u"Przywróć zamkniętą kartę"), ui::VKEY_T, p | ui::EF_SHIFT_DOWN);
   add("sidebar", T(u"Pokaż / ukryj panel"), ui::VKEY_S, p);
+  add("rss", T(u"Czytnik RSS"), ui::VKEY_R, p | ui::EF_ALT_DOWN | ui::EF_SHIFT_DOWN);
   add("devtools", u"DevTools", ui::VKEY_F12, 0);
 #if BUILDFLAG(IS_MAC)
   const int dev = p | ui::EF_ALT_DOWN;

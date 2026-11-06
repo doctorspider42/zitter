@@ -13,6 +13,9 @@
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "chromium/prototype/download_panel.h"
 #include "chromium/prototype/history_panel.h"
+#include "chromium/prototype/rss_reader.h"
+#include "content/public/browser/weak_document_ptr.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "chromium/prototype/site_data.h"
 #include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
@@ -56,6 +59,7 @@
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
 #include "content/public/browser/weak_document_ptr.h"
+#include "content/public/common/isolated_world_ids.h"
 #include "ui/shell_dialogs/selected_file_info.h"
 #include "ui/shell_dialogs/select_file_policy.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -931,6 +935,7 @@ WorkspaceWindow::Host::Host(Host&&) noexcept = default;
 WorkspaceWindow::Host& WorkspaceWindow::Host::operator=(Host&&) noexcept = default;
 
 WorkspaceWindow::~WorkspaceWindow() {
+  rss_panel_.reset();
   if (assistant_) assistant_->Stop();
   assistant_ = nullptr;
   assistant_targets_.clear();
@@ -1620,6 +1625,27 @@ void WorkspaceWindow::ShowSitePanel() {
     if (alive(page, url)) DeleteSiteCookie(Profile::FromBrowserContext(page->GetBrowserContext()), std::move(cookie), base::DoNothing());
   }, alive, weak_page, url);
   shell_->ShowSitePanel(ReadSitePermissions(profile, url), std::move(handlers));
+}
+
+void WorkspaceWindow::ShowRss() {
+  if (!model_.active()) return;
+  auto* profile = ProfileFor(model_.active()->profile_id);
+  if (!profile) return;
+  shell_->CloseOverlays(true);
+  if (!rss_panel_) rss_panel_ = std::make_unique<RssPanel>();
+  auto* page = contents(active_id());
+  rss_panel_->Show(profile, widget_.get(), page ? page->GetVisibleURL() : GURL(),
+    base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, Profile* profile, GURL url) {
+      if (window) window->OpenProfileTab(profile, url, true);
+    }, weak_factory_.GetWeakPtr(), profile));
+  rss_panel_->BeginDiscovery();
+  if (page && page->GetPrimaryMainFrame()) {
+    page->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
+      u"Array.from(document.querySelectorAll('link[rel~=alternate i]')).filter(x=>['application/rss+xml','application/atom+xml'].includes(x.type.toLowerCase().split(';')[0].trim())).slice(0,10).map(x=>x.href)",
+      base::BindOnce([](base::WeakPtr<RssPanel> panel, size_t generation, content::WeakDocumentPtr document, base::Value result) {
+        if (panel && panel->discovery_generation() == generation && document.AsRenderFrameHostIfValid()) panel->DiscoverFromPage(std::move(result));
+      }, rss_panel_->GetWeakPtr(), rss_panel_->discovery_generation(), page->GetPrimaryMainFrame()->GetWeakDocumentPtr()), content::ISOLATED_WORLD_ID_CONTENT_END);
+  }
 }
 
 void WorkspaceWindow::ShowHistory() {
@@ -2599,6 +2625,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "fingerprint") { shell_->CloseOverlays(true); extensions_bar_->ToggleFingerprintPanel(); return extensions_bar_->fingerprint_panel_for_testing() != nullptr; }
   if (id == "shield") { shell_->CloseOverlays(true); extensions_bar_->ToggleShieldPanel(); return extensions_bar_->shield_panel_for_testing() != nullptr; }
   if (id == "history") { ShowHistory(); return true; }
+  if (id == "rss") { ShowRss(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
   if (id == "address" || id == "new_tab" || id == "palette") {
     if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, std::string id) { if (w) w->RunShortcut(id); }, weak_factory_.GetWeakPtr(), id))) return true;

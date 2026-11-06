@@ -55,6 +55,7 @@ struct TimelineStore;
 
 class DownloadPanel;
 class HistoryPanel;
+class RssPanel;
 class PasswordsPanel;
 class AdBlockingRulesPanel;
 class ExtensionsBar;
@@ -130,6 +131,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowPasswords();
   void ShowDownloads();
   void ShowHistory();
+  void ShowRss();
+  RssPanel* rss_panel() const { return rss_panel_.get(); }
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
   void ShowAssistant(bool hover = false);
   void NewAssistantConversation();
@@ -535,6 +538,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::unique_ptr<views::Widget> widget_;
   std::unique_ptr<DownloadPanel> downloads_;
   std::unique_ptr<HistoryPanel> history_panel_;
+  std::unique_ptr<RssPanel> rss_panel_;
   std::unique_ptr<PasswordsPanel> passwords_panel_;
   std::unique_ptr<AdBlockingRulesPanel> ad_blocking_rules_panel_;
   raw_ptr<ExtensionsBar> extensions_bar_ = nullptr;  // Owned by the window root.

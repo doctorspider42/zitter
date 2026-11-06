@@ -178,6 +178,8 @@
 
 #include "base/command_line.h"
 #include "base/i18n/case_conversion.h"
+#include "chromium/prototype/rss_reader.h"
+#include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/location.h"
 #include "base/base_paths.h"
 #include "base/files/file_util.h"
@@ -420,6 +422,27 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     }, base::Unretained(this)));
     embedded_test_server()->RegisterRequestHandler(base::BindRepeating([](ZitterProfilesBrowserTest* self, const net::test_server::HttpRequest& request)
         -> std::unique_ptr<net::test_server::HttpResponse> {
+      if (request.relative_url == "/rss-large") {
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>(); response->set_content_type("application/rss+xml"); response->set_content(std::string(2*1024*1024+1,'x')); return response;
+      }
+      if (request.relative_url == "/rss-private-redirect") {
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>(); response->set_code(net::HTTP_FOUND); response->AddCustomHeader("Location", "/rss-private-check"); return response;
+      }
+      if (request.relative_url == "/rss-redirect") {
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_code(net::HTTP_FOUND); response->AddCustomHeader("Location", "/rss.xml"); return response;
+      }
+      if (request.relative_url == "/rss-delayed") {
+        auto response = std::make_unique<net::test_server::DelayedHttpResponse>(base::Milliseconds(800));
+        response->set_content_type("application/rss+xml");
+        response->set_content(R"(<rss><channel><title>Delayed feed</title><item><guid>late</guid><title>Arrived safely</title><link>/storage_probe.html</link></item></channel></rss>)"); return response;
+      }
+      if (request.relative_url == "/rss-private-check") {
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_content_type("application/rss+xml");
+        if (request.headers.contains("Cookie") || request.headers.contains("Authorization")) response->set_code(net::HTTP_FORBIDDEN);
+        else response->set_content(R"(<rss><channel><title>No credentials</title><item><guid>safe</guid><title>Private fetch</title><link>/storage_probe.html</link></item></channel></rss>)"); return response;
+      }
       if (request.relative_url == "/route-redirect") {
         auto response = std::make_unique<net::test_server::BasicHttpResponse>();
         response->set_code(net::HTTP_FOUND);
@@ -2358,6 +2381,198 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperMenuOriginAndDetach) 
   ASSERT_TRUE(views::MenuController::GetActiveInstance());
   window_.reset(); base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(views::MenuController::GetActiveInstance());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderTextBudgetAndSavedRetention) {
+  auto decode = [&](std::string xml) {
+    base::test::TestFuture<data_decoder::DataDecoder::ValueOrError> parsed;
+    data_decoder::DataDecoder::ParseXmlIsolated(xml, data_decoder::mojom::XmlParser::WhitespaceBehavior::kPreserveSignificant, parsed.GetCallback());
+    auto result = parsed.Take(); EXPECT_TRUE(result.has_value());
+    return result.has_value() ? DecodeRss(*result, embedded_test_server()->GetURL("/feed")) : std::optional<RssFeed>();
+  };
+  auto literal = decode(R"(<feed xmlns="http://www.w3.org/2005/Atom"><title>2 &lt; 3</title><entry><id>one</id><title type="text">2 &lt; 3 &amp; 5</title><link href="/one"/><content type="html">&lt;p&gt;Hello &amp;#x1F33F;&lt;/p&gt;&lt;p&gt;World&lt;/p&gt;</content></entry></feed>)");
+  ASSERT_TRUE(literal); ASSERT_EQ(literal->articles.size(), 1u); EXPECT_EQ(literal->title, "2 < 3"); EXPECT_EQ(literal->articles[0].title, "2 < 3 & 5");
+  EXPECT_EQ(literal->articles[0].text, "Hello 🌿\n\nWorld");
+  std::string namespaces = "<rss"; for(int i=0;i<140;++i) namespaces += " xmlns:n"+std::to_string(i)+"='urn:"+std::to_string(i)+"'";
+  namespaces += "><channel><title>Oversized namespaces</title></channel></rss>"; EXPECT_FALSE(decode(namespaces));
+  std::string nodes = "<rss><channel>"; for(int i=0;i<13000;++i) nodes += "<item/>"; nodes += "</channel></rss>"; EXPECT_FALSE(decode(nodes));
+  std::string chronological="<rss><channel>";
+  for(int i=0;i<101;++i) chronological+="<item><guid>old-"+std::to_string(i)+"</guid><link>/old/"+std::to_string(i)+"</link></item>";
+  chronological+="<item><guid>newest-last</guid><link>/newest</link><pubDate>Fri, 06 Nov 2026 09:30:00 GMT</pubDate></item></channel></rss>";
+  auto bounded=decode(chronological);ASSERT_TRUE(bounded);ASSERT_EQ(bounded->articles.size(),100u);EXPECT_EQ(bounded->articles[0].id,"newest-last");
+  auto anchors=decode(R"(<rss><channel><item><guid>anchor-a</guid><link>/same#one</link></item><item><guid>anchor-b</guid><link>/same#two</link></item></channel></rss>)");
+  ASSERT_TRUE(anchors);ASSERT_EQ(anchors->articles.size(),2u);EXPECT_EQ(anchors->articles[0].url.ref(),"one");EXPECT_EQ(anchors->articles[1].url.ref(),"two");
+  auto module = decode(R"(<rss xmlns:c="http://purl.org/rss/1.0/modules/content/"><channel><title>RSS</title><item><guid>a</guid><title>Unicode</title><link>/a</link><description>Fallback</description><c:encoded>&lt;p&gt;Module content&lt;/p&gt;</c:encoded></item></channel></rss>)");
+  ASSERT_TRUE(module); ASSERT_EQ(module->articles.size(), 1u); EXPECT_EQ(module->articles[0].text, "Module content");
+  std::string unicode; for (int i=0;i<2000;++i) unicode += "🌿";
+  auto long_text = decode("<rss><channel><item><link>/long</link><description>"+unicode+"</description></item></channel></rss>");
+  ASSERT_TRUE(long_text); ASSERT_EQ(long_text->articles.size(),1u); EXPECT_TRUE(base::IsStringUTF8(long_text->articles[0].text)); EXPECT_LE(long_text->articles[0].text.size(),4000u);
+  auto* reader = RssReader::For(work_); ASSERT_TRUE(base::test::RunUntil([&]{return reader->ready();}));
+  base::DictValue state; base::ListValue feeds;
+  for (int f=0;f<50;++f) {
+    base::DictValue feed; feed.Set("url",embedded_test_server()->GetURL("/rss-many.xml?"+std::to_string(f)).spec()); feed.Set("title","Source"); base::ListValue articles;
+    for (int a=0;a<100;++a) { base::DictValue item; item.Set("id",std::to_string(a)); item.Set("url",embedded_test_server()->GetURL("/old/"+std::to_string(a)).spec()); item.Set("title","Old article"); item.Set("text",std::string(4000,'x')); item.Set("saved",a==0); item.Set("read",a==0); articles.Append(std::move(item)); }
+    feed.Set("articles",std::move(articles)); feeds.Append(std::move(feed));
+  }
+  state.Set("feeds",std::move(feeds)); reader->Restore(std::move(state));
+  ASSERT_EQ(reader->feeds().size(),50u); size_t count=0,saved=0;
+  for (const auto& f:reader->feeds()) for (const auto& a:f.articles) { ++count; if(a.saved) {++saved; EXPECT_TRUE(a.read);} }
+  EXPECT_LT(count,5000u); EXPECT_EQ(saved,50u);
+  auto json=base::WriteJson(reader->Serialize()); ASSERT_TRUE(json); EXPECT_LT(json->size(),64u*1024*1024);
+  // Trigger the coalesced disk writer; all saved/read flags survive a real load.
+  reader->MarkAll({});
+  base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,settle.QuitClosure(),base::Milliseconds(600));settle.Run();
+  {base::ScopedAllowBlockingForTesting allow;base::ThreadPoolInstance::Get()->FlushForTesting();}
+  auto loaded=std::make_unique<RssReader>(work_); ASSERT_TRUE(base::test::RunUntil([&]{return loaded->ready()&&!loaded->busy();}));
+  size_t kept=0; for(const auto& f:loaded->feeds())for(const auto& a:f.articles)if(a.saved){++kept;EXPECT_TRUE(a.read);}
+  EXPECT_EQ(kept,50u);
+  auto* alias_reader = RssReader::For(personal_); ASSERT_TRUE(base::test::RunUntil([&]{return alias_reader->ready();}));
+  base::DictValue alias_state; base::ListValue alias_feeds;
+  for (const auto& path : {"/rss.xml", "/rss-redirect"}) {
+    base::DictValue feed; feed.Set("url", embedded_test_server()->GetURL(path).spec()); feed.Set("title", "Alias"); base::ListValue items;
+    if (std::string_view(path) == "/rss-redirect") {
+      base::DictValue item; item.Set("id","retired-saved"); item.Set("title","Retained alias article"); item.Set("url",embedded_test_server()->GetURL("/retired").spec()); item.Set("saved",true); item.Set("read",true); items.Append(std::move(item));
+    }
+    feed.Set("articles",std::move(items)); alias_feeds.Append(std::move(feed));
+  }
+  alias_state.Set("feeds",std::move(alias_feeds)); alias_reader->Restore(std::move(alias_state)); alias_reader->Refresh();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !alias_reader->busy();})); ASSERT_EQ(alias_reader->feeds().size(),1u);
+  auto retained=std::find_if(alias_reader->feeds()[0].articles.begin(),alias_reader->feeds()[0].articles.end(),[](const auto& a){return a.id=="retired-saved";});
+  ASSERT_NE(retained,alias_reader->feeds()[0].articles.end()); EXPECT_TRUE(retained->saved); EXPECT_TRUE(retained->read);
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderFetchParseIsolationAndPersistence) {
+  auto* reader = RssReader::For(work_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return reader->ready(); }));
+  auto rss = embedded_test_server()->GetURL("/rss.xml");
+  reader->Add(rss);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  ASSERT_EQ(reader->feeds().size(), 1u);
+  ASSERT_EQ(reader->feeds()[0].articles.size(), 2u);
+  EXPECT_EQ(reader->feeds()[0].title, "Field notes");
+  EXPECT_EQ(reader->feeds()[0].articles[0].url, embedded_test_server()->GetURL("/storage_probe.html?rss-first"));
+  EXPECT_EQ(reader->feeds()[0].articles[0].text.find("<img"), std::string::npos);
+  reader->Add(rss); EXPECT_EQ(reader->feeds().size(), 1u);
+  reader->Mark(rss, "first", true, true);
+  reader->Refresh(); ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  EXPECT_TRUE(reader->feeds()[0].articles[0].read); EXPECT_TRUE(reader->feeds()[0].articles[0].saved);
+  reader->Add(embedded_test_server()->GetURL("/rss-redirect"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); })); EXPECT_EQ(reader->feeds().size(), 1u);
+  reader->Add(embedded_test_server()->GetURL("/atom.xml"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  ASSERT_EQ(reader->feeds().size(), 2u); ASSERT_EQ(reader->feeds()[1].articles.size(), 2u);
+  EXPECT_EQ(reader->feeds()[1].articles[0].url, embedded_test_server()->GetURL("/journal/posts/one.html"));
+  EXPECT_EQ(reader->feeds()[1].articles[1].url, embedded_test_server()->GetURL("/storage_probe.html?atom"));
+  EXPECT_NE(reader->feeds()[1].articles[0].text.find("meaningful"), std::string::npos);
+  reader->Add(embedded_test_server()->GetURL("/rss_invalid.xml"));
+  reader->Add(embedded_test_server()->GetURL("/rss_entity.xml"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  ASSERT_EQ(reader->feeds().size(), 4u); EXPECT_FALSE(reader->feeds()[2].error.empty()); EXPECT_FALSE(reader->feeds()[3].error.empty());
+  EXPECT_EQ(reader->feeds()[0].articles.size(), 2u);
+  reader->Add(embedded_test_server()->GetURL("/rss-large"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); })); EXPECT_FALSE(reader->feeds().back().error.empty());
+  reader->Remove(embedded_test_server()->GetURL("/rss-large"));
+  ASSERT_TRUE(content::SetCookie(work_, embedded_test_server()->GetURL("/"), "rss_secret=private"));
+  reader->Add(embedded_test_server()->GetURL("/rss-private-check"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  ASSERT_EQ(reader->feeds().back().articles.size(), 1u);
+  reader->Add(embedded_test_server()->GetURL("/rss-private-redirect")); ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); })); EXPECT_EQ(reader->feeds().size(),5u);
+  auto* personal = RssReader::For(personal_); ASSERT_TRUE(base::test::RunUntil([&] { return personal->ready(); })); EXPECT_TRUE(personal->feeds().empty());
+  {
+    base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(600)); settle.Run();
+    base::ScopedAllowBlockingForTesting allow; base::ThreadPoolInstance::Get()->FlushForTesting();
+  }
+  auto reloaded = std::make_unique<RssReader>(work_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return reloaded->ready() && !reloaded->busy(); }));
+  ASSERT_EQ(reloaded->feeds().size(), 5u); EXPECT_TRUE(reloaded->feeds()[0].articles[0].saved); EXPECT_TRUE(reloaded->feeds()[0].articles[0].read);
+  auto* private_profile = work_->GetPrimaryOTRProfile(true);
+  auto* ephemeral = RssReader::For(private_profile); EXPECT_TRUE(ephemeral->ready()); EXPECT_TRUE(ephemeral->feeds().empty());
+  RssPanel private_panel; private_panel.Show(private_profile,window_->widget(),{},base::DoNothing());
+  EXPECT_NE(private_panel.widget()->widget_delegate()->GetWindowTitle().find(T(u"Okno prywatne")),std::u16string::npos);
+  ephemeral->Add(embedded_test_server()->GetURL("/rss-delayed"));
+  EXPECT_TRUE(ephemeral->busy()); ProfileDestroyer::DestroyOTRProfileWhenAppropriate(private_profile);
+  ASSERT_TRUE(base::test::RunUntil([&]{return !private_panel.widget();}));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderLifecycleDiscoveryAndVisuals) {
+  EnableNativeUIControls();
+  auto* shell = window_->shell(); ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready() && shell->appearance_ready(); }));
+  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/rss_discovery.html")));
+  EXPECT_TRUE(window_->RunShortcut("rss")); auto* panel = window_->rss_panel(); ASSERT_TRUE(panel); ASSERT_TRUE(panel->widget());
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->discovered_for_testing() == 2; }));
+  auto* reader = panel->reader(); ASSERT_TRUE(base::test::RunUntil([&] { return reader->ready(); }));
+  reader->Add(embedded_test_server()->GetURL("/rss.xml")); reader->Add(embedded_test_server()->GetURL("/atom.xml"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !reader->busy(); }));
+  ASSERT_EQ(reader->feeds()[0].title,"Field notes");
+  const auto read_name = TF(u"Czytaj: {}", {base::UTF8ToUTF16(reader->feeds()[0].articles[0].title)});
+  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),read_name)!=nullptr;}));
+  auto visible_text = [&](std::u16string_view text) {
+    auto find=[&](auto&& self,views::View* view)->bool {
+      if (view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kStaticText && view->GetViewAccessibility().GetCachedName()==text && view->IsDrawn() && !view->GetVisibleBounds().IsEmpty() && view->GetVisibleBounds().height()==view->height()) return true;
+      for (const auto& child:view->children()) if(self(self,child.get()))return true;
+      return false;
+    };
+    return panel->widget() && find(find,panel->widget()->GetContentsView());
+  };
+  const auto output = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-rss-render-dir");
+  auto capture = [&](std::string name) {
+    if (output.empty()) return;
+    auto* widget = panel->widget(); widget->LayoutRootViewIfNecessary();
+    base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(350)); settle.Run();
+    base::test::TestFuture<scoped_refptr<base::RefCountedMemory>> snapshot;
+    auto bounds = gfx::Rect(widget->GetWindowBoundsInScreen().size());
+#if BUILDFLAG(IS_MAC)
+    const auto screen = widget->GetWindowBoundsInScreen(); bounds = gfx::Rect(0,0,screen.right()+64,screen.bottom()+64);
+#endif
+    ui::GrabWindowSnapshotAsPNG(widget->GetNativeWindow(), bounds, snapshot.GetCallback());
+    auto png = snapshot.Take(); ASSERT_TRUE(png); ASSERT_GT(png->size(), 1000u);
+    auto bitmap = gfx::PNGCodec::Decode(base::span(*png)); ASSERT_FALSE(bitmap.isNull());
+    int left=bitmap.width(),top=bitmap.height(),right=0,bottom=0;
+    for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x)if(SkColorGetA(bitmap.getColor(x,y))){left=std::min(left,x);top=std::min(top,y);right=std::max(right,x+1);bottom=std::max(bottom,y+1);}
+    ASSERT_LT(left,right); ASSERT_LT(top,bottom); SkBitmap cropped; ASSERT_TRUE(bitmap.extractSubset(&cropped,SkIRect::MakeLTRB(left,top,right,bottom)));
+    auto encoded = gfx::PNGCodec::EncodeBGRASkBitmap(cropped,false); ASSERT_TRUE(encoded);
+    base::ScopedAllowBlockingForTesting allow; ASSERT_TRUE(base::CreateDirectory(output)); ASSERT_TRUE(base::WriteFile(output.AppendASCII(name),*encoded));
+  };
+  auto* read_button = FindButton(panel->widget()->GetContentsView(),read_name); ASSERT_TRUE(read_button);
+#if BUILDFLAG(IS_MAC)
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(panel->widget()->GetNativeWindow()));
+#endif
+  auto* focus = panel->widget()->GetFocusManager();
+  for(int i=0;i<40&&focus->GetFocusedView()!=read_button;++i) focus->AdvanceFocus(false);
+  ASSERT_EQ(focus->GetFocusedView(),read_button);
+  panel->widget()->LayoutRootViewIfNecessary(); read_button->ScrollViewToVisible();
+  ASSERT_FALSE(read_button->GetVisibleBounds().IsEmpty());
+  ASSERT_NO_FATAL_FAILURE(capture("rss-focus-list.png"));
+  ASSERT_TRUE(SendPrimaryKey(panel->widget()->GetNativeWindow(),ui::VKEY_RETURN,false,false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),T(u"Wróć do wpisów"))!=nullptr;}));
+  auto* back=FindButton(panel->widget()->GetContentsView(),T(u"Wróć do wpisów")); EXPECT_EQ(focus->GetFocusedView(),back);
+  panel->widget()->LayoutRootViewIfNecessary(); back->ScrollViewToVisible(); ASSERT_FALSE(back->GetVisibleBounds().IsEmpty());
+  ASSERT_TRUE(SendPrimaryKey(panel->widget()->GetNativeWindow(),ui::VKEY_SPACE,false,false));
+  ASSERT_TRUE(base::test::RunUntil([&]{return FindButton(panel->widget()->GetContentsView(),read_name)!=nullptr;}));
+  EXPECT_EQ(focus->GetFocusedView(),FindButton(panel->widget()->GetContentsView(),read_name));
+  for (auto mode : {ThemeMode::kDark, ThemeMode::kLight}) {
+    shell->SetThemeMode(mode); ASSERT_TRUE(base::test::RunUntil([&]{return panel->widget()->color_mode_override()==window_->widget()->color_mode_override();}));
+    panel->widget()->Hide(); shell->SetThemeMode(mode == ThemeMode::kDark ? ThemeMode::kLight : ThemeMode::kDark); window_->ShowRss(); shell->SetThemeMode(mode);
+    ASSERT_TRUE(base::test::RunUntil([&]{return panel->widget()->color_mode_override()==window_->widget()->color_mode_override();}));
+    const std::string suffix = mode == ThemeMode::kDark ? "-dark.png" : "-light.png";
+    panel->widget()->SetSize(gfx::Size(820,760)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-list")+suffix));
+    panel->widget()->SetSize(gfx::Size(460,640)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-narrow-list")+suffix));
+    panel->widget()->SetSize(gfx::Size(820,760));
+    panel->Select(embedded_test_server()->GetURL("/rss.xml"), "first");
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-article")+suffix));
+    panel->widget()->SetSize(gfx::Size(460,640)); ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-narrow")+suffix));
+    auto find_viewport=[&](auto&& self,views::View* view)->PanelViewport*{if(auto* viewport=PanelViewportForView(view))return viewport;for(const auto& child:view->children())if(auto* viewport=self(self,child.get()))return viewport;return nullptr;};
+    auto* viewport=find_viewport(find_viewport,panel->widget()->GetContentsView());ASSERT_TRUE(viewport);ASSERT_GT(viewport->maximum(),0);viewport->ScrollTo(viewport->maximum());
+    ASSERT_NO_FATAL_FAILURE(capture(std::string("rss-scrolled")+suffix));EXPECT_TRUE(visible_text(u"Czytnik RSS")); if(MetalPresents()) EXPECT_TRUE(panel->contains_for_testing("Czytnik RSS"));
+    panel->widget()->CloseNow(); window_->ShowRss(); panel = window_->rss_panel();
+  }
+  reader->Add(embedded_test_server()->GetURL("/rss-delayed")); EXPECT_TRUE(reader->busy());
+  panel->widget()->CloseNow(); window_->Select("personal"); window_->ShowRss(); panel = window_->rss_panel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->reader()->ready() && !reader->busy(); }));
+  EXPECT_TRUE(panel->reader()->feeds().empty()); EXPECT_FALSE(panel->contains_for_testing("Arrived safely"));
+  EXPECT_EQ(reader->feeds().back().articles.size(), 1u);
+  reader->Remove(embedded_test_server()->GetURL("/rss-delayed")); EXPECT_EQ(reader->feeds().size(), 2u);
+  SetUiLanguageForTesting("en"); panel->widget()->CloseNow(); window_->ShowRss(); ASSERT_TRUE(base::test::RunUntil([&]{return visible_text(u"Your sources, in one place");}));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperToolsVisuals) {
