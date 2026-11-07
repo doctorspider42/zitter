@@ -624,6 +624,53 @@ def _patch_once(text, anchor, replacement, marker, what):
     return text.replace(anchor, replacement, 1)
 
 
+def patch_legacy_renderer_uia(text):
+    destroy = """  host_ = nullptr;
+  if (::IsWindow(hwnd())) {
+    ::DestroyWindow(hwnd());
+  }
+"""
+    disconnect_before_destroy = """  host_ = nullptr;
+  if (::IsWindow(hwnd())) {
+    // Zitter: disconnect the renderer's UIA root while the HWND is still valid.
+    const bool was_servicing_accessibility =
+        std::exchange(may_service_accessibility_requests_, false);
+    if (auto& ax_platform = ui::AXPlatform::GetInstance();
+        was_servicing_accessibility && ax_platform.HasServicedUiaClients() &&
+        ax_platform.IsUiaProviderEnabled() &&
+        base::FeatureList::IsEnabled(features::kUiaDisconnectRootProviders)) {
+      const HRESULT result = ::UiaDisconnectProvider(ax_fragment_root_->GetProvider());
+      if (!ref) {
+        return;
+      }
+      // A synchronous window message can forbid outgoing COM calls. In that
+      // case, leave the deferred WM_DESTROY cleanup armed. The null host
+      // already prevents WM_GETOBJECT from returning this provider again.
+      if (FAILED(result)) {
+        may_service_accessibility_requests_ = true;
+      }
+    }
+    ::DestroyWindow(hwnd());
+  }
+"""
+    text = _patch_once(text, destroy, disconnect_before_destroy,
+                       "Zitter: disconnect the renderer's UIA root", "renderer HWND destruction")
+    on_destroy = """  may_service_accessibility_requests_ = false;
+
+  if (auto& ax_platform = ui::AXPlatform::GetInstance();
+      ax_platform.HasServicedUiaClients()) {"""
+    on_destroy_fallback = """  const bool needs_uia_disconnect =
+      std::exchange(may_service_accessibility_requests_, false);
+
+  if (auto& ax_platform = ui::AXPlatform::GetInstance();
+      ax_platform.HasServicedUiaClients()) {"""
+    text = _patch_once(text, on_destroy, on_destroy_fallback,
+                       "const bool needs_uia_disconnect", "renderer WM_DESTROY")
+    return _patch_once(text, "    if (ax_platform.IsUiaProviderEnabled() &&\n",
+                       "    if (needs_uia_disconnect && ax_platform.IsUiaProviderEnabled() &&\n",
+                       "if (needs_uia_disconnect &&", "renderer UIA fallback")
+
+
 def patch_extension_tabs(text, part):
     """part: 'header' (extension_tab_util.h), 'source' (.cc), 'tabs_api', 'windows_api' or 'function_details'."""
     if part == 'header':
@@ -940,6 +987,9 @@ def install(checkout, dry_run=False):
     window_icon = checkout / WINDOW_ICON_FILE
     window_icon_original = read(window_icon)
     window_icon_patched = patch_window_icon(window_icon_original)
+    legacy_uia = checkout / "content/browser/renderer_host/legacy_render_widget_host_win.cc"
+    legacy_uia_original = read(legacy_uia)
+    legacy_uia_patched = patch_legacy_renderer_uia(legacy_uia_original)
     for part, path in HISTORY_LOGO_FILES.items():
         extensions_logo[checkout / path] = read(checkout / path)
         extensions_logo_patched[checkout / path] = patch_history_logo(extensions_logo[checkout / path], part)
@@ -994,6 +1044,8 @@ def install(checkout, dry_run=False):
                 write(direct_write, direct_write_patched)
             if window_icon_patched != window_icon_original:
                 write(window_icon, window_icon_patched)
+            if legacy_uia_patched != legacy_uia_original:
+                write(legacy_uia, legacy_uia_patched)
             if search_highlight_patched != search_highlight_original:
                 write(search_highlight, search_highlight_patched)
             for path, text in extensions_logo_patched.items():
@@ -1017,6 +1069,8 @@ def install(checkout, dry_run=False):
             write(media_header, media_header_original)
             write(media_source, media_source_original)
             write(component_service, component_original)
+            if legacy_uia_patched != legacy_uia_original:
+                write(legacy_uia, legacy_uia_original)
             for path, text in {**extension_tabs, **extensions_logo}.items():
                 write(path, text)
             raise

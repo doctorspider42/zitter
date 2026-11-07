@@ -2,6 +2,13 @@
 import("//testing/test.gni")
 import("//build/rust/rust_static_library.gni")
 
+if (is_win) {
+  declare_args() {
+    # Build an isolated, per-user installation for local testing.
+    zitter_dev_build = false
+  }
+}
+
 # Native assistant core. Uses Chromium's vendored crates and toolchain only.
 config("assistant_includes") {
   include_dirs = [ "." ]
@@ -33,6 +40,7 @@ source_set("assistant_transport") {
     "chromium/assistant/native_transport.h",
   ]
   deps = [
+    ":assistant_cli_path",
     "//base",
     "//crypto",
     "//net",
@@ -40,6 +48,11 @@ source_set("assistant_transport") {
     "//third_party/rust/cxx/v1:lib",
     "//url",
   ]
+}
+
+source_set("assistant_cli_path") {
+  sources = [ "chromium/assistant/native_cli_path.h" ]
+  public_deps = [ "//base" ]
 }
 
 executable("zitter_assistant") {
@@ -266,6 +279,7 @@ source_set("shell") {
   ]
   include_dirs = [ ".", target_gen_dir ]
   public_deps = [
+    ":assistant_cli_path",
     ":assistant_page_script",
     ":content_blocking_engine",
     ":content_blocking_probe_script",
@@ -460,7 +474,7 @@ source_set("profile_workspace_browser_tests") {
   }
   if (is_win) {
     # Native input for the keyboard tests (aura::test::EnableUIControlsAuraWin).
-    deps += [ "//ui/aura:test_support", "//ui/base/ime/win:win" ]
+    deps += [ "//ui/accessibility", "//ui/aura:test_support", "//ui/base/ime/win:win" ]
   }
 }
 
@@ -559,6 +573,9 @@ if (is_win) {
       "chromium/installer/setup_text.h",
     ]
     include_dirs = [ "." ]
+    if (zitter_dev_build) {
+      defines = [ "ZITTER_DEV_BUILD" ]
+    }
     configs -= [ "//build/config/win:console" ]
     configs += [ "//build/config/win:windowed" ]
     deps = [ ":setup_manifest", "//third_party/zlib:minizip" ]
@@ -644,6 +661,9 @@ if (is_mac || is_linux || is_win) {
       configs -= [ "//build/config/win:console" ]
       configs += [ "//build/config/win:windowed", "//build/config/win:delayloads" ]
       sources += [ "chromium/app/zitter_exe.rc" ]
+      if (zitter_dev_build) {
+        defines = [ "ZITTER_DEV_BUILD" ]
+      }
       libs = [ "shell32.lib" ]
       deps += [
         ":updater",

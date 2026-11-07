@@ -3,6 +3,7 @@
 // shortcuts, Apps & features, the browser registration that Windows' Default
 // apps lists, and the access the network service's AppContainer needs.
 #include "chromium/installer/setup_install.h"
+#include "chromium/app/windows_channel.h"
 
 #include <windows.h>
 
@@ -37,10 +38,12 @@ namespace {
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 
-constexpr wchar_t kUninstallKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Zitter";
+constexpr const wchar_t* kUninstallKey = windows::kDevBuild
+    ? L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ZitterDev"
+    : L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Zitter";
 constexpr wchar_t kClientKey[] = L"Software\\Clients\\StartMenuInternet\\Zitter";
 constexpr wchar_t kProgId[] = L"ZitterHTML";
-constexpr wchar_t kAppUserModelId[] = L"Zitter.Browser";  // As chromium/app/main.cc.
+constexpr wchar_t kDevInstallMarker[] = L".zitter-dev-install";
 
 // Serialize updates/removals of one directory, including setup processes from
 // different browser profiles. An abandoned mutex is safe to reacquire.
@@ -261,7 +264,8 @@ std::wstring Extract(const std::wstring& directory, const std::function<void(dou
   return error;
 }
 
-bool Shortcut(const std::wstring& link, const std::wstring& target, const std::wstring& directory) {
+bool Shortcut(const std::wstring& link, const std::wstring& target,
+              const std::wstring& directory, const wchar_t* arguments = L"") {
   ComPtr<IShellLinkW> shell_link;
   ComPtr<IPropertyStore> properties;
   ComPtr<IPersistFile> file;
@@ -269,11 +273,12 @@ bool Shortcut(const std::wstring& link, const std::wstring& target, const std::w
   shell_link->SetPath(target.c_str());
   shell_link->SetWorkingDirectory(directory.c_str());
   shell_link->SetIconLocation(target.c_str(), 0);
-  shell_link->SetDescription(L"Zitter");
+  shell_link->SetDescription(windows::kProductName);
+  shell_link->SetArguments(arguments);
   // The taskbar pins and groups the shortcut with Zitter's windows.
   if (SUCCEEDED(shell_link.As(&properties))) {
     PROPVARIANT value;
-    if (SUCCEEDED(InitPropVariantFromString(kAppUserModelId, &value))) {
+    if (SUCCEEDED(InitPropVariantFromString(windows::kAppId, &value))) {
       properties->SetValue(PKEY_AppUserModel_ID, value);
       properties->Commit();
       PropVariantClear(&value);
@@ -283,10 +288,16 @@ bool Shortcut(const std::wstring& link, const std::wstring& target, const std::w
 }
 
 std::wstring StartMenuLink(bool system) {
-  return KnownFolder(system ? FOLDERID_CommonPrograms : FOLDERID_Programs) + L"\\Zitter.lnk";
+  return KnownFolder(system ? FOLDERID_CommonPrograms : FOLDERID_Programs) + L"\\" +
+         windows::kProductName + L".lnk";
 }
 std::wstring DesktopLink(bool system) {
-  return KnownFolder(system ? FOLDERID_PublicDesktop : FOLDERID_Desktop) + L"\\Zitter.lnk";
+  return KnownFolder(system ? FOLDERID_PublicDesktop : FOLDERID_Desktop) + L"\\" +
+         windows::kProductName + L".lnk";
+}
+
+std::wstring CleanProfileLink() {
+  return KnownFolder(FOLDERID_Programs) + L"\\Zitter Dev - Clean profile.lnk";
 }
 
 // Default apps lists Zitter for web links and pages: a ProgId, the
@@ -301,7 +312,7 @@ bool RegisterBrowser(bool system, const std::wstring& exe) {
   bool ok = SetString(root, classes, nullptr, L"Zitter HTML Document") &&
             SetString(root, classes + L"\\Application", L"ApplicationName", L"Zitter") &&
             SetString(root, classes + L"\\Application", L"ApplicationIcon", icon) &&
-            SetString(root, classes + L"\\Application", L"AppUserModelId", kAppUserModelId) &&
+            SetString(root, classes + L"\\Application", L"AppUserModelId", windows::kStableAppId) &&
             SetString(root, classes + L"\\DefaultIcon", nullptr, icon) &&
             SetString(root, classes + L"\\shell\\open\\command", nullptr, open) &&
             SetString(root, client, nullptr, L"Zitter") &&
@@ -337,7 +348,7 @@ bool RegisterUninstall(const Placement& placement, uint64_t bytes) {
   const HKEY root = Root(placement.system);
   const std::wstring& dir = placement.directory;
   const std::wstring uninstall = L"\"" + dir + L"\\zitter_setup.exe\" --uninstall" + (placement.system ? L" --system" : L"");
-  return SetString(root, kUninstallKey, L"DisplayName", L"Zitter") &&
+  return SetString(root, kUninstallKey, L"DisplayName", windows::kProductName) &&
          SetString(root, kUninstallKey, L"DisplayVersion", ZITTER_VERSION_SHORT) &&
          SetString(root, kUninstallKey, L"Publisher", L"Zitter contributors") &&
          SetString(root, kUninstallKey, L"DisplayIcon", dir + L"\\zitter.exe,0") &&
@@ -386,18 +397,49 @@ uint64_t DirectorySize(const std::wstring& directory) {
     if (entry.is_regular_file(error)) bytes += entry.file_size(error);
   return bytes;
 }
+
+bool PrepareDevDirectory(const Placement& placement, bool installing) {
+  if (!windows::kDevBuild) return true;
+  if (placement.system || !fs::path(placement.directory).is_absolute() ||
+      placement.directory != DefaultDirectory(false))
+    return false;
+
+  const DWORD attrs = GetFileAttributesW(placement.directory.c_str());
+  if (attrs != INVALID_FILE_ATTRIBUTES &&
+      (!(attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & FILE_ATTRIBUTE_REPARSE_POINT)))
+    return false;
+
+  const auto marker = fs::path(placement.directory) / kDevInstallMarker;
+  const DWORD marker_attrs = GetFileAttributesW(marker.c_str());
+  if (marker_attrs != INVALID_FILE_ATTRIBUTES)
+    return !(marker_attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+  if (!installing) return false;
+
+  std::error_code error;
+  fs::create_directories(placement.directory, error);
+  if (error || !fs::is_empty(placement.directory, error) || error) return false;
+  const HANDLE file = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
+                                  CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) return false;
+  CloseHandle(file);
+  return true;
+}
 }  // namespace
 
 std::wstring DefaultDirectory(bool system) {
-  return system ? KnownFolder(FOLDERID_ProgramFiles) + L"\\Zitter"
-                : KnownFolder(FOLDERID_LocalAppData) + L"\\Programs\\Zitter";
+  const auto base = system ? KnownFolder(FOLDERID_ProgramFiles)
+                           : KnownFolder(FOLDERID_LocalAppData) + L"\\Programs";
+  return base + L"\\" + windows::kProductName;
 }
 
 std::optional<Existing> FindExisting() {
   for (bool system : {false, true}) {
+    if (windows::kDevBuild && system) break;
     const std::wstring location = GetString(Root(system), kUninstallKey, L"InstallLocation");
     if (location.empty()) continue;
-    return Existing{{system, location}, GetString(Root(system), kUninstallKey, L"DisplayVersion")};
+    Placement placement{system, location};
+    if (!PrepareDevDirectory(placement, false)) continue;
+    return Existing{placement, GetString(Root(system), kUninstallKey, L"DisplayVersion")};
   }
   return std::nullopt;
 }
@@ -418,6 +460,7 @@ bool IsElevated() {
 std::wstring Install(const Placement& placement, bool desktop_shortcut, const std::function<void(double)>& progress, bool preserve_shortcuts, bool update_only, bool close_running_browser) {
   InstallLock lock(placement.directory);
   if (!lock.acquired()) return L"Another Zitter installer is running";
+  if (!PrepareDevDirectory(placement, true)) return L"Zitter Dev needs its own empty installation directory";
   if (update_only) {
     const auto location = GetString(Root(placement.system), kUninstallKey, L"InstallLocation");
     const auto installed = ParseVersion(GetString(Root(placement.system), kUninstallKey, L"DisplayVersion"));
@@ -443,7 +486,12 @@ std::wstring Install(const Placement& placement, bool desktop_shortcut, const st
     if (desktop_shortcut) Shortcut(DesktopLink(placement.system), exe, placement.directory);
     else DeleteFileW(DesktopLink(placement.system).c_str());
   }
-  if (!RegisterBrowser(placement.system, exe)) return L"Register Zitter as a browser";
+  if (windows::kDevBuild) {
+    if (!Shortcut(CleanProfileLink(), exe, placement.directory, windows::kCleanProfileArgument))
+      return L"Create the clean profile shortcut";
+  } else if (!RegisterBrowser(placement.system, exe)) {
+    return L"Register Zitter as a browser";
+  }
   if (!RegisterUninstall(placement, DirectorySize(placement.directory))) return L"Register in Apps & features";
   progress(1);
   return {};
@@ -452,10 +500,12 @@ std::wstring Install(const Placement& placement, bool desktop_shortcut, const st
 std::wstring Uninstall(const Placement& placement, bool remove_data, const std::function<void(double)>& progress) {
   InstallLock lock(placement.directory);
   if (!lock.acquired()) return L"Another Zitter installer is running";
+  if (!PrepareDevDirectory(placement, false)) return L"Zitter Dev installation directory is not recognized";
   if (IsRunning(placement.directory)) return L"running";
   DeleteFileW(StartMenuLink(placement.system).c_str());
   DeleteFileW(DesktopLink(placement.system).c_str());
-  UnregisterBrowser(placement.system);
+  if (windows::kDevBuild) DeleteFileW(CleanProfileLink().c_str());
+  else UnregisterBrowser(placement.system);
   RegDeleteTreeW(Root(placement.system), kUninstallKey);
   // Everything but this running copy, which deletes itself once it exits.
   const fs::path self = fs::path(ModulePath()).lexically_normal();
@@ -470,7 +520,8 @@ std::wstring Uninstall(const Placement& placement, bool remove_data, const std::
   }
   // Deepest first.
   for (auto it = directories.rbegin(); it != directories.rend(); ++it) fs::remove(*it, error);
-  if (remove_data) fs::remove_all(KnownFolder(FOLDERID_LocalAppData) + L"\\Zitter", error);
+  if (remove_data)
+    fs::remove_all(fs::path(KnownFolder(FOLDERID_LocalAppData)) / windows::kProductName, error);
   fs::remove(placement.directory, error);
   progress(1);
   return {};
@@ -481,6 +532,7 @@ void DeleteSelfLater(const std::wstring& directory) {
   // exits. Run from the install folder, it removes what the run kept loaded.
   const fs::path self(ModulePath());
   const bool inside = self.parent_path().lexically_normal() == fs::path(directory).lexically_normal();
+  if (windows::kDevBuild && !inside) return;
   std::wstring command = L"cmd.exe /c ping 127.0.0.1 -n 3 > nul & del /f /q \"" + self.wstring() + L"\"";
   if (inside) command += L" & rmdir /s /q \"" + directory + L"\"";
   STARTUPINFOW startup{};

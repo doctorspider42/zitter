@@ -36,6 +36,7 @@ struct PanelViewportOptions {
   bool overflow_indicators = false;
   // A single primary axis; offsets/reveal/scroll actions use X when horizontal.
   bool horizontal = false;
+  bool edge_hover_scroll = false;
 };
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options = {});
 std::unique_ptr<views::View> CreatePanelViewport(PanelViewport** adapter,base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> primary_bar);

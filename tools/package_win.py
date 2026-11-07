@@ -11,6 +11,7 @@ GN's runtime_deps for //zitter:zitter without symbols, generated sources and
 test data. The version is zitter.exe's (chromium/app/zitter_version.h).
 """
 import argparse
+import ctypes
 import os
 from pathlib import Path
 import re
@@ -69,6 +70,23 @@ def runtime_deps(out):
     return result.stdout.splitlines()
 
 
+def product_name(path):
+    """Read the product from the built PE rather than from the current GN args."""
+    path = str(path.resolve())
+    version_api = ctypes.windll.version
+    size = version_api.GetFileVersionInfoSizeW(path, None)
+    if not size:
+        raise ValueError(f"No version resource in {path}")
+    resource = ctypes.create_string_buffer(size)
+    name = ctypes.c_void_p()
+    length = ctypes.c_uint()
+    if not version_api.GetFileVersionInfoW(path, 0, size, resource) or not version_api.VerQueryValueW(
+        resource, r"\StringFileInfo\040904b0\ProductName", ctypes.byref(name), ctypes.byref(length)
+    ):
+        raise ValueError(f"No product name in {path}")
+    return ctypes.wstring_at(name.value)
+
+
 def write_zip(destination, out, files, prefix="", extras=None):
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as archive:
         for name in files:
@@ -98,13 +116,22 @@ def main():
                         help="THIRD_PARTY_LICENSES.txt from tools/audit_licenses.py, shipped beside zitter.exe")
     args = parser.parse_args()
     out = args.out.resolve()
+    product = product_name(out / "zitter.exe")
+    if product not in ("Zitter", "Zitter Dev"):
+        parser.error(f"Unexpected product name in zitter.exe: {product}")
+    dev = product == "Zitter Dev"
+    if dev and not args.setup:
+        parser.error("Zitter Dev requires a standalone zitter_setup.exe")
+    if args.setup and product_name(args.setup) != product:
+        parser.error("zitter.exe and zitter_setup.exe have different product names")
     files = select_files(runtime_deps(out))
     extras = package_notices(args.third_party_licenses)
     args.destination.mkdir(parents=True, exist_ok=True)
-    stem = f"Zitter-{version()}-win-x64"
-    portable = args.destination / f"{stem}-portable.zip"
-    write_zip(portable, out, files, prefix="Zitter/", extras=extras)
-    print(f"{portable} ({len(files) + len(extras)} files, {portable.stat().st_size // 2**20} MB)")
+    stem = f"{product.replace(' ', '-')}-{version()}-win-x64"
+    if not dev:
+        portable = args.destination / f"{stem}-portable.zip"
+        write_zip(portable, out, files, prefix="Zitter/", extras=extras)
+        print(f"{portable} ({len(files) + len(extras)} files, {portable.stat().st_size // 2**20} MB)")
     if args.setup:
         # The installer finds the ZIP from its end: minizip skips the bytes before it.
         setup = args.destination / f"{stem}-setup.exe"

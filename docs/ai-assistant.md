@@ -110,16 +110,21 @@ browser actions and permission checks remain in the browser process.
 
 | Backend | Setup | Model field |
 | --- | --- | --- |
-| OpenAI API | Add your key in **Settings → AI Assistant → AI connections**. `OPENAI_API_KEY` remains an optional fallback. Requests use the Responses API with `store: false`. | A model supporting structured JSON output. |
-| Codex CLI | Install and authenticate the native Codex executable. Put it on PATH or set `ZITTER_CODEX_PATH` to its absolute path. | Current defaults: `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`, `gpt-6-luna`. Custom IDs remain supported. |
-| Claude CLI | Install and authenticate native Claude Code. Put it on PATH or set `ZITTER_CLAUDE_PATH` to its absolute path. | A Claude CLI alias or exact model ID. |
-| Ollama | Start local Ollama and pull the chosen model. Optional `ZITTER_OLLAMA_URL` changes the loopback HTTP endpoint; the default is `http://127.0.0.1:11434`. | An installed model with reliable structured output. |
+| OpenAI API | Add your key in **Settings → AI Assistant → AI connections**. `OPENAI_API_KEY` remains an optional fallback. Requests use the Responses API with `store: false`. | Defaults include `gpt-6.1-sol`, `gpt-6.1-terra`, and `gpt-6-astra`. |
+| Codex CLI | Authenticate with `codex login`. Choose **Help and setup** to set a native executable path. Zitter also checks PATH, supported Windows desktop and npm installations, and `ZITTER_CODEX_PATH`. | Current defaults include `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`, and `gpt-6-luna`. Custom IDs remain supported. |
+| Claude CLI | Install native Claude Code and sign in with `/login`. Choose **Help and setup** to set the path, or use PATH or `ZITTER_CLAUDE_PATH`. | A Claude CLI alias or exact model ID. |
+| Ollama | Start local Ollama and choose **Detect models** or **Add model**. Optional `ZITTER_OLLAMA_URL` changes the loopback HTTP endpoint. The default is `http://127.0.0.1:11434`. | A downloaded model with reliable structured output. |
+
+On Windows, first-run setup offers to enable the assistant and configure its
+backends before importing browser data. Its connection cards use the same
+settings as the preferences window. The model picker shows visible models from
+enabled backends with local configuration.
 
 Codex must support `exec --json`, `--output-schema`, `--ephemeral`,
 `--ignore-user-config` and `--ignore-rules`. An unsupported CLI fails that backend
-without falling back to Node or another provider. A launcher installed through
-npm may be a JavaScript script: point `ZITTER_CODEX_PATH` at the actual native
-binary instead. The same native executable requirement applies to Claude.
+without falling back to Node or another provider. If automatic detection misses
+an npm installation, select the native binary through **Help and setup**.
+The same native executable requirement applies to Claude.
 Do not install npm packages into an app bundle. Chromium's own build toolchain
 and the independent network audit scripts are outside this runtime migration.
 

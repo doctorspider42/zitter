@@ -30,6 +30,9 @@
 
 namespace zitter {
 namespace {
+std::optional<updates::Release> ParseReleaseFields(
+    const base::DictValue& value, std::string_view current_version);
+
 constexpr char kLatest[] = "https://api.github.com/repos/doctorspider42/zitter/releases/latest";
 constexpr int64_t kMaxInstaller = 600 * 1024 * 1024;
 constexpr wchar_t kInstallKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Zitter";
@@ -101,49 +104,51 @@ base::File OpenVerifiedInstaller(const base::FilePath& path, const updates::Rele
   return file;
 }
 
-std::optional<updates::Release> Download(const base::FilePath& cache, std::string_view current_version) {
+updates::CheckResult Download(const base::FilePath& cache, std::string_view current_version) {
+  using updates::CheckStatus;
   std::string json;
-  if (!Fetch(kLatest, 2 * 1024 * 1024, &json)) return std::nullopt;
-  auto release = updates::ParseRelease(json, current_version);
-  if (!release || !base::CreateDirectory(cache)) return std::nullopt;
+  if (!Fetch(kLatest, 2 * 1024 * 1024, &json)) return {CheckStatus::kFailed};
+  const auto value = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  if (!value || !value->FindString("tag_name") || !value->FindList("assets") ||
+      !value->FindBool("draft").has_value() || !value->FindBool("prerelease").has_value()) {
+    return {CheckStatus::kFailed};
+  }
+  auto release = ParseReleaseFields(*value, current_version);
+  if (!release) return {CheckStatus::kNoUpdate};
+  if (!base::CreateDirectory(cache)) return {CheckStatus::kFailed};
   const auto installer = InstallerPath(cache, *release);
-  if (updates::VerifyInstaller(installer, *release)) return release;
+  if (updates::VerifyInstaller(installer, *release))
+    return {CheckStatus::kReady, std::move(release)};
   const auto partial = installer.AddExtension(FILE_PATH_LITERAL("partial"));
   {
     base::File file(partial, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
     if (!file.IsValid() || !Fetch(release->url, release->size, nullptr, &file) || !file.Flush()) {
       file.Close();
       base::DeleteFile(partial);
-      return std::nullopt;
+      return {CheckStatus::kFailed};
     }
   }
   if (!updates::VerifyInstaller(partial, *release) || !base::ReplaceFile(partial, installer, nullptr)) {
     base::DeleteFile(partial);
-    return std::nullopt;
+    return {CheckStatus::kFailed};
   }
-  return release;
+  return {CheckStatus::kReady, std::move(release)};
 }
-}  // namespace
-
-namespace updates {
-std::optional<Release> DownloadLatest(const base::FilePath& cache, std::string current_version) {
-  return Download(cache, current_version);
-}
-std::optional<Release> ParseRelease(std::string_view json, std::string_view current_version) {
-  auto value = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
-  if (!value || value->FindBool("draft").value_or(true) ||
-      value->FindBool("prerelease").value_or(true)) return std::nullopt;
-  const auto* tag = value->FindString("tag_name");
+std::optional<updates::Release> ParseReleaseFields(
+    const base::DictValue& value, std::string_view current_version) {
+  if (value.FindBool("draft").value_or(true) ||
+      value.FindBool("prerelease").value_or(true)) return std::nullopt;
+  const auto* tag = value.FindString("tag_name");
   if (!tag || !tag->starts_with('v')) return std::nullopt;
   const std::string number = tag->substr(1);
   base::Version version(number), current(current_version);
   if (!version.IsValid() || version.components().size() != 3 ||
       version.GetString() != number || !current.IsValid() || version.CompareTo(current) <= 0) return std::nullopt;
-  const auto* assets = value->FindList("assets");
+  const auto* assets = value.FindList("assets");
   if (!assets) return std::nullopt;
   const std::string name = "Zitter-" + *tag + "-windows-x64-setup.exe";
   const std::string expected_url = "https://github.com/doctorspider42/zitter/releases/download/" + *tag + "/" + name;
-  std::optional<Release> result;
+  std::optional<updates::Release> result;
   for (const auto& asset : *assets) {
     if (!asset.is_dict()) continue;
     const auto& fields = asset.GetDict();
@@ -158,9 +163,19 @@ std::optional<Release> ParseRelease(std::string_view json, std::string_view curr
         *size != static_cast<int64_t>(*size)) return std::nullopt;
     std::array<uint8_t, 32> decoded;
     if (!base::HexStringToSpan(digest->substr(7), decoded)) return std::nullopt;
-    result = Release{number, *url, base::ToLowerASCII(digest->substr(7)), static_cast<int64_t>(*size)};
+    result = updates::Release{number, *url, base::ToLowerASCII(digest->substr(7)), static_cast<int64_t>(*size)};
   }
   return result;
+}
+}  // namespace
+
+namespace updates {
+CheckResult DownloadLatest(const base::FilePath& cache, std::string current_version) {
+  return Download(cache, current_version);
+}
+std::optional<Release> ParseRelease(std::string_view json, std::string_view current_version) {
+  const auto value = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  return value ? ParseReleaseFields(*value, current_version) : std::nullopt;
 }
 
 bool VerifyInstaller(const base::FilePath& path, const Release& release) {
@@ -172,31 +187,51 @@ WindowsUpdater::WindowsUpdater(const base::FilePath& user_data, Ready ready)
     : cache_(user_data.Append(FILE_PATH_LITERAL("Updates"))), ready_(std::move(ready)) {}
 WindowsUpdater::~WindowsUpdater() = default;
 
-void WindowsUpdater::Start() {
+bool WindowsUpdater::Start() {
   const auto* command = base::CommandLine::ForCurrentProcess();
-  if (command->HasSwitch("disable-zitter-updates") || command->HasSwitch("zitter-app-benchmark")) return;
+  if (command->HasSwitch("disable-zitter-updates") || command->HasSwitch("zitter-app-benchmark")) return false;
   // A portable copy must never update some other registered installation.
   const auto installation = Installation();
-  if (!installation) return;
+  if (!installation) return false;
   directory_ = installation->first;
   // Leave first paint/startup alone; retry every six hours while running.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
       base::BindOnce(&WindowsUpdater::Check, weak_factory_.GetWeakPtr()), base::Seconds(30));
   timer_.Start(FROM_HERE, base::Hours(6), this, &WindowsUpdater::Check);
+  return true;
+}
+
+void WindowsUpdater::CheckNow(base::OnceCallback<void(updates::CheckStatus)> done) {
+  if (directory_.empty()) {
+    std::move(done).Run(updates::CheckStatus::kFailed);
+    return;
+  }
+  if (pending_) {
+    ready_.Run(pending_->version);
+    std::move(done).Run(updates::CheckStatus::kReady);
+    return;
+  }
+  // A manual request can join a startup or periodic check already in progress.
+  manual_check_done_ = std::move(done);
+  Check();
 }
 
 void WindowsUpdater::Check() {
-  if (busy_ || pending_) return;
+  if (busy_ || pending_ || directory_.empty()) return;
   busy_ = true;
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
-      {base::MayBlock(), base::TaskPriority::BEST_EFFORT, base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      {base::MayBlock(), manual_check_done_ ? base::TaskPriority::USER_VISIBLE
+                                           : base::TaskPriority::BEST_EFFORT,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::BindOnce(&updates::DownloadLatest, cache_, base::WideToUTF8(ZITTER_VERSION_SHORT)),
       base::BindOnce(&WindowsUpdater::Checked, weak_factory_.GetWeakPtr()));
 }
-void WindowsUpdater::Checked(std::optional<updates::Release> release) {
+void WindowsUpdater::Checked(updates::CheckResult result) {
   busy_ = false;
-  pending_ = std::move(release);
+  pending_ = std::move(result.release);
+  auto done = std::move(manual_check_done_);
   if (pending_) ready_.Run(pending_->version);
+  if (done) std::move(done).Run(result.status);
 }
 void WindowsUpdater::RequestInstall() {
   install_requested_ = pending_.has_value();

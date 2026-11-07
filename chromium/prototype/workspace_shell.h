@@ -92,6 +92,7 @@ struct ShellState {
   std::string profile_id;
   std::vector<Workspace> workspaces;
   bool configuration_ready = false;
+  bool onboarding_complete = true;
   bool profiles_busy = false;
   std::vector<ProfileInfo> profiles;
   std::vector<LinkRule> link_rules;
@@ -244,7 +245,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool assistant_edge_visible_for_testing() const;
   void RefreshAssistantPreferences();
   void OpenAssistantSettings();
-  void ShowAssistantKeyDialog();
+  void ShowAssistantKeyDialog(views::Widget* owner = nullptr);
   void OpenAdBlockingSettings();
   // Lists, sites or rules changed: the Settings card rebuilds after the click
   // that changed them has finished.
@@ -322,6 +323,8 @@ class WorkspaceShell final : public ui::EventHandler,
   // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
   void ShowAbout();
   void ShowUpdateReady(std::string version, base::RepeatingClosure install = {});
+  void SetUpdateCheckCallback(base::RepeatingClosure check);
+  void ShowUpdateCheckMessage(std::u16string message);
   // Find in page (design: Find & Print): the bar over the active page's top
   // right. `find` gets the text, the direction and case matching; `closed`
   // runs when the bar hides.
@@ -519,7 +522,7 @@ class WorkspaceShell final : public ui::EventHandler,
   uint32_t control_model_kind_for_testing(views::View* view) const;
   uint64_t scene_parent_id_for_testing(views::View* view) const;
   views::View* header_action_for_testing(size_t index) const;
-  views::View* sidebar_action_for_testing(size_t index) const{return index==0?url_pill_.get():index==1?new_tab_button_.get():nullptr;}
+  views::View* sidebar_address_for_testing() const { return url_pill_.get(); }
   views::View* footer_action_for_testing(size_t index) const{return index==0?add_button_.get():index==1?downloads_button_.get():nullptr;}
   ui::SimpleMenuModel* add_menu_for_testing() const{return add_menu_.get();}
   std::unique_ptr<views::View> CreateWorkspaceActionForTesting(base::RepeatingClosure callback) const;
@@ -552,6 +555,9 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<ImportBrowser> sources;
     std::u16string space_name;
     SkColor space_color = 0;
+    bool assistant_enabled = false;
+    base::RepeatingCallback<void(bool)> set_assistant_enabled;
+    base::RepeatingCallback<void(views::View*, std::string)> build_assistant_backends;
     // Passwords from a CSV export; reports the line to show under the source.
     base::RepeatingCallback<void(base::OnceCallback<void(std::u16string)>)> import_passwords;
     base::RepeatingCallback<void(ImportBrowser, base::OnceCallback<void(bool, std::u16string)>)> import_browser;
@@ -772,6 +778,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void CreateToolsPanel();
   void PositionPanels();
   void ApplySidebarWidth(int width,bool done);
+  void FitInitialSidebarWidth();
   void HideMetalSidebarGrip();
   void ScheduleMetalSplit();
   void UpdateMetalSplit();
@@ -874,6 +881,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void PostRemoveSiteRule(SitePreferenceRule rule,std::string profile_id);
   void RefreshSitePreferences(bool reload = true);
   void BuildAssistantPreferences();
+  void BuildAssistantBackendCards(views::View* list, const base::DictValue& data,
+                                  std::string_view only_provider = {});
+  void ShowAssistantBackendInput(views::Widget* owner, std::string provider, std::u16string value);
   void BuildAdBlockingPreferences();
   void SaveSitePreference();
   void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt);
@@ -943,14 +953,22 @@ class WorkspaceShell final : public ui::EventHandler,
   struct SidebarReorder {
     gfx::Rect indicator;
     bool into_folder = false;
+    bool profile_slot = false;
     bool pinned = false;
     std::string parent, before_pin;  // Pinned target: folder and next sibling ("" appends).
     size_t before_tab = 0;           // Tab target: host tab index (or count to append).
   };
-  std::optional<SidebarReorder> SidebarReorderAt(gfx::Point screen_point) const;
+  std::optional<SidebarReorder> SidebarReorderAt(gfx::Point screen_point,
+                                               bool allow_profile = true) const;
+  void SetSidebarReorder(std::optional<SidebarReorder> reorder);
+  void StepProfileDropPreview();
+  void UpdateSidebarDragOverlay();
+  sidebar::Item ProfileDropPreview(gfx::Rect bounds) const;
   // Live drag feedback for `row`, grabbed at `grab` (row-local); nullopt ends the drag.
   void HandleSidebarDrag(views::View* row, gfx::Point grab, std::optional<gfx::Point> screen_point);
   std::optional<SidebarReorder> sidebar_reorder_;
+  base::TimeTicks profile_drop_preview_start_;
+  base::RepeatingTimer profile_drop_preview_timer_;
   // The dragged row follows the pointer as a lifted copy; the original dims.
   views::ViewTracker drag_row_;
   gfx::Point drag_grab_;
@@ -1101,6 +1119,9 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> assistant_add_backend_ = nullptr, assistant_add_button_ = nullptr;
   raw_ptr<EditorControl> assistant_add_model_ = nullptr;
   std::string assistant_preferences_snapshot_;
+  views::ViewTracker welcome_assistant_backends_;
+  std::string welcome_assistant_snapshot_;
+  std::string welcome_assistant_provider_;
   bool assistant_refresh_pending_ = false;
   // Ad blocking cards: the lists, the sites without blocking, the rules summary.
   raw_ptr<views::View> ad_blocking_list_ = nullptr;
@@ -1146,7 +1167,6 @@ class WorkspaceShell final : public ui::EventHandler,
   GURL context_url_;
   std::string link_source_workspace_;
   std::vector<Workspace> route_workspaces_;
-  raw_ptr<views::View> new_tab_button_ = nullptr;
   std::unique_ptr<views::DialogDelegate> rust_folder_dialog_delegate_;
   // Removing a space asks first (design: Dialog), then removes with an undo toast.
   std::unique_ptr<views::DialogDelegate> remove_dialog_delegate_;
@@ -1297,6 +1317,7 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t sidebar_context_visit_count_ = 0;
   std::string update_version_;
   base::RepeatingClosure install_update_;
+  base::RepeatingClosure check_update_;
   size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::View> profile_picker_ = nullptr;
   raw_ptr<EditorControl> workspace_input_ = nullptr;
@@ -1408,6 +1429,7 @@ class WorkspaceShell final : public ui::EventHandler,
   base::TimeTicks reload_started_;
   void StepReloadAnimation();
   bool sidebar_width_dirty_ = false;
+  bool sidebar_width_initialized_ = false;
   bool pinned_ = true;
   bool new_tab_ = false;
   bool appearance_ready_ = false;

@@ -82,7 +82,7 @@ This helper requires the existing `zitter_ui_lab` overlay, `out/ZitterOptimized`
 <details>
 <summary><strong>Windows (x64)</strong></summary>
 
-Needs Visual Studio 2026 Build Tools (C++ desktop + ATL/MFC), the Windows 11 SDK 10.0.28000 and about 150 GB free. With the Chromium checkout in `.chromium/src` (see [docs/windows-port.md](docs/windows-port.md#phase-0-environment)):
+Needs Visual Studio 2026 Build Tools (C++ desktop + ATL/MFC), the Windows 11 SDK 10.0.28000 and about 150 GB free. If Build Tools are installed under `Program Files (x86)`, set `vs2026_install` to the Build Tools installation directory before running GN. See the [Windows setup guide](docs/windows-port.md#phase-0-environment) for the PowerShell command and Chromium checkout setup.
 
 ```powershell
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
@@ -96,6 +96,9 @@ python tools/package_win.py --out .chromium/src/out/ZitterWinRelease --setup .ch
 ```
 
 This produces a portable package and `Zitter-<version>-win-x64-setup.exe`, which installs per user or for all users and supports `--quiet`.
+
+For a separate per-user installer and fresh-profile testing, see
+[Zitter Dev for side-by-side testing](docs/windows-port.md#zitter-dev-for-side-by-side-testing).
 
 </details>
 

@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/jump_list_win.h"
+#include "chromium/app/windows_channel.h"
 
 #include <windows.h>
 
@@ -87,10 +88,13 @@ ComPtr<IObjectCollection> Collection() {
 
 void WriteJumpList(std::vector<JumpListSpace> spaces, std::u16string spaces_title, std::u16string new_tab,
                    std::u16string palette) {
+  const auto& command = *base::CommandLine::ForCurrentProcess();
+  const bool dev = command.HasSwitch(windows::kDevChannelSwitch);
+  if (dev && command.HasSwitch(windows::kCleanProfileSwitch)) return;
   ComPtr<ICustomDestinationList> list;
   if (FAILED(::CoCreateInstance(CLSID_DestinationList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&list)))) return;
   // The same ID as the window and the installer's shortcuts (main.cc).
-  list->SetAppID(L"Zitter.Browser");
+  list->SetAppID(dev ? windows::kDevAppId : windows::kStableAppId);
   UINT slots = 0;
   ComPtr<IObjectArray> removed;
   if (FAILED(list->BeginList(&slots, IID_PPV_ARGS(&removed)))) return;

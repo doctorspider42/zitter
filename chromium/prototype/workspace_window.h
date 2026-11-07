@@ -25,6 +25,7 @@
 #include "components/find_in_page/find_tab_helper.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
+#include "ui/views/widget/widget_observer.h"
 #include "chromium/prototype/assistant_panel.h"
 #include "chromium/prototype/workspace_shell.h"
 #include "zitter/application/workspace_controller.h"
@@ -68,7 +69,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
                               public ui::AcceleratorTarget,
                               public ui::SelectFileDialog::Listener,
                               public content::BrowsingDataRemover::Observer,
-                              public find_in_page::FindResultObserver {
+                              public find_in_page::FindResultObserver,
+                              public views::WidgetObserver {
  public:
   WorkspaceWindow(Profile* work, Profile* personal);
   explicit WorkspaceWindow(base::FilePath data_directory, bool offer_import = true, Profile* private_profile = nullptr);
@@ -165,7 +167,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   base::DictValue AssistantSettingsForShell();
   void WriteAssistantSettings(base::DictValue value);
   void WithAssistantApiKey(base::OnceCallback<void(std::string)> callback);
-  void CheckAssistantConnection(std::string provider);
+  void CheckAssistantConnection(std::string provider, bool discover = false);
   // Invisible pages of the assistant profile share its cookies and logins.
   // Starting from a visible tab moves that tab, with its page state, away from the user.
   bool AssistantStartBackground(const std::string& key, const std::string& from_tab, const GURL& url);
@@ -387,6 +389,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ScheduleSessionSave();
   void SchedulePreconnect(std::u16string_view query);
   void SaveSession();
+  void ShowRestoredWindow(std::optional<base::DictValue> placement);
+  void RememberWindowPlacement();
+  void SaveWindowPlacement();
+  void OnWidgetBoundsChanged(views::Widget*, const gfx::Rect&) override;
+  void OnWidgetShowStateChanged(views::Widget*) override;
   void RestoreSession();
   struct Host;
   void AssociateReaderPin(Host& host, views::WebView* view);
@@ -521,6 +528,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::vector<std::string> import_new_workspace_ids_;
   base::FilePath configuration_path_;
   scoped_refptr<base::SequencedTaskRunner> config_runner_;
+  gfx::Rect windowed_bounds_;
+  bool window_placement_ready_ = false;
+  bool window_maximized_ = false;
+  bool window_fullscreen_ = false;
   base::OnceClosure ready_callback_;
   bool configuration_ready_ = false;
   int pending_config_writes_ = 0;

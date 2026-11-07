@@ -238,6 +238,7 @@ class SceneParentNodes final {
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFolderNameField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantApiKeyField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantSetupField);
 // Color roles. The values only name a role: Tone() resolves each one from the
 // design system palette (design.rs) for the view's scheme and workspace color.
 constexpr SkColor kInk = 0xFF1B1A22;
@@ -253,6 +254,7 @@ constexpr SkColor kOk = 0xFF0F766E;
 constexpr int kSidebarWidth = 248;
 constexpr int kMinSidebarWidth = 200;
 constexpr int kMaxSidebarWidth = 480;
+constexpr auto kSidebarInsets = gfx::Insets::TLBR(2, 4, 8, 4);
 // The sidebar never takes more than half of the window.
 int SidebarColumn(int preferred, int window_width) {
   return std::min(preferred, std::max(120, window_width / 2));
@@ -361,7 +363,7 @@ struct Appearance {
   bool workspace_names = true;
   // Pinned folders start collapsed; an item opened elsewhere peeks out of its folder.
   bool folders_collapsed = true;
-  int sidebar_width = kSidebarWidth;
+  std::optional<int> sidebar_width;
   std::map<std::string, std::string> emoji;
   // Time Machine records each workspace's tabs (on by default) for 7, 30 or 90 days.
   bool time_machine = true;
@@ -395,8 +397,8 @@ Appearance ReadAppearance(const base::FilePath& path) {
       if (value.is_string() && !value.GetString().empty() && value.GetString().size() <= 64)
         result.emoji[id] = value.GetString();
   }
-  result.sidebar_width = std::clamp(dict->FindInt("sidebar_width").value_or(kSidebarWidth),
-                                    kMinSidebarWidth, kMaxSidebarWidth);
+  if (const auto width = dict->FindInt("sidebar_width"))
+    result.sidebar_width = std::clamp(*width, kMinSidebarWidth, kMaxSidebarWidth);
   result.time_machine = dict->FindBool("time_machine").value_or(true);
   const int days = dict->FindInt("time_machine_days").value_or(30);
   result.time_machine_days = days == 7 || days == 90 ? days : 30;
@@ -430,7 +432,7 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   dict.Set("workspace_animations", appearance.animations);
   dict.Set("workspace_names", appearance.workspace_names);
   dict.Set("pinned_folders_collapsed", appearance.folders_collapsed);
-  dict.Set("sidebar_width", appearance.sidebar_width);
+  if (appearance.sidebar_width) dict.Set("sidebar_width", *appearance.sidebar_width);
   dict.Set("time_machine", appearance.time_machine);
   dict.Set("time_machine_days", appearance.time_machine_days);
   base::DictValue emoji_dict;
@@ -1252,18 +1254,26 @@ class ToastView final : public views::View {
     SetNotifyEnterExitOnChild(true);GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
   }
   void SetMessage(std::u16string lead,std::u16string noun){lead_->SetText(lead);noun_->SetText(noun);GetViewAccessibility().SetName(lead+noun);PreferredSizeChanged();}
-  void SetAction(std::u16string label){views::AsViewClass<SceneTextButton>(undo_)->SetText(std::move(label));actions_->InvalidateLayout();PreferredSizeChanged();}
+  void SetAction(std::u16string label) {
+    actions_->SetVisible(!label.empty());
+    views::AsViewClass<SceneTextButton>(undo_)->SetText(std::move(label));
+    actions_->InvalidateLayout();
+    PreferredSizeChanged();
+  }
   std::u16string text() const{return std::u16string(lead_->GetText())+std::u16string(noun_->GetText());}
   views::View* undo() const{return undo_;}
   // `space-4` in, the message, „Cofnij” and close at their natural widths, `space-2` out.
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{
-    const int width=16+message_->GetPreferredSize().width()+12+actions_->GetPreferredSize().width()+4+close_->GetPreferredSize().width()+8;
+    const int actions_width = actions_->GetVisible() ? actions_->GetPreferredSize().width() + 4 : 0;
+    const int width=16+message_->GetPreferredSize().width()+12+actions_width+close_->GetPreferredSize().width()+8;
     return gfx::Size(std::min(420,width),44);}
   void Layout(PassKey) override{
     const auto close=close_->GetPreferredSize(),actions=actions_->GetPreferredSize(),message=message_->GetPreferredSize();
     auto centred=[&](views::View* view,int x,gfx::Size size){view->SetBounds(x,(height()-size.height())/2,size.width(),size.height());};
-    const int close_x=width()-8-close.width(),actions_x=close_x-4-actions.width();
-    centred(close_,close_x,close);centred(actions_,actions_x,actions);
+    const int close_x = width() - 8 - close.width();
+    const int actions_x = actions_->GetVisible() ? close_x - 4 - actions.width() : close_x;
+    centred(close_,close_x,close);
+    if (actions_->GetVisible()) centred(actions_,actions_x,actions);
     centred(message_,16,gfx::Size(std::max(0,actions_x-12-16),message.height()));}
   void OnThemeChanged() override{views::View::OnThemeChanged();const auto p=Palette(this);for(auto* label:{lead_.get(),noun_.get()}){label->SetEnabledColor(p.ink);label->SetBackgroundColor(p.bg_raised);}SchedulePaint();}
   void OnPaint(gfx::Canvas* canvas) override{canvas->DrawColor(Palette(this).bg_raised);}
@@ -2123,7 +2133,6 @@ void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass
 void SetRowSiteControls(views::View* view,bool site,bool open){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetSiteControls(site,open);}
 bool RowSiteControls(views::View* view){auto* row=views::AsViewClass<RustRowView>(view);return row&&row->site_controls();}
 void SetRowTitle(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetTitle(std::move(value));});}
-void SetRowDetail(views::View* view,std::u16string value){VisitRow(view,[&value](auto* row){row->SetDetail(std::move(value));});}
 void SetRowMonogram(views::View* view,std::u16string value,SkColor color){VisitRow(view,[&value,color](auto* row){row->SetMonogram(std::move(value),color);});}
 void SetRowCallback(views::View* view,views::Button::PressedCallback value){VisitRow(view,[&value](auto* row){row->SetCallback(std::move(value));});}
 template<typename Callback> decltype(auto) WithRowSnapshot(views::View* view,Callback callback){
@@ -3861,6 +3870,7 @@ void RegisterKeys(views::Widget* widget, ui::AcceleratorTarget* target,
   widget->GetFocusManager()->RegisterAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, 0), ui::AcceleratorManager::kHighPriority, target);
 #if BUILDFLAG(IS_WIN)
   widget->GetFocusManager()->RegisterAccelerator(ui::Accelerator(ui::VKEY_F5, 0), ui::AcceleratorManager::kHighPriority, target);
+  widget->GetFocusManager()->RegisterAccelerator(ui::Accelerator(ui::VKEY_F11, 0), ui::AcceleratorManager::kHighPriority, target);
 #endif
 #if BUILDFLAG(IS_MAC)
   if (install_native) InstallWorkspaceKeyboardRouting(widget, panel);
@@ -4219,22 +4229,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         return shell && shell->metal_sidebar_visible();
       }, weak)));
   workspace_name_->SetVisible(false);
-#if BUILDFLAG(IS_MAC)
-  const auto* new_tab_hint = u"⌘T";
-#else
-  const auto* new_tab_hint = u"Ctrl+T";
-#endif
-  RowRecipe::Spec new_tab;
-  new_tab.title = T(u"Nowa karta");
-  new_tab.detail = new_tab_hint;
-  new_tab.sidebar_row = true;
-  new_tab.scene_visible = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    return shell && shell->metal_sidebar_visible();
-  }, weak);
-  new_tab.icon = &vector_icons::kAdd2Icon;
-  new_tab.kbd = true;
-  new_tab_button_ = sidebar->AddChildView(CreateSceneRow(
-      base::BindRepeating(&WorkspaceShell::OpenAddress,weak,true),std::move(new_tab),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak),{chrome_node_graph_,4,{},"sidebar.new-tab"}));
   std::unique_ptr<views::ScrollBar> vertical_bar;
   vertical_bar=CreateSidebarScrollBar(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
   PanelViewport* tab_viewport=nullptr;
@@ -4249,7 +4243,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   tab_list_=list.get();tab_scroll_->SetPanelContents(std::move(list));
   tab_list_->set_context_menu_controller(this);
   // Rust panel layout in Rust mode; identical BoxLayout fallback for Views.
-  SetSidebarPanelLayout(sidebar.get(), true, gfx::Insets::TLBR(2, 4, 8, 4), 2, scroll);
+  SetSidebarPanelLayout(sidebar.get(), true, kSidebarInsets, 2, scroll);
 
   // Workspace settings: profile and color live here, not in the sidebar.
   workspace_form_=std::make_unique<WorkspaceFormState>();
@@ -4414,7 +4408,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   std::unique_ptr<views::ScrollBar> workspace_bar;
   workspace_bar=CreateSidebarScrollBar(footer_visible,true);
   PanelViewport* workspace_viewport=nullptr;
-  auto* dot_scroll=footer->AddChildView(CreatePanelViewport(&workspace_viewport,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),{-1,-1,true,false,false,false,true},std::move(workspace_bar)));
+  auto* dot_scroll=footer->AddChildView(CreatePanelViewport(
+      &workspace_viewport, base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak),
+      {.horizontal = true, .edge_hover_scroll = true}, std::move(workspace_bar)));
   workspace_scroll_=workspace_viewport;
   dot_scroll->SetPreferredSize(gfx::Size(0,32));
   auto dots = std::make_unique<WorkspaceRail>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
@@ -4770,7 +4766,10 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         if (!shell->general_dirty_.contains("animations")) shell->workspace_animations_ = appearance.animations;
         if (!shell->general_dirty_.contains("workspace_names")) shell->workspace_names_ = appearance.workspace_names;
         if (!shell->general_dirty_.contains("folders_collapsed")) {shell->folders_collapsed_ = appearance.folders_collapsed;shell->sidebar_tree_.SetDefaultCollapsed(appearance.folders_collapsed);}
-        if (!shell->sidebar_width_dirty_) shell->sidebar_width_ = appearance.sidebar_width;
+        if (!shell->sidebar_width_dirty_ && appearance.sidebar_width) {
+          shell->sidebar_width_ = *appearance.sidebar_width;
+          shell->sidebar_width_initialized_ = true;
+        }
         if (!shell->general_dirty_.contains("time_machine")) {
           shell->time_machine_enabled_ = appearance.time_machine; shell->time_machine_days_ = appearance.time_machine_days;
           if (shell->callbacks_.timeline_settings) shell->callbacks_.timeline_settings.Run(shell->time_machine_enabled_, shell->time_machine_days_);
@@ -4781,6 +4780,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         shell->RefreshWorkspaceHeading();
         shell->appearance_ready_ = true;
         shell->ApplyAppearance();
+        shell->FitInitialSidebarWidth();
         // The pinned sidebar already appeared with the window; reorder panels
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
@@ -4847,6 +4847,7 @@ void WorkspaceShell::Detach() {
   CancelWorkspaceSwipe();
   StopWorkspaceAnimation();
   sidebar_warm_timer_.Stop();
+  profile_drop_preview_timer_.Stop();
   if (sidebar_root_) sidebar_root_->RemovePreTargetHandler(this);
   import_preview_timer_.Stop();
   if (folder_dialog_) folder_dialog_->CloseNow();
@@ -4861,8 +4862,7 @@ void WorkspaceShell::Detach() {
   weak_factory_.InvalidateWeakPtrs();
   if (!widget_) return;
   accelerator_target_ = nullptr;
-  tools_form_.reset();
-  new_tab_button_ = nullptr;
+  ResetToolsForm();
   widget_->RemoveObserver(this);
   for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()})
     if (panel) panel->RemoveObserver(this);
@@ -4896,6 +4896,10 @@ void WorkspaceShell::Detach() {
   color_presets_ = nullptr;
   emoji_input_ = nullptr;
   sidebar_root_ = nullptr;
+  drag_overlay_ = nullptr;
+  drag_row_.SetView(nullptr);
+  drag_point_.reset();
+  sidebar_reorder_.reset();
   palette_root_ = nullptr;
   tab_list_ = nullptr;
   tab_scroll_ = nullptr;
@@ -4943,7 +4947,7 @@ void WorkspaceShell::Detach() {
   tools_scroll_ = nullptr; tools_picker_ = nullptr;
   shortcut_chord_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr;
-  tools_widget_.reset(); tools_delegate_.reset();
+  tools_widget_.reset(); tools_delegate_.reset(); tools_form_.reset();
   toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
   download_cue_timer_.Stop(); download_cue_hide_timer_.Stop(); downloads_done_timer_.Stop(); downloads_tremor_timer_.Stop(); downloads_spin_timer_.Stop(); download_cue_ = nullptr; download_cue_widget_.reset(); download_cue_delegate_.reset();
   remove_dialog_.reset(); remove_dialog_delegate_.reset(); drop_view_ = nullptr; drop_widget_.reset(); drop_delegate_.reset();
@@ -5058,6 +5062,7 @@ void WorkspaceShell::Update(ShellState state) {
   copy_url_button_->SetEnabled(IsWorkspaceTabUrl(state_.url));
   if (state_.loading && !reload_timer_.IsRunning()) AnimateReload();
   if (selected) ApplyAppearance(false);
+  FitInitialSidebarWidth();
   RebuildTabs(previous_workspace, changed);
 }
 
@@ -5724,7 +5729,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running() || sidebar_slide_timer_.IsRunning()) {
     metal_sidebar_->Hide();HideMetalSidebarGrip();
-    if (was_visible) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
+    if (was_visible) { tab_list_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); if (drag_overlay_) drag_overlay_->SchedulePaint(); }
     return;
   }
   // Invalidations can reach Metal before the next native compositor paint.
@@ -5733,12 +5738,6 @@ void WorkspaceShell::UpdateMetalSidebar() {
   auto* viewport = tab_list_->parent();
   const auto list_bounds = viewport->GetBoundsInScreen();
   const auto viewport_frame = views::View::ConvertRectToTarget(viewport, sidebar_root_, viewport->GetLocalBounds());
-  for (auto* control : {new_tab_button_.get()}) {
-    const auto r = control->GetMirroredBounds();
-    const auto a = sidebar::action_frame({r.x(), r.y(), r.width(), r.height()},
-        {viewport_frame.x(), viewport_frame.y(), viewport_frame.width(), viewport_frame.height()});
-    control->SetBoundsRect(sidebar_root_->GetMirroredRect(gfx::Rect(a.x, a.y, a.width, a.height)));
-  }
   workspace_name_->SetBoundsRect(sidebar_root_->GetMirroredRect(gfx::Rect(
       viewport_frame.x(), workspace_name_->y(), viewport_frame.width(), workspace_name_->height())));
   const auto scroller=GetSidebarScrollBarSnapshot(tab_scroll_->vertical_scroll_bar());
@@ -5746,7 +5745,6 @@ void WorkspaceShell::UpdateMetalSidebar() {
   if (scroller.visible) bounds.Union(scroller.bounds);
   if (sidebar_footer_->IsDrawn()) bounds.Union(sidebar_footer_->GetBoundsInScreen());
   if (url_pill_->IsDrawn()) bounds.Union(url_pill_->parent()->GetBoundsInScreen());
-  if (new_tab_button_->IsDrawn()) bounds.Union(new_tab_button_->GetBoundsInScreen());
   const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
   std::vector<SidebarViewportNode> nodes;
   std::vector<views::View*> native_views;
@@ -5823,24 +5821,11 @@ void WorkspaceShell::UpdateMetalSidebar() {
     auto rect = gfx::RectF(copy_url_button_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
     items.push_back(static_cast<RustActionView*>(copy_url_button_.get())->SceneItem(rect, rect));
   }
-  for (auto* control : {static_cast<views::View*>(url_pill_.get()),new_tab_button_.get()}) {
-    if (!control->IsDrawn()) continue;
-    auto* row=control;
-    const auto& spec = RowSpec(row);
-    auto rect = row->GetBoundsInScreen(); rect.Offset(-bounds.x(), -bounds.y());
-    sidebar::Item item{};
-    item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
-    item.clip={float(rect.x()), float(rect.y()), float(rect.width()), float(rect.height())};
-    if (spec.address) { items.push_back(AddressRowItem(row,spec,gfx::RectF(rect),gfx::RectF(rect),RowTitleWidth(row),RowHovered(row),row->HasFocus())); continue; }
-    if (spec.kbd) { for (auto& key : CommandRowItems(row,spec,gfx::RectF(rect),gfx::RectF(rect),RowHovered(row),row->HasFocus())) items.push_back(std::move(key)); continue; }
-    item.kind=spec.address ? 4 : 3; item.title=base::UTF16ToUTF8(spec.title); item.detail=base::UTF16ToUTF8(spec.detail);
-    item.title_width=RowTitleWidth(row); item.font_size=Font(0).GetFontSize();
-    item.detail_font_size=Font(spec.address ? 0 : -1).GetFontSize(); item.detail_ink=Tone(row,kMuted);
-    item.ink=Tone(row,row->GetEnabledInViewsSubtree() && !spec.blank ? kInk : kMuted); item.badge=Tone(row,spec.address ? kMuted : kSubtle);
-    item.active=spec.secure;
-    item.hovered=RowHovered(row);
-    item.fill=spec.address ? Tone(row,kCard) : item.hovered ? HoverWash(row) : SK_ColorTRANSPARENT; if (spec.address) item.edge=Hairline(row); item.focused=row->HasFocus(); item.focus=Palette(row).focus;
-    items.push_back(std::move(item));
+  if (auto* row = url_pill_.get(); row->IsDrawn()) {
+    auto rect = gfx::RectF(row->GetBoundsInScreen());
+    rect.Offset(-bounds.x(), -bounds.y());
+    items.push_back(AddressRowItem(row, RowSpec(row), rect, rect,
+                                  RowTitleWidth(row), RowHovered(row), row->HasFocus()));
   }
   if (workspace_name_->IsDrawn()) {
     auto rect = workspace_name_->GetBoundsInScreen(); rect.Offset(-bounds.x(), -bounds.y());
@@ -5903,7 +5888,12 @@ void WorkspaceShell::UpdateMetalSidebar() {
     item.clip={float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())};
     items.push_back(std::move(item));
   }
-  if (sidebar_reorder_) {
+  const bool profile_slot = sidebar_reorder_ && sidebar_reorder_->profile_slot;
+  if (profile_slot) {
+    auto rect = sidebar_reorder_->indicator;
+    rect.Offset(-bounds.x(), -bounds.y());
+    items.push_back(ProfileDropPreview(rect));
+  } else if (sidebar_reorder_) {
     // Drop target: a line where the row lands, or a wash over the folder that receives it.
     auto rect=gfx::RectF(sidebar_reorder_->indicator);rect.Offset(-bounds.x(),-bounds.y());
     const auto list=gfx::RectF(list_origin.x(),list_origin.y(),list_bounds.width(),list_bounds.height());
@@ -5912,7 +5902,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
     item.x=rect.x();item.y=rect.y();item.width=rect.width();item.height=rect.height();
     item.clip={list.x(),list.y(),list.width(),list.height()};items.push_back(std::move(item));
   }
-  if (auto* rust_row=views::AsViewClass<RustRowView>(drag_row_.view()); rust_row && drag_point_) {
+  if (auto* rust_row=views::AsViewClass<RustRowView>(drag_row_.view()); rust_row && drag_point_ && !profile_slot) {
     // A lifted copy of the dragged row follows the pointer above everything else.
     const gfx::Point origin=*drag_point_-drag_grab_.OffsetFromOrigin()-bounds.OffsetFromOrigin();
     const gfx::RectF ghost(origin.x(),origin.y(),rust_row->width(),rust_row->height());
@@ -5940,10 +5930,16 @@ void WorkspaceShell::UpdateMetalSidebar() {
   // The initial native paint record can contain fallback text. Re-record it
   // once when GPU presentation takes ownership, then the control paint gate
   // keeps it empty until fallback is needed again.
-  if (!was_visible && metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
   // A failed drawable must expose freshly painted fallback content, even if
   // the last native paint was skipped while Metal still had a visible frame.
-  if (was_visible && !metal_sidebar_->visible()) { tab_list_->SchedulePaint(); new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); }
+  if (was_visible != metal_sidebar_->visible()) {
+    tab_list_->SchedulePaint();
+    url_pill_->SchedulePaint();
+    workspace_name_->SchedulePaint();
+    tab_scroll_->vertical_scroll_bar()->SchedulePaint();
+    sidebar_footer_->SchedulePaint();
+    if (drag_overlay_) drag_overlay_->SchedulePaint();
+  }
 }
 
 void WorkspaceShell::ConfigureSidebarContextMenus(views::View* view) {
@@ -6073,7 +6069,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
 void WorkspaceShell::UpdateWorkspaceSwipePreview() {
   if (metal_sidebar_ && metal_sidebar_->visible()) {
     metal_sidebar_->Hide();HideMetalSidebarGrip();
-    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
+    url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
   }
   if (!swipe_overlay_) {
     StopWorkspaceAnimation();
@@ -7181,15 +7177,23 @@ WorkspaceShell::ResolvedRowTarget WorkspaceShell::ResolveSidebarTarget(std::stri
   const auto target=sidebar::resolve_row_target(rust::Str(workspace.data(),workspace.size()),state_.workspace_id,identity[0],identity[1],rust::Str(pin.data(),pin.size()),rust::Slice<const sidebar::MenuTab>(tabs.data(),tabs.size()),rust::Slice<const sidebar::TreeNode>(pins.data(),pins.size()));
   return {target.valid,target.has_tab?std::optional<size_t>(target.tab):std::nullopt,std::string(target.pin)};
 }
-std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(gfx::Point point) const {
-  if (url_pill_ && new_tab_button_ && sidebar_widget_ && sidebar_widget_->GetWindowBoundsInScreen().Contains(point) &&
-      point.y() >= url_pill_->GetBoundsInScreen().y() && point.y() <= new_tab_button_->GetBoundsInScreen().bottom()) {
-    SidebarReorder out; out.pinned = true; out.parent = "@profile";
-    const auto bounds = new_tab_button_->GetBoundsInScreen();
-    out.indicator = gfx::Rect(bounds.x(), bounds.y() - 4, bounds.width(), 2);
+std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
+    gfx::Point point, bool allow_profile) const {
+  if (!sidebar_visible() || !sidebar_root_ ||
+      !sidebar_root_->GetBoundsInScreen().Contains(point))
+    return std::nullopt;
+  const auto address = url_pill_->parent()->GetBoundsInScreen();
+  const auto list = tab_list_->parent()->GetBoundsInScreen();
+  if (point.y() >= address.y() && point.y() < list.y()) {
+    if (!allow_profile || !state_.configuration_ready || state_.profiles_busy)
+      return std::nullopt;
+    SidebarReorder out;
+    out.pinned = true;
+    out.parent = "@profile";
+    out.profile_slot = true;
+    out.indicator = address;
     return out;
   }
-  if(!sidebar_visible()||!sidebar_root_||!sidebar_root_->GetBoundsInScreen().Contains(point))return std::nullopt;
   const auto found=tab_lists_.find(state_.workspace_id);
   if(found==tab_lists_.end()||!found->second.node_graph)return std::nullopt;
   const auto& cache=found->second;
@@ -7231,7 +7235,10 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(g
   const auto& meta=metas[target.row];const auto& r=meta.bounds;
   out.indicator=gfx::Rect(r.x(),target.after?r.bottom():r.y()-2,r.width(),2);
   if(!meta.pinned){out.before_tab=target.after?meta.after_tab:meta.before_tab;return out;}
-  if (std::ranges::any_of(state_.pins,[&](const auto& pin){return pin.id==meta.pin&&pin.profile_pin;})) {out.parent="@profile";out.before_pin=target.after?"":meta.pin;return out;}
+  if (std::ranges::any_of(state_.pins,[&](const auto& pin){return pin.id==meta.pin&&pin.profile_pin;})) {
+    if (!allow_profile) return std::nullopt;
+    out.parent="@profile";out.before_pin=target.after?"":meta.pin;return out;
+  }
   if(target.into||(target.after&&meta.expanded)) {
     // Into a folder: dropped on its row, or just below an open folder's header.
     out.parent=meta.pin;
@@ -7330,7 +7337,7 @@ void WorkspaceShell::CreateSplitDrop() {
 void WorkspaceShell::HandlePaneDrag(size_t pane,std::optional<gfx::Point> point,bool drop) {
   const auto panes=state_.split_tabs;
   if(!state_.split_visible||pane>=panes.size()||!state_.configuration_ready||state_.profiles_busy){
-    if(sidebar_reorder_){sidebar_reorder_.reset();ScheduleMetalSidebar();}ShowSplitDrop(std::nullopt,{});return;}
+    SetSidebarReorder(std::nullopt);ShowSplitDrop(std::nullopt,{});return;}
   const size_t tab=panes[pane];
   std::optional<SidebarReorder> reorder;std::optional<size_t> place;
   if(point){
@@ -7345,10 +7352,10 @@ void WorkspaceShell::HandlePaneDrag(size_t pane,std::optional<gfx::Point> point,
   }
   std::u16string title;for(const auto& row:state_.tabs)if(row.index==tab)title=row.title;
   if(!drop){
-    sidebar_reorder_=reorder;ScheduleMetalSidebar();
+    SetSidebarReorder(std::move(reorder));
     ShowSplitDrop(place,std::move(title),panes.size()-1);return;
   }
-  sidebar_reorder_.reset();ScheduleMetalSidebar();ShowSplitDrop(std::nullopt,{});
+  SetSidebarReorder(std::nullopt);ShowSplitDrop(std::nullopt,{});
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,size_t tab,std::optional<SidebarReorder> reorder,std::optional<size_t> place){
     if(!shell||!shell->state_.configuration_ready||shell->state_.profiles_busy||!std::ranges::contains(shell->state_.split_tabs,tab))return;
     if(reorder){
@@ -7374,7 +7381,7 @@ void WorkspaceShell::DragHoverSettled() {
     if(tab.index!=state_.active_tab)callbacks_.select_tab.Run(tab.index);
     drag_hover_split_=true;
     const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
-    sidebar_reorder_.reset();ScheduleMetalSidebar();
+    SetSidebarReorder(std::nullopt);
     ShowSplitDrop(panes<kMaxSplitPanes?std::optional<size_t>(panes):std::nullopt,drag_row_.view()?std::u16string(drag_row_.view()->GetViewAccessibility().GetCachedName()):std::u16string());
     return;
   }
@@ -7382,7 +7389,8 @@ void WorkspaceShell::DragHoverSettled() {
 void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::optional<gfx::Point> point) {
   // Another tab's row under the pointer: wait, then focus it and preview the split.
   std::optional<std::array<uint64_t,2>> hovered;
-  if(point&&tab_list_&&tab_list_->GetWidget()){
+  if (point && tab_list_ && tab_list_->GetWidget() &&
+      tab_list_->parent()->GetBoundsInScreen().Contains(*point)) {
     gfx::Point local=*point;views::View::ConvertPointFromScreen(tab_list_,&local);
     for(auto* view=tab_list_->HitTestPoint(local)?tab_list_->GetEventHandlerForPoint(local):nullptr;view;view=view->parent()){
       auto* over=views::AsViewClass<RustRowView>(view);if(!over)continue;
@@ -7395,32 +7403,96 @@ void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::opt
     if(hovered)drag_hover_timer_.Start(FROM_HERE,base::Milliseconds(450),base::BindOnce(&WorkspaceShell::DragHoverSettled,weak_factory_.GetWeakPtr()));
   }
   drag_row_.SetView(point?row:nullptr);drag_grab_=grab;drag_point_=point;
-  if(drag_hover_split_){ScheduleMetalSidebar();return;}
-  sidebar_reorder_=point?SidebarReorderAt(*point):std::nullopt;
+  if (drag_hover_split_) {
+    UpdateSidebarDragOverlay();
+    return;
+  }
+  const auto* rust_row = views::AsViewClass<RustRowView>(row);
+  SetSidebarReorder(point ? SidebarReorderAt(*point, !rust_row || !rust_row->PinBinding().folder)
+                          : std::nullopt);
   ShowSplitDrop(point&&!sidebar_reorder_?SplitDropSlot(*point):std::nullopt,row?std::u16string(row->GetViewAccessibility().GetCachedName()):std::u16string());
+}
+
+namespace {
+constexpr auto kProfileDropReveal = base::Milliseconds(120);
+}  // namespace
+
+void WorkspaceShell::SetSidebarReorder(std::optional<SidebarReorder> reorder) {
+  const bool was_over_profile = sidebar_reorder_ && sidebar_reorder_->profile_slot;
+  const bool over_profile = reorder && reorder->profile_slot;
+  sidebar_reorder_ = std::move(reorder);
+  if (!over_profile) {
+    profile_drop_preview_timer_.Stop();
+  } else if (!was_over_profile && !gfx::Animation::PrefersReducedMotion()) {
+    profile_drop_preview_start_ = base::TimeTicks::Now();
+    profile_drop_preview_timer_.Start(FROM_HERE, base::Milliseconds(16), this,
+                                      &WorkspaceShell::StepProfileDropPreview);
+  }
+  UpdateSidebarDragOverlay();
+}
+
+void WorkspaceShell::StepProfileDropPreview() {
+  if (base::TimeTicks::Now() - profile_drop_preview_start_ >= kProfileDropReveal)
+    profile_drop_preview_timer_.Stop();
+  UpdateSidebarDragOverlay();
+}
+
+sidebar::Item WorkspaceShell::ProfileDropPreview(gfx::Rect bounds) const {
+  const auto palette = Palette(root_, workspace_color(state_.workspace_id));
+  const auto elapsed = base::TimeTicks::Now() - profile_drop_preview_start_;
+  const double reveal = profile_drop_preview_timer_.IsRunning()
+      ? std::clamp(elapsed / kProfileDropReveal, 0.0, 1.0)
+      : 1.0;
+  const int progress = static_cast<int>(100 * reveal);
+  sidebar::Item item{};
+  item.kind = 31;
+  item.x = bounds.x();
+  item.y = bounds.y();
+  item.width = bounds.width();
+  item.height = bounds.height();
+  item.clip = {item.x, item.y, item.width, item.height};
+  item.badge = pinned_ ? palette.bg_base : Mix(palette.bg_base, palette.bg_raised, 70);
+  item.fill = Mix(palette.accent_soft, palette.bg_hover, progress);
+  item.edge = Mix(palette.accent_ink, palette.line_strong, progress);
+  item.ink = palette.accent_ink;
+  item.font_size = 14 + 4 * reveal;
+  return item;
+}
+
+void WorkspaceShell::UpdateSidebarDragOverlay() {
   ScheduleMetalSidebar();
-  if(!sidebar_root_)return;
+  if (!sidebar_root_) return;
+  if (!drag_point_ && !sidebar_reorder_) {
+    if (drag_overlay_) drag_overlay_->SetVisible(false);
+    return;
+  }
   if(!drag_overlay_)drag_overlay_=sidebar_root_->AddChildView(std::make_unique<SidebarDragOverlay>(
       base::BindRepeating(&WorkspaceShell::PaintSidebarDrag,base::Unretained(this))));
   // Above every row, including children added since the last drag.
   sidebar_root_->ReorderChildView(drag_overlay_,sidebar_root_->children().size());
   drag_overlay_->SetBoundsRect(sidebar_root_->GetLocalBounds());
-  drag_overlay_->SetVisible(point.has_value());
+  drag_overlay_->SetVisible(true);
   drag_overlay_->SchedulePaint();
 }
 void WorkspaceShell::PaintSidebarDrag(gfx::Canvas* canvas,views::View* overlay) {
+  if (metal_sidebar_visible()) return;
   auto* row=views::AsViewClass<RustRowView>(drag_row_.view());
-  if(!row||!drag_point_||metal_sidebar_visible())return;
   auto local=[&](gfx::Rect screen){gfx::Point origin=screen.origin();views::View::ConvertPointFromScreen(overlay,&origin);return gfx::Rect(origin,screen.size());};
   const SkColor tint=FrameTint(workspace_color(state_.workspace_id),root_);
   // The row stays in place as a faded placeholder.
-  FillRound(canvas,local(row->GetBoundsInScreen()),10,SkColorSetA(pinned_?tint:Mix(tint,Tone(root_,kCard),70),0xB3));
+  if (row && drag_point_)
+    FillRound(canvas,local(row->GetBoundsInScreen()),10,SkColorSetA(pinned_?tint:Mix(tint,Tone(root_,kCard),70),0xB3));
+  if (sidebar_reorder_ && sidebar_reorder_->profile_slot) {
+    PaintSceneRecipe(canvas, ProfileDropPreview(local(sidebar_reorder_->indicator)), Font(0), true);
+    return;
+  }
   if(sidebar_reorder_) {
     gfx::ScopedCanvas clipped(canvas);canvas->ClipRect(local(tab_list_->parent()->GetBoundsInScreen()));
     const SkColor accent=workspace_color(state_.workspace_id);
     if(sidebar_reorder_->into_folder)FillRound(canvas,local(sidebar_reorder_->indicator),10,SkColorSetA(accent,0x40));
     else FillRound(canvas,local(sidebar_reorder_->indicator),1,accent);
   }
+  if (!row || !drag_point_) return;
   // A lifted copy of the row follows the pointer.
   gfx::Point origin=*drag_point_-drag_grab_.OffsetFromOrigin();views::View::ConvertPointFromScreen(overlay,&origin);
   const gfx::Rect ghost(origin,row->size());
@@ -7436,14 +7508,17 @@ void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_
   if(workspace!=state_.workspace_id)return;
   if(hover_split){
     // Dropped on the tab it settled on: join that tab's split on the right.
-    sidebar_reorder_.reset();ScheduleMetalSidebar();
+    SetSidebarReorder(std::nullopt);
     const auto target=ResolveSidebarTarget(workspace,identity,pin);
     const size_t panes=state_.split_visible?std::max<size_t>(1,state_.split_tabs.size()):1;
     if(target.valid&&state_.configuration_ready&&!state_.profiles_busy)QueueSplit(target.tab,target.pin,panes<kMaxSplitPanes?std::optional<size_t>(panes):std::nullopt);
     return;
   }
-  if(auto reorder=SidebarReorderAt(point)) {
-    sidebar_reorder_.reset();ScheduleMetalSidebar();
+  const bool allow_profile = !std::ranges::any_of(state_.pins, [&](const auto& item) {
+    return item.id == pin && item.folder;
+  });
+  if(auto reorder=SidebarReorderAt(point, allow_profile)) {
+    SetSidebarReorder(std::nullopt);
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,std::string workspace,std::array<uint64_t,2> identity,std::string pin,SidebarReorder reorder){
       if(!shell||shell->state_.workspace_id!=workspace||!shell->state_.configuration_ready||shell->state_.profiles_busy)return;
       const auto target=shell->ResolveSidebarTarget(workspace,identity,pin);
@@ -7858,7 +7933,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   if (metal_sidebar_) {
     metal_sidebar_->Hide();HideMetalSidebarGrip();
     tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
-    new_tab_button_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
+    url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint();
   }
   if(metal_sidebar_) {
     auto* viewport=tab_list_->parent();
@@ -8443,24 +8518,21 @@ void WorkspaceShell::RefreshAssistantPreferences() {
     if(!shell)return;shell->assistant_refresh_pending_=false;shell->RefreshGeneralControls();
   },weak_factory_.GetWeakPtr()));
 }
-void WorkspaceShell::BuildAssistantPreferences() {
-  if(!assistant_backends_list_||!assistant_models_list_||!callbacks_.read_assistant)return;
-  auto data=callbacks_.read_assistant.Run();
-  const auto snapshot=base::WriteJson(data).value_or("");
-  if(snapshot==assistant_preferences_snapshot_)return;
-  assistant_preferences_snapshot_=snapshot;
+void WorkspaceShell::BuildAssistantBackendCards(views::View* list, const base::DictValue& data,
+                                                std::string_view only_provider) {
   auto weak=weak_factory_.GetWeakPtr();
   const bool enabled=data.FindBool("enabled").value_or(false);
   auto text=[](const base::DictValue& d,const char* key){const auto* v=d.FindString(key);return v?base::UTF8ToUTF16(*v):std::u16string();};
   auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){if(shell&&shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(std::move(command));};
-  assistant_backends_list_->RemoveAllChildViews();
+  list->RemoveAllChildViews();
   const auto* backends=data.FindList("backends");const auto* status=data.FindList("status");
   for(size_t i=0;backends&&i<backends->size();++i){
     const auto& backend=(*backends)[i].GetDict();const auto provider=*backend.FindString("provider");
+    if (!only_provider.empty() && provider != only_provider) continue;
     const base::DictValue* state=status&&i<status->size()?&(*status)[i].GetDict():nullptr;
     const int tone=state?state->FindInt("tone").value_or(0):0;
     const bool checking=state&&state->FindBool("checking").value_or(false);
-    auto* card=assistant_backends_list_->AddChildView(std::make_unique<views::View>());
+    auto* card=list->AddChildView(std::make_unique<views::View>());
     SetSidebarPanelLayout(card,true,gfx::Insets::TLBR(6,0,14,0),8);
     auto* line=card->AddChildView(std::make_unique<views::View>());
     auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),4);
@@ -8480,12 +8552,46 @@ void WorkspaceShell::BuildAssistantPreferences() {
     check->GetViewAccessibility().SetName(TF(u"Sprawdź połączenie z {}",{text(backend,"label")}));check->SetEnabled(enabled&&!checking);
     if(provider=="openai"){
       const bool saved=data.FindBool("has_saved_key").value_or(false);
-      auto* key=PreferenceAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::Event&){if(shell)shell->ShowAssistantKeyDialog();},weak),saved?T(u"Zmień klucz API"):T(u"Dodaj klucz API"));key->SetEnabled(enabled);
+      auto* key=PreferenceAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* card, const ui::Event&){if(shell)shell->ShowAssistantKeyDialog(card->GetWidget());},weak,base::Unretained(card)),saved?T(u"Zmień klucz API"):T(u"Dodaj klucz API"));key->SetEnabled(enabled);
       if(saved){auto* remove=PreferenceAction(actions,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const ui::Event&){write(shell,base::DictValue().Set("command","remove_key"));},write,weak),T(u"Usuń klucz"));remove->SetEnabled(enabled);}
+    }
+    if (provider == "ollama") {
+      auto* discover = PreferenceAction(actions, base::BindRepeating([](decltype(write) write,
+          base::WeakPtr<WorkspaceShell> shell, const ui::Event&) {
+        write(shell, base::DictValue().Set("command", "discover").Set("provider", "ollama"));
+      }, write, weak), T(u"Wykryj modele"));
+      discover->SetEnabled(enabled && !checking);
+    }
+    if (provider == "codex" || provider == "claude" || provider == "ollama") {
+      auto* configure = PreferenceAction(actions, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,
+          views::View* card, std::string provider, std::u16string value, const ui::Event&) {
+        if (shell) shell->ShowAssistantBackendInput(card->GetWidget(), provider, value);
+      }, weak, base::Unretained(card), provider,
+         text(data, provider == "codex" ? "codex_path" : "claude_path")),
+         provider == "ollama" ? T(u"Dodaj model") : T(u"Pomoc i konfiguracja"));
+      configure->SetEnabled(enabled);
     }
     SetSidebarPanelLayout(actions,false,gfx::Insets(),8);
   }
-  AddPreferenceCopy(assistant_backends_list_,T(u"Test wysyła krótką wiadomość do wybranego modelu. Nie udostępnia stron ani historii przeglądania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  AddPreferenceCopy(list,T(u"Test wysyła krótką wiadomość do wybranego modelu. Nie udostępnia stron ani historii przeglądania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  list->InvalidateLayout();
+  if (auto* owner = list->GetWidget()) owner->GetContentsView()->InvalidateLayout();
+}
+void WorkspaceShell::BuildAssistantPreferences() {
+  if (!callbacks_.read_assistant) return;
+  auto data = callbacks_.read_assistant.Run();
+  const auto snapshot = base::WriteJson(data).value_or("");
+  if (auto* welcome = welcome_assistant_backends_.view(); welcome && snapshot != welcome_assistant_snapshot_) {
+    welcome_assistant_snapshot_ = snapshot;
+    BuildAssistantBackendCards(welcome, data, welcome_assistant_provider_);
+  }
+  if (!assistant_backends_list_ || !assistant_models_list_ || snapshot == assistant_preferences_snapshot_) return;
+  assistant_preferences_snapshot_ = snapshot;
+  BuildAssistantBackendCards(assistant_backends_list_, data);
+  auto weak=weak_factory_.GetWeakPtr();
+  const bool enabled=data.FindBool("enabled").value_or(false);
+  auto text=[](const base::DictValue& d,const char* key){const auto* v=d.FindString(key);return v?base::UTF8ToUTF16(*v):std::u16string();};
+  auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){if(shell&&shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(std::move(command));};
   assistant_models_list_->RemoveAllChildViews();
   const auto* default_model=data.FindString("default_model");
   const auto* models=data.FindList("models");
@@ -8529,7 +8635,28 @@ void WorkspaceShell::BuildAssistantPreferences() {
   RefreshChoiceViewports(assistant_backends_list_->parent());RefreshChoiceViewports(assistant_models_list_->parent());
   if(general_widget_)general_widget_->GetContentsView()->InvalidateLayout();
 }
-void WorkspaceShell::ShowAssistantKeyDialog(){
+namespace {
+void ShowAssistantDialog(views::Widget* owner, std::unique_ptr<ui::DialogModel> dialog) {
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(
+      views::BubbleDialogModelHost::CreateModal(
+          std::move(dialog), ui::mojom::ModalType::kWindow, /*autosize=*/false),
+      owner->GetNativeWindow(), owner->GetNativeView());
+  prompt->SetColorModeOverride(owner->color_mode_override());
+  const auto area = display::Screen::Get()
+                        ->GetDisplayNearestWindow(owner->GetNativeWindow())
+                        .work_area();
+  auto bounds = prompt->GetWindowBoundsInScreen();
+  bounds.set_origin(owner->GetWindowBoundsInScreen().CenterPoint() -
+                    gfx::Vector2d(bounds.width() / 2, bounds.height() / 2));
+  bounds.AdjustToFit(area);
+  prompt->SetBounds(bounds);
+  prompt->Show();
+}
+}  // namespace
+
+void WorkspaceShell::ShowAssistantKeyDialog(views::Widget* owner){
+  if (!owner) owner = general_widget_.get();
+  if (!owner) return;
   ui::DialogModel::Builder builder;auto* model=builder.model();
   auto dialog=builder.SetTitle(T(u"Połącz OpenAI"))
       .AddParagraph(ui::DialogModelLabel(T(u"Wklej klucz API ze swojego konta OpenAI. Zitter zapisze go w postaci zaszyfrowanej przy użyciu zabezpieczeń systemu.")))
@@ -8543,8 +8670,38 @@ void WorkspaceShell::ShowAssistantKeyDialog(){
         return true;
       },weak_factory_.GetWeakPtr(),base::Unretained(model)),ui::DialogModel::Button::Params().SetLabel(T(u"Zapisz klucz")))
       .AddCancelButton(base::DoNothing(),ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj"))).Build();
-  auto* prompt=views::DialogDelegate::CreateDialogWidget(views::BubbleDialogModelHost::CreateModal(std::move(dialog),ui::mojom::ModalType::kWindow),general_widget_->GetNativeWindow(),general_widget_->GetNativeView());
-  prompt->SetColorModeOverride(general_widget_->color_mode_override());prompt->Show();
+  ShowAssistantDialog(owner, std::move(dialog));
+}
+void WorkspaceShell::ShowAssistantBackendInput(views::Widget* owner, std::string provider,
+                                              std::u16string value) {
+  if (!owner) return;
+  const bool ollama = provider == "ollama";
+  const auto label = ollama ? T(u"ID modelu") : T(u"Ścieżka do programu");
+  const auto help = ollama
+      ? T(u"Uruchom Ollama, pobierz model i wpisz jego pełną nazwę, np. qwen3:8b. Możesz też użyć przycisku „Wykryj modele”.")
+      : provider == "codex"
+          ? T(u"Uruchom codex login w terminalu i sprawdź codex login status. Jeśli wykrywanie nie działa, podaj pełną ścieżkę do natywnego codex.exe (lub codex na macOS i Linuksie). Puste pole włącza wykrywanie automatyczne.")
+          : T(u"Uruchom claude w terminalu i zaloguj się poleceniem /login. Jeśli wykrywanie nie działa, podaj pełną ścieżkę do natywnego programu Claude Code. Puste pole włącza wykrywanie automatyczne.");
+  ui::DialogModel::Builder builder;
+  auto* model = builder.model();
+  auto dialog = builder.SetTitle(AssistantProviderLabel(provider))
+      .AddParagraph(ui::DialogModelLabel(help))
+      .AddTextfield(kAssistantSetupField, label, ollama ? std::u16string() : value)
+      .SetInitiallyFocusedField(kAssistantSetupField)
+      .AddOkButton(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, ui::DialogModel* model,
+          std::string provider, bool ollama) {
+        if (!shell || !shell->callbacks_.write_assistant) return true;
+        const auto text = base::UTF16ToUTF8(base::TrimWhitespace(
+            model->GetTextfieldByUniqueId(kAssistantSetupField)->text(), base::TRIM_ALL));
+        if (ollama ? text.empty() || text.size() > 120
+                   : !text.empty() && !base::FilePath::FromUTF8Unsafe(text).IsAbsolute()) return false;
+        shell->callbacks_.write_assistant.Run(base::DictValue().Set("provider", provider)
+            .Set("command", ollama ? "add" : "cli_path").Set(ollama ? "id" : "path", text));
+        return true;
+      }, weak_factory_.GetWeakPtr(), base::Unretained(model), provider, ollama),
+      ui::DialogModel::Button::Params().SetLabel(T(u"Zapisz")))
+      .AddCancelButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj"))).Build();
+  ShowAssistantDialog(owner, std::move(dialog));
 }
 void WorkspaceShell::OpenAssistantSettings() {
   OpenGeneralSettings();
@@ -9351,7 +9508,10 @@ gfx::Rect WorkspaceShell::downloads_anchor_in_screen() const{
 }
 void WorkspaceShell::ShowToast(std::u16string lead,std::u16string noun,base::OnceClosure undo,std::u16string action){
   if(!toast_widget_)return;
-  auto* toast=static_cast<ToastView*>(toast_.get());toast->SetMessage(std::move(lead),std::move(noun));toast->SetAction(action.empty()?T(u"Cofnij"):std::move(action));toast_undo_=std::move(undo);
+  auto* toast = static_cast<ToastView*>(toast_.get());
+  toast->SetMessage(std::move(lead), std::move(noun));
+  toast->SetAction(undo && action.empty() ? T(u"Cofnij") : std::move(action));
+  toast_undo_ = std::move(undo);
   PositionToast();toast_widget_->ShowInactive();
   if(time_machine_widget_&&time_machine_widget_->IsVisible())toast_widget_->StackAboveWidget(time_machine_widget_.get());
   toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,weak_factory_.GetWeakPtr()));
@@ -9455,6 +9615,7 @@ std::string WorkspaceShell::ShortcutFor(const ui::Accelerator& accelerator) cons
     if (current != tools_.shortcuts.end() && current->accelerator == original->accelerator) return id;
   }
 #if BUILDFLAG(IS_WIN)
+  if (accelerator == ui::Accelerator(ui::VKEY_F11, 0)) return "toggle_window_fullscreen";
   // Compatibility alias only while Reload retains its default. Explicit F5
   // assignments win above; remapping or disabling Reload removes this alias.
   if (accelerator == ui::Accelerator(ui::VKEY_F5, 0)) {
@@ -9466,8 +9627,6 @@ std::string WorkspaceShell::ShortcutFor(const ui::Accelerator& accelerator) cons
 }
 void WorkspaceShell::RefreshKeyRegistrations() {
   if (!accelerator_target_ || !widget_) return;
-  if (new_tab_button_) for (const auto& shortcut : tools_.shortcuts) if (shortcut.id == "new_tab")
-    SetRowDetail(new_tab_button_.get(),base::UTF8ToUTF16(DisplayShortcut(shortcut.accelerator)));
 #if BUILDFLAG(IS_MAC)
   UpdateWorkspaceMenuShortcuts(tools_.shortcuts);
 #endif
@@ -10338,6 +10497,7 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string action) {
         if (!shell) return;
         if (action == "install_update") { if (shell->install_update_) shell->install_update_.Run(); }
+        else if (action == "check_update") { if (shell->check_update_) shell->check_update_.Run(); }
         else if (action == "about") shell->ShowAbout();
         else if (shell->callbacks_.run_shortcut) shell->callbacks_.run_shortcut.Run(std::move(action));
       }, weak_factory_.GetWeakPtr()));
@@ -10402,6 +10562,9 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
     }
   }
   model->AddSeparator(ui::NORMAL_SEPARATOR);
+  if (check_update_) {
+    add("check_update", T(u"Sprawdź aktualizacje…"), kMenuDownloadsIcon);
+  }
   add("about", T(u"O Zitter"), kMenuAboutIcon);
   add("quit", T(u"Zamknij Zitter"), kMenuQuitIcon);
   app_menu_delegate_ = std::move(delegate);
@@ -10506,6 +10669,22 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool) {
         if (shell) --shell->pending_writes_;
       }, weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::FitInitialSidebarWidth() {
+  if (sidebar_width_initialized_ || sidebar_width_dirty_ || !appearance_ready_ ||
+      !state_.configuration_ready || !state_.onboarding_complete ||
+      state_.workspaces.empty()) return;
+  sidebar_width_initialized_ = true;
+  const int rail_width = workspace_dots_->GetPreferredSize().width();
+  const int footer_width = sidebar::footer_layout(-1, rail_width).width;
+  const int width = std::clamp(footer_width + kSidebarInsets.width() +
+                                   sidebar_root_->GetInsets().width(),
+                               kSidebarWidth, kMaxSidebarWidth);
+  if (width == sidebar_width_) return;
+  sidebar_width_ = width;
+  static_cast<ShellRoot*>(root_.get())->sidebar_width = width;
+  root_->InvalidateLayout();
+  PositionPanels();
 }
 void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   const std::string key(id);
@@ -11065,7 +11244,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   METADATA_HEADER(WelcomeView, views::View)
  public:
   WelcomeView(WorkspaceShell::WelcomeSetup setup, base::OnceCallback<void(WorkspaceShell::WelcomeResult)> done)
-      : setup_(std::move(setup)), done_(std::move(done)), color_(setup_.space_color) {
+      : setup_(std::move(setup)), done_(std::move(done)), color_(setup_.space_color), assistant_enabled_(setup_.assistant_enabled) {
     // Import one source at a time, without opening a second configuration panel.
     import_on_.assign(setup_.sources.size(), false);
     if (!import_on_.empty()) import_on_[0] = true;
@@ -11111,7 +11290,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kEnd);
     ket_ = Text(brand, u"|z⟩", DesignFont(1, 34, 400, true), true);
     eyebrow_ = Text(brand, base::i18n::ToUpper(T(u"Pierwsze kroki")), DesignFont(2, 11, 600, false), false);
-    const std::array<std::u16string, 4> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Import danych"), T(u"Pierwsza przestrzeń")};
+    const std::array<std::u16string, 5> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Asystent AI"), T(u"Import danych"), T(u"Pierwsza przestrzeń")};
     for (size_t i = 0; i < labels.size(); ++i) {
       steps_[i] = nav_->AddChildView(std::make_unique<WelcomeStep>(
           base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), i), labels[i]));
@@ -11155,7 +11334,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 
   void ShowStep(size_t step) {
     if (import_busy_) return;
-    if (imported_ || (step == 3 && SelectedSource())) step = 2;
+    if (imported_ || (step == 4 && SelectedSource())) step = 3;
     step_ = step;
     // The page's own views go with it; the step list and footer stay.
     if (name_field_) setup_name_ = name_field_->GetText();
@@ -11172,7 +11351,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
       case 0: {
         layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kCenter);
         Headline(page_, T(u"Gdzie dziś?"), 72);
-        Body(page_, T(u"Przestrzenie oddzielają pracę od reszty życia. Każda ma swój kolor, karty i profil. Ustawmy je w trzech krótkich krokach."), 15)
+        Body(page_, T(u"Przestrzenie oddzielają pracę od reszty życia. Każda ma swój kolor, karty i profil. Przejdź przez krótką konfigurację."), 15)
             ->SetMaximumWidthSingleLine(420);
         auto* dots = page_->AddChildView(std::make_unique<views::View>());
         dots->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
@@ -11199,6 +11378,48 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         break;
       }
       case 2: {
+        Headline(page_, T(u"Włączyć asystenta AI?"), 48);
+        auto* actions = page_->AddChildView(std::make_unique<views::View>());
+        actions->SetLayoutManager(std::make_unique<views::BoxLayout>(
+            views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 10));
+        auto* toggle = actions->AddChildView(std::make_unique<WelcomeSwitch>(
+            base::BindRepeating([](WelcomeView* view) {
+              view->assistant_enabled_ = !view->assistant_enabled_;
+              if (view->setup_.set_assistant_enabled)
+                view->setup_.set_assistant_enabled.Run(view->assistant_enabled_);
+              view->ShowStep(2);
+            }, base::Unretained(this)), T(u"Włącz asystenta AI")));
+        toggle->SetOn(assistant_enabled_);
+        switches_.push_back(toggle);
+        Body(actions, T(u"Włącz asystenta AI"));
+        auto* help = actions->AddChildView(std::make_unique<WelcomeButton>(
+            base::BindRepeating([](WelcomeView* view) {
+              view->assistant_help_ = !view->assistant_help_;
+              view->ShowStep(2);
+            }, base::Unretained(this)), u"?", WelcomeButton::Look::kQuiet));
+        help->GetViewAccessibility().SetName(T(u"Wymagania asystenta AI"));
+        if (assistant_help_)
+          Body(page_, T(u"Claude Code lub Codex wymagają konta z dostępem do CLI. Alternatywy to klucz OpenAI API z aktywnym rozliczaniem albo lokalna Ollama z pobranym modelem. Włącz wybrany backend przełącznikiem."), 13, true);
+        if (assistant_enabled_ && setup_.build_assistant_backends) {
+          auto* providers = page_->AddChildView(std::make_unique<views::View>());
+          providers->SetLayoutManager(std::make_unique<views::BoxLayout>(
+              views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 6));
+          for (const char* provider : kAssistantProviders) {
+            providers->AddChildView(std::make_unique<WelcomeButton>(
+                base::BindRepeating([](WelcomeView* view, std::string provider) {
+                  view->assistant_provider_ = std::move(provider);
+                  view->ShowStep(2);
+                }, base::Unretained(this), std::string(provider)), AssistantProviderLabel(provider),
+                assistant_provider_ == provider ? WelcomeButton::Look::kPrimary : WelcomeButton::Look::kQuiet));
+          }
+          auto* cards = page_->AddChildView(std::make_unique<views::View>());
+          cards->SetLayoutManager(std::make_unique<views::BoxLayout>(
+              views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));
+          setup_.build_assistant_backends.Run(cards, assistant_provider_);
+        }
+        break;
+      }
+      case 3: {
         Headline(page_, T(u"Przenieś swoje dane"), 48);
         if (!imported_) {
           Body(page_, setup_.sources.empty() ? T(u"Nie znalazłem innych przeglądarek na tym komputerze.")
@@ -11214,7 +11435,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         if (!import_status_.empty()) Body(page_, import_status_);
         break;
       }
-      case 3: {
+      case 4: {
         Headline(page_, T(u"Twoja pierwsza przestrzeń"), 48);
         Text(page_, T(u"Nazwa"), DesignFont(2, 12, 500, false), false);
         name_field_ = page_->AddChildView(std::make_unique<views::Textfield>());
@@ -11242,17 +11463,17 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     row->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
     footer_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Palette(this, color_).line));
     const bool importing = SelectedSource().has_value() || imported_;
-    steps_[3]->SetVisible(!importing);
-    auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1), base::NumberToString16(importing ? 3 : 4)}), DesignFont(2, 12, 500, false), false);
+    steps_[4]->SetVisible(!importing);
+    auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1), base::NumberToString16(importing ? 4 : 5)}), DesignFont(2, 12, 500, false), false);
     row->SetFlexForView(count, 1);
     if (step > 0 && !imported_)
       footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), step - 1),
                                                             T(u"Wstecz"), WelcomeButton::Look::kQuiet));
-    if (step == 2 && !setup_.sources.empty() && !imported_)
+    if (step == 3 && !setup_.sources.empty() && !imported_)
       footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::Next, base::Unretained(this), false),
                                                             T(u"Pomiń"), WelcomeButton::Look::kQuiet));
-    const std::u16string next = step == 0 ? T(u"Zaczynamy") : imported_ ? T(u"Otwórz Zitter") : step == 2 && SelectedSource() ? T(u"Importuj")
-                                : step == 3 ? T(u"Otwórz Zitter") : step == 1 && !IsZitterDefaultBrowser() ? T(u"Nie teraz") : T(u"Kontynuuj");
+    const std::u16string next = step == 0 ? T(u"Zaczynamy") : imported_ ? T(u"Otwórz Zitter") : step == 3 && SelectedSource() ? T(u"Importuj")
+                                : step == 4 ? T(u"Otwórz Zitter") : step == 1 && !IsZitterDefaultBrowser() ? T(u"Nie teraz") : T(u"Kontynuuj");
     auto* primary = footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::Next, base::Unretained(this), true),
         next, step == 0 ? WelcomeButton::Look::kZing
                        : step == 1 && !IsZitterDefaultBrowser() ? WelcomeButton::Look::kQuiet : WelcomeButton::Look::kPrimary));
@@ -11346,7 +11567,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     const bool on = !import_on_[index];
     std::fill(import_on_.begin(), import_on_.end(), false);
     import_on_[index] = on;
-    ShowStep(2);
+    ShowStep(3);
   }
   void PickColor(SkColor color) {
     color_ = color;
@@ -11357,15 +11578,15 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     setup_.import_passwords.Run(base::BindOnce([](base::WeakPtr<WelcomeView> view, std::u16string status) {
       if (!view) return;
       view->password_status_ = std::move(status);
-      if (view->step_ == 2) view->ShowStep(2);
+      if (view->step_ == 3) view->ShowStep(3);
     }, weak_factory_.GetWeakPtr()));
   }
   void Next(bool primary) {
     if (import_busy_) return;
-    if (step_ == 2 && !imported_) {
+    if (step_ == 3 && !imported_) {
       if (const auto source = SelectedSource(); primary && source) {
         import_status_ = T(u"Importowanie wybranych danych…");
-        ShowStep(2);
+        ShowStep(3);
         import_busy_ = true;
         nav_->SetEnabled(false);
         page_->SetEnabled(false);
@@ -11378,7 +11599,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
           view->nav_->SetEnabled(true);
           view->page_->SetEnabled(true);
           view->footer_->SetEnabled(true);
-          view->ShowStep(2);
+          view->ShowStep(3);
         }, weak_factory_.GetWeakPtr()));
         return;
       }
@@ -11389,7 +11610,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
       if (GetWidget()) GetWidget()->Close();
       return;
     }
-    if (step_ < 3) { ShowStep(step_ + 1); return; }
+    if (step_ < 4) { ShowStep(step_ + 1); return; }
     Finish();
     if (GetWidget()) GetWidget()->Close();
   }
@@ -11402,6 +11623,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   std::u16string import_status_;
   std::vector<bool> import_on_;
   SkColor color_;
+  bool assistant_enabled_ = false;
+  bool assistant_help_ = false;
+  std::string assistant_provider_ = "openai";
   std::u16string setup_name_;
   std::u16string password_status_;
   raw_ptr<views::View> nav_ = nullptr;
@@ -11411,7 +11635,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   raw_ptr<views::Label> ket_ = nullptr;
   raw_ptr<views::Label> eyebrow_ = nullptr;
   raw_ptr<views::Textfield> name_field_ = nullptr;
-  std::array<raw_ptr<WelcomeStep>, 4> steps_ = {};
+  std::array<raw_ptr<WelcomeStep>, 5> steps_ = {};
   bool shown_ = false;
   std::vector<raw_ptr<WelcomeSwatch>> swatches_;
   std::vector<raw_ptr<WelcomeSwitch>> switches_;
@@ -11428,6 +11652,14 @@ void AbandonWelcome(views::View* contents) {
 
 void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(WelcomeResult)> done) {
   if (!widget_ || welcome_widget_) return;
+  setup.build_assistant_backends = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,
+                                                         views::View* cards, std::string provider) {
+    if (!shell) return;
+    shell->welcome_assistant_backends_.SetView(cards);
+    shell->welcome_assistant_provider_ = std::move(provider);
+    shell->welcome_assistant_snapshot_.clear();
+    shell->BuildAssistantPreferences();
+  }, weak_factory_.GetWeakPtr());
   auto delegate = std::make_unique<views::WidgetDelegate>();
   delegate->SetTitle(T(u"Witaj w Zitter"));
   delegate->SetIcon(widget_->widget_delegate()->GetWindowIcon());
@@ -11450,6 +11682,14 @@ void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(Wel
   welcome_widget_->Show();
 }
 #endif
+void WorkspaceShell::SetUpdateCheckCallback(base::RepeatingClosure check) {
+  check_update_ = std::move(check);
+}
+
+void WorkspaceShell::ShowUpdateCheckMessage(std::u16string message) {
+  ShowToast(std::move(message), {}, {});
+}
+
 void WorkspaceShell::ShowUpdateReady(std::string version, base::RepeatingClosure install) {
   update_version_ = std::move(version);
   install_update_ = std::move(install);

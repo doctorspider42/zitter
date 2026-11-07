@@ -18,6 +18,7 @@
 #include "base/task/single_thread_task_executor.h"
 #include "base/timer/timer.h"
 #include "chromium/assistant/native_transport.h"
+#include "base/json/json_reader.h"
 #include "net/base/address_list.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/host_port_pair.h"
@@ -149,7 +150,7 @@ class Fetch final : public net::URLRequest::Delegate {
         "User-Agent", public_ ? "ZitterResearch/1.0" : "ZitterAssistant/1.0",
         true);
     if (public_) request_->SetExtraRequestHeaderByName("Accept", "text/html,text/plain,application/json", true);
-    if (!public_) {
+    if (!public_ && kind_ != "ollama-models") {
       request_->set_method("POST");
       request_->SetExtraRequestHeaderByName("Content-Type", "application/json",
                                             true);
@@ -469,7 +470,8 @@ std::string PerformHTTP(std::string id, const base::DictValue& request) {
   if (*kind == "research")
     return Research(id, request);
   GURL url("https://api.openai.com/v1/responses");
-  if (*kind == "ollama") {
+  const bool list_models = *kind == "ollama-models";
+  if (*kind == "ollama" || list_models) {
     auto env = base::Environment::Create();
     GURL endpoint(
         env->GetVar("ZITTER_OLLAMA_URL").value_or("http://127.0.0.1:11434"));
@@ -478,9 +480,24 @@ std::string PerformHTTP(std::string id, const base::DictValue& request) {
         (endpoint.host() != "localhost" && endpoint.host() != "127.0.0.1" &&
          endpoint.host() != "[::1]"))
       return Failure("Ollama must use a local HTTP endpoint.");
-    url = endpoint.Resolve("/api/chat");
+    url = endpoint.Resolve(list_models ? "/api/tags" : "/api/chat");
   } else if (*kind != "openai")
     return Failure("Unknown provider");
+  if (list_models) {
+    const auto response = FetchURL(id, *kind, url, "", false);
+    if (response.status != 200) return Failure("Could not list models. Start Ollama and check its local address.");
+    const auto parsed = base::JSONReader::ReadDict(response.body, base::JSON_PARSE_RFC);
+    const auto* models = parsed ? parsed->FindList("models") : nullptr;
+    if (!models) return Failure("Ollama returned an invalid model list.");
+    base::ListValue names;
+    for (const auto& entry : *models) {
+      const auto* model = entry.GetIfDict();
+      const auto* name = model ? model->FindString("name") : nullptr;
+      if (name && !name->empty() && name->size() <= 120) names.Append(*name);
+      if (names.size() == 32) break;
+    }
+    return Json(base::DictValue().Set("models", std::move(names)));
+  }
   const auto* body = request.FindDict("body");
   if (!body)
     return Failure("Invalid provider request");
@@ -512,8 +529,12 @@ std::string PerformHTTP(std::string id, const base::DictValue& request) {
       }
       continue;
     }
-    return Failure(
-        "Provider request failed. Check credentials, endpoint and model.");
+    if (response.status == 401 && *kind == "openai")
+      return Failure("OpenAI rejected the API key. Check the key in settings.");
+    if (response.status == 403 || response.status == 404)
+      return Failure("The service did not find this model or your account cannot use it.");
+    if (response.status == 429) return Failure("The provider limit was reached. Check your plan or API balance.");
+    return Failure("Provider request failed. Check credentials, endpoint and model.");
   }
   return Failure("Provider request failed.");
 }

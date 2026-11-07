@@ -115,14 +115,19 @@ TEST(WindowsUpdater, DetectsCorruptionTruncationAndMissingInstaller) {
 TEST(WindowsUpdater, DISABLED_PublishedInstallerDownloadsAndVerifies) {
   base::ScopedTempDir directory;
   ASSERT_TRUE(directory.CreateUniqueTempDir());
-  auto release = DownloadLatest(directory.GetPath(), "0.0.0");
+  auto result = DownloadLatest(directory.GetPath(), "0.0.0");
+  ASSERT_EQ(CheckStatus::kReady, result.status);
+  const auto& release = result.release;
   ASSERT_TRUE(release);
   const auto installer = directory.GetPath().AppendASCII("Zitter-" + release->version + "-setup.exe");
   EXPECT_TRUE(VerifyInstaller(installer, *release));
   // A second check reuses the verified installer rather than downloading it.
   auto cached = DownloadLatest(directory.GetPath(), "0.0.0");
-  ASSERT_TRUE(cached);
-  EXPECT_EQ(release->sha256, cached->sha256);
+  ASSERT_EQ(CheckStatus::kReady, cached.status);
+  ASSERT_TRUE(cached.release);
+  EXPECT_EQ(release->sha256, cached.release->sha256);
+  EXPECT_EQ(CheckStatus::kNoUpdate,
+            DownloadLatest(directory.GetPath(), release->version).status);
 }
 }  // namespace
 }  // namespace zitter::updates

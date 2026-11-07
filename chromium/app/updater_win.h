@@ -23,12 +23,17 @@ struct Release {
   std::string sha256;
   int64_t size = 0;
 };
+enum class CheckStatus { kReady, kNoUpdate, kFailed };
+struct CheckResult {
+  CheckStatus status;
+  std::optional<Release> release = std::nullopt;
+};
 // Only a newer, stable release's exact Windows installer, with a GitHub digest.
 std::optional<Release> ParseRelease(std::string_view json,
                                     std::string_view current_version);
 bool VerifyInstaller(const base::FilePath& path, const Release& release);
-std::optional<Release> DownloadLatest(const base::FilePath& cache,
-                                    std::string current_version);
+CheckResult DownloadLatest(const base::FilePath& cache,
+                           std::string current_version);
 }  // namespace updates
 
 // Runs only for this executable's registered installation, never portable/dev
@@ -38,18 +43,20 @@ class WindowsUpdater {
   using Ready = base::RepeatingCallback<void(std::string)>;
   WindowsUpdater(const base::FilePath& user_data, Ready ready);
   ~WindowsUpdater();
-  void Start();
+  bool Start();
+  void CheckNow(base::OnceCallback<void(updates::CheckStatus)> done);
   void RequestInstall();
   void InstallOnExit();
 
  private:
   void Check();
-  void Checked(std::optional<updates::Release> release);
+  void Checked(updates::CheckResult result);
   base::FilePath directory_;
   base::FilePath cache_;
   bool busy_ = false;
   bool install_requested_ = false;
   Ready ready_;
+  base::OnceCallback<void(updates::CheckStatus)> manual_check_done_;
   std::optional<updates::Release> pending_;
   base::RepeatingTimer timer_;
   base::WeakPtrFactory<WindowsUpdater> weak_factory_{this};

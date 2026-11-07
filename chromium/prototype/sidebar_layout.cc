@@ -19,13 +19,16 @@
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
+#include "base/timer/timer.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/compositor/layer.h"
+#include "ui/display/screen.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/style/platform_style.h"
+#include "ui/views/widget/widget.h"
 namespace zitter::prototype {
 namespace {
 class RustViewportClip final : public views::View {
@@ -42,6 +45,7 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   METADATA_HEADER(RustPanelViewport,views::View)
  public:
   explicit RustPanelViewport(base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> primary_bar):changed_(std::move(changed)),options_(options){
+    if (options_.edge_hover_scroll) SetNotifyEnterExitOnChild(true);
     clip_=AddChildView(std::make_unique<RustViewportClip>(base::BindRepeating(&RustPanelViewport::Reveal,weak_factory_.GetWeakPtr())));
     bar_=AddChildView(primary_bar?std::move(primary_bar):views::PlatformStyle::CreateScrollBar(options_.horizontal?views::ScrollBar::Orientation::kHorizontal:views::ScrollBar::Orientation::kVertical));bar_->set_controller(this);bar_->SetVisible(false);bar_->GetViewAccessibility().SetIsIgnored(true);bar_->GetViewAccessibility().SetIsLeaf(true);
     if(options_.dialog_style||options_.overflow_indicators){top_=AddChildView(std::make_unique<views::Separator>());bottom_=AddChildView(std::make_unique<views::Separator>());top_->SetVisible(false);bottom_->SetVisible(false);}
@@ -71,7 +75,26 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
     auto rect=[](const auto& r){return gfx::Rect(r.x,r.y,r.width,r.height);};clip_->SetBoundsRect(rect(plan.viewport));contents_->SetBoundsRect(rect(plan.content));bar_->SetBoundsRect(rect(plan.bar));bar_->SetVisible(plan.show_bar);contents_->DeprecatedLayoutImmediately();Apply(previous!=offset());
   }
   void OnThemeChanged() override{views::View::OnThemeChanged();ApplyBackground();}
-  bool OnMouseWheel(const ui::MouseWheelEvent& event) override{return maximum()>0&&(options_.horizontal?event.x_offset():event.y_offset())!=0&&bar_->OnMouseWheel(event);}
+  bool OnMouseWheel(const ui::MouseWheelEvent& event) override {
+    if (maximum() <= 0) return false;
+    if (!options_.horizontal) return event.y_offset() != 0 && bar_->OnMouseWheel(event);
+    // A regular mouse supplies only Y wheel ticks. Native horizontal input
+    // keeps priority when both axes are present.
+    const int delta = event.x_offset() != 0 ? event.x_offset() : event.y_offset();
+    if (delta == 0) return false;
+    edge_scroll_since_ = base::TimeTicks::Now();
+    return bar_->ScrollByContentsOffset(delta);
+  }
+  void OnMouseEntered(const ui::MouseEvent&) override {
+    if (options_.edge_hover_scroll && !edge_scroll_timer_.IsRunning())
+      edge_scroll_timer_.Start(FROM_HERE, base::Milliseconds(16), this,
+                               &RustPanelViewport::ScrollAtPointerEdge);
+  }
+  void OnMouseExited(const ui::MouseEvent&) override { StopEdgeScroll(); }
+  void VisibilityChanged(views::View* starting_from, bool visible) override {
+    views::View::VisibilityChanged(starting_from, visible);
+    if (!visible) StopEdgeScroll();
+  }
   bool OnKeyPressed(const ui::KeyEvent& event) override{return maximum()>0&&bar_->OnKeyPressed(event);}
   void OnScrollEvent(ui::ScrollEvent* event) override{
     if(maximum()<=0)return;bar_->ObserveScrollEvent(*event);
@@ -89,6 +112,44 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   void ScrollToPosition(views::ScrollBar* source,int position) override{if(source==bar_)ScrollTo(position);}
   int GetScrollIncrement(views::ScrollBar*,bool page,bool) override{const int extent=options_.horizontal?clip_->width():clip_->height();return page?extent:extent/5;}
  private:
+  void StopEdgeScroll() {
+    edge_scroll_timer_.Stop();
+    edge_scroll_direction_ = 0;
+  }
+  void ScrollAtPointerEdge() {
+    auto* widget = GetWidget();
+    if (!widget || !widget->IsVisible() || !IsDrawn()) {
+      StopEdgeScroll();
+      return;
+    }
+    auto* screen = display::Screen::Get();
+    auto point = screen->GetCursorScreenPoint();
+    views::View::ConvertPointFromScreen(clip_, &point);
+    if (maximum() == 0 || widget->IsMouseButtonDown() ||
+        !clip_->GetLocalBounds().Contains(point) ||
+        !screen->IsWindowUnderCursor(widget->GetNativeWindow())) {
+      edge_scroll_direction_ = 0;
+      return;
+    }
+    const int edge = std::min(20, clip_->width() / 3);
+    const int left = point.x();
+    const int right = clip_->width() - 1 - left;
+    const int distance = std::min(left, right);
+    if (distance >= edge) {
+      edge_scroll_direction_ = 0;
+      return;
+    }
+    const int direction = (left < right) == base::i18n::IsRTL() ? 1 : -1;
+    const auto now = base::TimeTicks::Now();
+    if (direction != edge_scroll_direction_) {
+      edge_scroll_direction_ = direction;
+      edge_scroll_since_ = now;
+    }
+    if (now - edge_scroll_since_ < base::Milliseconds(180)) return;
+    const double proximity = 1.0 - static_cast<double>(distance) / edge;
+    ScrollTo(offset() + direction * (0.75 + 4.25 * proximity));
+  }
+
   void ApplyBackground(){std::optional<ui::ColorVariant> color;if(background_)color=*background_;else if(options_.dialog_style)color=ui::kColorDialogBackground;SetBackground(color?views::CreateSolidBackground(*color):nullptr);if(contents_){
       // Clear only a fill this viewport installed; panel contents such as
       // settings cards own their own rounded background.
@@ -106,6 +167,9 @@ class RustPanelViewport final : public views::View,public PanelViewport,public v
   rust::Box<sidebar::ScrollViewportState> state_=sidebar::new_scroll_viewport();
   raw_ptr<views::Separator> top_=nullptr,bottom_=nullptr;
   raw_ptr<RustViewportClip> clip_=nullptr;raw_ptr<views::View> contents_=nullptr;raw_ptr<views::ScrollBar> bar_=nullptr;
+  base::RepeatingTimer edge_scroll_timer_;
+  base::TimeTicks edge_scroll_since_;
+  int edge_scroll_direction_ = 0;
   base::WeakPtrFactory<RustPanelViewport> weak_factory_{this};
 };
 BEGIN_METADATA(RustPanelViewport)

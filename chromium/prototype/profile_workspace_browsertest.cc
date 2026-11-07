@@ -109,6 +109,11 @@
 #include "ui/gfx/geometry/insets_f.h"
 #include "ui/events/gesture_event_details.h"
 #include "ui/accessibility/ax_action_data.h"
+#if BUILDFLAG(IS_WIN)
+#include "ui/accessibility/accessibility_features.h"
+#include "ui/accessibility/platform/ax_platform.h"
+#include "ui/accessibility/platform/ax_platform_node_win.h"
+#endif
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/test/combobox_test_api.h"
 #include "chromium/prototype/page_services.h"
@@ -355,7 +360,9 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
   // and its AppContainer can't read an out\ directory that no installer granted
   // access to: browser tests don't fall back to an unsandboxed relaunch.
   ZitterProfilesBrowserTest() {
-    network_sandbox_.InitAndDisableFeature(sandbox::policy::features::kNetworkServiceSandbox);
+    windows_features_.InitWithFeatures(
+        {features::kUiaDisconnectRootProviders},
+        {sandbox::policy::features::kNetworkServiceSandbox});
   }
   // Geometry tests size windows and panels in DIPs, as on a Retina Mac; a
   // high-DPI Windows desktop can be smaller than that in DIPs (300% of a 4K
@@ -466,6 +473,13 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
         response->AddCustomHeader("Location", self->embedded_test_server()->GetURL("client.test", "/storage_probe.html?redirect").spec());
         return response;
       }
+      if (request.relative_url == "/api/tags") {
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_code(net::HTTP_OK);
+        response->set_content_type("application/json");
+        response->set_content(R"({"models":[{"name":"test-local"}]})");
+        return response;
+      }
       if (request.relative_url == "/api/chat") {
         auto response = std::make_unique<net::test_server::BasicHttpResponse>();
         response->set_code(net::HTTP_OK); response->set_content_type("application/json");
@@ -495,6 +509,18 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     routing_client_.reset();
     InProcessBrowserTest::TearDownOnMainThread();
   }
+
+#if BUILDFLAG(IS_WIN)
+  void PostRunTestOnMainThread() override {
+    InProcessBrowserTest::PostRunTestOnMainThread();
+    // All native windows have now closed with per-window UIA cleanup enabled.
+    // Pump the UI thread until Windows releases the remaining COM references.
+    ui::AXPlatform::GetInstance().DisableActiveUiaProvider();
+    EXPECT_TRUE(base::test::RunUntil([] {
+      return ui::AXPlatformNodeWin::GetCounts().ghost_nodes == 0;
+    }));
+  }
+#endif
 
  protected:
   void SetPaletteQuery(std::u16string query) {
@@ -564,7 +590,7 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
   base::Lock routing_lock_;
   std::vector<std::string> routing_cookies_ GUARDED_BY(routing_lock_);
 #if BUILDFLAG(IS_WIN)
-  base::test::ScopedFeatureList network_sandbox_;
+  base::test::ScopedFeatureList windows_features_;
 #endif
   std::unique_ptr<RoutingTestBrowserClient> routing_client_;
   raw_ptr<content::ContentBrowserClient> old_client_ = nullptr;
@@ -920,6 +946,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantConnectionsAndEncrypt
   base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL",embedded_test_server()->base_url().spec());
   auto* shell=window_->shell();shell->OpenAssistantSettings();
   window_->AssistantSettingsForShell();
+  window_->WriteAssistantSettings(base::DictValue().Set("command", "discover").Set("provider", "ollama"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return std::ranges::any_of(window_->assistant_settings().PanelModels(), [](const auto& model) {
+      return model.provider == "ollama" && model.id == "test-local";
+    });
+  }));
   window_->WriteAssistantSettings(base::DictValue().Set("command","check").Set("provider","ollama"));
   ASSERT_TRUE(base::test::RunUntil([&]{
     auto data=window_->AssistantSettingsForShell();const auto* list=data.FindList("status");
@@ -959,7 +991,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantCodexDefaultsMigrateW
       .Append(base::DictValue().Set("provider","codex").Set("id","my-custom-model")))
       .Set("default_model","codex/gpt-5.4");
   auto settings=AssistantSettings::FromValue(&previous);
-  EXPECT_EQ(settings.default_model,"codex/gpt-6.1-sol");EXPECT_EQ(settings.models.size(),5u);
+  EXPECT_EQ(settings.default_model,"codex/gpt-6.1-sol");
+  EXPECT_EQ(std::ranges::count_if(settings.models, [](const auto& model) { return model.provider == "codex"; }), 5);
+  EXPECT_TRUE(settings.PanelModels().empty());
+  settings.available[0] = true;
+  EXPECT_EQ(settings.PanelModels().size(), 3u);
+  EXPECT_TRUE(std::ranges::all_of(settings.PanelModels(), [](const auto& model) { return model.provider == "openai"; }));
   EXPECT_EQ(settings.models[0].id,"gpt-6.1-sol");EXPECT_FALSE(settings.models[0].visible);
   EXPECT_EQ(settings.models[1].id,"my-custom-model");
   const auto serialized=settings.ToValue();const auto again=AssistantSettings::FromValue(&serialized);
@@ -3603,7 +3640,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ChromeLogicalNodesRemainDistin
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);shell->SetPinned(true);shell->ShowSidebar();
   const bool rust=shell->workspace_input()->rust_editor();std::vector<views::View*> controls;
   for(size_t i=0;i<4;++i)controls.push_back(shell->header_action_for_testing(i));
-  for(size_t i=0;i<2;++i)controls.push_back(shell->sidebar_action_for_testing(i));controls.push_back(shell->footer_action_for_testing(0));
+  controls.push_back(shell->sidebar_address_for_testing());
+  controls.push_back(shell->footer_action_for_testing(0));
   std::vector<uint64_t> ids;for(auto* view:controls){ASSERT_TRUE(view);ids.push_back(shell->sidebar_node_id_for_testing(view));if(rust)EXPECT_NE(0u,ids.back());else EXPECT_EQ(0u,ids.back());}
   if(rust)for(size_t i=0;i<ids.size();++i)for(size_t j=0;j<i;++j)EXPECT_NE(ids[i],ids[j]);
   ASSERT_TRUE(window_->Select("personal"));shell->SetWorkspaceEmoji("personal",u"🚀");shell->ShowSidebar();
@@ -5510,12 +5548,36 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DownloadsTransferControlsAndPr
   class RevealDelegate final : public content::DownloadManagerDelegate {
    public:
     void ShowDownloadInShell(download::DownloadItem* item) override { revealed = item; }
+    void OpenDownload(download::DownloadItem* item) override { opened = item; }
     raw_ptr<download::DownloadItem> revealed = nullptr;
+    raw_ptr<download::DownloadItem> opened = nullptr;
   } reveal;
   auto* original_delegate = manager->GetDelegate();
   manager->SetDelegate(&reveal);
   EXPECT_TRUE(panel->Act(guid, DownloadPanel::Action::kReveal));
   EXPECT_EQ(item, reveal.revealed);
+  manager->SetDelegate(original_delegate);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return panel->visible_guids().size() == 1 && panel->list_for_testing()->children().size() == 2;
+  }));
+  panel->widget()->LayoutRootViewIfNecessary();
+  auto* root = panel->widget()->GetRootView();
+  auto* download_row = panel->list_for_testing()->children()[1].get();
+  const auto point = views::View::ConvertRectToTarget(
+      download_row, root, download_row->GetLocalBounds()).CenterPoint();
+  auto click = [&](int flags) {
+    ui::MouseEvent press(ui::EventType::kMousePressed, point, point, base::TimeTicks::Now(),
+                         ui::EF_LEFT_MOUSE_BUTTON | flags, ui::EF_LEFT_MOUSE_BUTTON);
+    EXPECT_TRUE(root->OnMousePressed(press));
+    ui::MouseEvent release(ui::EventType::kMouseReleased, point, point, base::TimeTicks::Now(),
+                           ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON);
+    root->OnMouseReleased(release);
+  };
+  manager->SetDelegate(&reveal);
+  click(0);
+  EXPECT_FALSE(reveal.opened);
+  click(ui::EF_IS_DOUBLE_CLICK);
+  EXPECT_EQ(item, reveal.opened);
   manager->SetDelegate(original_delegate);
   start("/cancel.txt"); cancelled.WaitForRequest();
   cancelled.Send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=cancel.txt\r\nContent-Length: 262144\r\n\r\n");
@@ -9038,6 +9100,48 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->sidebar_drag_row_for_testing(); }));
   window_->SelectTab(2);
   EXPECT_EQ(pages[0], window_->contents("work"));
+
+  EXPECT_FALSE(FindButton(shell->sidebar_view(), u"Nowa karta"));
+  for (const auto mode : {ThemeMode::kLight, ThemeMode::kDark}) {
+    shell->SetThemeMode(mode);
+    auto* address = shell->sidebar_address_for_testing();
+    views::View* source = nullptr;
+    for (size_t tab = 0; tab < window_->tab_count("work") && !source; ++tab)
+      source = shell->tab_button(tab);
+    ASSERT_TRUE(source && address);
+    const auto slot = address->parent()->GetBoundsInScreen();
+    move(source->GetBoundsInScreen().CenterPoint());
+    button(ui_controls::DOWN);
+    move(slot.CenterPoint());
+    EXPECT_TRUE(shell->sidebar_drop_target_for_testing());
+    if (shell->metal_sidebar_visible()) {
+      EXPECT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_text_for_testing("★"); }));
+    } else {
+      const auto bitmap = views::test::PaintViewToBitmap(overlay);
+      auto center = slot.CenterPoint();
+      views::View::ConvertPointFromScreen(overlay, &center);
+      // The center contains the star, with the slot's flat fill on each side.
+      const auto fill = bitmap.getColor(center.x() - 12, center.y());
+      int star_pixels = 0;
+      for (int dy = -6; dy <= 6; ++dy)
+        for (int dx = -6; dx <= 6; ++dx)
+          star_pixels += bitmap.getColor(center.x() + dx, center.y() + dy) != fill;
+      EXPECT_GT(star_pixels, 15);
+      auto top = slot.top_center() + gfx::Vector2d(0, 1);
+      views::View::ConvertPointFromScreen(overlay, &top);
+      int dash_pixels = 0;
+      for (int dx = -24; dx <= 24; ++dx)
+        dash_pixels += bitmap.getColor(top.x() + dx, top.y()) != fill;
+      EXPECT_GT(dash_pixels, 12);
+      EXPECT_LT(dash_pixels, 40);
+    }
+    button(ui_controls::UP);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      const auto& pins = window_->pinned_items("work");
+      return std::ranges::count_if(pins, &PinnedItem::profile_pin) ==
+             (mode == ThemeMode::kLight ? 1 : 2);
+    }));
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderRemovalKeepsOpenedPinsAsTabs) {
@@ -9722,21 +9826,61 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetrie
     ASSERT_TRUE(png);
     ASSERT_TRUE(base::WriteFile(directory.AppendASCII(name), *png));
   };
-  auto find_step = [&](auto&& self, views::View* root, std::u16string_view name) -> views::View* {
+  auto find_control = [&](auto&& self, views::View* root, ax::mojom::Role role, std::u16string_view name) -> views::View* {
     ui::AXNodeData data;
     root->GetViewAccessibility().GetAccessibleNodeData(&data);
-    if (data.role == ax::mojom::Role::kTab && data.GetString16Attribute(ax::mojom::StringAttribute::kName) == name) return root;
+    if (data.role == role && data.GetString16Attribute(ax::mojom::StringAttribute::kName) == name) return root;
     for (const auto& child : root->children())
-      if (auto* found = self(self, child.get(), name)) return found;
+      if (auto* found = self(self, child.get(), role, name)) return found;
     return nullptr;
   };
-  auto* import_step = find_step(find_step, welcome, u"Import danych");
+  auto find_step = [&](std::u16string_view name) {
+    return find_control(find_control, welcome, ax::mojom::Role::kTab, name);
+  };
+  auto* import_step = find_step(u"Import danych");
   ASSERT_TRUE(import_step);
-  ClickControl(find_step(find_step, welcome, u"Domyślna przeglądarka"));
+  ClickControl(find_step(u"Domyślna przeglądarka"));
   render("default-browser.png");
+  ClickControl(find_step(u"Asystent AI"));
+  EXPECT_FALSE(window_->assistant_settings().enabled);
+  ClickControl(FindButton(welcome, u"Wymagania asystenta AI"));
+  ClickControl(find_control(find_control, welcome, ax::mojom::Role::kSwitch, u"Włącz asystenta AI"));
+  ASSERT_TRUE(window_->assistant_settings().enabled);
+  EXPECT_TRUE(FindButton(welcome, u"Dodaj klucz API"));
+  ClickControl(FindButton(welcome, u"Ollama"));
+  EXPECT_TRUE(FindButton(welcome, u"Wykryj modele"));
+  ClickControl(FindButton(welcome, u"Codex"));
+  auto* configure_codex = FindButton(welcome, u"Pomoc i konfiguracja");
+  ASSERT_TRUE(configure_codex);
+  EXPECT_FALSE(configure_codex->GetVisibleBounds().IsEmpty());
+  auto* welcome_widget = shell->welcome_widget_for_testing();
+  const auto original_bounds = welcome_widget->GetWindowBoundsInScreen();
+  const auto work_area = display::Screen::Get()
+                             ->GetDisplayNearestWindow(welcome_widget->GetNativeWindow())
+                             .work_area();
+  auto edge_bounds = original_bounds;
+  edge_bounds.set_origin(work_area.bottom_left() +
+                         gfx::Vector2d(-edge_bounds.width() * 2 / 3, -edge_bounds.height() / 3));
+  welcome_widget->SetBounds(edge_bounds);
+  ClickControl(configure_codex);
+  base::RunLoop().RunUntilIdle();
+  views::Widget* prompt = nullptr;
+  for (views::Widget* owned : views::Widget::GetAllOwnedWidgets(welcome_widget->GetNativeView())) {
+    if (owned->widget_delegate()->GetWindowTitle() == u"Codex") prompt = owned;
+  }
+  ASSERT_TRUE(prompt);
+  EXPECT_TRUE(work_area.Contains(prompt->GetWindowBoundsInScreen()));
+  prompt->CloseNow();
+  welcome_widget->SetBounds(original_bounds);
+  for (const auto mode : {ThemeMode::kLight, ThemeMode::kDark}) {
+    shell->welcome_widget_for_testing()->SetColorModeOverride(mode == ThemeMode::kLight
+        ? ui::ColorProviderKey::ColorMode::kLight : ui::ColorProviderKey::ColorMode::kDark);
+    ClickControl(find_step(u"Asystent AI"));
+    render(mode == ThemeMode::kLight ? "assistant-light.png" : "assistant-dark.png");
+  }
   ClickControl(import_step);
   render("import.png");
-  auto* first_space = find_step(find_step, welcome, u"Pierwsza przestrzeń");
+  auto* first_space = find_step(u"Pierwsza przestrzeń");
   ASSERT_TRUE(first_space);
   EXPECT_FALSE(first_space->GetVisible());
   auto* apply = FindButton(welcome, u"Importuj");
@@ -9768,6 +9912,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetrie
   EXPECT_EQ(3u, window_->workspaces().size());
   EXPECT_FALSE(window_->shell()->import_visible());
   EXPECT_FALSE(window_->shell()->welcome_widget_for_testing());
+  EXPECT_TRUE(window_->assistant_settings().enabled);
 }
 #endif
 

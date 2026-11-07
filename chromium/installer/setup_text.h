@@ -6,6 +6,12 @@
 
 #include <windows.h>
 
+#if defined(ZITTER_DEV_BUILD)
+#define ZITTER_SETUP_PRODUCT L"Zitter Dev"
+#else
+#define ZITTER_SETUP_PRODUCT L"Zitter"
+#endif
+
 namespace zitter::setup {
 
 struct Text {
@@ -51,7 +57,7 @@ struct Text {
 inline const Text& Strings() {
   static const Text kPolish = {
       L"Instalacja",
-      L"Instalacja · znaleziono Zitter",
+      L"Instalacja · znaleziono " ZITTER_SETUP_PRODUCT,
       L"Odinstalowanie",
       L"Gdzie ma zamieszkać?",
       L"Tylko dla mnie",
@@ -61,36 +67,36 @@ inline const Text& Strings() {
       L"Folder",
       L"Zmień…",
       L"Skrót na pulpicie",
-      L"Uruchom Zitter po instalacji",
-      L"Zitter jest zainstalowany. Nie udało się go uruchomić — otwórz go z menu Start.",
+      L"Uruchom " ZITTER_SETUP_PRODUCT L" po instalacji",
+      ZITTER_SETUP_PRODUCT L" jest zainstalowany. Nie udało się go uruchomić — otwórz go z menu Start.",
       L"x64 · Windows 10+",
       L"Anuluj",
       L"Zainstaluj",
-      L"Zitter już tu jest.",
+      ZITTER_SETUP_PRODUCT L" już tu jest.",
       L"✓ Zainstalowany",
       L"Aktualizacja zachowa przestrzenie, karty, profile i hasła. Nowa wersja: %s.",
-      L"Usuń Zitter",
+      L"Usuń " ZITTER_SETUP_PRODUCT,
       L"Zainstaluj w innym miejscu",
       L"Zaktualizuj",
-      L"Usunąć Zitter?",
+      L"Usunąć " ZITTER_SETUP_PRODUCT L"?",
       L"Usunę aplikację z %s razem ze skrótami.",
       L"Usuń też dane przeglądania",
       L"Przestrzenie, profile, historia, hasła i karty. Tego nie da się cofnąć.",
       L"Wróć",
       L"Zaraz zadrży.",
-      L"Kopiuję Zitter na ten komputer. Bez uprawnień administratora, tylko dla Ciebie.",
-      L"Kopiuję Zitter dla wszystkich użytkowników tego komputera.",
-      L"Usuwam Zitter z tego komputera.",
+      L"Kopiuję " ZITTER_SETUP_PRODUCT L" na ten komputer. Bez uprawnień administratora, tylko dla Ciebie.",
+      L"Kopiuję " ZITTER_SETUP_PRODUCT L" dla wszystkich użytkowników tego komputera.",
+      L"Usuwam " ZITTER_SETUP_PRODUCT L" z tego komputera.",
       L"Kopiuję pliki przeglądarki",
       L"Usuwam pliki przeglądarki",
       L"Zamknij",
-      L"Zamknij Zitter i spróbuj ponownie.",
+      L"Zamknij " ZITTER_SETUP_PRODUCT L" i spróbuj ponownie.",
       L"Nie udało się: %s",
-      L"Wybierz folder dla Zitter",
+      L"Wybierz folder dla " ZITTER_SETUP_PRODUCT,
   };
   static const Text kEnglish = {
       L"Installation",
-      L"Installation · Zitter found",
+      L"Installation · " ZITTER_SETUP_PRODUCT L" found",
       L"Uninstall",
       L"Where should it live?",
       L"Just for me",
@@ -100,36 +106,38 @@ inline const Text& Strings() {
       L"Folder",
       L"Change…",
       L"Desktop shortcut",
-      L"Launch Zitter after installation",
-      L"Zitter is installed. It could not be launched — open it from the Start menu.",
+      L"Launch " ZITTER_SETUP_PRODUCT L" after installation",
+      ZITTER_SETUP_PRODUCT L" is installed. It could not be launched — open it from the Start menu.",
       L"x64 · Windows 10+",
       L"Cancel",
       L"Install",
-      L"Zitter is already here.",
+      ZITTER_SETUP_PRODUCT L" is already here.",
       L"✓ Installed",
       L"Updating keeps your spaces, tabs, profiles and passwords. New version: %s.",
-      L"Remove Zitter",
+      L"Remove " ZITTER_SETUP_PRODUCT,
       L"Install somewhere else",
       L"Update",
-      L"Remove Zitter?",
+      L"Remove " ZITTER_SETUP_PRODUCT L"?",
       L"I'll remove the app from %s, shortcuts included.",
       L"Also remove browsing data",
       L"Spaces, profiles, history, passwords and tabs. This can't be undone.",
       L"Back",
       L"About to tremble.",
-      L"Copying Zitter to this computer. No administrator rights, just for you.",
-      L"Copying Zitter for everyone on this computer.",
-      L"Removing Zitter from this computer.",
+      L"Copying " ZITTER_SETUP_PRODUCT L" to this computer. No administrator rights, just for you.",
+      L"Copying " ZITTER_SETUP_PRODUCT L" for everyone on this computer.",
+      L"Removing " ZITTER_SETUP_PRODUCT L" from this computer.",
       L"Copying browser files",
       L"Removing browser files",
       L"Close",
-      L"Close Zitter and try again.",
+      L"Close " ZITTER_SETUP_PRODUCT L" and try again.",
       L"That didn't work: %s",
-      L"Choose a folder for Zitter",
+      L"Choose a folder for " ZITTER_SETUP_PRODUCT,
   };
   return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_POLISH ? kPolish : kEnglish;
 }
 
 }  // namespace zitter::setup
+
+#undef ZITTER_SETUP_PRODUCT
 
 #endif

@@ -6,6 +6,11 @@ Portable copies and executables outside their registered installation do not
 check or install updates. Launching with `--disable-zitter-updates` disables the
 updater for that run. Benchmark runs also disable it.
 
+To check immediately, open the Zitter menu in the main window and choose
+**Check for updates…**. Zitter reports when no Windows update is available or a
+check or download fails. If a verified installer is ready, the notification
+offers the same **Install** action as an automatic check.
+
 The updater accepts only a strictly newer three-component version and the exact
 `Zitter-vVERSION-windows-x64-setup.exe` asset from
 `doctorspider42/zitter`. Drafts, prereleases, missing Windows installers and

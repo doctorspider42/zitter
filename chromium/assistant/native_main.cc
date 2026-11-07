@@ -52,6 +52,7 @@ constexpr auto kRpcTraffic =
 }
 
 rust::String runtime_request(rust::Str path, rust::Str body);
+std::string PerformHTTP(std::string id, const base::DictValue& request);
 bool BeginOperation(std::string_view id);
 void EndOperation(std::string_view id);
 void CancelOperation(std::string_view id);
@@ -232,12 +233,24 @@ int main(int argc, const char** argv) {
     const auto model=command->GetSwitchValueASCII("check-model");
     if(provider!="openai"&&provider!="codex"&&provider!="claude"&&provider!="ollama")return 2;
     zitter::assistant::BeginOperation("connection-check");
+    if (provider == "ollama" && command->HasSwitch("list-models")) {
+      const auto result = zitter::assistant::PerformHTTP(
+          "connection-check", base::DictValue().Set("provider", "ollama-models"));
+      zitter::assistant::EndOperation("connection-check");
+      std::cout << result << std::endl;
+      return 0;
+    }
     auto body=base::DictValue().Set("id","connection-check").Set("prompt","Connection test. Reply OK without using tools.")
         .Set("config",base::DictValue().Set("provider",provider).Set("model",model)).Set("permissions",base::DictValue());
     auto result=base::JSONReader::ReadDict(std::string(zitter::assistant::runtime_request("/turn",base::WriteJson(body).value())),base::JSON_PARSE_RFC);
     const bool ok=result&&!result->FindString("error")&&result->FindString("answer")&&!result->FindString("answer")->empty();
     zitter::assistant::EndOperation("connection-check");
-    std::cout<<(ok?"{\"ok\":true}":"{\"ok\":false}")<<std::endl;
+    auto reply = base::DictValue().Set("ok", ok);
+    if (!ok) {
+      const auto* error = result ? result->FindString("error") : nullptr;
+      reply.Set("error", error ? *error : "The model returned no usable answer. Try another model.");
+    }
+    std::cout << base::WriteJson(reply).value() << std::endl;
     return ok?0:1;
   }
   int port = 0, pid = 0;

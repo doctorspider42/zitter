@@ -67,14 +67,15 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
 
  protected:
   bool GetClientAreaInsets(gfx::Insets* insets, int frame_thickness) const override {
-    if (GetWidget()->IsFullscreen()) {
+    // Native frame messages can still arrive after the Widget has detached.
+    if (IsFullscreen()) {
       *insets = gfx::Insets();
       return true;
     }
     // Any non-client area at the top makes Windows draw its own titlebar. A
     // maximized window is outdented by the frame thickness on every side, so
     // the top inset keeps the client area on its monitor.
-    const int top = GetWidget()->IsMaximized() ? frame_thickness : 0;
+    const int top = IsMaximized() ? frame_thickness : 0;
     *insets = gfx::Insets::TLBR(top, frame_thickness, frame_thickness, frame_thickness);
     return true;
   }

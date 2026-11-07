@@ -17,6 +17,7 @@
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chromium/assistant/native_cli_path.h"
 #include "chromium/assistant/native_transport.h"
 #if BUILDFLAG(IS_POSIX)
 #include <signal.h>
@@ -33,48 +34,22 @@ namespace {
 std::string Failure(std::string_view message) {
   return base::WriteJson(base::DictValue().Set("error", message)).value();
 }
-base::FilePath NativeCommand(base::cstring_view setting, std::string name) {
-  auto env = base::Environment::Create();
-  std::vector<base::FilePath> candidates;
-  if (auto path = env->GetVar(setting); path && !path->empty())
-    candidates.push_back(base::FilePath::FromUTF8Unsafe(*path));
-  else {
-#if BUILDFLAG(IS_WIN)
-    name += ".exe";
-    const char separator = ';';
-#else
-    const char separator = ':';
-#endif
-    for (auto dir : base::SplitString(
-             env->GetVar("PATH").value_or(""), std::string(1, separator),
-             base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {
-      auto root = base::FilePath::FromUTF8Unsafe(dir);
-      if (root.IsAbsolute())
-        candidates.push_back(root.AppendASCII(name));
-    }
-  }
-  for (const auto& path : candidates) {
-    if (!path.IsAbsolute())
-      continue;
-    base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
-    std::array<unsigned char, 4> magic{};
-    if (!file.IsValid() ||
-        file.ReadAtCurrentPos(base::as_writable_byte_span(magic)).value_or(0) !=
-            4)
-      continue;
-    const auto& b = magic;
-    // A direct platform executable, never a shell/Node launcher.
-    const bool native =
-        (b[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' &&
-         magic[3] == 'F') ||
-        (magic[0] == 'M' && magic[1] == 'Z') ||
-        (b[0] == 0xcf && b[1] == 0xfa && b[2] == 0xed && b[3] == 0xfe) ||
-        (b[0] == 0xce && b[1] == 0xfa && b[2] == 0xed && b[3] == 0xfe) ||
-        (b[0] == 0xca && b[1] == 0xfe && b[2] == 0xba && b[3] == 0xbe);
-    if (native)
-      return path;
-  }
-  return {};
+std::string CliFailure(std::string_view output, std::string_view diagnostics) {
+  const auto message = base::ToLowerASCII(std::string(output) + std::string(diagnostics));
+  if (message.contains("unauthorized") || message.contains("401") ||
+      message.contains("not logged in") || (message.contains("please run") && message.contains("login")) ||
+      message.contains("authentication") || message.contains("sign in"))
+    return Failure("Sign in to the provider CLI, then retry the connection test.");
+  if (message.contains("unexpected argument") || message.contains("unknown option"))
+    return Failure("The provider CLI does not support the required options. Update it and retry.");
+  if (message.contains("model") && (message.contains("not supported") || message.contains("not found") ||
+                                     message.contains("not available") || message.contains("access")))
+    return Failure("The service did not find this model or your account cannot use it.");
+  if (message.contains("429") || message.contains("usage limit") || message.contains("rate limit"))
+    return Failure("The provider limit was reached. Check your plan or API balance.");
+  if (message.contains("sandbox") || message.contains("access is denied"))
+    return Failure("The provider could not start its sandbox. Run the CLI once in a terminal to finish setup.");
+  return Failure("Provider CLI failed. Check installation, supported version and login.");
 }
 }  // namespace
 std::string PerformCLI(std::string id, const base::DictValue& request) {
@@ -235,21 +210,19 @@ std::string PerformCLI(std::string id, const base::DictValue& request) {
     }
   }
   const auto in_path = temp.GetPath().AppendASCII("input"),
-             out_path = temp.GetPath().AppendASCII("output");
+             out_path = temp.GetPath().AppendASCII("output"),
+             diagnostics_path = temp.GetPath().AppendASCII("diagnostics");
   if (!base::WriteFile(in_path, stdin_text))
     return Failure("Could not prepare provider input");
   base::File in(in_path, base::File::FLAG_OPEN | base::File::FLAG_READ),
-      out(out_path, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
+      out(out_path, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE),
+      diagnostics(diagnostics_path, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
 #if BUILDFLAG(IS_POSIX)
-  base::File diagnostics(base::FilePath("/dev/null"),
-                         base::File::FLAG_OPEN | base::File::FLAG_WRITE);
   options.fds_to_remap = {{in.GetPlatformFile(), STDIN_FILENO},
                           {out.GetPlatformFile(), STDOUT_FILENO},
                           {diagnostics.GetPlatformFile(), STDERR_FILENO}};
   options.new_process_group = true;
 #elif BUILDFLAG(IS_WIN)
-  base::File diagnostics(base::FilePath(L"NUL"),
-                         base::File::FLAG_OPEN | base::File::FLAG_WRITE);
   options.start_hidden = true;
   options.stdin_handle = in.GetPlatformFile();
   options.stdout_handle = out.GetPlatformFile();
@@ -302,7 +275,8 @@ std::string PerformCLI(std::string id, const base::DictValue& request) {
          !base::IsStringUTF8(
              std::string_view(output).substr(0, complete + 1))) ||
         (done && !base::IsStringUTF8(output));
-    if (!within_limit || invalid_utf8 || cancelled(id) ||
+    const auto diagnostics_size = base::GetFileSize(diagnostics_path);
+    if (!within_limit || invalid_utf8 || !diagnostics_size || *diagnostics_size > 512 * 1024 || cancelled(id) ||
         base::TimeTicks::Now() - started > base::Minutes(10)) {
 #if BUILDFLAG(IS_POSIX)
       ::kill(-process.Pid(), SIGKILL);
@@ -325,10 +299,11 @@ std::string PerformCLI(std::string id, const base::DictValue& request) {
   // Reap any agent descendants even when the direct child exited normally.
   ::kill(-process.Pid(), SIGKILL);
 #endif
-  if (code != 0)
-    return Failure(
-        "Provider CLI failed. Check installation, supported version "
-        "and login.");
+  if (code != 0) {
+    std::string details;
+    base::ReadFileToStringWithMaxSize(diagnostics_path, &details, 512 * 1024);
+    return CliFailure(output, details);
+  }
   return base::WriteJson(base::DictValue().Set("body", output)).value();
 }
 }  // namespace zitter::assistant

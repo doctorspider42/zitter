@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "base/base_paths.h"
+#include "base/base_switches.h"
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/environment.h"
@@ -31,12 +32,15 @@
 #include "chrome/app/chrome_main_linux.h"
 #elif BUILDFLAG(IS_WIN)
 #include "chromium/app/updater_win.h"
+#include "chromium/app/windows_channel.h"
 #include <windows.h>
 
 #include <shobjidl.h>
 
 #include "base/files/file_enumerator.h"
+#include "base/process/launch.h"
 #include "base/win/win_util.h"
+#include "chrome/chrome_elf/chrome_elf_main.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
 #include "content/public/app/sandbox_helper_win.h"
 #include "sandbox/win/src/sandbox_types.h"
@@ -52,10 +56,10 @@ base::FilePath DefaultDataDirectory() {
   base::FilePath home;
   CHECK(base::PathService::Get(base::DIR_HOME, &home));
 #if BUILDFLAG(IS_WIN)
-  // %LOCALAPPDATA%\Zitter, next to where Chromium keeps its User Data.
   base::FilePath local;
   CHECK(base::PathService::Get(base::DIR_LOCAL_APP_DATA, &local));
-  return local.Append(FILE_PATH_LITERAL("Zitter"));
+  auto root = local.Append(zitter::windows::kProductName);
+  return zitter::windows::kDevBuild ? root.Append(FILE_PATH_LITERAL("User Data")) : root;
 #elif BUILDFLAG(IS_MAC)
   CHECK(base::CreateDirectory(home.Append("Library").Append("Caches").Append("Zitter")));
   return home.Append("Library").Append("Application Support").Append("Zitter");
@@ -66,6 +70,42 @@ base::FilePath DefaultDataDirectory() {
   return root.Append("zitter");
 #endif
 }
+
+#if BUILDFLAG(IS_WIN)
+std::optional<int> PrepareDevProfile(base::CommandLine& command) {
+  const auto default_profile = DefaultDataDirectory();
+  const auto dev_data_root = default_profile.DirName();
+  const auto fail = [](const wchar_t* reason) {
+    ::MessageBoxW(nullptr, reason, zitter::windows::kProductName, MB_OK | MB_ICONERROR);
+    return 1;
+  };
+  if (!command.HasSwitch(switches::kUserDataDir)) {
+    auto profile = default_profile;
+    if (command.HasSwitch(zitter::windows::kCleanProfileSwitch)) {
+      const auto profiles = dev_data_root.Append(FILE_PATH_LITERAL("Clean Profiles"));
+      if (!base::CreateDirectory(profiles) ||
+          !base::CreateTemporaryDirInDir(profiles, FILE_PATH_LITERAL("Profile"), &profile))
+        return fail(L"Could not create a clean profile.");
+    }
+    // chrome_elf reads the original Windows command line, before Chromium sees
+    // any in-process switch changes. Put the profile on the real command line.
+    command.AppendSwitchPath(switches::kUserDataDir, profile);
+    if (!base::LaunchProcess(command, {}).IsValid())
+      return fail(L"Could not start Zitter Dev.");
+    return 0;
+  }
+
+  const auto requested = command.GetSwitchValuePath(switches::kUserDataDir)
+                             .NormalizePathSeparators().StripTrailingSeparators();
+  wchar_t effective[MAX_PATH];
+  wchar_t invalid[MAX_PATH];
+  if (!dev_data_root.IsParent(requested) || requested.ReferencesParent() ||
+      !GetUserDataDirectoryThunk(effective, std::size(effective), invalid, std::size(invalid)) ||
+      invalid[0] || !base::FilePath::CompareEqualIgnoreCase(requested.value(), effective))
+    return fail(L"Zitter Dev needs a browsing profile inside its own data directory.");
+  return std::nullopt;
+}
+#endif
 }  // namespace
 
 // Used by Chromium startup services; capture before upstream mutates switches.
@@ -84,7 +124,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
   install_static::InitializeFromPrimaryModule();
   base::win::SetAbortBehaviorForCrashReporting();
   base::CommandLine::Init(0, nullptr);
-  if (const auto update = zitter::RunWindowsUpdateHelper()) return *update;
+  if (!zitter::windows::kDevBuild) {
+    if (const auto update = zitter::RunWindowsUpdateHelper()) return *update;
+  }
 #else
 int main(int argc, const char** argv) {
   const auto main_entry = base::TimeTicks::Now();
@@ -111,10 +153,20 @@ int main(int argc, const char** argv) {
 #if BUILDFLAG(IS_WIN)
     // The taskbar groups Zitter's windows, pins and jump list under this ID;
     // the installer's shortcuts carry the same one (installer/win).
-    ::SetCurrentProcessExplicitAppUserModelID(L"Zitter.Browser");
+    ::SetCurrentProcessExplicitAppUserModelID(zitter::windows::kAppId);
+    if (zitter::windows::kDevBuild) {
+      if (const auto launch = PrepareDevProfile(*command)) return *launch;
+      command->AppendSwitch(zitter::windows::kDevChannelSwitch);
+      command->AppendSwitch("disable-zitter-updates");
+    }
     // Extensions other apps register for Google Chrome stay Chrome's
     // (tools/install_chromium_overlay.py).
     command->AppendSwitch("zitter-ignore-chrome-registry-extensions");
+    // Release Windows UI Automation providers when each native window closes.
+    auto features = command->GetSwitchValueASCII(switches::kEnableFeatures);
+    if (!features.empty()) features += ',';
+    features += "UiaDisconnectRootProviders";
+    command->AppendSwitchASCII(switches::kEnableFeatures, features);
 #endif
     zitter::ConfigureSafeBrowsingKey();
     zitter::ConfigureNetworkPolicy(*command);

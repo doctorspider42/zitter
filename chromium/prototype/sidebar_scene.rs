@@ -203,6 +203,7 @@ mod ffi {
     struct Item {
         x: f32, y: f32, width: f32, height: f32,
         // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface, 25: history result row, 26: progress indicator, 27: Peek title (middle elision and physical RTL alignment), 28: workspace color hue ring, 29: workspace color saturation x tone field (both: `badge` the stored color, `tile` the dark scheme, `fill` the surface, `ink` the knob edge, `title` the ring's emoji).
+        // 30: shortcut keycap, 31: profile favorites drop preview.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
         favicon: Vec<u32>, favorite: bool,
@@ -721,7 +722,6 @@ mod ffi {
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
         fn footer_layout(width: i32, content_width: i32) -> ColumnLayout;
         fn strip_layout(width: i32, height: i32, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
-        fn action_frame(row: Rect, viewport: Rect) -> Rect;
         fn address_layout(width: i32, height: i32, host_width: i32) -> RowLayout;
         fn row_layout(width: i32, height: i32, title_width: i32,
                       detail: bool, chip: bool, close: bool) -> RowLayout;
@@ -2543,7 +2543,7 @@ impl ActionGraph {
         let previous=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).collect::<Vec<_>>();
         let geometry_changed=previous.into_iter().ne(items.iter().map(|i|i.key.as_str()))||items.iter().any(|item|self.nodes.get(&(3,0,0,item.key.clone())).is_some_and(|node|{let n=node.borrow();matches!(n.model.as_deref(),Some(NodeModel::Workspace(p)) if p.label!=item.label)}));
         let mut keys=Vec::with_capacity(10+items.len());
-        for name in ["sidebar.add","sidebar.downloads","header.sidebar","header.back","header.forward","header.reload","sidebar.address","sidebar.new-tab"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
+        for name in ["sidebar.add","sidebar.downloads","header.sidebar","header.back","header.forward","header.reload","sidebar.address"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
         keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});
         for item in &items{keys.push(ffi::ActionNodeKey{kind:3,high:0,low:0,name:item.key.clone()});}
         let plan=self.reconcile(keys);if !plan.admitted{return plan;}
@@ -2884,12 +2884,6 @@ fn close_visible(_active: bool, _tile: bool, hovered: bool) -> bool {
     hovered
 }
 
-// Chrome action and list share one opaque Metal surface, leaving the native
-// scrollbar gutter outside it. Adapter mirroring happens outside this policy.
-fn action_frame(row: ffi::Rect, viewport: ffi::Rect) -> ffi::Rect {
-    ffi::Rect {x: viewport.x, y: row.y, width: viewport.width.max(0), height: row.height.max(0)}
-}
-
 fn row_layout(width: i32, height: i32, title_width: i32,
               detail: bool, chip: bool, close: bool) -> ffi::RowLayout {
     let width = width.max(0); let height = height.max(0);
@@ -2910,7 +2904,9 @@ fn footer_layout(width: i32, content_width: i32) -> ffi::ColumnLayout {
     // Two 28 px IconButtons close the 32 px row: Downloads on the leading edge,
     // „+” on the trailing one. The space rail is centred between them.
     const BUTTON: i32 = 28; const GAP: i32 = 4;
-    let width=width.max(0); let lead=BUTTON+GAP;
+    let lead=BUTTON+GAP;
+    // An unconstrained width fits the full rail and both footer actions.
+    let width=if width<0 {content_width.max(0).saturating_add(2*lead)} else {width};
     let middle=(width-2*lead).max(0);
     let overflow=content_width>middle;
     let height=if overflow {47} else {32};
@@ -3151,6 +3147,34 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         let mut slice=|left:f32,right:f32|{let left=(i.width*left).round();let right=(i.width*right.min(1.0)).round();let x=if i.tile{i.x+i.width-right}else{i.x+left};emit(x,i.y,(right-left).max(0.0),i.height,0.0,i.ink,"",0.0,false);};
         if i.title_width>=0.0{slice(0.0,i.title_width.min(1.0));}
         else{let t=i.detail_font_size.clamp(0.0,1.0);if t<0.5{slice(t/2.0,t*2.0);}else if t<0.75{slice(t*3.0-1.25,1.0);slice(0.0,t-0.5);}else{let left=(t-0.75)*4.0;slice(left,left+0.25-(t-0.75));}}
+        return;
+    }
+    if i.kind == 31 {
+        // The address row temporarily becomes the profile favorites drop slot.
+        emit(i.x, i.y, i.width, i.height, 0.0, i.badge, "", 0.0, false);
+        emit(i.x + 1.0, i.y + 1.0, i.width - 2.0, i.height - 2.0,
+            design_tokens::radius::SM, i.fill, "", 0.0, false);
+        let mut dashes = |length: f32, horizontal: bool| {
+            let span = length - 14.0;
+            let count = ((span + 3.0) / 7.0).floor() as usize;
+            let start = (length - (count as f32 * 7.0 - 3.0)) / 2.0;
+            for n in 0..count {
+                let offset = start + n as f32 * 7.0;
+                if horizontal {
+                    for y in [i.y + 1.0, i.y + i.height - 2.0] {
+                        emit(i.x + offset, y, 4.0, 1.0, 0.5, i.edge, "", 0.0, false);
+                    }
+                } else {
+                    for x in [i.x + 1.0, i.x + i.width - 2.0] {
+                        emit(x, i.y + offset, 1.0, 4.0, 0.5, i.edge, "", 0.0, false);
+                    }
+                }
+            }
+        };
+        dashes(i.width, true);
+        dashes(i.height, false);
+        emit(i.x, i.y, i.width, i.height, 0.0, i.ink, "★", i.font_size, false);
+        out.last_mut().unwrap().center = true;
         return;
     }
     if i.kind == 30 {
@@ -3793,12 +3817,24 @@ mod tests {
         assert_eq!(huge.children[1].y, i32::MAX);
         assert_eq!(huge.children[1].height, 0);
     }
-    #[test] fn action_frame_aligns_with_viewport_without_changing_vertical_layout() {
-        let r = action_frame(ffi::Rect {x: 4, y: 70, width: 240, height: 34},
-            ffi::Rect {x: 4, y: 106, width: 225, height: 500});
-        assert_eq!((r.x, r.y, r.width, r.height), (4, 70, 225, 34));
-        let narrow = action_frame(r, ffi::Rect {x: 19, y: 106, width: -1, height: 0});
-        assert_eq!((narrow.x, narrow.width, narrow.height), (19, 0, 34));
+    #[test] fn profile_drop_preview_has_dashes_and_a_centered_star() {
+        let mut item = row(177.0);
+        item.kind = 31;
+        item.font_size = 18.0;
+        for dark in [false, true] {
+            let palette = design_palette(dark, 0xff8c66ff);
+            item.badge = palette.bg_base;
+            item.fill = palette.accent_soft;
+            item.edge = palette.accent_ink;
+            item.ink = palette.accent_ink;
+            let ops = layout(std::slice::from_ref(&item));
+            let star = ops.last().unwrap();
+            assert_eq!(star.text, "★");
+            assert!(star.center && star.width == item.width && star.color == item.ink);
+            assert!(ops.iter().filter(|p| p.width == 4.0 && p.height == 1.0).count() > 2);
+            assert!(ops.iter().filter(|p| p.width == 1.0 && p.height == 4.0).count() > 2);
+            assert!(ops.iter().all(|p| p.clip.width == item.clip.width));
+        }
     }
     #[test] fn new_tab_action_keeps_title_hint_icon_and_clip() {
         let mut item = row(177.0); item.kind = 3; item.close = false;

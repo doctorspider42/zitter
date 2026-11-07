@@ -33,6 +33,7 @@
 #include "ui/base/text/bytes_formatting.h"
 #include "ui/display/screen.h"
 #include "ui/display/display.h"
+#include "ui/events/event.h"
 #include "ui/views/border.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/views/accessibility/view_accessibility.h"
@@ -50,6 +51,26 @@ class DownloadListView final : public views::View {
   void ContentsChanged(){InvalidateLayout();PreferredSizeChanged();}
 };
 BEGIN_METADATA(DownloadListView)
+END_METADATA
+
+class DownloadRowView final : public views::View {
+  METADATA_HEADER(DownloadRowView, views::View)
+ public:
+  explicit DownloadRowView(base::RepeatingCallback<bool(bool)> pressed)
+      : pressed_(std::move(pressed)) {}
+
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+    if (!event.IsOnlyLeftMouseButton())
+      return false;
+    // Views only forwards the double-click flag to the first press's handler.
+    auto pressed = pressed_;
+    return pressed.Run(event.GetClickCount() == 2);
+  }
+
+ private:
+  base::RepeatingCallback<bool(bool)> pressed_;
+};
+BEGIN_METADATA(DownloadRowView)
 END_METADATA
 
 std::u16string Bytes(int64_t value) { return ui::FormatBytes(base::ByteSize(static_cast<uint64_t>(std::max<int64_t>(0, value)))); }
@@ -341,7 +362,13 @@ void DownloadPanel::Refresh() {
       if (key.starts_with("~")) continue;
       if (key.starts_with("#")) { auto* label = MakeLine(list_, 7, static_cast<int>(PanelScene::Tone::kMuted)); SetText(label, base::UTF8ToUTF16(key.substr(1))); label->SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(12, 12, 4, 12))); continue; }
       const auto& guid = key;
-      auto* box = list_->AddChildView(std::make_unique<views::View>());
+      auto* box = list_->AddChildView(std::make_unique<DownloadRowView>(
+          base::BindRepeating([](base::WeakPtr<DownloadPanel> panel,
+                                 const std::string& guid, bool double_click) {
+            if (!panel || panel->choosing_) return false;
+            if (double_click) panel->Act(guid, Action::kOpen);
+            return true;
+          }, weak, guid)));
       Row row; row.guid = guid;
       row.tile=box->AddChildView(scene_->MakeFileTile());
       auto* column=box->AddChildView(std::make_unique<views::View>());

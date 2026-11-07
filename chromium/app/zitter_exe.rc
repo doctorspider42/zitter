@@ -6,6 +6,12 @@
 
 #include "chromium/app/zitter_version.h"
 
+#if defined(ZITTER_DEV_BUILD)
+#define ZITTER_PRODUCT_NAME "Zitter Dev"
+#else
+#define ZITTER_PRODUCT_NAME "Zitter"
+#endif
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION ZITTER_VERSION
  PRODUCTVERSION ZITTER_VERSION
@@ -20,12 +26,12 @@ BEGIN
     BLOCK "040904b0"
     BEGIN
       VALUE "CompanyName", "Zitter contributors"
-      VALUE "FileDescription", "Zitter"
+      VALUE "FileDescription", ZITTER_PRODUCT_NAME
       VALUE "FileVersion", ZITTER_VERSION_STRING
       VALUE "InternalName", "zitter"
       VALUE "LegalCopyright", "Copyright 2026 Zitter contributors"
       VALUE "OriginalFilename", "zitter.exe"
-      VALUE "ProductName", "Zitter"
+      VALUE "ProductName", ZITTER_PRODUCT_NAME
       VALUE "ProductVersion", ZITTER_VERSION_STRING
     END
   END

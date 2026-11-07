@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "base/environment.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "base/timer/timer.h"
@@ -52,6 +53,9 @@ struct AssistantSettings {
   ~AssistantSettings();
   bool enabled = true;
   std::array<bool, 4> backends{true, true, true, true};
+  std::array<bool, 4> available{};
+  std::string codex_path, claude_path;
+  bool ollama_configured = false;
   std::vector<AssistantModel> models;
   std::string encrypted_api_key;  // OS-encrypted, base64 encoded; never sent to the UI.
   std::string default_model;  // "<provider>/<id>"
@@ -59,6 +63,8 @@ struct AssistantSettings {
   bool background = true, confirm_background = true;
   int concurrency = 12;
   bool BackendEnabled(std::string_view provider) const;
+  bool BackendAvailable(std::string_view provider) const;
+  void ApplyCliPaths(base::EnvironmentMap& environment) const;
   // Visible models of enabled backends, in settings order.
   std::vector<AssistantModel> PanelModels() const;
   base::DictValue ToValue() const;
@@ -114,6 +120,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // Escape skips a pending click on the visible page, otherwise stops it.
   bool HandleEscape();
   void SettingsChanged();
+  void BackendAvailabilityChanged();
   void OnResize(int resize_amount, bool done_resizing) override;
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
@@ -293,6 +300,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void Dismiss(std::string key);
   void Append(Session& session, std::string text, std::vector<AssistantChip> chips = {});
   void UpdateControls();
+  void SyncSelectedModel();
   void UpdatePageControl();
   void OpenSettings();
   raw_ptr<WorkspaceWindow> window_;

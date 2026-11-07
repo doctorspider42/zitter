@@ -34,6 +34,7 @@
 #include <vector>
 
 #include "chromium/installer/setup_accessibility.h"
+#include "chromium/app/windows_channel.h"
 #include "chromium/installer/setup_install.h"
 #include "chromium/installer/setup_resource.h"
 #include "chromium/installer/setup_text.h"
@@ -142,7 +143,7 @@ class Window : public AccessibilityHost {
     window_class.lpszClassName = L"ZitterSetup";
     RegisterClassExW(&window_class);
     // Sized at 96 DPI, then rescaled to the monitor it lands on.
-    hwnd_ = CreateWindowExW(0, L"ZitterSetup", L"Zitter", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+    hwnd_ = CreateWindowExW(0, L"ZitterSetup", windows::kProductName, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                             CW_USEDEFAULT, CW_USEDEFAULT, static_cast<int>(kWidth), static_cast<int>(kHeight),
                             nullptr, nullptr, instance_, this);
     if (!hwnd_) return 1;
@@ -176,6 +177,8 @@ class Window : public AccessibilityHost {
 #pragma clang unsafe_buffer_usage end
     LocalFree(raw);
     auto has = [&](const wchar_t* name) { return std::find(args.begin(), args.end(), name) != args.end(); };
+    if (windows::kDevBuild && (has(L"--system") || has(L"--dir") || has(L"--update-only")))
+      ExitProcess(1);
     placement_.system = has(L"--system");
     if (auto dir = std::find(args.begin(), args.end(), L"--dir"); dir != args.end() && std::next(dir) != args.end())
       placement_.directory = *std::next(dir);
@@ -553,23 +556,26 @@ class Window : public AccessibilityHost {
   }
 
   void PaintFresh(D2D1_RECT_F b) {
-    const float headline = Print(text_.where, kHeadline, {b.left, b.top, b.right, b.bottom}, kInk);
-    Say({b.left, b.top, b.right, b.top + headline}, text_.where);
+    const wchar_t* heading = windows::kDevBuild ? windows::kProductName : text_.where;
+    const float headline = Print(heading, kHeadline, {b.left, b.top, b.right, b.bottom}, kInk);
+    Say({b.left, b.top, b.right, b.top + headline}, heading);
     float y = b.top + headline + 16;
-    const float half = (b.right - b.left - 10) / 2;
-    Card({b.left, y, b.left + half, y + 62}, text_.for_me, text_.for_me_detail, !placement_.system, kForMe);
-    Card({b.right - half, y, b.right, y + 62}, text_.for_all, text_.for_all_detail, placement_.system, kForAll);
-    y += 62 + 16;
+    if (!windows::kDevBuild) {
+      const float half = (b.right - b.left - 10) / 2;
+      Card({b.left, y, b.left + half, y + 62}, text_.for_me, text_.for_me_detail, !placement_.system, kForMe);
+      Card({b.right - half, y, b.right, y + 62}, text_.for_all, text_.for_all_detail, placement_.system, kForAll);
+      y += 62 + 16;
+    }
     Print(text_.folder, kLabel, {b.left, y, b.right, y + 16}, kMuted);
     y += 22;
-    const float change = ButtonWidth(text_.change, Look::kOutline);
-    const D2D1_RECT_F field{b.left, y, b.right - change - 8, y + 32};
+    const float change = windows::kDevBuild ? 0 : ButtonWidth(text_.change, Look::kOutline);
+    const D2D1_RECT_F field{b.left, y, b.right - (change ? change + 8 : 0), y + 32};
     Fill(field, kRaised, 8);
     Ring(field, kLineStrong, 8);
     Print(DisplayPath(placement_.directory), kPath, {field.left + 12, y + 8, field.right - 12, y + 24}, kInk,
          DWRITE_TEXT_ALIGNMENT_LEADING, true);
     Say(field, std::wstring(text_.folder) + L": " + placement_.directory);
-    Button({b.right - change, y, b.right, y + 32}, text_.change, Look::kOutline, kChange);
+    if (change) Button({b.right - change, y, b.right, y + 32}, text_.change, Look::kOutline, kChange);
     y += 32 + 16;
     Print(text_.desktop_shortcut, kBody, {b.left, y + 1, b.right - 40, y + 20}, kInk);
     Toggle({b.right - 34, y, b.right, y + 20}, desktop_shortcut_, kShortcut, text_.desktop_shortcut);
@@ -590,13 +596,20 @@ class Window : public AccessibilityHost {
     Ring(card, kLine, 12);
     const D2D1_RECT_F tile{card.left + 16, y + 14, card.left + 56, y + 54};
     Fill(tile, kTile, 10);
-    Print(L"|zâź©", kKet, {tile.left, tile.top + 9, tile.right, tile.bottom}, kAccent, DWRITE_TEXT_ALIGNMENT_CENTER);
+    auto mark = Layout(L"|z\u27E9", kKet, tile.right - tile.left,
+                       DWRITE_TEXT_ALIGNMENT_CENTER);
+    mark->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    mark->SetMaxHeight(tile.bottom - tile.top);
+    mark->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    target_->DrawTextLayout({tile.left, tile.top}, mark.Get(), Brush(kAccent),
+                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
     const float status = TextWidth(text_.installed, kLabel);
-    Print(L"Zitter " + existing_->version, kStrong, {tile.right + 14, y + 15, card.right - status - 32, y + 33}, kInk);
+    const std::wstring installed = std::wstring(windows::kProductName) + L" " + existing_->version;
+    Print(installed, kStrong, {tile.right + 14, y + 15, card.right - status - 32, y + 33}, kInk);
     Print(DisplayPath(existing_->placement.directory), kPath, {tile.right + 14, y + 35, card.right - status - 32, y + 51},
          kMuted, DWRITE_TEXT_ALIGNMENT_LEADING, true);
     Print(text_.installed, kLabel, {card.right - status - 16, y + 26, card.right - 16, y + 42}, kOk);
-    Say(card, L"Zitter " + existing_->version + L", " + existing_->placement.directory + L", " + text_.installed);
+    Say(card, installed + L", " + existing_->placement.directory + L", " + text_.installed);
     y += 68 + 16;
     const std::wstring keeps = Substitute(text_.update_keeps, PayloadVersion());
     const float note = Print(keeps, kBody, {b.left, y, b.right, b.bottom}, kMuted);
@@ -607,14 +620,17 @@ class Window : public AccessibilityHost {
     const float footer = b.bottom - 32;
     Button({b.left - 12, footer, b.left - 12 + ButtonWidth(text_.remove_zitter, Look::kDanger), footer + 32},
            text_.remove_zitter, Look::kDanger, kRemoveZitter);
-    ButtonsRightToLeft(b.right, footer, {{text_.install_elsewhere, Look::kOutline, kElsewhere}, {text_.update, Look::kPrimary, kUpdate}});
+    if (windows::kDevBuild)
+      ButtonsRightToLeft(b.right, footer, {{text_.update, Look::kPrimary, kUpdate}});
+    else
+      ButtonsRightToLeft(b.right, footer, {{text_.install_elsewhere, Look::kOutline, kElsewhere}, {text_.update, Look::kPrimary, kUpdate}});
   }
 
   void PaintRemove(D2D1_RECT_F b) {
     const float headline = Print(text_.remove_question, kHeadline, b, kInk);
     Say({b.left, b.top, b.right, b.top + headline}, text_.remove_question);
     float y = b.top + headline + 16;
-    // â€žUsunÄ™ aplikacjÄ™ z <folder> razem ze skrĂłtami.â€ť, the folder in mono ink.
+    // Draw the installation path in the monospace font.
     const std::wstring path = DisplayPath(placement_.directory);
     const std::wstring sentence = Substitute(text_.remove_from, path);
     auto layout = Layout(sentence, kBody, b.right - b.left);
@@ -784,7 +800,7 @@ class Window : public AccessibilityHost {
   void Refuse(const std::wstring& message, UINT icon) {
     exit_code_ = 1;
     if (!quiet_) {
-      MessageBoxW(hwnd_, message.c_str(), L"Zitter", MB_OK | icon);
+      MessageBoxW(hwnd_, message.c_str(), windows::kProductName, MB_OK | icon);
       return;
     }
     page_ = Page::kFresh;  // Lets WM_CLOSE through.
@@ -868,7 +884,7 @@ class Window : public AccessibilityHost {
     if (removing_) {
       DeleteSelfLater(placement_.directory);
     } else if (launch_browser_ && !quiet_ && !LaunchBrowser()) {
-      MessageBoxW(hwnd_, text_.launch_failed, L"Zitter", MB_OK | MB_ICONINFORMATION);
+      MessageBoxW(hwnd_, text_.launch_failed, windows::kProductName, MB_OK | MB_ICONINFORMATION);
     }
     exit_code_ = 0;
     page_ = Page::kFresh;  // Lets WM_CLOSE through.

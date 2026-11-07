@@ -53,6 +53,9 @@ class Runtime final : public ChromeBrowserMainExtraParts,
  private:
   void ReplaceStockWindow(BrowserWindowInterface* browser);
   void WindowReady();
+#if BUILDFLAG(IS_WIN)
+  void CheckForUpdates();
+#endif
   void OpenPrivateWindow();
   void ClosePrivateWindow(prototype::WorkspaceWindow* window);
   prototype::WorkspaceWindow* ActiveWindow() const;

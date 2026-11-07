@@ -80,6 +80,8 @@
 #include "third_party/blink/public/common/page/page_zoom.h"
 
 #include "base/auto_reset.h"
+#include "base/command_line.h"
+#include "chromium/app/windows_channel.h"
 #include "chromium/prototype/extensions_bar.h"
 #include "chromium/prototype/extension_tab_events.h"
 #include "chrome/browser/ui/extensions/extension_install_ui.h"
@@ -129,6 +131,8 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/content_accelerators/accelerator_util.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/insets.h"
@@ -166,6 +170,17 @@
 
 namespace zitter::prototype {
 namespace {
+constexpr char kWindowPlacementFile[] = "ZitterWindow.json";
+constexpr gfx::Rect kDefaultWindowBounds(80, 80, 1280, 820);
+
+base::SequencedTaskRunner& WindowPlacementRunner() {
+  static const base::NoDestructor<scoped_refptr<base::SequencedTaskRunner>> runner(
+      base::ThreadPool::CreateSequencedTaskRunner(
+          {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN}));
+  return **runner;
+}
+
 // Palette result provenance; kind is sidebar::PaletteResultKind. Rust owns the
 // wording.
 std::u16string ResultDetail(int kind, const std::u16string& label) {
@@ -1036,7 +1051,9 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extensions_bar_ = static_cast<ExtensionsBar*>(shell_->SetHeaderTrailing(
       std::make_unique<ExtensionsBar>(std::move(extension_callbacks))));
   delegate_ = std::make_unique<views::WidgetDelegate>();
-  delegate_->SetTitle(is_private() ? T(u"Zitter — tryb prywatny") : u"Zitter");
+  const bool dev = base::CommandLine::ForCurrentProcess()->HasSwitch(windows::kDevChannelSwitch);
+  delegate_->SetTitle(dev ? (is_private() ? T(u"Zitter Dev — tryb prywatny") : u"Zitter Dev")
+                          : (is_private() ? T(u"Zitter — tryb prywatny") : u"Zitter"));
   delegate_->SetHasWindowSizeControls(true);
   delegate_->SetContentsView(std::move(root));
   delegate_->SetClientViewFactory(WorkspaceShell::ClientViewFactory());
@@ -1044,7 +1061,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
       views::Widget::InitParams::CLIENT_OWNS_WIDGET,
       views::Widget::InitParams::TYPE_WINDOW);
   params.delegate = delegate_.get();
-  params.bounds = gfx::Rect(80, 80, 1280, 820);
+  params.bounds = kDefaultWindowBounds;
   widget_ = std::make_unique<views::Widget>();
 #if BUILDFLAG(IS_MAC)
   params.native_widget = CreateWorkspaceNativeWidget(widget_.get());
@@ -1066,9 +1083,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
 #endif
   shell_->Attach(widget_.get(), this);
   if (!is_private()) MarkStartup("shell_attached");
-  widget_->Show();
-  if (!is_private()) MarkStartup("widget_shown");
   if (is_private()) {
+    widget_->Show();
     profiles_.push_back({{"private-profile", base::UTF16ToUTF8(T(u"Tryb prywatny")), "", ""}, nullptr});
     model_.Add({"private", "private-profile", base::UTF16ToUTF8(T(u"Tryb prywatny"))});
     restored_active_ = "private";
@@ -1078,24 +1094,14 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
     FinishConfiguration();
     return;
   }
-  config_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce([](base::FilePath path) {
+  widget_->AddObserver(this);
+  WindowPlacementRunner().PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce([](base::FilePath path) -> std::optional<base::DictValue> {
         std::string json;
-        base::ReadFileToString(path, &json);
-        std::string session;
-        base::ReadFileToString(path.DirName().AppendASCII("ZitterSession.json"), &session);
-        std::string timeline;
-        base::ReadFileToStringWithMaxSize(path.DirName().AppendASCII("ZitterTimeline.jsonl"), &timeline, 64 * 1024 * 1024);
-        return std::array<std::string, 3>{std::move(json), std::move(session), std::move(timeline)};
-      }, configuration_path_),
-      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::array<std::string, 3> data) {
-        if (!window) return;
-        window->session_json_ = std::move(data[1]);
-        MarkStartup("workspace_files_read");
-        window->LoadTimeline(std::move(data[2]));
-        MarkStartup("timeline_loaded");
-        window->RestoreConfiguration(std::move(data[0]));
-      }, weak_factory_.GetWeakPtr()));
+        if (!base::ReadFileToStringWithMaxSize(path, &json, 4096)) return std::nullopt;
+        return base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+      }, data_directory_.AppendASCII(kWindowPlacementFile)),
+      base::BindOnce(&WorkspaceWindow::ShowRestoredWindow, weak_factory_.GetWeakPtr()));
 }
 
 WorkspaceWindow::Host::Host() = default;
@@ -1104,6 +1110,10 @@ WorkspaceWindow::Host::Host(Host&&) noexcept = default;
 WorkspaceWindow::Host& WorkspaceWindow::Host::operator=(Host&&) noexcept = default;
 
 WorkspaceWindow::~WorkspaceWindow() {
+  if (!is_private()) {
+    SaveWindowPlacement();
+    widget_->RemoveObserver(this);
+  }
   if (assistant_) assistant_->Stop();
   assistant_ = nullptr;
   assistant_targets_.clear();
@@ -1138,6 +1148,106 @@ WorkspaceWindow::~WorkspaceWindow() {
     if (entry.lease) entry.lease->profile()->GetDefaultStoragePartition()->Flush();
   }
   profiles_.clear();
+}
+
+void WorkspaceWindow::ShowRestoredWindow(std::optional<base::DictValue> placement) {
+  auto bounds = kDefaultWindowBounds;
+  if (placement) {
+    const auto x = placement->FindInt("x");
+    const auto y = placement->FindInt("y");
+    const auto width = placement->FindInt("width");
+    const auto height = placement->FindInt("height");
+    if (x && y && width && height && *width > 0 && *height > 0)
+      bounds = gfx::Rect(*x, *y, *width, *height);
+  }
+  const auto* screen = display::Screen::Get();
+  auto work_area = screen->GetDisplayMatching(bounds).work_area();
+  if (work_area.IsEmpty()) work_area = screen->GetPrimaryDisplay().work_area();
+  if (!work_area.IsEmpty()) bounds.AdjustToFit(work_area);
+
+  const bool maximized = placement && placement->FindBool("maximized").value_or(false);
+  const bool fullscreen = placement && placement->FindBool("fullscreen").value_or(false);
+#if BUILDFLAG(IS_WIN)
+  const float initial_scale =
+      screen->GetDisplayNearestWindow(widget_->GetNativeWindow()).device_scale_factor();
+#endif
+  widget_->SetBounds(bounds);
+#if BUILDFLAG(IS_WIN)
+  // Crossing to a different DPI sends WM_DPICHANGED, which may resize the
+  // window again. Apply the saved DIP bounds once the new scale is active.
+  if (screen->GetDisplayNearestWindow(widget_->GetNativeWindow()).device_scale_factor() !=
+      initial_scale) {
+    widget_->SetBounds(bounds);
+  }
+#endif
+  windowed_bounds_ = bounds;
+  widget_->Show();
+  if (maximized) widget_->Maximize();
+  if (fullscreen) widget_->SetFullscreen(true);
+  window_maximized_ = maximized;
+  window_placement_ready_ = true;
+  RememberWindowPlacement();
+  MarkStartup("widget_shown");
+
+  config_runner_->PostTaskAndReplyWithResult(FROM_HERE,
+      base::BindOnce([](base::FilePath path) {
+        std::string json;
+        base::ReadFileToString(path, &json);
+        std::string session;
+        base::ReadFileToString(path.DirName().AppendASCII("ZitterSession.json"), &session);
+        std::string timeline;
+        base::ReadFileToStringWithMaxSize(path.DirName().AppendASCII("ZitterTimeline.jsonl"), &timeline, 64 * 1024 * 1024);
+        return std::array<std::string, 3>{std::move(json), std::move(session), std::move(timeline)};
+      }, configuration_path_),
+      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::array<std::string, 3> data) {
+        if (!window) return;
+        window->session_json_ = std::move(data[1]);
+        MarkStartup("workspace_files_read");
+        window->LoadTimeline(std::move(data[2]));
+        MarkStartup("timeline_loaded");
+        window->RestoreConfiguration(std::move(data[0]));
+      }, weak_factory_.GetWeakPtr()));
+}
+
+void WorkspaceWindow::RememberWindowPlacement() {
+  if (!window_placement_ready_ || widget_->IsMinimized()) return;
+  window_fullscreen_ = widget_->IsFullscreen();
+  if (window_fullscreen_) return;
+
+  window_maximized_ = widget_->IsMaximized();
+  // Windows exposes the normal rectangle even while maximized. On Mac the
+  // restored rectangle of a zoomed window is its current frame.
+#if BUILDFLAG(IS_MAC)
+  if (window_maximized_) return;
+#endif
+  const auto bounds = widget_->GetRestoredBounds();
+  if (!bounds.IsEmpty()) windowed_bounds_ = bounds;
+}
+
+void WorkspaceWindow::OnWidgetBoundsChanged(views::Widget*, const gfx::Rect&) {
+  RememberWindowPlacement();
+}
+
+void WorkspaceWindow::OnWidgetShowStateChanged(views::Widget*) {
+  RememberWindowPlacement();
+}
+
+void WorkspaceWindow::SaveWindowPlacement() {
+  if (!window_placement_ready_) return;
+  RememberWindowPlacement();
+  base::DictValue placement;
+  placement.Set("x", windowed_bounds_.x());
+  placement.Set("y", windowed_bounds_.y());
+  placement.Set("width", windowed_bounds_.width());
+  placement.Set("height", windowed_bounds_.height());
+  placement.Set("maximized", window_maximized_);
+  placement.Set("fullscreen", window_fullscreen_);
+  WindowPlacementRunner().PostTask(
+      FROM_HERE, base::BindOnce([](base::FilePath path, base::DictValue placement) {
+        std::string json;
+        if (base::JSONWriter::Write(placement, &json))
+          base::ImportantFileWriter::WriteFileAtomically(path, json);
+      }, data_directory_.AppendASCII(kWindowPlacementFile), std::move(placement)));
 }
 
 views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* parent,
@@ -1445,6 +1555,7 @@ void WorkspaceWindow::UpdateShell() {
     }
 #endif
     state.configuration_ready = configuration_ready_ && !profiles_busy_ && !configuration_invalid_;
+    state.onboarding_complete = !offer_import_ || onboarding_complete_;
     state.url = host.view->GetWebContents()->GetVisibleURL();
     state.active_tab = host.active_tab;
     for (const auto& member : host.split)
@@ -2931,6 +3042,11 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     if (fullscreen_page_) fullscreen_page_->ExitFullscreen(true);
     return true;
   }
+  if (id == "toggle_window_fullscreen") {
+    if (fullscreen_page_) fullscreen_page_->ExitFullscreen(true);
+    else widget_->SetFullscreen(!widget_->IsFullscreen());
+    return true;
+  }
   if (id == "copy_url") {
     // The address pill trembles once: the copy's only confirmation (design: AddressPill).
     auto* page = peek_contents() ? peek_contents() : contents(active_id());
@@ -3578,6 +3694,13 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
   } else {
     configuration_invalid_ = !json.empty();
     if (json.empty()) {
+#if BUILDFLAG(IS_WIN)
+      if (offer_import_) {
+        assistant_settings_.enabled = false;
+        assistant_settings_.backends.fill(false);
+        shell_->SetAssistantAllowed(false);
+      }
+#endif
       profiles_.push_back({{"personal-profile", base::UTF16ToUTF8(T(u"Profil osobisty")), "ZitterPersonal", ""}, nullptr});
       model_.Add({"personal", "personal-profile", base::UTF16ToUTF8(T(u"Moja przestrzeń"))});
       starter_workspace_id_ = "personal";
@@ -3793,6 +3916,14 @@ void WorkspaceWindow::ShowWelcome() {
         setup.sources = std::move(found);
         setup.space_name = starter ? base::UTF8ToUTF16(starter->name) : std::u16string();
         setup.space_color = window->shell_->workspace_color(window->starter_workspace_id_);
+        setup.assistant_enabled = window->assistant_settings_.enabled;
+        setup.set_assistant_enabled = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, bool enabled) {
+          if (!window || window->configuration_invalid_) return;
+          auto settings = window->assistant_settings_;
+          settings.enabled = enabled;
+          window->SetAssistantSettings(std::move(settings));
+          window->AssistantStateChanged();
+        }, window);
         setup.import_browser = base::BindRepeating(&WorkspaceWindow::StartWelcomeImport, window);
         setup.import_passwords = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, base::OnceCallback<void(std::u16string)> report) {
           auto* page = window ? window->contents(window->active_id()) : nullptr;
@@ -4306,8 +4437,10 @@ void WorkspaceWindow::DismissImport() {
   if (profiles_busy_) return;
   InvalidateImportPreview();
   starter_workspace_id_.clear();
+  const bool finishing_onboarding = !onboarding_complete_;
   onboarding_complete_ = true;
   SaveConfiguration();
+  if (finishing_onboarding) UpdateShell();
 }
 
 void WorkspaceWindow::ScheduleSessionSave() {

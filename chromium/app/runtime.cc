@@ -26,6 +26,7 @@
 #include "components/tabs/public/tab_interface.h"
 #include "chromium/prototype/workspace_window.h"
 #if BUILDFLAG(IS_WIN)
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/jump_list_win.h"
 #include "chromium/app/updater_win.h"
 #endif
@@ -109,7 +110,10 @@ void Runtime::WindowReady() {
               runtime->RequestClose();
             }, runtime->weak_factory_.GetWeakPtr()));
       }, weak_factory_.GetWeakPtr()));
-  updater_->Start();
+  if (updater_->Start()) {
+    window_->shell()->SetUpdateCheckCallback(base::BindRepeating(
+        &Runtime::CheckForUpdates, weak_factory_.GetWeakPtr()));
+  }
 #endif
   for (const auto& arg : base::CommandLine::ForCurrentProcess()->GetArgs()) {
 #if BUILDFLAG(IS_WIN)
@@ -143,6 +147,29 @@ void Runtime::WindowReady() {
     performance_probe_->Start();
   }
 }
+
+#if BUILDFLAG(IS_WIN)
+void Runtime::CheckForUpdates() {
+  if (!window_ || closing_ || !updater_) return;
+  window_->shell()->ShowUpdateCheckMessage(prototype::T(u"Sprawdzanie aktualizacji…"));
+  updater_->CheckNow(base::BindOnce(
+      [](base::WeakPtr<Runtime> runtime, updates::CheckStatus status) {
+        if (!runtime || !runtime->window_ || runtime->closing_) return;
+        auto* shell = runtime->window_->shell();
+        switch (status) {
+          case updates::CheckStatus::kReady:
+            // The existing update notification offers installation.
+            break;
+          case updates::CheckStatus::kNoUpdate:
+            shell->ShowUpdateCheckMessage(prototype::T(u"Brak dostępnych aktualizacji dla Windows."));
+            break;
+          case updates::CheckStatus::kFailed:
+            shell->ShowUpdateCheckMessage(prototype::T(u"Nie udało się sprawdzić lub pobrać aktualizacji."));
+            break;
+        }
+      }, weak_factory_.GetWeakPtr()));
+}
+#endif
 
 prototype::WorkspaceWindow* Runtime::ActiveWindow() const {
   for (const auto& window : private_windows_) {

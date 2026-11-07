@@ -351,6 +351,38 @@ Notes:
   window's thread. Checked with a UIA client on the install and remove pages:
   every control is listed with its state, and Toggle, Select, SetFocus and
   Invoke work. Keyboard: Tab, Enter, Space, Esc.
+## Zitter Dev for side-by-side testing
+
+Enable `zitter_dev_build = true` in a Windows build directory's `args.gn`. Start
+from `chromium/windows-release.args.gn` and save the arguments to
+`.chromium/src/out/ZitterWinDev/args.gn`. Use the toolchain environment above.
+Setup must come from a static build so it can start before extracting the
+browser's DLLs. For faster local linking, you can build the browser in a separate
+component directory with the same Dev option and package it with the static Dev
+setup.
+
+```powershell
+python tools/install_chromium_overlay.py .chromium/src
+cd .chromium/src
+gn gen out/ZitterWinDev
+autoninja -C out/ZitterWinDev zitter zitter_setup
+cd ../..
+python tools/package_win.py --out .chromium/src/out/ZitterWinDev --setup .chromium/src/out/ZitterWinDev/zitter_setup.exe --destination build/dev
+```
+
+The unsigned `Zitter-Dev-*-win-x64-setup.exe` installs for the current user under
+`%LOCALAPPDATA%\Programs\Zitter Dev`. Dev has its own Start menu shortcuts,
+taskbar identity, Apps & features entry and browsing data under
+`%LOCALAPPDATA%\Zitter Dev`. Explicit `--user-data-dir` paths must be inside
+that directory. Install a newer local build over it to keep Dev data.
+
+Open **Zitter Dev - Clean profile** from the Start menu to test first run.
+Each launch starts with a fresh profile. The test profiles stay in
+`%LOCALAPPDATA%\Zitter Dev\Clean Profiles` for inspection. To reset the installation
+itself, uninstall **Zitter Dev** and select **Also remove browsing data** before
+reinstalling. Build and run setup again to refresh Dev. The Dev build uses manual
+updates and is intended for local testing.
+
 ## Windows integration
 
 - Links from other apps: a second `zitter.exe` forwards its command line to

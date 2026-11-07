@@ -5,6 +5,14 @@
 #include "chromium/app/zitter_version.h"
 #include "chromium/installer/setup_resource.h"
 
+#if defined(ZITTER_DEV_BUILD)
+#define ZITTER_PRODUCT_NAME "Zitter Dev"
+#define ZITTER_SETUP_NAME "Zitter Dev Setup"
+#else
+#define ZITTER_PRODUCT_NAME "Zitter"
+#define ZITTER_SETUP_NAME "Zitter Setup"
+#endif
+
 IDI_SETUP ICON "../app/zitter.ico"
 
 IDR_FONT_SERIF RCDATA "../../assets/fonts/InstrumentSerif-Regular.ttf"
@@ -27,12 +35,12 @@ BEGIN
     BLOCK "040904b0"
     BEGIN
       VALUE "CompanyName", "Zitter contributors"
-      VALUE "FileDescription", "Zitter Setup"
+      VALUE "FileDescription", ZITTER_SETUP_NAME
       VALUE "FileVersion", ZITTER_VERSION_STRING
       VALUE "InternalName", "zitter_setup"
       VALUE "LegalCopyright", "Copyright 2026 Zitter contributors"
       VALUE "OriginalFilename", "zitter_setup.exe"
-      VALUE "ProductName", "Zitter"
+      VALUE "ProductName", ZITTER_PRODUCT_NAME
       VALUE "ProductVersion", ZITTER_VERSION_STRING
     END
   END
