@@ -27,6 +27,13 @@ import re, sys
 args = Path(sys.argv[1]).read_text()
 if not re.search(r"^is_debug\s*=\s*false\s*$", args, re.M):
     raise SystemExit("The local app requires an existing Release output (is_debug = false)")
+if not all(re.search(pattern, args, re.M) for pattern in (
+    r"^proprietary_codecs[ \t]*=[ \t]*true[ \t]*(?:#.*)?$",
+    r'^ffmpeg_branding[ \t]*=[ \t]*"Chrome"[ \t]*(?:#.*)?$',
+)):
+    raise SystemExit(
+        'The local app requires proprietary_codecs = true and ffmpeg_branding = "Chrome" in args.gn'
+    )
 EOF
 "$ZITTER_PYTHON_BIN" "$ROOT/tools/install_chromium_overlay.py" "$SRC"
 targets=(zitter)

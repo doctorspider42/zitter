@@ -63,6 +63,9 @@ Read the actual GN arguments, not just the output directory's name. A release
 requires `is_debug = false`. The optimized setup used for v0.1.0 also has
 `is_component_build = false`, ThinLTO, and PGO. `chromium/release.args.gn` is an
 older component configuration, not the authoritative optimized configuration.
+Add `proprietary_codecs = true` and `ffmpeg_branding = "Chrome"` from
+`chromium/optimized.args.gn` to existing output directories. The local build
+checks both settings so packaged builds support H.264 and AAC.
 If PGO is enabled, its pinned profile must be available. Do not silently fall
 back to a Debug build when a release configuration fails.
 
