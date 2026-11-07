@@ -65,7 +65,7 @@ class DmgTests(unittest.TestCase):
                 dmg.render_background(Path(directory) / '.background', '0.4.1', 'arm64', Path(directory) / 'work')
             self.assertEqual(['0.4.1', 'Apple Silicon'], commands[0][3:5])
             self.assertEqual('tiffutil', commands[1][0])
-            self.assertTrue(commands[1][-1].endswith('.background/background.tiff'))
+            self.assertEqual(Path(commands[1][-1]).parts[-2:], ('.background', 'background.tiff'))
 
 
 if __name__ == '__main__':

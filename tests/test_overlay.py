@@ -300,12 +300,26 @@ class OverlayTests(unittest.TestCase):
                                  'bool CrxUpdateService::RegisterComponent(\n'
                                  '    const ComponentRegistration& component) {\n'
                                  '  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);\n}\n', newline="\n")
+            renderer = checkout / "content/browser/renderer_host/legacy_render_widget_host_win.cc"
+            renderer.parent.mkdir(parents=True, exist_ok=True)
+            renderer.write_text(
+                "  host_ = nullptr;\n"
+                "  if (::IsWindow(hwnd())) {\n"
+                "    ::DestroyWindow(hwnd());\n"
+                "  }\n"
+                "  may_service_accessibility_requests_ = false;\n\n"
+                "  if (auto& ax_platform = ui::AXPlatform::GetInstance();\n"
+                "      ax_platform.HasServicedUiaClients()) {\n"
+                "    if (ax_platform.IsUiaProviderEnabled() &&\n",
+                newline="\n",
+            )
             with mock.patch.object(overlay.subprocess, "check_output", return_value=revision):
                 overlay.install(checkout, dry_run=True)
                 self.assertFalse((checkout / "zitter").exists())
                 self.assertEqual(build.read_text(), original)
                 overlay.install(checkout)
                 overlay.install(checkout)
+                self.assertIn("if (needs_uia_disconnect &&", renderer.read_text())
                 self.assertEqual(build.read_text().replace(overlay.DEPENDENCY, ""), original)
                 source = checkout / "zitter/zitter/core/workspace_model.cc"
                 source.write_text(source.read_text() + "\n// Local changes\n", newline="\n")
