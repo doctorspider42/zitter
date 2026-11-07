@@ -174,6 +174,12 @@ std::u16string ResultDetail(int kind, const std::u16string& label) {
 
 namespace {
 
+favicon::FaviconService* ImplicitFaviconService(Profile* profile) {
+  // Chromium rejects implicit access for OTR profiles. Private pages can
+  // fetch icons in memory without reading or writing the regular profile DB.
+  return profile->IsOffTheRecord() ? nullptr :
+      FaviconServiceFactory::GetForProfile(profile, ServiceAccessType::IMPLICIT_ACCESS);
+}
 
 
 // Only this allowlist crosses the native settings/profile boundary.
@@ -309,7 +315,14 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
   }
   void OnBoundsChanged(const gfx::Rect& previous) override {
     views::WebView::OnBoundsChanged(previous);
-    if (rss_ && rss_->view()) { holder()->SetVisible(false); rss_->view()->SetBoundsRect(GetLocalBounds()); }
+    if (rss_ && rss_->view()) {
+      holder()->SetVisible(false);
+      // WebView also calls this for every descendant hierarchy change. Setting
+      // unchanged bounds would immediately lay out the partially rebuilt RSS
+      // tree for each added row/text node instead of batching invalidations.
+      if (rss_->view()->bounds() != GetLocalBounds())
+        rss_->view()->SetBoundsRect(GetLocalBounds());
+    }
   }
   bool SkipDefaultKeyEventProcessing(const ui::KeyEvent& event) override {
     return rss_ ? views::View::SkipDefaultKeyEventProcessing(event)
@@ -1148,7 +1161,7 @@ std::u16string WorkspaceWindow::TabTitle(const Host& host, views::WebView* view)
 void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source_hint) {
   PageServices::Attach(page);
   favicon::ContentFaviconDriver::CreateForWebContents(page,
-      FaviconServiceFactory::GetForProfile(Profile::FromBrowserContext(page->GetBrowserContext()), ServiceAccessType::IMPLICIT_ACCESS));
+      ImplicitFaviconService(Profile::FromBrowserContext(page->GetBrowserContext())));
   PageServices::FromWebContents(page)->SetManagePasswords(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
     if (window) window->ShowPasswords();
   }, weak_factory_.GetWeakPtr()));
@@ -1347,7 +1360,7 @@ void WorkspaceWindow::UpdateShell() {
     for (const auto& other : hosts_) if (other.sleeping) state.sleeping_workspaces.insert(other.workspace_id);
     state.profiles_busy = profiles_busy();
     state.pins = pinned_items(host.workspace_id);
-    if (auto* service = FaviconServiceFactory::GetForProfile(host.profile, ServiceAccessType::IMPLICIT_ACCESS)) {
+    if (auto* service = ImplicitFaviconService(host.profile)) {
       for (const auto& pin : state.pins) {
         if (pin.folder || !pin.url.SchemeIsHTTPOrHTTPS()) continue;
         const auto key = std::make_pair(host.profile_id, pin.url.spec());
@@ -2283,7 +2296,7 @@ bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
       }
     }
     for (const auto& pin : pinned_items(workspace)) if (!pin.folder && pin.url.SchemeIsHTTPOrHTTPS()) pages.try_emplace(pin.url);
-    auto* service = FaviconServiceFactory::GetForProfile(host.profile, ServiceAccessType::IMPLICIT_ACCESS);
+    auto* service = ImplicitFaviconService(host.profile);
     if (service) service->ClearUnableToDownloadFavicons();
     for (const auto& [url, known_icon] : pages) {
       const FaviconKey key{host.profile_id,url.spec()};
@@ -2340,7 +2353,7 @@ void WorkspaceWindow::FinishWorkspaceFavicon(FaviconKey key,uint64_t generation,
     auto& favicon = entry->GetFavicon();
     favicon.valid = !image.IsEmpty(); favicon.url = icon; favicon.image = image;
   }
-  if (auto* profile = ProfileFor(key.first)) if (auto* service = FaviconServiceFactory::GetForProfile(profile,ServiceAccessType::IMPLICIT_ACCESS)) {
+  if (auto* profile = ProfileFor(key.first)) if (auto* service = ImplicitFaviconService(profile)) {
     const base::flat_set<GURL> pages{GURL(key.second)};
     if (!image.IsEmpty()) service->SetFavicons(pages,icon,favicon_base::IconType::kFavicon,image);
     else service->DeleteFaviconMappings(pages,favicon_base::IconType::kFavicon);

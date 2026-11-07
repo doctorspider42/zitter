@@ -2613,6 +2613,36 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderTabsPinsRestoreAndIso
   }
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderBatchesDescendantLayout) {
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->tools_ready(); }));
+  window_->ShowRss();
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->rss_panel());
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->rss_panel()->reader()->ready(); }));
+  auto* root = window_->rss_panel()->view();
+  window_->widget()->LayoutRootViewIfNecessary();
+  ASSERT_FALSE(root->bounds().IsEmpty());
+  ASSERT_EQ(root->parent()->GetLocalBounds(), root->bounds());
+  // Chromium's WebView receives every descendant addition. It must leave
+  // invalidations queued while RSS builds its list, rather than synchronously
+  // laying out the entire partial list once per added text node.
+  std::vector<views::View*> added;
+  for (int i = 0; i < 64; ++i) {
+    root->InvalidateLayout();
+    added.push_back(root->AddChildView(std::make_unique<views::View>()));
+    EXPECT_TRUE(root->needs_layout()) << "descendant " << i;
+  }
+  for (auto* view : added) root->RemoveChildViewT(view);
+  window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_FALSE(root->needs_layout());
+  EXPECT_EQ(root->parent()->GetLocalBounds(), root->bounds());
+  const auto bounds = window_->widget()->GetWindowBoundsInScreen();
+  window_->widget()->SetBounds(gfx::Rect(bounds.origin(), gfx::Size(1000, 720)));
+  window_->widget()->LayoutRootViewIfNecessary();
+  EXPECT_EQ(root->parent()->GetLocalBounds(), root->bounds());
+  window_->widget()->SetBounds(bounds);
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderAdoptionMovementAndProfileSwitch) {
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->tools_ready(); }));
   window_->ShowRss(); ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
@@ -2771,8 +2801,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderLifecycleDiscoveryAnd
   shell->SetPinned(true); shell->ShowSidebar();
   const auto output = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-rss-render-dir");
   auto capture = [&](std::string name, views::Widget* captured_widget = nullptr) {
-    if (output.empty()) return;
     auto* widget = captured_widget ? captured_widget : panel->widget(); widget->LayoutRootViewIfNecessary();
+    // Reader rebuilds/layout are queued even when no screenshot is requested.
+    base::RunLoop().RunUntilIdle();
+    widget->LayoutRootViewIfNecessary();
+    if (output.empty()) return;
     base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(350)); settle.Run();
     base::test::TestFuture<scoped_refptr<base::RefCountedMemory>> snapshot;
     auto bounds = gfx::Rect(widget->GetWindowBoundsInScreen().size());

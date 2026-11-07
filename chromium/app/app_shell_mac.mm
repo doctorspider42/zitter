@@ -200,10 +200,12 @@ void InstallAppShell() {
             if (g_delegate) g_delegate->RaiseWindow();
             return NO;  // Chrome would create a new Browser window here.
           });
-  // Chrome re-points its last-profile menu bridges here, building a bookmarks
-  // menu from a main-menu item Zitter's menu does not have (CHECK failure on
-  // profile deletion). Zitter never opens Browser windows, so AppController
-  // never holds a last profile or bridges to update.
+  // DevTools and popup Browser windows still post main-window notifications.
+  // Chrome would attach its tab/bookmark/history bridges to menu items absent
+  // from Zitter's menu (BookmarkMenuBridge CHECKs the missing submenu). Zitter
+  // owns menu dispatch and profile selection even while those windows focus.
+  Replace(controller, @selector(windowDidBecomeMain:), ^(id, NSNotification*) {});
+  // Profile deletion must not rebuild the same Chrome-only menu bridges.
   Replace(controller, @selector(profileWasRemoved:forIncognito:),
           ^(id, const base::FilePath&, bool) {});
   Replace(controller, @selector(applicationDockMenu:), ^NSMenu*(id, NSApplication*) {

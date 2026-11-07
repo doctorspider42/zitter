@@ -451,7 +451,11 @@ source_set("profile_workspace_browser_tests") {
     "//ui/snapshot",
   ]
   if (is_mac) {
-    sources += [ "chromium/app/app_shell_mac.mm", "chromium/prototype/rss_menu_test_support.mm" ]
+    sources += [
+      "chromium/app/app_shell_mac.mm",
+      "chromium/app/app_shell_mac_browsertest.mm",
+      "chromium/prototype/rss_menu_test_support.mm",
+    ]
   }
   if (is_win) {
     # Native input for the keyboard tests (aura::test::EnableUIControlsAuraWin).

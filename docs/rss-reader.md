@@ -37,6 +37,14 @@ The preview also supports saving and marking unread.
 
 ### Layout
 
+Reader updates batch layout invalidations while rebuilding the entry list.
+Chromium's WebView forwards descendant additions to its bounds handler even
+when the host size is unchanged; the RSS host only sets reader bounds when they
+actually change. This avoids synchronously laying out the growing list after
+every added row and text node, including when RSS is restored at startup.
+The regression test checks that descendant additions keep layout queued and
+that a real window resize still resizes the reader.
+
 The layout follows the "Zitter RSS Reader Redesign" canvas
 (https://claude.ai/artifact/BXaWK2sQxpGe5wNvJQJRva). From a tab width of 760 px the
 reader shows two panes. On the left is a 320 px list column on `bg-base` with the

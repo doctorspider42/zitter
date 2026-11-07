@@ -48,5 +48,11 @@ the docking preferences globally. Consequently docking into Zitter's page card
 is not supported. Local tools do not weaken TLS, CORS, or sandbox restrictions,
 and do not enable a remote debugging endpoint.
 
+On macOS, Zitter's app shell also handles main-window notifications from these
+upstream windows. Chromium's AppController must not attach its tab, bookmark or
+history menu bridges to Zitter's application menu, which has its own commands
+and no Chromium bookmarks submenu. The native app-shell regression test opens,
+evaluates JavaScript in, closes and reopens DevTools with the actual Zitter menu.
+
 Settings are merged into `ZitterTools.json` with an independent startup dirty
 guard. Private windows keep mode changes in memory without writing them.
