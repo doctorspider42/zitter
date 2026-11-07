@@ -5,6 +5,8 @@
 #include <map>
 #if BUILDFLAG(IS_POSIX)
 #include <unistd.h>
+#elif BUILDFLAG(IS_WIN)
+#include <windows.h>
 #endif
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_window.h"
