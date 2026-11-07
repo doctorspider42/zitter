@@ -23,6 +23,8 @@
 #include <unistd.h>
 #endif
 #if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
 #include "base/win/scoped_handle.h"
 #endif
 namespace zitter::assistant {
