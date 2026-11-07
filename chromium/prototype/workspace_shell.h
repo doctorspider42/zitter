@@ -39,7 +39,7 @@
 #include "build/build_config.h"
 
 namespace zitter::sidebar { struct Item; struct Timeline; struct SidebarPinTree; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
-namespace ui { class AcceleratorTarget; }
+namespace ui { class AcceleratorTarget; class KeyEvent; }
 namespace gfx { class Canvas; }
 namespace views {
 class DialogDelegate;
@@ -417,6 +417,19 @@ class WorkspaceShell final : public ui::EventHandler,
   PanelViewport* tools_viewport_for_testing() const{return tools_scroll_;}
   EditorControl* shortcut_search_for_testing() const { return shortcut_search_; }
   EditorControl* shortcut_input() const { return shortcut_chord_; }
+  // Keyboard shortcuts window: a row's chord button, a filter chip ("all",
+  // a category, "changed", "keys"), a tab ("keyboard", "gestures"), the
+  // footer's reset action and a gesture's action picker ("L", "UD", ...).
+  views::View* shortcut_keycaps_for_testing(std::string_view id) const;
+  views::View* shortcut_chip_for_testing(std::string_view key) const;
+  views::View* tools_tab_for_testing(std::string_view key) const;
+  views::View* tools_footer_action_for_testing() const { return tools_footer_action_; }
+  views::View* gesture_picker_for_testing(std::string_view direction) const;
+  const std::string& shortcut_recording_for_testing() const { return shortcut_recording_; }
+  bool shortcut_conflict_for_testing() const { return shortcut_conflict_.has_value(); }
+  const std::u16string& shortcut_error_for_testing() const { return shortcut_error_; }
+  bool tools_gestures_for_testing() const { return tools_gestures_; }
+  size_t shortcut_rows_for_testing() const { return shortcut_keycaps_.size(); }
   views::View* tools_selection() const { return tools_picker_; }
   views::View* tools_choice_for_testing(std::string_view key) const;
   size_t tools_choice_count_for_testing(std::string_view key) const;
@@ -831,16 +844,38 @@ class WorkspaceShell final : public ui::EventHandler,
   void ResetToolsForm();
   void RefreshTools();
   void BuildRustToolsForm();
-  void BuildShortcutFilters();
-  void FilterShortcutChoices();
-  void BuildMouseGestureControls();
-  void RefreshMouseGestureChoice();
-  void InputConfigurationAction(int action);
+  // Keyboard shortcuts window (tools page 1): a Keyboard tab with one row per
+  // action, whose chord records in place, and a Mouse gestures tab.
+  struct ShortcutConflict { std::string id; std::vector<std::pair<std::string, ui::Accelerator>> chords; std::string other; };
+  void BuildShortcutsPage();
+  void BuildShortcutRows();
+  void BuildGesturesTab();
+  // Runs `change` after the event that asked for it, then rebuilds the page.
+  void PostShortcutsChange(base::OnceClosure change);
+  void RecordShortcutKey(const std::string& id, const ui::KeyEvent& event);
+  void SetShortcutsSearch(std::u16string query);
+  std::vector<std::string> ShortcutRowIds(const std::string& id) const;
+  bool ShortcutModified(const std::string& id) const;
+  std::u16string ShortcutRowTitle(const std::string& id) const;
   raw_ptr<EditorControl> shortcut_search_ = nullptr;
-  raw_ptr<views::View> shortcut_category_ = nullptr;
-  raw_ptr<views::View> gesture_choice_ = nullptr;
-  raw_ptr<views::View> gesture_command_ = nullptr;
+  raw_ptr<views::View> shortcut_list_ = nullptr;
+  raw_ptr<views::View> tools_tabs_ = nullptr;
+  raw_ptr<views::View> tools_toolbar_ = nullptr;
+  raw_ptr<views::View> tools_footer_ = nullptr;
+  raw_ptr<views::View> tools_footer_action_ = nullptr;
+  std::map<std::string, raw_ptr<views::View>> shortcut_keycaps_, shortcut_chips_, gesture_pickers_;
   std::vector<std::string> gesture_commands_;
+  bool tools_gestures_ = false;
+  bool shortcut_key_search_ = false;
+  std::string shortcut_filter_ = "all";
+  std::u16string shortcut_query_;
+  std::string shortcut_recording_;
+  // The row (or "@search") that takes focus after the page rebuilds.
+  std::string shortcut_focus_;
+  std::u16string shortcut_error_;
+  std::optional<ShortcutConflict> shortcut_conflict_;
+  std::string gesture_hit_;
+  bool gesture_tried_ = false;
   void BuildRustPreferenceRows(const sidebar::PreferenceCatalogue& catalogue);
   void RefreshToolsViewport();
   void RefreshKeyRegistrations();

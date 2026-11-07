@@ -7,7 +7,17 @@
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include <memory>
 #include <vector>
+#include <algorithm>
+#include <cmath>
 #include "base/command_line.h"
+#include "base/i18n/rtl.h"
+#include "base/memory/raw_ptr.h"
+#include "base/no_destructor.h"
+#include "base/timer/timer.h"
+#include "ui/compositor/layer.h"
+#include "ui/compositor/layer_animator.h"
+#include "ui/compositor/scoped_layer_animation_settings.h"
+#include "ui/gfx/animation/animation.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
@@ -114,6 +124,142 @@ std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback
 }
 SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar) {
   return static_cast<SidebarScrollBar*>(bar)->Snapshot();
+}
+namespace {
+// Design: Overlay scrollbar. The bar is a 14 px hit strip over the content's
+// edge; only the pill inside it is painted.
+constexpr int kPanelBarHit = 14;
+constexpr int kPanelThumbRest = 4;
+constexpr int kPanelThumbHover = 8;
+constexpr int kPanelEdgeRest = 2;
+constexpr int kPanelEdgeHover = 3;
+constexpr int kPanelEnds = 4;
+constexpr int kPanelThumbMinimum = 32;
+constexpr auto kPanelFadeIn = base::Milliseconds(120);
+constexpr auto kPanelFadeOut = base::Milliseconds(220);
+constexpr auto kPanelHideDelay = base::Milliseconds(800);
+base::RepeatingCallback<PanelScrollBarColors(const views::View*)>& PanelColorSource() {
+  static base::NoDestructor<base::RepeatingCallback<PanelScrollBarColors(const views::View*)>> source;
+  return *source;
+}
+PanelScrollBarColors PanelColors(const views::View* view) {
+  auto& source = PanelColorSource();
+  return source ? source.Run(view) : PanelScrollBarColors();
+}
+SkColor PanelAlpha(unsigned color, float alpha) {
+  return SkColorSetA(color, static_cast<U8CPU>(std::lround(255 * std::clamp(alpha, 0.f, 1.f))));
+}
+class PanelOverlayScrollBar;
+class PanelOverlayThumb final : public views::BaseScrollBarThumb {
+ public:
+  explicit PanelOverlayThumb(PanelOverlayScrollBar* bar);
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    return IsHorizontal() ? gfx::Size(kPanelThumbMinimum, kPanelBarHit) : gfx::Size(kPanelBarHit, kPanelThumbMinimum);
+  }
+  void OnPaint(gfx::Canvas* canvas) override;
+  void OnBoundsChanged(const gfx::Rect& previous) override;
+  void OnStateChanged() override;
+ private:
+  raw_ptr<PanelOverlayScrollBar> bar_;
+};
+class PanelOverlayScrollBar final : public views::ScrollBar {
+ public:
+  explicit PanelOverlayScrollBar(bool horizontal)
+      : ScrollBar(horizontal ? Orientation::kHorizontal : Orientation::kVertical) {
+    SetNotifyEnterExitOnChild(true);
+    SetPaintToLayer();
+    layer()->SetFillsBoundsOpaquely(false);
+    layer()->SetOpacity(0.f);
+    SetThumb(new PanelOverlayThumb(this));
+  }
+  int GetThickness() const override { return kPanelBarHit; }
+  bool OverlapsContent() const override { return true; }
+  gfx::Rect GetTrackBounds() const override {
+    auto track = GetLocalBounds();
+    track.Inset(IsHorizontal() ? gfx::Insets::VH(0, kPanelEnds) : gfx::Insets::VH(kPanelEnds, 0));
+    return track;
+  }
+  // A faded-out bar never takes clicks meant for the content beneath it.
+  bool GetCanProcessEventsWithinSubtree() const override {
+    return shown_ && ScrollBar::GetCanProcessEventsWithinSubtree();
+  }
+  void OnMouseEntered(const ui::MouseEvent&) override { Show(); SchedulePaint(); GetThumb()->SchedulePaint(); }
+  void OnMouseExited(const ui::MouseEvent&) override { StartHideCountdown(); SchedulePaint(); GetThumb()->SchedulePaint(); }
+  void OnPaint(gfx::Canvas* canvas) override {
+    if (!Wide()) return;
+    // Hover: the track gets a 6 % ink tint, as wide as the grown pill.
+    const auto colors = PanelColors(this);
+    cc::PaintFlags flags; flags.setAntiAlias(true); flags.setColor(PanelAlpha(colors.ink, 0.06f));
+    canvas->DrawRoundRect(gfx::RectF(Pill(GetTrackBounds())), kPanelThumbHover / 2.f, flags);
+  }
+  bool Wide() const {
+    return IsMouseHovered() || GetThumb()->GetState() != views::Button::STATE_NORMAL;
+  }
+  // The pill inside `area` (the thumb or the track), flush with the far edge.
+  gfx::Rect Pill(gfx::Rect area) const {
+    const bool wide = Wide();
+    const int thickness = wide ? kPanelThumbHover : kPanelThumbRest;
+    const int edge = wide ? kPanelEdgeHover : kPanelEdgeRest;
+    if (IsHorizontal()) return gfx::Rect(area.x(), area.bottom() - edge - thickness, area.width(), thickness);
+    const int x = base::i18n::IsRTL() ? area.x() + edge : area.right() - edge - thickness;
+    return gfx::Rect(x, area.y(), thickness, area.height());
+  }
+  void Show() {
+    hide_timer_.Stop();
+    if (shown_) return;
+    shown_ = true;
+    Fade(1.f, kPanelFadeIn);
+  }
+  void StartHideCountdown() {
+    if (IsMouseHovered() || GetThumb()->GetState() != views::Button::STATE_NORMAL) return;
+    hide_timer_.Start(FROM_HERE, kPanelHideDelay, base::BindOnce(&PanelOverlayScrollBar::Hide, base::Unretained(this)));
+  }
+ private:
+  bool IsHorizontal() const { return GetOrientation() == Orientation::kHorizontal; }
+  void Hide() {
+    if (!shown_) return;
+    shown_ = false;
+    Fade(0.f, kPanelFadeOut);
+  }
+  void Fade(float opacity, base::TimeDelta duration) {
+    ui::ScopedLayerAnimationSettings settings(layer()->GetAnimator());
+    settings.SetTransitionDuration(gfx::Animation::PrefersReducedMotion() ? base::TimeDelta() : duration);
+    settings.SetPreemptionStrategy(ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
+    layer()->SetOpacity(opacity);
+  }
+  bool shown_ = false;
+  base::OneShotTimer hide_timer_;
+};
+PanelOverlayThumb::PanelOverlayThumb(PanelOverlayScrollBar* bar) : BaseScrollBarThumb(bar), bar_(bar) {}
+void PanelOverlayThumb::OnPaint(gfx::Canvas* canvas) {
+  const auto colors = PanelColors(this);
+  const bool pressed = GetState() == views::Button::STATE_PRESSED;
+  const bool wide = bar_->Wide();
+  // Night: ink at 32 % / 50 %; Paper needs a little more to hold 3:1.
+  const float alpha = wide ? (colors.dark ? 0.5f : 0.55f) : (colors.dark ? 0.32f : 0.36f);
+  cc::PaintFlags flags; flags.setAntiAlias(true);
+  // Dragging takes the space accent, so the pill reads as held.
+  flags.setColor(pressed ? SkColor(colors.accent) : PanelAlpha(colors.ink, alpha));
+  const auto pill = bar_->Pill(GetLocalBounds());
+  canvas->DrawRoundRect(gfx::RectF(pill), std::min(pill.width(), pill.height()) / 2.f, flags);
+}
+void PanelOverlayThumb::OnBoundsChanged(const gfx::Rect& previous) {
+  if (previous.size() == size() && previous.origin() == origin()) return;
+  bar_->Show();
+  bar_->StartHideCountdown();
+}
+void PanelOverlayThumb::OnStateChanged() {
+  if (GetState() == views::Button::STATE_NORMAL) bar_->StartHideCountdown();
+  else bar_->Show();
+  bar_->SchedulePaint();
+  SchedulePaint();
+}
+}  // namespace
+void SetPanelScrollBarColors(base::RepeatingCallback<PanelScrollBarColors(const views::View*)> colors) {
+  PanelColorSource() = std::move(colors);
+}
+std::unique_ptr<views::ScrollBar> CreatePanelOverlayScrollBar(bool horizontal) {
+  return std::make_unique<PanelOverlayScrollBar>(horizontal);
 }
 // Keeps Rust viewport projection but never presents; adapters see an invisible
 // surface and paint their Rust scene recipe through the Chromium compositor.

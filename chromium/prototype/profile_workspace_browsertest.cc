@@ -3231,23 +3231,32 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationFiltersRecor
     auto* control = FindButton(shell->tools_widget()->GetContentsView(), title); ASSERT_TRUE(control);
     ClickControl(control); base::RunLoop().RunUntilIdle();
   };
+  auto press = [&](views::View* control) {
+    ASSERT_TRUE(control); ClickControl(control); base::RunLoop().RunUntilIdle();
+  };
   for (int i = 0; i < 3; ++i) {
     shell->OpenTools(1); ASSERT_TRUE(shell->shortcut_search_for_testing());
-    shell->ActivateToolsChoiceForTesting("category", 1);
-    EXPECT_EQ(5u, shell->tools_choice_count_for_testing("selection"));
+    EXPECT_FALSE(shell->tools_gestures_for_testing());
+    // Navigation: address, find, back, forward and reload.
+    ASSERT_NO_FATAL_FAILURE(press(shell->shortcut_chip_for_testing("navigation")));
+    EXPECT_EQ(5u, shell->shortcut_rows_for_testing());
     auto* search = shell->shortcut_search_for_testing();
-    search->input_client()->InsertText(u"reload", ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
-    EXPECT_EQ(1u, shell->tools_choice_count_for_testing("selection"));
-    ASSERT_NO_FATAL_FAILURE(click(u"Nagraj kombinację…"));
-    EXPECT_TRUE(shell->CaptureShortcut(ui::Accelerator(ui::VKEY_F12, 0)));
-    EXPECT_EQ(u"F12", shell->shortcut_input()->GetText());
-    ASSERT_NO_FATAL_FAILURE(click(u"Zapisz skrót"));
+    search->input_client()->InsertText(u"Odśwież", ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+    EXPECT_EQ(1u, shell->shortcut_rows_for_testing());
+    ASSERT_TRUE(shell->shortcut_keycaps_for_testing("reload"));
+    // The chord is the control: pressing it records in place.
+    ASSERT_NO_FATAL_FAILURE(press(shell->shortcut_keycaps_for_testing("reload")));
+    EXPECT_EQ("reload", shell->shortcut_recording_for_testing());
+    ui::KeyEvent f12(ui::EventType::kKeyPressed, ui::VKEY_F12, ui::EF_NONE);
+    EXPECT_TRUE(shell->shortcut_keycaps_for_testing("reload")->OnKeyPressed(f12));
+    base::RunLoop().RunUntilIdle();
     EXPECT_EQ("reload", shell->ShortcutFor(ui::Accelerator(ui::VKEY_F12, 0)));
-    EXPECT_EQ(u"reload", shell->shortcut_search_for_testing()->GetText());
-    ASSERT_NO_FATAL_FAILURE(click(u"Przywróć domyślny skrót wybranej akcji"));
+    EXPECT_TRUE(shell->shortcut_recording_for_testing().empty());
+    EXPECT_EQ(u"Odśwież", shell->shortcut_search_for_testing()->GetText());
+    ASSERT_NO_FATAL_FAILURE(click(u"Przywróć domyślny skrót: Odśwież stronę"));
     EXPECT_EQ("reload", shell->ShortcutFor(*ParseShortcut(Chord("R")))) ;
     shell->OpenTools(2); EXPECT_FALSE(shell->shortcut_search_for_testing());
-    EXPECT_FALSE(shell->tools_choice_for_testing("gesture"));
+    EXPECT_FALSE(shell->tools_choice_for_testing("L"));
   }
   shell->OpenTools(1);
   const auto output = base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-input-render-dir");
@@ -3301,14 +3310,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationFiltersRecor
         EXPECT_EQ(0u,changed)<<"Scrolling painted over the fixed header or footer: "<<name;
       }
       const auto palette=sidebar::design_palette(shell->theme_mode()==ThemeMode::kDark,shell->workspace_color(window_->active_id()));
-      for(auto* editor:{shell->shortcut_search_for_testing(),shell->shortcut_input()}) {
-        ASSERT_TRUE(editor);
+      for(auto* editor:{shell->shortcut_search_for_testing()}) {
+        if(!editor)continue;
         const auto editor_screen=editor->view()->GetBoundsInScreen();
         auto visible_screen=editor_screen;visible_screen.Intersect(viewport_screen);
-        if(visible_screen.IsEmpty()) {
-          if(MetalPresents())EXPECT_FALSE(editor->metal_visible())<<name;
-          continue;
-        }
+        // The search stays in the fixed toolbar, above the scrolling rows.
+        if(visible_screen.IsEmpty())continue;
         const int x=std::lround((visible_screen.x()-widget_screen.x()+4)*scale);
         const int y=std::lround((visible_screen.CenterPoint().y()-widget_screen.y())*scale);
         ASSERT_GE(x,0);ASSERT_LT(x,panel.width());ASSERT_GE(y,0);ASSERT_LT(y,panel.height());
@@ -3324,8 +3331,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationFiltersRecor
       shell->SetThemeMode(mode);
       shell->tools_viewport_for_testing()->ScrollTo(0);
       ASSERT_NO_FATAL_FAILURE(capture(mode == ThemeMode::kDark ? "input-dark.png" : "input-light.png"));
-      shell->tools_viewport_for_testing()->ScrollTo(shell->tools_viewport_for_testing()->maximum());
+      ClickControl(shell->tools_tab_for_testing("gestures")); base::RunLoop().RunUntilIdle();
+      ASSERT_TRUE(shell->tools_gestures_for_testing()); fixed_regions.reset();
       ASSERT_NO_FATAL_FAILURE(capture(mode == ThemeMode::kDark ? "gestures-dark.png" : "gestures-light.png"));
+      ClickControl(shell->tools_tab_for_testing("keyboard")); base::RunLoop().RunUntilIdle();
     }
     // Force partial and complete clipping even when the compact settings fit
     // almost entirely in the usual panel. The normal review images stay intact.
@@ -3340,7 +3349,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationFiltersRecor
       viewport->ScrollTo(0);
       const std::string suffix=mode==ThemeMode::kDark?"-dark.png":"-light.png";
       ASSERT_NO_FATAL_FAILURE(capture(std::string("clip-base")+suffix));
-      const auto field= shell->shortcut_search_for_testing()->view()->GetBoundsInScreen();
+      const auto field= shell->shortcut_keycaps_for_testing("address")->GetBoundsInScreen();
       const int start=field.y()-viewport->view()->GetBoundsInScreen().y();
       viewport->ScrollTo(start+field.height()/2);
       ASSERT_NO_FATAL_FAILURE(capture(std::string("clip-partial")+suffix));
@@ -3381,17 +3390,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ConfigurableNativeKeyboardShor
   const bool sidebar_before = shell->sidebar_visible();
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_S, !BUILDFLAG(IS_MAC), false, false, BUILDFLAG(IS_MAC)));
   ASSERT_TRUE(base::test::RunUntil([&] { return sidebar_before != shell->sidebar_visible(); }));
-  auto* record = FindButton(shell->tools_widget()->GetContentsView(), u"Nagraj kombinację…");
+  auto* record = shell->shortcut_keycaps_for_testing("address");
   ASSERT_TRUE(record);
   ClickControl(record);
   base::RunLoop().RunUntilIdle();
+  ASSERT_EQ("address", shell->shortcut_recording_for_testing());
+  ASSERT_TRUE(shell->shortcut_keycaps_for_testing("address")->HasFocus());
+  // While recording, the app's own shortcuts are chords, not commands.
   ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(), ui::VKEY_U, !BUILDFLAG(IS_MAC), true, false, BUILDFLAG(IS_MAC)));
-  EXPECT_EQ(base::UTF8ToUTF16(Chord("Shift+U")), shell->shortcut_input()->GetText());
-  auto* save_key = FindButton(shell->tools_widget()->GetContentsView(), u"Zapisz skrót");
-  ASSERT_TRUE(save_key);
-  ClickControl(save_key);
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ("address", shell->ShortcutFor(*ParseShortcut(Chord("Shift+U"))));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->ShortcutFor(*ParseShortcut(Chord("Shift+U"))) == "address"; }));
+  EXPECT_TRUE(shell->shortcut_recording_for_testing().empty());
   ASSERT_TRUE(shell->SetShortcut("sidebar", ""));
   EXPECT_TRUE(shell->ShortcutFor(*ParseShortcut(Chord("S"))).empty());
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_saved() && window_->configuration_saved(); }));
@@ -3934,11 +3942,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPanelResizeLongStatusAndV
     for(auto size:{gfx::Size(420,560),gfx::Size(680,720)}){
       shell->SetOperationStatus(u"Długi status 🦀 אבג · sprawdzenie zawijania, zmiany rozmiaru i widoczności przewijanego formularza bez nachodzenia na nagłówek ani stopkę.");
       shell->tools_widget()->SetSize(size);shell->tools_widget()->LayoutRootViewIfNecessary();
-      auto* field=page==1?shell->shortcut_input():shell->provider_input(0);ASSERT_TRUE(field);
+      auto* field=page==1?shell->shortcut_search_for_testing():shell->provider_input(0);ASSERT_TRUE(field);
       auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
-      auto* root=scroll->view()->parent();ASSERT_TRUE(root);ASSERT_EQ(3u,root->children().size());auto* heading=root->children()[0].get();EXPECT_EQ(scroll->view(),root->children()[1].get());auto* status=root->children()[2].get();
+      // Heading, the fixed toolbar (search and chips, page 1 only), rows, footer.
+      auto* root=scroll->view()->parent();ASSERT_TRUE(root);ASSERT_EQ(4u,root->children().size());auto* heading=root->children()[0].get();auto* toolbar=root->children()[1].get();EXPECT_EQ(scroll->view(),root->children()[2].get());auto* status=root->children()[3].get();
       const auto insets=root->GetInsets()+gfx::Insets(20);EXPECT_EQ(insets.left(),heading->x());EXPECT_EQ(insets.top(),heading->y());EXPECT_EQ(root->width()-insets.width(),heading->width());
-      EXPECT_EQ(heading->bounds().bottom()+12,scroll->view()->y());EXPECT_EQ(scroll->view()->bounds().bottom()+12,status->y());EXPECT_EQ(root->height()-insets.bottom(),status->bounds().bottom());
+      EXPECT_EQ(page==1,toolbar->GetVisible());
+      if(page==1){EXPECT_EQ(heading->bounds().bottom()+12,toolbar->y());EXPECT_EQ(toolbar->bounds().bottom()+12,scroll->view()->y());}
+      else EXPECT_EQ(heading->bounds().bottom()+12,scroll->view()->y());EXPECT_EQ(scroll->view()->bounds().bottom()+12,status->y());EXPECT_EQ(root->height()-insets.bottom(),status->bounds().bottom());
       EXPECT_EQ(root->width()-insets.width(),status->width());EXPECT_GT(scroll->view()->height(),0);ASSERT_TRUE(scroll->contents());EXPECT_GE(scroll->contents()->height(),scroll->view()->height());
       if(rust){field->view()->ScrollRectToVisible(field->view()->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_order_correct_for_testing()&&shell->tools_chrome_excludes_for_testing(field->view());}));if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));}
     }
@@ -3954,13 +3965,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsPolicyFailedActionsAndRec
   const auto count=shell->browser_tools().providers.size();ASSERT_NO_FATAL_FAILURE(click(u"Zapisz wyszukiwarkę"));
   EXPECT_EQ(count,shell->browser_tools().providers.size());EXPECT_TRUE(original.view());
   EXPECT_TRUE(has_copy(u"Sprawdź unikalny prefiks, nazwę i adres z {query}. Musi pozostać co najmniej jedna wyszukiwarka."));
-  shell->OpenTools(1);auto* chord=shell->shortcut_input();ASSERT_TRUE(chord);const auto previous=shell->browser_tools().shortcuts.front().accelerator;
-  chord->SetText(u"Escape");ASSERT_NO_FATAL_FAILURE(click(u"Zapisz skrót"));EXPECT_EQ(previous,shell->browser_tools().shortcuts.front().accelerator);
-  EXPECT_TRUE(has_copy(u"Nieprawidłowa lub zajęta kombinacja. Zmień ją albo wyłącz skrót drugiej akcji."));
-  chord->RequestFocus();ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);chord->SetCompositionText(marked);ASSERT_TRUE(chord->IsIMEComposing());
-  ASSERT_NO_FATAL_FAILURE(click(u"Nagraj kombinację…"));EXPECT_FALSE(chord->IsIMEComposing());EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,chord->input_client()->GetTextInputType());
-  EXPECT_TRUE(has_copy(u"Naciśnij kombinację. Escape anuluje nagrywanie."));
-  ASSERT_TRUE(shell->CaptureShortcut(ui::Accelerator(ui::VKEY_ESCAPE,0)));EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,chord->input_client()->GetTextInputType());EXPECT_TRUE(has_copy(u"Nagrywanie anulowane."));
+  shell->OpenTools(1);const auto previous=shell->browser_tools().shortcuts.front().accelerator;const auto id=shell->browser_tools().shortcuts.front().id;
+  auto* keys=shell->shortcut_keycaps_for_testing(id);ASSERT_TRUE(keys);ClickControl(keys);base::RunLoop().RunUntilIdle();
+  ASSERT_EQ(id,shell->shortcut_recording_for_testing());EXPECT_TRUE(has_copy(u"Esc anuluje · Backspace usuwa skrót · F1–F24 działają bez modyfikatora"));
+  // Reserved text editing chords are refused and recording goes on.
+  ui::KeyEvent copy(ui::EventType::kKeyPressed,ui::VKEY_C,kPrimaryModifier);EXPECT_TRUE(shell->shortcut_keycaps_for_testing(id)->OnKeyPressed(copy));base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(previous,shell->browser_tools().shortcuts.front().accelerator);EXPECT_EQ(id,shell->shortcut_recording_for_testing());
+  EXPECT_EQ(u"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane.",shell->shortcut_error_for_testing());
+  ui::KeyEvent escape(ui::EventType::kKeyPressed,ui::VKEY_ESCAPE,ui::EF_NONE);EXPECT_TRUE(shell->shortcut_keycaps_for_testing(id)->OnKeyPressed(escape));base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(shell->shortcut_recording_for_testing().empty());EXPECT_TRUE(shell->shortcut_error_for_testing().empty());EXPECT_EQ(previous,shell->browser_tools().shortcuts.front().accelerator);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaProviderAndClose) {
@@ -4001,26 +4014,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsActionsCocoaProviderAndCl
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixAndCallbacks) {
   auto* shell=window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  shell->OpenTools(1);EnableNativeUIControls();
+  // The shortcuts page has no pickers; its rows are covered by the recorder tests.
+  shell->OpenTools(1);EnableNativeUIControls();EXPECT_FALSE(shell->tools_selection());
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
-  auto* picker=shell->tools_selection();ASSERT_TRUE(picker);
-  const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust,!views::AsViewClass<views::Combobox>(picker));
-  EXPECT_EQ(shell->browser_tools().shortcuts.size(),shell->tools_choice_count_for_testing("selection"));
-  picker->RequestFocus();ASSERT_TRUE(picker->HasFocus());
-  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(shell->tools_widget()->GetNativeWindow(),ui::VKEY_H,false,false,false,false));
-  const auto& shortcuts=shell->browser_tools().shortcuts;
-  const auto history=std::find_if(shortcuts.begin(),shortcuts.end(),[](const auto& shortcut){return shortcut.id=="history";});
-  ASSERT_NE(shortcuts.end(),history);const size_t index=history-shortcuts.begin();
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_selection_for_testing("selection")==index;}));
-  EXPECT_EQ(base::UTF8ToUTF16(FormatShortcut(history->accelerator)),shell->shortcut_input()->GetText());
-  auto* record=FindButton(shell->tools_widget()->GetContentsView(),u"Nagraj kombinację…");ASSERT_TRUE(record);
-  ClickControl(record);base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,shell->shortcut_input()->input_client()->GetTextInputType());
-  shell->ActivateToolsChoiceForTesting("selection",0);
-  EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,shell->shortcut_input()->input_client()->GetTextInputType());
-  EXPECT_EQ(base::UTF8ToUTF16(FormatShortcut(shortcuts[0].accelerator)),shell->shortcut_input()->GetText());
   ASSERT_TRUE(shell->UpsertSearchProvider({"Tools duplicate 🦀","ztools","https://tools.test/?q={query}"}));
-  shell->OpenTools(2);picker=shell->tools_selection();
+  shell->OpenTools(2);auto* picker=shell->tools_selection();ASSERT_TRUE(picker);
+  EXPECT_EQ(shell->workspace_input()->rust_editor(),!views::AsViewClass<views::Combobox>(picker));
   const auto& providers=shell->browser_tools().providers;
   const auto provider=std::find_if(providers.begin(),providers.end(),[](const auto& item){return item.keyword=="ztools";});
   ASSERT_NE(providers.end(),provider);const size_t provider_index=provider-providers.begin()+1;
@@ -4031,24 +4030,33 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesCocoaPrefixAndCall
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsFormStructureOrderAndNames) {
-  auto* shell=window_->shell();
-  const std::vector<std::vector<std::u16string>> expected={{},
-    {u"Szukaj akcji lub kombinacji",u"Kategoria skrótów",u"Akcja skrótu",u"Kombinacja, np. Cmd+Shift+J",u"Zapisz skrót",u"Nagraj kombinację…",u"Wyłącz wybrany skrót",u"Przywróć domyślny skrót wybranej akcji",u"Przywróć schemat Arc",u"Gest do edycji",u"Akcja gestu",u"Zapisz gest",u"Przywróć domyślne gesty"},
-    {u"Wyszukiwarka do edycji",u"Nazwa wyszukiwarki",u"Prefiks (a–z, 0–9)",u"Adres z {query}",u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}};
-  // Page 0 (snapshots) became the Time Machine view.
-  for(int page=1;page<3;++page){SCOPED_TRACE(page);shell->OpenTools(page);
-    std::vector<std::u16string> names;
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));
+  auto names_in=[&](views::View* root){std::vector<std::u16string> names;
     auto visit=[&](auto&& self,views::View* view)->void{if(!view->GetVisible())return;ui::AXNodeData ax;view->GetViewAccessibility().GetAccessibleNodeData(&ax);
-      if(ax.role==ax::mojom::Role::kTextField||ax.role==ax::mojom::Role::kComboBoxSelect||ax.role==ax::mojom::Role::kButton){names.push_back(ax.GetString16Attribute(ax::mojom::StringAttribute::kName));return;}
+      if(ax.role==ax::mojom::Role::kTextField||ax.role==ax::mojom::Role::kComboBoxSelect||ax.role==ax::mojom::Role::kButton||ax.role==ax::mojom::Role::kSwitch){names.push_back(ax.GetString16Attribute(ax::mojom::StringAttribute::kName));return;}
       for(const auto& child:view->children())self(self,child.get());};
-    visit(visit,shell->tools_body_for_testing());EXPECT_EQ(expected[page],names);
-  }
+    visit(visit,root);return names;};
+  // Page 1: search, Find by keys and seven filter chips stay above the rows;
+  // every row is one chord button named after its action.
+  shell->OpenTools(1);
+  const auto toolbar=names_in(shell->tools_body_for_testing()->parent()->parent()->parent()->children()[1].get());
+  ASSERT_EQ(9u,toolbar.size());EXPECT_EQ(u"Szukaj akcji lub kombinacji",toolbar[0]);EXPECT_EQ(u"Szukaj po klawiszach",toolbar[1]);
+  EXPECT_TRUE(toolbar[2].starts_with(u"Wszystkie, "));EXPECT_TRUE(toolbar[8].starts_with(u"Zmienione, "));
+  const auto rows=names_in(shell->tools_body_for_testing());EXPECT_EQ(shell->shortcut_rows_for_testing(),rows.size());
+  ASSERT_FALSE(rows.empty());EXPECT_TRUE(rows[0].starts_with(u"Adres i wyszukiwanie: "))<<rows[0];
+  for(const auto& name:rows)EXPECT_TRUE(name.ends_with(u". Naciśnij, aby nagrać nowy skrót."))<<name;
+  // The gestures tab: the switch and one action picker per gesture.
+  ClickControl(shell->tools_tab_for_testing("gestures"));base::RunLoop().RunUntilIdle();
+  const auto gestures=names_in(shell->tools_body_for_testing());ASSERT_EQ(9u,gestures.size());EXPECT_EQ(u"Włącz gesty myszy",gestures[0]);EXPECT_EQ(u"Akcja gestu: W lewo",gestures[1]);
+  shell->OpenTools(2);
+  EXPECT_EQ((std::vector<std::u16string>{u"Wyszukiwarka do edycji",u"Nazwa wyszukiwarki",u"Prefiks (a–z, 0–9)",u"Adres z {query}",u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}),names_in(shell->tools_body_for_testing()));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsChoicesShortcutProviderProjectionAndDrafts) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));shell->OpenTools(1);
-  const auto shortcuts=shell->browser_tools().shortcuts;ASSERT_FALSE(shortcuts.empty());ASSERT_EQ(shortcuts.size(),shell->tools_choice_count_for_testing("selection"));
-  for(size_t i=0;i<shortcuts.size();++i){SCOPED_TRACE(i);EXPECT_EQ(shortcuts[i].title+u" — "+base::UTF8ToUTF16(FormatShortcut(shortcuts[i].accelerator)),shell->tools_choice_label_for_testing("selection",i));shell->ActivateToolsChoiceForTesting("selection",i);EXPECT_EQ(base::UTF8ToUTF16(FormatShortcut(shortcuts[i].accelerator)),shell->shortcut_input()->GetText());}
+  // One row per action; "Przejdź do karty 1–9" and "… przestrzeni 1–9" stand for nine each.
+  const auto shortcuts=shell->browser_tools().shortcuts;ASSERT_FALSE(shortcuts.empty());ASSERT_EQ(shortcuts.size()-16,shell->shortcut_rows_for_testing());
+  for(const auto& item:shortcuts){SCOPED_TRACE(item.id);const bool grouped=(item.id.starts_with("tab")||item.id.starts_with("space"))&&item.id.size()<=6&&item.id.back()>='2'&&item.id.back()<='9';EXPECT_EQ(!grouped,shell->shortcut_keycaps_for_testing(item.id)!=nullptr);}
   ASSERT_TRUE(shell->UpsertSearchProvider({"Projection duplicate 🦀","zproja","https://projection.test/a?q={query}"}));ASSERT_TRUE(shell->UpsertSearchProvider({"Projection duplicate 🦀","zprojb","https://projection.test/b?q={query}"}));ASSERT_TRUE(shell->SetDefaultSearchProvider("zprojb"));shell->OpenTools(2);
   const auto providers=shell->browser_tools().providers;ASSERT_EQ(providers.size()+1,shell->tools_choice_count_for_testing("selection"));EXPECT_EQ(u"Dodaj nową wyszukiwarkę…",shell->tools_choice_label_for_testing("selection",0));
   for(size_t field=0;field<3;++field)EXPECT_TRUE(shell->provider_input(field)->GetText().empty());
@@ -4089,17 +4097,28 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolsEditorsCocoaProviderAndSt
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ShortcutEditorCocoaRecorderAdmissionAndCancel) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(1);EnableNativeUIControls();
-  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));const std::u16string chord=base::UTF8ToUTF16(Chord("Shift+U"));auto* field=shell->shortcut_input();field->SetText(chord);field->SelectRange(gfx::Range(field->GetText().size()));
-  EXPECT_EQ(shell->workspace_input()->rust_editor(),field->rust_editor());
-  auto key=[&](ui::KeyboardCode code,bool shift=false,bool command=false){return SendPrimaryKey(shell->tools_widget()->GetNativeWindow(),code,shift,command);};
-  auto record=[&]{auto* button=FindButton(shell->tools_widget()->GetContentsView(),u"Nagraj kombinację…");ASSERT_TRUE(button);ClickControl(button);base::RunLoop().RunUntilIdle();};
-  ui::CompositionText marked;marked.text=u"未";marked.selection=gfx::Range(1);field->SetCompositionText(marked);ASSERT_TRUE(field->IsIMEComposing());record();
-  EXPECT_FALSE(field->IsIMEComposing());EXPECT_EQ(chord,field->GetText());EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,field->input_client()->GetTextInputType());
-  ASSERT_TRUE(key(ui::VKEY_A));EXPECT_EQ(chord,field->GetText());ASSERT_TRUE(key(ui::VKEY_C,false,true));EXPECT_EQ(chord,field->GetText());
-  ASSERT_TRUE(key(ui::VKEY_ESCAPE));EXPECT_TRUE(shell->tools_widget()->IsVisible());EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,field->input_client()->GetTextInputType());
-  record();ASSERT_TRUE(key(ui::VKEY_U,true,true));EXPECT_EQ(chord,field->GetText());EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,field->input_client()->GetTextInputType());
-  EXPECT_NE("address",shell->ShortcutFor(*ParseShortcut(Chord("Shift+U"))));
-  ASSERT_TRUE(key(ui::VKEY_RETURN));ASSERT_TRUE(base::test::RunUntil([&]{return shell->ShortcutFor(*ParseShortcut(Chord("Shift+U")))=="address";}));
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(shell->tools_widget()->GetNativeWindow()));
+  const auto previous=*ParseShortcut(Chord("L"));ASSERT_EQ("address",shell->ShortcutFor(previous));
+  auto key=[&](ui::KeyboardCode code,bool shift=false,bool command=false){const bool sent=SendPrimaryKey(shell->tools_widget()->GetNativeWindow(),code,shift,command);base::RunLoop().RunUntilIdle();return sent;};
+  auto record=[&]{auto* button=shell->shortcut_keycaps_for_testing("address");ASSERT_TRUE(button);ClickControl(button);base::RunLoop().RunUntilIdle();ASSERT_EQ("address",shell->shortcut_recording_for_testing());ASSERT_TRUE(shell->shortcut_keycaps_for_testing("address")->HasFocus());};
+  ASSERT_NO_FATAL_FAILURE(record());
+  // A bare letter and a text editing chord are refused; recording continues.
+  ASSERT_TRUE(key(ui::VKEY_A));EXPECT_EQ("address",shell->shortcut_recording_for_testing());EXPECT_FALSE(shell->shortcut_error_for_testing().empty());
+  ASSERT_TRUE(key(ui::VKEY_C,false,true));EXPECT_EQ("address",shell->shortcut_recording_for_testing());EXPECT_EQ("address",shell->ShortcutFor(previous));
+  // Escape cancels the recording, not the window.
+  ASSERT_TRUE(key(ui::VKEY_ESCAPE));EXPECT_TRUE(shell->tools_widget()->IsVisible());EXPECT_TRUE(shell->shortcut_recording_for_testing().empty());EXPECT_EQ("address",shell->ShortcutFor(previous));
+  ASSERT_NO_FATAL_FAILURE(record());ASSERT_TRUE(key(ui::VKEY_U,true,true));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->ShortcutFor(*ParseShortcut(Chord("Shift+U")))=="address";}));
+  EXPECT_TRUE(shell->ShortcutFor(previous).empty());
+  // A chord another action owns asks first; „Użyj dla” moves it over.
+  ASSERT_NO_FATAL_FAILURE(record());ASSERT_TRUE(key(ui::VKEY_T,false,true));
+  ASSERT_TRUE(shell->shortcut_conflict_for_testing());EXPECT_EQ("new_tab",shell->ShortcutFor(*ParseShortcut(Chord("T"))));
+  auto* swap=FindButton(shell->tools_widget()->GetContentsView(),u"Użyj dla: Adres i wyszukiwanie");ASSERT_TRUE(swap);ClickControl(swap);base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(shell->shortcut_conflict_for_testing());EXPECT_EQ("address",shell->ShortcutFor(*ParseShortcut(Chord("T"))));
+  for(const auto& item:shell->browser_tools().shortcuts)if(item.id=="new_tab")EXPECT_EQ(ui::VKEY_UNKNOWN,item.accelerator.key_code());
+  // „Przywróć schemat Arc” puts every chord back.
+  auto* reset=shell->tools_footer_action_for_testing();ASSERT_TRUE(reset);EXPECT_TRUE(reset->GetEnabled());ClickControl(reset);base::RunLoop().RunUntilIdle();
+  EXPECT_EQ("address",shell->ShortcutFor(previous));EXPECT_EQ("new_tab",shell->ShortcutFor(*ParseShortcut(Chord("T"))));EXPECT_FALSE(shell->tools_footer_action_for_testing()->GetEnabled());
   ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_saved();}));
 }
 
@@ -4746,7 +4765,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueToolsRoutes
   EXPECT_FALSE(shell->tools_widget());
   EXPECT_FALSE(shell->time_machine_for_testing());
   const std::vector<std::pair<std::u16string,int>> routes={{u"Time Machine przestrzeni",0},{u"Skróty klawiszowe",1},{u"Wyszukiwarki i prefiksy",2}};
-  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()&&shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_input()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
+  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()&&shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_search_for_testing()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
   // Its History row opens Zitter's History window.
   ASSERT_TRUE(window_->Select("work"));const auto tabs=window_->tab_count("work");
   shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Historia przeglądania",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();
@@ -7982,7 +8001,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SelectorModelsBelongToNodesAcr
 
 // A retained selector bypasses base-button input for keys and AX; both must reject retirement.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RetiredSelectorRejectsKeyboardAndPopupAfterToolsRebuild) {
-  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(1);auto* picker=shell->tools_choice_for_testing("selection");ASSERT_TRUE(picker);const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust?3u:0u,shell->control_model_kind_for_testing(picker));const auto id=shell->sidebar_node_id_for_testing(picker);if(rust)EXPECT_NE(0u,id);else EXPECT_EQ(0u,id);
+  auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready();}));shell->OpenTools(2);auto* picker=shell->tools_choice_for_testing("selection");ASSERT_TRUE(picker);const bool rust=shell->workspace_input()->rust_editor();EXPECT_EQ(rust?3u:0u,shell->control_model_kind_for_testing(picker));const auto id=shell->sidebar_node_id_for_testing(picker);if(rust)EXPECT_NE(0u,id);else EXPECT_EQ(0u,id);
   auto held=picker->parent()->RemoveChildViewT(picker);if(rust){EXPECT_EQ(0u,shell->control_model_kind_for_testing(held.get()));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));ui::KeyEvent down(ui::EventType::kKeyPressed,ui::VKEY_DOWN,0);EXPECT_FALSE(held->OnKeyPressed(down));held->SetEventTargeter(std::make_unique<views::ViewTargeter>(std::make_unique<views::ViewTargeterDelegate>()));ui::AXActionData open;open.action=ax::mojom::Action::kDoDefault;held->HandleAccessibleAction(open);EXPECT_FALSE(views::MenuController::GetActiveInstance());}
   shell->OpenTools(2);ASSERT_TRUE(shell->tools_choice_for_testing("selection"));if(rust){EXPECT_NE(0u,shell->sidebar_node_id_for_testing(shell->tools_choice_for_testing("selection")));EXPECT_EQ(0u,shell->sidebar_node_id_for_testing(held.get()));}
 }
@@ -10444,8 +10463,12 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesPostedActionsR
   auto provider_index=[&](std::string key){const auto& values=shell->browser_tools().providers;auto found=std::find_if(values.begin(),values.end(),[&](const auto& item){return item.keyword==key;});return found==values.end()?size_t(0):size_t(found-values.begin()+1);};
   auto a=provider_index("zchoicea"),b=provider_index("zchoiceb");ASSERT_GT(a,0u);ASSERT_GT(b,0u);shell->ActivateToolsChoiceForTesting("selection",a);auto* remove=FindButton(shell->tools_widget()->GetContentsView(),u"Usuń wyszukiwarkę");ASSERT_TRUE(remove);ClickControl(remove);shell->ActivateToolsChoiceForTesting("selection",b);base::RunLoop().RunUntilIdle();EXPECT_GT(provider_index("zchoicea"),0u);EXPECT_GT(provider_index("zchoiceb"),0u);
   ClickControl(remove);ASSERT_TRUE(base::test::RunUntil([&]{return provider_index("zchoiceb")==0;}));EXPECT_GT(provider_index("zchoicea"),0u);
-  shell->OpenTools(1);const auto shortcuts=shell->browser_tools().shortcuts;ASSERT_GE(shortcuts.size(),2u);shell->ActivateToolsChoiceForTesting("selection",0);auto* disable=FindButton(shell->tools_widget()->GetContentsView(),u"Wyłącz wybrany skrót");ASSERT_TRUE(disable);ClickControl(disable);shell->ActivateToolsChoiceForTesting("selection",1);base::RunLoop().RunUntilIdle();EXPECT_EQ(shortcuts[0].accelerator,shell->browser_tools().shortcuts[0].accelerator);EXPECT_EQ(shortcuts[1].accelerator,shell->browser_tools().shortcuts[1].accelerator);
-  ClickControl(disable);ASSERT_TRUE(base::test::RunUntil([&]{return shell->browser_tools().shortcuts[1].accelerator.key_code()==ui::VKEY_UNKNOWN;}));EXPECT_EQ(shortcuts[0].accelerator,shell->browser_tools().shortcuts[0].accelerator);
+  // A row change posted before the page was rebuilt for another page is dropped.
+  shell->OpenTools(1);const auto shortcuts=shell->browser_tools().shortcuts;auto* keys=shell->shortcut_keycaps_for_testing(shortcuts[0].id);ASSERT_TRUE(keys);
+  ClickControl(keys);shell->OpenTools(2);base::RunLoop().RunUntilIdle();shell->OpenTools(1);EXPECT_TRUE(shell->shortcut_recording_for_testing().empty());
+  keys=shell->shortcut_keycaps_for_testing(shortcuts[0].id);ClickControl(keys);base::RunLoop().RunUntilIdle();ASSERT_EQ(shortcuts[0].id,shell->shortcut_recording_for_testing());
+  ui::KeyEvent erase(ui::EventType::kKeyPressed,ui::VKEY_BACK,ui::EF_NONE);EXPECT_TRUE(shell->shortcut_keycaps_for_testing(shortcuts[0].id)->OnKeyPressed(erase));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->browser_tools().shortcuts[0].accelerator.key_code()==ui::VKEY_UNKNOWN;}));EXPECT_EQ(shortcuts[1].accelerator,shell->browser_tools().shortcuts[1].accelerator);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayCutoutsAndScrolling) {
@@ -10454,16 +10477,16 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayC
   // Page 0 (snapshots) became the Time Machine view.
   for(int page=1;page<3;++page){shell->OpenTools(page);if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_visible_for_testing()&&shell->tools_chrome_order_correct_for_testing();}))<<shell->tools_chrome_debug_for_testing();inspect();
     if(MetalPresents())EXPECT_TRUE(shell->tools_chrome_excludes_for_testing(shell->tools_close_for_testing()));
-    auto* editor=page==1?shell->shortcut_input():shell->provider_input(0);editor->view()->ScrollRectToVisible(editor->view()->GetLocalBounds());
+    auto* editor=page==1?shell->shortcut_search_for_testing():shell->provider_input(0);editor->view()->ScrollRectToVisible(editor->view()->GetLocalBounds());
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(editor->view());}));
-    auto* choice=shell->tools_selection();choice->ScrollRectToVisible(choice->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(choice);}));
+    if(page==2){auto* choice=shell->tools_selection();choice->ScrollRectToVisible(choice->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(choice);}));}
   }
-  shell->OpenTools(1);auto* field=shell->shortcut_input()->view();auto* spacer=field->parent()->AddChildView(std::make_unique<views::View>());spacer->SetPreferredSize(gfx::Size(1,1200));shell->tools_widget()->LayoutRootViewIfNecessary();
+  shell->OpenTools(1);auto* field=shell->shortcut_keycaps_for_testing("address");ASSERT_TRUE(field);auto* spacer=shell->tools_body_for_testing()->AddChildView(std::make_unique<views::View>());spacer->SetPreferredSize(gfx::Size(1,1200));shell->tools_widget()->LayoutRootViewIfNecessary();
   base::test::TestFuture<void> presented;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},presented.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(presented.Wait());
   auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);scroll->ScrollTo(scroll->maximum());
   ASSERT_TRUE(base::test::RunUntil([&]{return field->GetVisibleBounds().IsEmpty();}));
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_contains_text_for_testing("Skróty klawiszowe");}));
-  field->ScrollRectToVisible(field->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_excludes_for_testing(field);}));
+  field->ScrollRectToVisible(field->GetLocalBounds());ASSERT_TRUE(base::test::RunUntil([&]{return !field->GetVisibleBounds().IsEmpty();}));
   shell->tools_widget()->Hide();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_chrome_visible_for_testing();}));shell->OpenTools(2);shell->SetThemeMode(ThemeMode::kDark);
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_chrome_order_correct_for_testing()&&shell->tools_chrome_contains_text_for_testing("Wyszukiwarki i prefiksy");}));
 }
@@ -10471,8 +10494,9 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChromeSharedUnderlayC
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatchingClippingAndCancelledChildren) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_ready()&&shell->appearance_ready();}));
-  const std::array<std::vector<std::u16string>,3> titles={{{u"Zapisz snapshot",u"Przywróć wybrany układ",u"Usuń wybrany snapshot",u"Przywróć wybraną kartę",u"Uśpij tę przestrzeń"},{u"Nagraj kombinację…",u"Zapisz skrót",u"Wyłącz wybrany skrót",u"Przywróć schemat Arc"},{u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}}};
-  const std::array<size_t,3> groups={4,3,1};
+  const std::array<std::vector<std::u16string>,3> titles={{{u"Zapisz snapshot",u"Przywróć wybrany układ",u"Usuń wybrany snapshot",u"Przywróć wybraną kartę",u"Uśpij tę przestrzeń"},{u"Szukaj po klawiszach",u"Przywróć schemat Arc"},{u"Zapisz wyszukiwarkę",u"Ustaw jako domyślną",u"Usuń wyszukiwarkę"}}};
+  // Shortcut rows hold no action groups at rest; their chords are buttons.
+  const std::array<size_t,3> groups={4,0,1};
   auto present=[&]{base::test::TestFuture<void> ready;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},ready.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(ready.Wait());};
   for(int page=1;page<3;++page){
     shell->OpenTools(page);ASSERT_EQ(groups[page],shell->tools_action_groups_for_testing());ASSERT_NO_FATAL_FAILURE(present());
@@ -10481,30 +10505,31 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsActionsScenesBatching
       auto* button=FindButton(shell->tools_widget()->GetContentsView(),title);ASSERT_TRUE(button);EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(button));EXPECT_TRUE(button->children().empty());
       if(!button->GetVisible())continue;
       button->ScrollRectToVisible(button->GetLocalBounds());
-      if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_visible_for_testing(button)&&shell->tools_actions_contains_scene_text_for_testing(base::UTF16ToUTF8(title==u"Nagraj kombinację…"?u"Nagraj…":title==u"Wyłącz wybrany skrót"?u"Wyłącz":title==u"Przywróć schemat Arc"?u"Przywróć wszystkie":title));}));
+      if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_visible_for_testing(button)&&shell->tools_actions_contains_scene_text_for_testing(base::UTF16ToUTF8(title));}));
       auto expected=[&]{auto* group=button->parent();auto bounds=group->GetVisibleBounds();bounds.Offset(group->GetBoundsInScreen().x(),group->GetBoundsInScreen().y());return bounds;};
       if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_bounds_for_testing(button)==expected();}));
     }
   }
-  shell->OpenTools(1);auto* first=FindButton(shell->tools_widget()->GetContentsView(),u"Nagraj kombinację…");ASSERT_TRUE(first);auto* group=first->parent();
+  shell->OpenTools(2);const auto providers=shell->browser_tools().providers.size();auto* first=FindButton(shell->tools_widget()->GetContentsView(),u"Zapisz wyszukiwarkę");ASSERT_TRUE(first);auto* group=first->parent();
   auto* scrolling_fixture=group->parent()->AddChildView(std::make_unique<views::View>());scrolling_fixture->SetPreferredSize(gfx::Size(1,1200));shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());first->ScrollRectToVisible(first->GetLocalBounds());
   const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(first->OnMousePressed(press));auto* scroll=shell->tools_viewport_for_testing();ASSERT_TRUE(scroll);
   scroll->ScrollTo(group->y()+first->bounds().bottom()+20);
   ASSERT_TRUE(base::test::RunUntil([&]{return first->GetVisibleBounds().IsEmpty()&&group->GetVisibleBounds().IsEmpty();}))<<"first="<<first->GetVisibleBounds().ToString()<<" group="<<group->GetVisibleBounds().ToString()<<" viewport="<<scroll->visible_rect().ToString();
-  first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(ui::TEXT_INPUT_TYPE_TEXT,shell->shortcut_input()->input_client()->GetTextInputType());
+  first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_EQ(providers,shell->browser_tools().providers.size());
   first->ScrollRectToVisible(first->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_action_metal_visible_for_testing(first);}));
   ASSERT_TRUE(first->OnMousePressed(press));shell->tools_widget()->Hide();first->OnMouseReleased(release);base::RunLoop().RunUntilIdle();EXPECT_FALSE(shell->tools_widget()->IsVisible());
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return !shell->tools_action_metal_visible_for_testing(first)&&!shell->tools_close_metal_visible_for_testing();}));
-  views::ViewTracker old(first);shell->OpenTools(2);EXPECT_FALSE(old.view());
+  views::ViewTracker old(first);shell->OpenTools(1);EXPECT_FALSE(old.view());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClippingHideRebuildAndResize) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready()&&shell->tools_ready();}));
   window_->widget()->SetBounds(gfx::Rect(50,50,640,520));
   auto present=[&]{base::test::TestFuture<void> ready;auto* compositor=shell->tools_widget()->GetCompositor();ASSERT_TRUE(compositor);compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce([](base::OnceClosure done,const viz::FrameTimingDetails&){std::move(done).Run();},ready.GetCallback()));compositor->ScheduleFullRedraw();ASSERT_TRUE(ready.Wait());};
-  for(int page=1;page<3;++page){
+  // Only search providers keep a selection picker; gestures have their own.
+  for(int page=2;page<3;++page){
     shell->OpenTools(page);shell->tools_widget()->LayoutRootViewIfNecessary();ASSERT_NO_FATAL_FAILURE(present());
     for(const auto* key:{"selection"}){
       auto* picker=shell->tools_choice_for_testing(key);ASSERT_TRUE(picker);EXPECT_TRUE(picker->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(picker));EXPECT_FALSE(views::AsViewClass<views::Combobox>(picker));
@@ -10514,7 +10539,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClipping
       ui::AXNodeData ax;picker->GetViewAccessibility().GetAccessibleNodeData(&ax);EXPECT_EQ(ax::mojom::Role::kComboBoxSelect,ax.role);
     }
   }
-  shell->OpenTools(1);auto* top=shell->tools_selection();
+  shell->OpenTools(2);auto* top=shell->tools_selection();
   // Make the offscreen precondition independent of native minimum panel size.
   // This fixture-only spacer leaves the real controls and services unchanged.
   auto* scrolling_fixture=top->parent()->AddChildView(std::make_unique<views::View>());
@@ -10529,7 +10554,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, ToolsChoicesScenesClipping
   shell->tools_widget()->Show();shell->tools_widget()->Activate();if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->tools_choice_metal_visible_for_testing("selection");}));
   window_->widget()->SetBounds(gfx::Rect(90,90,900,720));shell->SetThemeMode(ThemeMode::kDark);
   if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{auto r=top->GetVisibleBounds();r.Offset(top->GetBoundsInScreen().x(),top->GetBoundsInScreen().y());return shell->tools_choice_metal_bounds_for_testing("selection")==r;}));
-  views::ViewTracker old(top);shell->OpenTools(2);EXPECT_FALSE(old.view());
+  views::ViewTracker old(top);shell->OpenTools(1);EXPECT_FALSE(old.view());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceChromeSharedLayerCutoutsThemeAndScrolling) {

@@ -141,5 +141,11 @@ struct SidebarScrollBarSnapshot { gfx::Rect bounds, thumb; unsigned color = 0; b
 // Native event/scroll-service/menu/AX adapter; Rust owns thumb geometry and drag.
 std::unique_ptr<views::ScrollBar> CreateSidebarScrollBar(base::RepeatingCallback<bool()> scene_visible, bool horizontal = false);
 SidebarScrollBarSnapshot GetSidebarScrollBarSnapshot(views::ScrollBar* bar);
+// Overlay scrollbar for panels and dialogs (design: Overlay scrollbar): no
+// arrows and no track at rest; a 4 px pill floats over the content while it
+// scrolls, grows to 8 px under the pointer and fades out 800 ms later.
+struct PanelScrollBarColors { unsigned ink = 0xFFF3F1F8; unsigned accent = 0xFF9A92FF; bool dark = true; };
+void SetPanelScrollBarColors(base::RepeatingCallback<PanelScrollBarColors(const views::View*)> colors);
+std::unique_ptr<views::ScrollBar> CreatePanelOverlayScrollBar(bool horizontal = false);
 }
 #endif

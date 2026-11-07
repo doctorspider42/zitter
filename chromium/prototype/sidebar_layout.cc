@@ -17,6 +17,7 @@
 #include "ui/color/color_id.h"
 #include "ui/views/view_class_properties.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
+#include "chromium/prototype/sidebar_metal.h"
 #include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
@@ -41,13 +42,22 @@ class RustViewportClip final : public views::View {
 };
 BEGIN_METADATA(RustViewportClip)
 END_METADATA
+// macOS keeps its native overlay bar; elsewhere panels use Zitter's overlay
+// bar instead of the platform's arrowed gutter (design: Overlay scrollbar).
+std::unique_ptr<views::ScrollBar> DefaultPanelScrollBar(bool horizontal){
+#if BUILDFLAG(IS_MAC)
+  return views::PlatformStyle::CreateScrollBar(horizontal?views::ScrollBar::Orientation::kHorizontal:views::ScrollBar::Orientation::kVertical);
+#else
+  return CreatePanelOverlayScrollBar(horizontal);
+#endif
+}
 class RustPanelViewport final : public views::View,public PanelViewport,public views::ScrollBarController {
   METADATA_HEADER(RustPanelViewport,views::View)
  public:
   explicit RustPanelViewport(base::RepeatingClosure changed,PanelViewportOptions options,std::unique_ptr<views::ScrollBar> primary_bar):changed_(std::move(changed)),options_(options){
     if (options_.edge_hover_scroll) SetNotifyEnterExitOnChild(true);
     clip_=AddChildView(std::make_unique<RustViewportClip>(base::BindRepeating(&RustPanelViewport::Reveal,weak_factory_.GetWeakPtr())));
-    bar_=AddChildView(primary_bar?std::move(primary_bar):views::PlatformStyle::CreateScrollBar(options_.horizontal?views::ScrollBar::Orientation::kHorizontal:views::ScrollBar::Orientation::kVertical));bar_->set_controller(this);bar_->SetVisible(false);bar_->GetViewAccessibility().SetIsIgnored(true);bar_->GetViewAccessibility().SetIsLeaf(true);
+    bar_=AddChildView(primary_bar?std::move(primary_bar):DefaultPanelScrollBar(options_.horizontal));bar_->set_controller(this);bar_->SetVisible(false);bar_->GetViewAccessibility().SetIsIgnored(true);bar_->GetViewAccessibility().SetIsLeaf(true);
     if(options_.dialog_style||options_.overflow_indicators){top_=AddChildView(std::make_unique<views::Separator>());bottom_=AddChildView(std::make_unique<views::Separator>());top_->SetVisible(false);bottom_->SetVisible(false);}
     auto& ax=GetViewAccessibility();ax.SetRole(ax::mojom::Role::kScrollView);ax.SetIsScrollable(true);ax.SetScrollXMin(0);ax.SetScrollXMax(0);ax.SetScrollYMin(0);ax.SetScrollYMax(0);
   }

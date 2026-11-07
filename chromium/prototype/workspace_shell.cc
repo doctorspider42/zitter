@@ -36,6 +36,7 @@
 #include "base/hash/hash.h"
 #include "base/no_destructor.h"
 #include "base/i18n/break_iterator.h"
+#include <map>
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
 #include "base/json/json_reader.h"
@@ -48,6 +49,7 @@
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
+#include "cc/paint/path_effect.h"
 #include "cc/paint/paint_shader.h"
 #include "cc/paint/display_item_list.h"
 #include "cc/paint/paint_record.h"
@@ -1786,6 +1788,251 @@ views::View* PreferenceAction(views::View* parent,views::Button::PressedCallback
   parent=parent->AddChildView(std::make_unique<SceneActionGroup>(stretch,0,!stretch));
   return AddAction(parent,std::move(callback),std::move(text));
 }
+
+// Keyboard shortcuts window (design: Keyboard shortcuts — redesign). Each row's
+// chord is its own control: pressing it records a new chord in place.
+// The keys of a chord as separate keycaps, modifiers first.
+std::vector<std::u16string> ShortcutKeycaps(const ui::Accelerator& chord){
+  std::vector<std::u16string> keys;
+  if(chord.key_code()==ui::VKEY_UNKNOWN)return keys;
+  const int mods=chord.modifiers();
+#if BUILDFLAG(IS_MAC)
+  if(mods&ui::EF_CONTROL_DOWN)keys.push_back(u"⌃");
+  if(mods&ui::EF_ALT_DOWN)keys.push_back(u"⌥");
+  if(mods&ui::EF_SHIFT_DOWN)keys.push_back(u"⇧");
+  if(mods&ui::EF_COMMAND_DOWN)keys.push_back(u"⌘");
+  auto key=base::UTF8ToUTF16(DisplayShortcut(ui::Accelerator(chord.key_code(),ui::EF_COMMAND_DOWN)));
+  if(key.starts_with(u"⌘"))key.erase(0,1);
+#else
+  if(mods&ui::EF_COMMAND_DOWN)keys.push_back(u"Win");
+  if(mods&ui::EF_CONTROL_DOWN)keys.push_back(u"Ctrl");
+  if(mods&ui::EF_ALT_DOWN)keys.push_back(u"Alt");
+  if(mods&ui::EF_SHIFT_DOWN)keys.push_back(u"Shift");
+  auto key=base::UTF8ToUTF16(DisplayShortcut(ui::Accelerator(chord.key_code(),ui::EF_CONTROL_DOWN)));
+  if(key.starts_with(u"Ctrl+"))key.erase(0,5);
+#endif
+  keys.push_back(std::move(key));
+  return keys;
+}
+gfx::FontList KeycapFont(){return DesignFont(3,12,400,false);}
+// A row's chord: keycaps at rest, the recording pill while it listens.
+class ShortcutKeycapsButton final : public views::Button {
+  METADATA_HEADER(ShortcutKeycapsButton,views::Button)
+ public:
+  enum class Mode { kRest, kRecording, kConflict };
+  ShortcutKeycapsButton(PressedCallback pressed,std::vector<std::u16string> keys,Mode mode,
+      base::RepeatingCallback<void(const ui::KeyEvent&)> key)
+      :views::Button(std::move(pressed)),keys_(std::move(keys)),mode_(mode),key_(std::move(key)){
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    SetNotifyEnterExitOnChild(true);
+  }
+  bool recording() const{return mode_==Mode::kRecording;}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{
+    if(recording())return gfx::Size(28+gfx::GetStringWidth(T(u"Naciśnij klawisze…"),KeycapFont())+16,32);
+    if(keys_.empty())return gfx::Size(gfx::GetStringWidth(T(u"Nie ustawiono"),DesignFont(2,12,500,false))+20,32);
+    int width=12;for(const auto& key:keys_)width+=KeyWidth(key)+3;
+    return gfx::Size(width-3,32);
+  }
+  // While recording, every key — Tab and the app's own shortcuts too — is
+  // the new chord, not focus traversal or a command.
+  bool SkipDefaultKeyEventProcessing(const ui::KeyEvent&) override{return recording();}
+  bool OnKeyPressed(const ui::KeyEvent& event) override{
+    if(!recording())return views::Button::OnKeyPressed(event);
+    if(key_)key_.Run(event);
+    return true;
+  }
+  bool OnKeyReleased(const ui::KeyEvent& event) override{return recording()||views::Button::OnKeyReleased(event);}
+  void OnMouseEntered(const ui::MouseEvent& event) override{views::Button::OnMouseEntered(event);SchedulePaint();}
+  void OnMouseExited(const ui::MouseEvent& event) override{views::Button::OnMouseExited(event);SchedulePaint();}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const auto bounds=GetLocalBounds();
+    if(recording()){
+      cc::PaintFlags fill;fill.setAntiAlias(true);fill.setColor(p.bg_raised);
+      canvas->DrawRoundRect(gfx::RectF(bounds),bounds.height()/2.f,fill);
+      cc::PaintFlags edge;edge.setAntiAlias(true);edge.setStyle(cc::PaintFlags::kStroke_Style);edge.setStrokeWidth(1.5f);edge.setColor(p.accent);
+      auto ring=gfx::RectF(bounds);ring.Inset(0.75f);canvas->DrawRoundRect(ring,ring.height()/2.f,edge);
+      FillRound(canvas,gfx::Rect(14,bounds.height()/2-3,6,6),3,p.accent);
+      canvas->DrawStringRect(T(u"Naciśnij klawisze…"),KeycapFont(),p.ink,gfx::Rect(28,0,bounds.width()-28,bounds.height()));
+      return;
+    }
+    const bool hot=IsMouseHovered()||GetState()==STATE_PRESSED;
+    if(hot)FillRound(canvas,bounds,8,p.bg_hover);
+    if(keys_.empty()){
+      canvas->DrawStringRectWithFlags(T(u"Nie ustawiono"),DesignFont(2,12,500,false),p.ink_muted,bounds,gfx::Canvas::TEXT_ALIGN_CENTER);
+      return;
+    }
+    const SkColor ring=mode_==Mode::kConflict?p.warn:hot?p.accent:Mix(p.line_strong,p.bg_hover,40);
+    int x=6;const int y=(bounds.height()-22)/2;
+    for(const auto& key:keys_){
+      const gfx::Rect cap(x,y,KeyWidth(key),22);
+      FillRound(canvas,cap,4,p.bg_void);
+      FillRound(canvas,gfx::Rect(cap.x(),cap.y(),cap.width(),cap.height()-1),4,p.bg_hover);
+      cc::PaintFlags edge;edge.setAntiAlias(true);edge.setStyle(cc::PaintFlags::kStroke_Style);edge.setStrokeWidth(1);edge.setColor(ring);
+      auto outline=gfx::RectF(cap);outline.Inset(0.5f);canvas->DrawRoundRect(outline,4,edge);
+      canvas->DrawStringRectWithFlags(key,KeycapFont(),p.ink,gfx::Rect(cap.x(),cap.y(),cap.width(),cap.height()-1),gfx::Canvas::TEXT_ALIGN_CENTER);
+      x+=cap.width()+3;
+    }
+  }
+ private:
+  static int KeyWidth(const std::u16string& key){return std::max(22,gfx::GetStringWidth(key,KeycapFont())+12);}
+  std::vector<std::u16string> keys_;Mode mode_;base::RepeatingCallback<void(const ui::KeyEvent&)> key_;
+};
+BEGIN_METADATA(ShortcutKeycapsButton)
+END_METADATA
+// A 28 px icon button: the reset arc, or the warning triangle when inert.
+class ShortcutGlyph final : public views::Button {
+  METADATA_HEADER(ShortcutGlyph,views::Button)
+ public:
+  enum class Kind { kReset, kWarning };
+  ShortcutGlyph(PressedCallback pressed,Kind kind,std::u16string name):views::Button(std::move(pressed)),kind_(kind){
+    if(kind_==Kind::kWarning){SetFocusBehavior(FocusBehavior::NEVER);SetEnabled(false);GetViewAccessibility().SetIsIgnored(true);}
+    else{GetViewAccessibility().SetName(name);SetTooltipText(name);}
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return kind_==Kind::kWarning?gfx::Size(16,16):gfx::Size(28,28);}
+  void OnMouseEntered(const ui::MouseEvent& event) override{views::Button::OnMouseEntered(event);SchedulePaint();}
+  void OnMouseExited(const ui::MouseEvent& event) override{views::Button::OnMouseExited(event);SchedulePaint();}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);
+    cc::PaintFlags stroke;stroke.setAntiAlias(true);stroke.setStyle(cc::PaintFlags::kStroke_Style);stroke.setStrokeWidth(1.6f);
+    stroke.setStrokeCap(cc::PaintFlags::kRound_Cap);stroke.setStrokeJoin(cc::PaintFlags::kRound_Join);
+    if(kind_==Kind::kWarning){
+      stroke.setColor(p.warn);SkPathBuilder path;
+      path.moveTo(8,2.5f);path.lineTo(14,13);path.lineTo(2,13);path.close();
+      path.moveTo(8,6.5f);path.lineTo(8,9.5f);path.moveTo(8,11.3f);path.lineTo(8,11.31f);
+      canvas->DrawPath(path.detach(),stroke);return;
+    }
+    const bool hot=IsMouseHovered()||GetState()==STATE_PRESSED;
+    if(hot)FillRound(canvas,GetLocalBounds(),8,p.bg_hover);
+    stroke.setColor(hot?p.ink:p.ink_muted);
+    canvas->Translate(gfx::Vector2d(6,6));
+    SkPathBuilder arc;arc.arcTo(SkRect::MakeLTRB(3,3,13,13),180,-290,true);
+    canvas->DrawPath(arc.detach(),stroke);
+    SkPathBuilder head;head.moveTo(3,2.5f);head.lineTo(3,5);head.lineTo(5.5f,5);
+    canvas->DrawPath(head.detach(),stroke);
+  }
+ private:
+  Kind kind_;
+};
+BEGIN_METADATA(ShortcutGlyph)
+END_METADATA
+// A shortcut row's surface: a wash under the pointer at rest, the accent wash
+// while recording, a warning edge around a conflict.
+class ShortcutRowView final : public views::View {
+  METADATA_HEADER(ShortcutRowView,views::View)
+ public:
+  enum class Style { kRow, kRecording, kConflict, kTile, kTileHit };
+  explicit ShortcutRowView(Style style):style_(style){SetNotifyEnterExitOnChild(true);}
+  // Gesture tiles share a row in equal columns.
+  void SetFixedWidth(int width){fixed_width_=width;PreferredSizeChanged();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{
+    if(!fixed_width_||!GetLayoutManager())return views::View::CalculatePreferredSize(available);
+    return gfx::Size(fixed_width_,GetLayoutManager()->GetPreferredHeightForWidth(this,fixed_width_));
+  }
+  void OnMouseEntered(const ui::MouseEvent&) override{SchedulePaint();}
+  void OnMouseExited(const ui::MouseEvent&) override{SchedulePaint();}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const auto bounds=GetLocalBounds();
+    switch(style_){
+      case Style::kRow:if(IsMouseHovered())FillRound(canvas,bounds,8,Mix(p.bg_hover,p.bg_raised,45));break;
+      case Style::kRecording:FillRound(canvas,bounds,12,p.accent_soft);break;
+      case Style::kConflict:case Style::kTile:case Style::kTileHit:{
+        const SkColor fill=style_==Style::kTileHit?p.accent_soft:Mix(p.bg_hover,p.bg_raised,45);
+        const SkColor edge=style_==Style::kConflict?Mix(p.warn,p.bg_raised,45):style_==Style::kTileHit?p.accent:p.line;
+        FillRound(canvas,bounds,12,fill);
+        cc::PaintFlags flags;flags.setAntiAlias(true);flags.setStyle(cc::PaintFlags::kStroke_Style);
+        flags.setStrokeWidth(style_==Style::kTileHit?1.5f:1.f);flags.setColor(edge);
+        auto ring=gfx::RectF(bounds);ring.Inset(style_==Style::kTileHit?0.75f:0.5f);canvas->DrawRoundRect(ring,12,flags);
+        break;
+      }
+    }
+  }
+ private:
+  Style style_;int fixed_width_=0;
+};
+BEGIN_METADATA(ShortcutRowView)
+END_METADATA
+// A small label on a tinted pill: „ZMIENIONY” on a changed row.
+class ShortcutBadge final : public views::View {
+  METADATA_HEADER(ShortcutBadge,views::View)
+ public:
+  explicit ShortcutBadge(std::u16string text):text_(base::i18n::ToUpper(text)){GetViewAccessibility().SetName(text);GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);}
+  static gfx::FontList BadgeFont(){return DesignFont(2,10,600,false);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(gfx::GetStringWidth(text_,BadgeFont())+text_.size()+12,18);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);FillRound(canvas,GetLocalBounds(),4,p.accent_soft);
+    canvas->DrawStringRectWithFlags(text_,BadgeFont(),p.accent_ink,GetLocalBounds(),gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+ private:
+  std::u16string text_;
+};
+BEGIN_METADATA(ShortcutBadge)
+END_METADATA
+// A mouse gesture drawn as its stroke: start dot, path and arrowhead.
+class GestureGlyphView final : public views::View {
+  METADATA_HEADER(GestureGlyphView,views::View)
+ public:
+  explicit GestureGlyphView(std::string direction):direction_(std::move(direction)){GetViewAccessibility().SetIsIgnored(true);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(44,44);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);FillRound(canvas,GetLocalBounds(),8,p.bg_base);
+    // Points on the design's 64-unit grid, scaled to the 44 px tile.
+    struct Shape{std::vector<SkPoint> line,head;SkPoint dot;};
+    static const base::NoDestructor<std::map<std::string,Shape>> shapes(std::map<std::string,Shape>{
+      {"L",{{{48,32},{16,32}},{{22,26},{16,32},{22,38}},{48,32}}},
+      {"R",{{{16,32},{48,32}},{{42,26},{48,32},{42,38}},{16,32}}},
+      {"U",{{{32,48},{32,16}},{{26,22},{32,16},{38,22}},{32,48}}},
+      {"D",{{{32,16},{32,48}},{{26,42},{32,48},{38,42}},{32,16}}},
+      {"UD",{{{22,48},{22,14},{42,14},{42,48}},{{36,42},{42,48},{48,42}},{22,48}}},
+      {"DU",{{{22,16},{22,50},{42,50},{42,16}},{{36,22},{42,16},{48,22}},{22,16}}},
+      {"LR",{{{48,22},{14,22},{14,42},{48,42}},{{42,36},{48,42},{42,48}},{48,22}}},
+      {"RL",{{{16,22},{50,22},{50,42},{16,42}},{{22,36},{16,42},{22,48}},{16,22}}}});
+    const auto found=shapes->find(direction_);if(found==shapes->end())return;
+    const float scale=44.f/64.f;
+    cc::PaintFlags stroke;stroke.setAntiAlias(true);stroke.setStyle(cc::PaintFlags::kStroke_Style);stroke.setStrokeWidth(2.2f);
+    stroke.setStrokeCap(cc::PaintFlags::kRound_Cap);stroke.setStrokeJoin(cc::PaintFlags::kRound_Join);stroke.setColor(p.accent);
+    for(const auto* points:{&found->second.line,&found->second.head}){
+      SkPathBuilder path;for(size_t i=0;i<points->size();++i){const SkPoint pt{(*points)[i].x()*scale,(*points)[i].y()*scale};if(i)path.lineTo(pt);else path.moveTo(pt);}
+      canvas->DrawPath(path.detach(),stroke);
+    }
+    cc::PaintFlags dot;dot.setAntiAlias(true);dot.setColor(p.ink);
+    canvas->DrawCircle(gfx::PointF(found->second.dot.x()*scale,found->second.dot.y()*scale),2.5f,dot);
+  }
+ private:
+  std::string direction_;
+};
+BEGIN_METADATA(GestureGlyphView)
+END_METADATA
+// „Wypróbuj tutaj”: draws a gesture with the right button held and reports
+// its directions (48 px per stroke, at most one turn), as the window does.
+class GesturePadView final : public views::View {
+  METADATA_HEADER(GesturePadView,views::View)
+ public:
+  explicit GesturePadView(base::RepeatingCallback<void(std::string)> done):done_(std::move(done)){}
+  bool OnMousePressed(const ui::MouseEvent& event) override{
+    if(!event.IsOnlyRightMouseButton()||!GetEnabled())return false;
+    tracking_=true;last_=event.location();directions_.clear();return true;
+  }
+  bool OnMouseDragged(const ui::MouseEvent& event) override{
+    if(!tracking_)return false;
+    const auto delta=event.location()-last_;
+    if(std::max(std::abs(delta.x()),std::abs(delta.y()))<48)return true;
+    const char direction=std::abs(delta.x())>std::abs(delta.y())?(delta.x()<0?'L':'R'):(delta.y()<0?'U':'D');
+    if(directions_.empty()||directions_.back()!=direction)directions_.push_back(direction);
+    last_=event.location();return true;
+  }
+  void OnMouseReleased(const ui::MouseEvent&) override{if(!tracking_)return;tracking_=false;if(done_)done_.Run(directions_);}
+  void OnMouseCaptureLost() override{tracking_=false;}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);cc::PaintFlags flags;flags.setAntiAlias(true);flags.setStyle(cc::PaintFlags::kStroke_Style);
+    flags.setStrokeWidth(1.5f);flags.setColor(p.line_strong);
+    const SkScalar intervals[]={5,4};flags.setPathEffect(cc::PathEffect::MakeDash(intervals,2,0));
+    auto ring=gfx::RectF(GetLocalBounds());ring.Inset(0.75f);canvas->DrawRoundRect(ring,12,flags);
+  }
+ private:
+  base::RepeatingCallback<void(std::string)> done_;bool tracking_=false;gfx::Point last_;std::string directions_;
+};
+BEGIN_METADATA(GesturePadView)
+END_METADATA
 
 // Editing/IME remains a platform service; result selection is scene state.
 class PaletteView final : public views::View {
@@ -4039,6 +4286,11 @@ WorkspaceShell::WorkspaceShell(base::FilePath path, Callbacks callbacks)
   if (callbacks_.private_mode) { theme_mode_ = ThemeMode::kDark; general_dirty_.insert("theme"); }
   sidebar_tree_.SetDefaultCollapsed(true);
   InstallMenuStyle();
+  // Panel scrollbars paint from the design palette of the window they sit in.
+  SetPanelScrollBarColors(base::BindRepeating([](const views::View* view) {
+    const auto palette = Palette(view);
+    return PanelScrollBarColors{palette.ink, palette.accent, IsDark(view)};
+  }));
   ui::NativeTheme::GetInstanceForNativeUi()->AddObserver(this);
 }
 WorkspaceShell::~WorkspaceShell() { ui::NativeTheme::GetInstanceForNativeUi()->RemoveObserver(this); Detach(); }
@@ -5034,7 +5286,8 @@ void WorkspaceShell::Detach() {
   time_machine_check_ = nullptr; time_machine_days_picker_ = nullptr; time_machine_ = nullptr;
   time_machine_widget_.reset(); time_machine_delegate_.reset();
   sidebar_check_ = nullptr; animations_check_ = nullptr; workspace_names_check_ = nullptr; folders_collapsed_check_ = nullptr; language_picker_ = nullptr;
-  shortcut_search_ = nullptr; shortcut_category_ = nullptr; gesture_choice_ = nullptr; gesture_command_ = nullptr;
+  shortcut_search_ = nullptr; shortcut_list_ = nullptr; tools_tabs_ = nullptr; tools_toolbar_ = nullptr; tools_footer_ = nullptr; tools_footer_action_ = nullptr;
+  shortcut_keycaps_.clear(); shortcut_chips_.clear(); gesture_pickers_.clear();
   tools_root_ = nullptr; tools_body_ = nullptr; tools_close_=nullptr; tools_title_ = nullptr; tools_status_ = nullptr;
   tools_scroll_ = nullptr; tools_picker_ = nullptr;
   shortcut_chord_ = nullptr;
@@ -9805,7 +10058,7 @@ void WorkspaceShell::PositionPanels() {
   if (!sidebar_widget_ || !address_widget_ || !settings_widget_) return;
   const auto bounds = widget_->GetClientAreaBoundsInScreen();
   if (tools_widget_) {
-    const int w = std::max(300, std::min(660, bounds.width() - 24));
+    const int w = std::max(300, std::min(760, bounds.width() - 24));
     const int h = std::max(240, std::min(680, bounds.height() - 24));
     SetWidgetBounds(tools_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - w / 2, bounds.CenterPoint().y() - h / 2, w, h));
   }
@@ -10132,6 +10385,18 @@ void WorkspaceShell::CreateToolsPanel() {
   auto* heading = panel->AddChildView(std::make_unique<views::View>());
   tools_title_ = AddToolsCopy(heading, u"Time Machine", kInk, 5,
                               static_cast<int>(gfx::Font::Weight::SEMIBOLD), false);
+  // Keyboard shortcuts: the Keyboard / Mouse gestures tabs beside the title.
+  tools_tabs_ = ActionGroup(heading, false, 4);
+  for (const bool gestures : {false, true}) {
+    auto* tab = AddAction(tools_tabs_, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, bool gestures) {
+      if (!shell) return;
+      shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell, bool gestures) {
+        shell->tools_gestures_ = gestures; shell->shortcut_recording_.clear(); shell->shortcut_conflict_.reset();
+        shell->shortcut_error_.clear(); shell->gesture_tried_ = false;
+      }, base::Unretained(shell.get()), gestures));
+    }, weak, gestures), gestures ? T(u"Gesty myszy") : T(u"Klawiatura"));
+    views::AsViewClass<SceneTextButton>(tab)->SetKind(6);
+  }
   auto* controls = heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));
   tools_close_ = controls->AddControl({}, T(u"Zamknij narzędzia"));
   BindFormCommand(tools_close_, sidebar::FormCommand::ToolsDismiss);
@@ -10145,9 +10410,27 @@ void WorkspaceShell::CreateToolsPanel() {
   tools_body_ = body.get();
   SetSidebarPanelLayout(tools_body_, true, gfx::Insets::TLBR(0, 0, 8, 8), 10);
   tools_scroll_->SetPanelContents(std::move(body));
+  // Search and category chips stay put while the list scrolls under them.
+  tools_toolbar_ = panel->AddChildView(std::make_unique<views::View>());
+  SetSidebarPanelLayout(tools_toolbar_, true, gfx::Insets(), 12);
   panel->AddChildView(std::move(scroll));
-  tools_status_ = AddToolsCopy(panel.get(), u"", kMuted, -1,
+  tools_footer_ = panel->AddChildView(std::make_unique<views::View>());
+  tools_status_ = AddToolsCopy(tools_footer_, u"", kMuted, -1,
                                static_cast<int>(gfx::Font::Weight::NORMAL), true);
+  auto* footer_actions = ActionGroup(tools_footer_, false, 0);
+  tools_footer_action_ = AddAction(footer_actions, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell) return;
+    shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell) {
+      if (shell->tools_gestures_) {
+        shell->tools_.mouse_gestures = DefaultMouseGestures(); shell->gestures_dirty_ = true;
+      } else {
+        shell->tools_.shortcuts = ArcShortcuts(); shell->keys_dirty_ = true; shell->RefreshKeyRegistrations();
+      }
+      shell->shortcut_recording_.clear(); shell->shortcut_conflict_.reset(); shell->shortcut_error_.clear();
+      shell->SaveTools();
+    }, base::Unretained(shell.get())));
+  }, weak), T(u"Przywróć schemat Arc"));
+  SetSidebarPanelLayout(tools_footer_, false, gfx::Insets(), 12, tools_status_, true);
   SetSidebarPanelLayout(panel.get(), true, gfx::Insets(20), 12, tools_scroll_->view());
   CreatePanelWidget(std::move(panel), tools_delegate_, tools_widget_, T(u"Zitter — Narzędzia"));
 }
@@ -10171,17 +10454,31 @@ void WorkspaceShell::OpenTools(int page) {
   CloseOverlays(true);
   if (!tools_widget_) CreateToolsPanel();
   if(tools_form_)tools_form_->form->tools_select(std::clamp(page,1,2));
+  tools_gestures_ = false; shortcut_filter_ = "all"; shortcut_query_.clear(); shortcut_key_search_ = false;
+  shortcut_recording_.clear(); shortcut_conflict_.reset(); shortcut_error_.clear(); shortcut_focus_.clear();
+  gesture_tried_ = false; gesture_hit_.clear();
   RefreshTools(); RefreshKeyRegistrations(); PositionPanels(); ApplyTheme();
   tools_widget_->LayoutRootViewIfNecessary();
   tools_widget_->Show(); tools_widget_->Activate(); tools_widget_->ClearNativeFocus();
   if (tools_picker_) tools_picker_->RequestFocus();
+  else if (shortcut_search_) shortcut_search_->RequestFocus();
 }
 views::View* WorkspaceShell::tools_choice_for_testing(std::string_view key) const{
   if(key=="selection")return tools_picker_;
-  if(key=="category")return shortcut_category_;
-  if(key=="gesture")return gesture_choice_;
-  if(key=="gesture_command")return gesture_command_;
-  return nullptr;
+  return gesture_picker_for_testing(key);
+}
+views::View* WorkspaceShell::shortcut_keycaps_for_testing(std::string_view id) const{
+  const auto found=shortcut_keycaps_.find(std::string(id));return found==shortcut_keycaps_.end()?nullptr:found->second.get();
+}
+views::View* WorkspaceShell::shortcut_chip_for_testing(std::string_view key) const{
+  const auto found=shortcut_chips_.find(std::string(key));return found==shortcut_chips_.end()?nullptr:found->second.get();
+}
+views::View* WorkspaceShell::tools_tab_for_testing(std::string_view key) const{
+  if(!tools_tabs_||tools_tabs_->children().size()<2)return nullptr;
+  return key=="gestures"?tools_tabs_->children()[1].get():key=="keyboard"?tools_tabs_->children()[0].get():nullptr;
+}
+views::View* WorkspaceShell::gesture_picker_for_testing(std::string_view direction) const{
+  const auto found=gesture_pickers_.find(std::string(direction));return found==gesture_pickers_.end()?nullptr:found->second.get();
 }
 size_t WorkspaceShell::tools_choice_count_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerCount(picker):0;}
 std::optional<size_t> WorkspaceShell::tools_choice_selection_for_testing(std::string_view key) const{auto* picker=tools_choice_for_testing(key);return picker?PickerIndex(picker):std::nullopt;}
@@ -10244,7 +10541,7 @@ void WorkspaceShell::BuildRustToolsForm(){
         break;
       }
       case Kind::Choice:{
-        if(node.role==Role::ShortcutChoice){BuildShortcutFilters();rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& item:tools_.shortcuts)metadata.push_back({item.id,units(item.title),units(base::UTF8ToUTF16(FormatShortcut(item.accelerator)))});const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));control=form_picker(parent,label,projection);}
+        if(node.role==Role::ShortcutChoice){rust::Vec<sidebar::ToolsShortcutItem> metadata;for(const auto& item:tools_.shortcuts)metadata.push_back({item.id,units(item.title),units(base::UTF8ToUTF16(FormatShortcut(item.accelerator)))});const auto projection=tools_form_->form->tools_shortcut_choices(std::move(metadata));control=form_picker(parent,label,projection);}
         else if(node.role==Role::ProviderChoice){rust::Vec<sidebar::ToolsProviderItem> metadata;for(const auto& item:tools_.providers)metadata.push_back({item.keyword,units(base::UTF8ToUTF16(item.name)),units(base::UTF8ToUTF16(item.keyword)),units(base::UTF8ToUTF16(item.url)),item.keyword==tools_.default_keyword});const auto projection=tools_form_->form->tools_provider_choices(std::move(metadata));control=form_picker(parent,label,projection);}
         else{std::vector<std::u16string> choices;for(const auto& value:node.choices)choices.push_back(base::UTF8ToUTF16(std::string(value)));control=ChoicePicker(parent,label,std::move(choices));SetPickerIndex(control,0);}
         switch(node.role){case Role::ShortcutChoice:case Role::ProviderChoice:tools_picker_=control;SetPickerCallback(control,base::BindRepeating(&WorkspaceShell::RefreshToolsChoiceFields,weak));break;default:CHECK(false);}
@@ -10276,11 +10573,15 @@ void WorkspaceShell::RefreshTools() {
   for(auto* field:{shortcut_chord_.get(),shortcut_search_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
     if(field)field->SetCallbacks({},{});
   ResetToolsForm();
-  shortcut_chord_ = nullptr; shortcut_search_ = nullptr; shortcut_category_ = nullptr;
-  gesture_choice_ = nullptr; gesture_command_ = nullptr;
+  shortcut_chord_ = nullptr; shortcut_search_ = nullptr;
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr; tools_picker_ = nullptr;
   tools_body_->RemoveAllChildViews();
-  if(tools_form_){BuildRustToolsForm();if(ToolsPage()==1)BuildMouseGestureControls();PreparePanelText(tools_widget_->GetRootView());tools_body_->InvalidateLayout();return;}
+  if(tools_form_&&ToolsPage()==1){BuildShortcutsPage();return;}
+  shortcut_keycaps_.clear();shortcut_chips_.clear();gesture_pickers_.clear();shortcut_list_=nullptr;
+  if(tools_tabs_)tools_tabs_->SetVisible(false);
+  if(tools_toolbar_){tools_toolbar_->RemoveAllChildViews();tools_toolbar_->SetVisible(false);}
+  if(tools_footer_action_)tools_footer_action_->parent()->SetVisible(false);
+  if(tools_form_){BuildRustToolsForm();PreparePanelText(tools_widget_->GetRootView());tools_body_->InvalidateLayout();return;}
   std::u16string form_title,form_intro,form_tail,form_status;
   std::vector<std::u16string> fields,pickers,headings,actions,form_choices;
   if(workspace_form_){
@@ -10381,134 +10682,530 @@ void WorkspaceShell::RefreshTools() {
   }
   PreparePanelText(tools_widget_->GetRootView()); tools_body_->InvalidateLayout();
 }
-void WorkspaceShell::BuildShortcutFilters() {
-  AddToolsCopy(tools_body_, T(u"Klawisze F1–F24 działają także bez modyfikatora."), kMuted, -1, static_cast<int>(gfx::Font::Weight::NORMAL), true);
-  auto weak = weak_factory_.GetWeakPtr();
-  shortcut_search_ = AddEditor(tools_body_);
-  const auto label = T(u"Szukaj akcji lub kombinacji");
-  shortcut_search_->GetViewAccessibility().SetName(label);
-  shortcut_search_->SetPlaceholderText(label);
-  shortcut_search_->view()->SetPreferredSize(gfx::Size(240, 36));
-  shortcut_search_->SetPresentation(gfx::FontList().GetFontSize(), 8, true, Tone(root_, kChip));
-  shortcut_search_->SetCallbacks(base::BindRepeating(&WorkspaceShell::FilterShortcutChoices, weak),
-      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, const ui::KeyEvent& event) {
-        return shell && shell->HandleToolsEditorKey(shell->shortcut_search_, event);
-      }, weak));
-  shortcut_category_ = ChoicePicker(tools_body_, T(u"Kategoria skrótów"),
-      {T(u"Wszystkie akcje"), T(u"Nawigacja"), T(u"Karty"), T(u"Przestrzenie"), T(u"Split View"), T(u"Przeglądarka")});
-  views::AsViewClass<SceneSelect>(shortcut_category_)->SetTone(3);
-  SetPickerIndex(shortcut_category_, 0);
-  SetPickerCallback(shortcut_category_, base::BindRepeating(&WorkspaceShell::FilterShortcutChoices, weak));
-}
-void WorkspaceShell::FilterShortcutChoices() {
-  if (!tools_form_ || !shortcut_search_ || shortcut_search_->IsIMEComposing()) return;
-  auto* picker = views::AsViewClass<SceneSelect>(tools_picker_);
-  if (!picker) return;
-  SetShortcutRecording(false); RefreshKeyRegistrations();
-  const auto query = base::i18n::ToLower(base::TrimWhitespace(shortcut_search_->GetText(), base::TRIM_ALL));
-  const auto category = std::array{"", "navigation", "tabs", "workspaces", "split", "browser"}[
-      std::min<size_t>(5, PickerIndex(shortcut_category_).value_or(0))];
-  rust::Vec<sidebar::ToolsShortcutItem> metadata;
-  auto units=[](const std::u16string& text){rust::Vec<uint16_t> out;for(char16_t unit:text)out.push_back(unit);return out;};
-  for (const auto& binding : tools_.shortcuts) {
-    if (*category && ShortcutCategory(binding.id) != category) continue;
-    const auto searchable = base::i18n::ToLower(binding.title + u" " + base::UTF8ToUTF16(binding.id + " " + FormatShortcut(binding.accelerator) + " " + DisplayShortcut(binding.accelerator)));
-    if (!query.empty() && searchable.find(query) == std::u16string::npos) continue;
-    metadata.push_back({binding.id, units(binding.title), units(base::UTF8ToUTF16(FormatShortcut(binding.accelerator)))});
+namespace {
+bool IsModifierKey(ui::KeyboardCode code) {
+  switch (code) {
+    case ui::VKEY_SHIFT: case ui::VKEY_LSHIFT: case ui::VKEY_RSHIFT:
+    case ui::VKEY_CONTROL: case ui::VKEY_LCONTROL: case ui::VKEY_RCONTROL:
+    case ui::VKEY_MENU: case ui::VKEY_LMENU: case ui::VKEY_RMENU:
+    case ui::VKEY_LWIN: case ui::VKEY_RWIN: case ui::VKEY_ALTGR: case ui::VKEY_CAPITAL:
+      return true;
+    default:
+      return false;
   }
-  const auto previous = tools_form_->form->tools_choice_draft(picker->SelectedKey());
-  std::optional<size_t> selected;
-  for (size_t i = 0; i < metadata.size(); ++i) if (previous.valid && metadata[i].id == previous.target) selected = i;
-  const auto projection = tools_form_->form->tools_shortcut_choices(std::move(metadata));
-  std::vector<std::pair<std::string,std::u16string>> options;
-  for (const auto& choice : projection.choices) options.emplace_back(std::string(choice.key), std::u16string(choice.label.begin(), choice.label.end()));
-  picker->SetOptions(options); picker->SetSelectedIndex(selected.value_or(0)); picker->SetEnabled(projection.enabled);
-  if (shortcut_chord_) { shortcut_chord_->SetText(u""); shortcut_chord_->view()->SetEnabled(projection.enabled); }
-  RefreshToolsChoiceFields();
-  SetPanelText(tools_status_, projection.enabled ? T(u"Wybierz akcję, aby zmienić skrót.") : T(u"Brak pasujących akcji. Zmień wyszukiwanie lub kategorię."));
 }
-void WorkspaceShell::BuildMouseGestureControls() {
-  auto weak = weak_factory_.GetWeakPtr();
-  auto action = [&](views::View* parent, std::u16string label, int id) {
-    return AddAction(parent, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, int id) {
-      if (!shell) return;
-      // Destruction of a clicked view must happen after its dispatch returns.
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-          base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, uint64_t generation, int id) {
-            if (shell && shell->tools_generation_ == generation) shell->InputConfigurationAction(id);
-          }, shell, shell->tools_generation_, id));
-    }, weak, id), std::move(label));
+// "tab2"…"tab9" and "space2"…"space9" are shown on the row of their "…1".
+bool GroupedShortcut(std::string_view id) {
+  for (std::string_view prefix : {"tab", "space"})
+    if (id.size() == prefix.size() + 1 && id.starts_with(prefix) && id.back() >= '2' && id.back() <= '9') return true;
+  return false;
+}
+}  // namespace
+std::vector<std::string> WorkspaceShell::ShortcutRowIds(const std::string& id) const {
+  for (std::string prefix : {"tab", "space"}) {
+    if (id != prefix + "1") continue;
+    std::vector<std::string> ids;
+    for (int i = 1; i <= 9; ++i) ids.push_back(prefix + base::NumberToString(i));
+    return ids;
+  }
+  return {id};
+}
+std::u16string WorkspaceShell::ShortcutRowTitle(const std::string& id) const {
+  if (id == "tab1") return T(u"Przejdź do karty 1–9");
+  if (id == "space1") return T(u"Przejdź do przestrzeni 1–9");
+  for (const auto& item : tools_.shortcuts) if (item.id == id) return item.title;
+  return base::UTF8ToUTF16(id);
+}
+bool WorkspaceShell::ShortcutModified(const std::string& id) const {
+  const auto defaults = ArcShortcuts();
+  for (const auto& member : ShortcutRowIds(id)) {
+    const auto current = std::find_if(tools_.shortcuts.begin(), tools_.shortcuts.end(), [&](const auto& item) { return item.id == member; });
+    const auto original = std::find_if(defaults.begin(), defaults.end(), [&](const auto& item) { return item.id == member; });
+    if (current != tools_.shortcuts.end() && original != defaults.end() && !(current->accelerator == original->accelerator)) return true;
+  }
+  return false;
+}
+void WorkspaceShell::PostShortcutsChange(base::OnceClosure change) {
+  // Rows are rebuilt after the click or key that asked for it has returned.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+      [](base::WeakPtr<WorkspaceShell> shell, uint64_t generation, base::OnceClosure change) {
+        if (!shell || shell->tools_generation_ != generation || !shell->tools_widget_ ||
+            !shell->tools_widget_->IsVisible() || shell->ToolsPage() != 1) return;
+        std::move(change).Run();
+        shell->BuildShortcutsPage();
+      }, weak_factory_.GetWeakPtr(), tools_generation_, std::move(change)));
+}
+void WorkspaceShell::SetShortcutsSearch(std::u16string query) {
+  if (query == shortcut_query_) return;
+  shortcut_query_ = std::move(query);
+  BuildShortcutRows();
+  PreparePanelText(tools_body_);
+  tools_body_->InvalidateLayout();
+}
+void WorkspaceShell::RecordShortcutKey(const std::string& id, const ui::KeyEvent& event) {
+  if (event.type() != ui::EventType::kKeyPressed || IsModifierKey(event.key_code())) return;
+  const int flags = ui::Accelerator::MaskOutKeyEventFlags(event.flags());
+  const auto code = event.key_code();
+  const auto ids = ShortcutRowIds(id);
+  auto post = [&](base::OnceCallback<void(WorkspaceShell*)> change) {
+    PostShortcutsChange(base::BindOnce(std::move(change), base::Unretained(this)));
   };
-  auto* keyboard_actions = tools_body_->children().empty() ? nullptr : views::AsViewClass<SceneActionGroup>(tools_body_->children().back());
-  auto* reset = action(keyboard_actions, T(u"Przywróć domyślny skrót wybranej akcji"), 30);
-  auto* reset_button=views::AsViewClass<SceneTextButton>(reset);reset_button->SetQuiet();reset_button->SetText(T(u"Przywróć wybrany"));
-  reset->SetTooltipText(T(u"Przywróć domyślny skrót wybranej akcji"));reset->GetViewAccessibility().SetName(T(u"Przywróć domyślny skrót wybranej akcji"));
-  keyboard_actions->ReorderChildView(reset,0);
-  AddToolsCopy(tools_body_, T(u"Gesty myszy"), kInk, 2, static_cast<int>(gfx::Font::Weight::SEMIBOLD), false);
-  AddToolsCopy(tools_body_, T(u"Przytrzymaj Alt i prawy przycisk myszy. Przesuń co najmniej 48 px w kierunku strzałek i puść przycisk. Escape anuluje gest. Zwykłe kliknięcia pozostają bez zmian. Gesty są domyślnie wyłączone."), kMuted, -1, static_cast<int>(gfx::Font::Weight::NORMAL), true);
-  auto* line = tools_body_->AddChildView(std::make_unique<views::View>());
-  auto* layout = line->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 16));
-  auto* copy = AddToolsCopy(line, T(u"Włącz gesty myszy"), kInk, 0, static_cast<int>(gfx::Font::Weight::NORMAL), false);
-  layout->SetFlexForView(copy, 1);
-  auto* toggle = PreferenceToggle(line, T(u"Włącz gesty myszy")); SetToggleOn(toggle, tools_.mouse_gestures_enabled);
+  if (code == ui::VKEY_ESCAPE && !flags) {
+    post(base::BindOnce([](std::string id, WorkspaceShell* shell) {
+      shell->shortcut_recording_.clear(); shell->shortcut_error_.clear(); shell->shortcut_focus_ = id;
+    }, id));
+    return;
+  }
+  if ((code == ui::VKEY_BACK || code == ui::VKEY_DELETE) && !flags) {
+    post(base::BindOnce([](std::vector<std::string> ids, std::string id, WorkspaceShell* shell) {
+      for (const auto& member : ids) shell->SetShortcut(member, "");
+      shell->shortcut_recording_.clear(); shell->shortcut_error_.clear(); shell->shortcut_focus_ = id;
+    }, ids, id));
+    return;
+  }
+  // A grouped row takes the modifiers; each action keeps its own digit.
+  std::vector<std::pair<std::string, ui::Accelerator>> chords;
+  if (ids.size() > 1) {
+    for (size_t i = 0; i < ids.size(); ++i) chords.emplace_back(ids[i], ui::Accelerator(static_cast<ui::KeyboardCode>(ui::VKEY_1 + i), flags));
+  } else {
+    chords.emplace_back(id, ui::Accelerator(code, flags));
+  }
+  for (const auto& [member, chord] : chords) {
+    if (ValidShortcut(chord)) continue;
+    post(base::BindOnce([](WorkspaceShell* shell) {
+      shell->shortcut_error_ = T(u"Użyj Cmd / Ctrl / Alt i klawisza. Skróty edycji tekstu oraz systemowe są zarezerwowane.");
+    }));
+    return;
+  }
+  std::string other;
+  for (const auto& [member, chord] : chords) {
+    const auto owner = ShortcutFor(chord);
+    if (!owner.empty() && std::find(ids.begin(), ids.end(), owner) == ids.end()) { other = owner; break; }
+  }
+  if (!other.empty()) {
+    post(base::BindOnce([](ShortcutConflict conflict, WorkspaceShell* shell) {
+      shell->shortcut_recording_.clear(); shell->shortcut_error_.clear(); shell->shortcut_conflict_ = std::move(conflict);
+    }, ShortcutConflict{id, chords, other}));
+    return;
+  }
+  post(base::BindOnce([](std::vector<std::pair<std::string, ui::Accelerator>> chords, std::string id, WorkspaceShell* shell) {
+    // Free the group's own digits first, so members can trade chords.
+    for (const auto& [member, chord] : chords) {
+      const auto owner = shell->ShortcutFor(chord);
+      if (!owner.empty() && owner != member) shell->SetShortcut(owner, "");
+    }
+    for (const auto& [member, chord] : chords) shell->SetShortcut(member, FormatShortcut(chord));
+    shell->shortcut_recording_.clear(); shell->shortcut_error_.clear(); shell->shortcut_focus_ = id;
+  }, chords, id));
+}
+void WorkspaceShell::BuildShortcutsPage() {
+  if (!tools_body_ || !tools_toolbar_ || !tools_tabs_ || !tools_footer_action_) return;
+  auto weak = weak_factory_.GetWeakPtr();
+  if (tools_root_) CancelChoiceInteractions(tools_root_);
+  SetPanelText(tools_title_, T(u"Skróty klawiszowe"));
+  std::vector<std::string> rows;
+  for (const auto& item : tools_.shortcuts) if (!GroupedShortcut(item.id)) rows.push_back(item.id);
+  tools_tabs_->SetVisible(true);
+  const std::array<std::u16string, 2> tabs{
+      T(u"Klawiatura") + u"  " + base::NumberToString16(rows.size()),
+      T(u"Gesty myszy") + u"  " + base::NumberToString16(tools_.mouse_gestures.size())};
+  for (size_t i = 0; i < tabs.size(); ++i) {
+    auto* tab = views::AsViewClass<SceneTextButton>(tools_tabs_->children()[i].get());
+    tab->SetKind((i == 1) == tools_gestures_ ? 7 : 6);
+    tab->SetText(tabs[i]);
+  }
+  tools_toolbar_->RemoveAllChildViews(); shortcut_search_ = nullptr; shortcut_chips_.clear();
+  tools_toolbar_->SetVisible(!tools_gestures_);
+  auto* footer = views::AsViewClass<SceneTextButton>(tools_footer_action_.get());
+  footer->parent()->SetVisible(true);
+  footer->SetText(tools_gestures_ ? T(u"Przywróć domyślne gesty") : T(u"Przywróć schemat Arc"));
+  SetPanelText(tools_status_, T(u"Zmiany zapisują się od razu."));
+  if (tools_gestures_) {
+    BuildGesturesTab();
+    const auto defaults = DefaultMouseGestures();
+    bool changed = defaults.size() != tools_.mouse_gestures.size();
+    for (size_t i = 0; !changed && i < defaults.size(); ++i)
+      changed = defaults[i].direction != tools_.mouse_gestures[i].direction || defaults[i].command != tools_.mouse_gestures[i].command;
+    footer->SetEnabled(changed);
+  } else {
+    // Search: by name, or (Szukaj po klawiszach) by pressing the chord itself.
+    auto* search_row = tools_toolbar_->AddChildView(std::make_unique<views::View>());
+    shortcut_search_ = AddEditor(search_row);
+    shortcut_search_->GetViewAccessibility().SetName(T(u"Szukaj akcji lub kombinacji"));
+    shortcut_search_->SetPlaceholderText(shortcut_key_search_ ? T(u"Naciśnij kombinację…") : T(u"Szukaj akcji lub kombinacji"));
+    shortcut_search_->view()->SetPreferredSize(gfx::Size(240, 36));
+    shortcut_search_->SetPresentation(gfx::FontList().GetFontSize(), 8, true, Tone(root_, kChip));
+    shortcut_search_->SetText(shortcut_query_);
+    shortcut_search_->SetCallbacks(
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          if (!shell || !shell->shortcut_search_ || shell->shortcut_key_search_ || shell->shortcut_search_->IsIMEComposing()) return;
+          shell->SetShortcutsSearch(std::u16string(shell->shortcut_search_->GetText()));
+        }, weak),
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, const ui::KeyEvent& event) {
+          if (!shell || !shell->shortcut_search_) return false;
+          if (!shell->shortcut_key_search_) return shell->HandleToolsEditorKey(shell->shortcut_search_, event);
+          if (event.type() != ui::EventType::kKeyPressed || IsModifierKey(event.key_code())) return true;
+          const int flags = ui::Accelerator::MaskOutKeyEventFlags(event.flags());
+          if (event.key_code() == ui::VKEY_ESCAPE && !flags) {
+            shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell) {
+              shell->shortcut_key_search_ = false; shell->shortcut_query_.clear(); shell->shortcut_focus_ = "@search";
+            }, base::Unretained(shell.get())));
+            return true;
+          }
+          std::u16string text;
+          if (!((event.key_code() == ui::VKEY_BACK || event.key_code() == ui::VKEY_DELETE) && !flags))
+            text = base::UTF8ToUTF16(FormatShortcut(ui::Accelerator(event.key_code(), flags)));
+          shell->shortcut_search_->SetText(text);
+          shell->SetShortcutsSearch(text);
+          return true;
+        }, weak));
+    auto* keys_group = ActionGroup(search_row, false, 0);
+    auto* keys = AddAction(keys_group, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+      if (!shell) return;
+      shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell) {
+        shell->shortcut_key_search_ = !shell->shortcut_key_search_; shell->shortcut_query_.clear(); shell->shortcut_focus_ = "@search";
+      }, base::Unretained(shell.get())));
+    }, weak), T(u"Szukaj po klawiszach"));
+    views::AsViewClass<SceneTextButton>(keys)->SetKind(shortcut_key_search_ ? 7 : 6);
+    shortcut_chips_["keys"] = keys;
+    SetSidebarPanelLayout(search_row, false, gfx::Insets(), 8, shortcut_search_->view(), true);
+    // Category chips with their counts; „Zmienione” lists what differs from Arc.
+    const std::array<std::pair<const char*, std::u16string>, 7> filters{{
+        {"all", T(u"Wszystkie")}, {"navigation", T(u"Nawigacja")}, {"tabs", T(u"Karty")}, {"workspaces", T(u"Przestrzenie")},
+        {"split", T(u"Split View")}, {"browser", T(u"Przeglądarka")}, {"changed", T(u"Zmienione")}}};
+    auto* chips = ActionGroup(tools_toolbar_, false, 6);
+    size_t changed = 0;
+    for (const auto& id : rows) if (ShortcutModified(id)) ++changed;
+    for (const auto& [key, label] : filters) {
+      size_t count = 0;
+      for (const auto& id : rows)
+        if (std::string_view(key) == "all" || (std::string_view(key) == "changed" ? ShortcutModified(id) : ShortcutCategory(id) == key)) ++count;
+      auto* chip = AddAction(chips, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string key) {
+        if (!shell) return;
+        shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell, std::string key) {
+          shell->shortcut_filter_ = key; shell->shortcut_recording_.clear(); shell->shortcut_conflict_.reset(); shell->shortcut_error_.clear();
+        }, base::Unretained(shell.get()), key));
+      }, weak, std::string(key)), label + u"  " + base::NumberToString16(count));
+      views::AsViewClass<SceneTextButton>(chip)->SetKind(shortcut_filter_ == key ? 7 : 6);
+      chip->GetViewAccessibility().SetName(label + u", " + base::NumberToString16(count));
+      shortcut_chips_[key] = chip;
+    }
+    BuildShortcutRows();
+    footer->SetEnabled(changed > 0);
+  }
+  PreparePanelText(tools_widget_->GetRootView());
+  tools_toolbar_->InvalidateLayout(); tools_body_->InvalidateLayout(); tools_root_->InvalidateLayout();
+  // Focus follows the row being recorded or just changed, so the keyboard
+  // stays where the person is working.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell || !shell->tools_widget_ || !shell->tools_widget_->IsVisible() || shell->ToolsPage() != 1) return;
+    shell->tools_widget_->LayoutRootViewIfNecessary();
+    views::View* target = nullptr;
+    views::View* reveal = nullptr;
+    if (!shell->shortcut_recording_.empty()) target = shell->shortcut_keycaps_for_testing(shell->shortcut_recording_);
+    else if (shell->shortcut_conflict_) target = shell->shortcut_keycaps_for_testing(shell->shortcut_conflict_->id);
+    else if (shell->shortcut_focus_ == "@search" && shell->shortcut_search_) target = shell->shortcut_search_->view();
+    else if (!shell->shortcut_focus_.empty()) target = shell->shortcut_keycaps_for_testing(shell->shortcut_focus_);
+    shell->shortcut_focus_.clear();
+    if (!target) return;
+    reveal = target->parent() && target->parent()->parent() && (shell->shortcut_conflict_ || !shell->shortcut_recording_.empty())
+        ? target->parent()->parent() : target;
+    reveal->ScrollViewToVisible();
+    target->RequestFocus();
+  }, weak));
+}
+void WorkspaceShell::BuildShortcutRows() {
+  if (!tools_body_) return;
+  auto weak = weak_factory_.GetWeakPtr();
+  CancelChoiceInteractions(tools_body_);
+  tools_body_->RemoveAllChildViews(); shortcut_keycaps_.clear(); gesture_pickers_.clear();
+  auto current = [&](const std::string& id) {
+    for (const auto& item : tools_.shortcuts) if (item.id == id) return item.accelerator;
+    return ui::Accelerator();
+  };
+  const auto query = base::i18n::ToLower(base::TrimWhitespace(shortcut_query_, base::TRIM_ALL));
+  std::map<std::string, std::vector<std::string>> by_category;
+  for (const auto& item : tools_.shortcuts) {
+    if (GroupedShortcut(item.id)) continue;
+    const auto ids = ShortcutRowIds(item.id);
+    const auto category = ShortcutCategory(item.id);
+    const bool active = shortcut_recording_ == item.id || (shortcut_conflict_ && shortcut_conflict_->id == item.id);
+    if (!active) {
+      if (shortcut_filter_ == "changed" && !ShortcutModified(item.id)) continue;
+      if (shortcut_filter_ != "all" && shortcut_filter_ != "changed" && category != shortcut_filter_) continue;
+      if (!query.empty()) {
+        bool match = false;
+        for (const auto& member : ids) {
+          const auto chord = current(member);
+          if (shortcut_key_search_) {
+            match |= base::i18n::ToLower(base::UTF8ToUTF16(FormatShortcut(chord))) == query;
+          } else {
+            const auto text = base::i18n::ToLower(ShortcutRowTitle(item.id) + u" " + base::UTF8ToUTF16(FormatShortcut(chord) + " " + DisplayShortcut(chord)));
+            match |= text.find(query) != std::u16string::npos;
+          }
+        }
+        if (!match) continue;
+      }
+    }
+    by_category[category].push_back(item.id);
+  }
+  auto* list = tools_body_->AddChildView(std::make_unique<views::View>());
+  list->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 0));
+  shortcut_list_ = list;
+  auto record = [&](const std::string& id) {
+    return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
+      if (!shell) return;
+      shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell, std::string id) {
+        shell->shortcut_recording_ = id; shell->shortcut_conflict_.reset(); shell->shortcut_error_.clear();
+      }, base::Unretained(shell.get()), id));
+    }, weak, id);
+  };
+  auto cancel = [&](const std::string& id) {
+    return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
+      if (!shell) return;
+      shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell, std::string id) {
+        shell->shortcut_recording_.clear(); shell->shortcut_conflict_.reset(); shell->shortcut_error_.clear(); shell->shortcut_focus_ = id;
+      }, base::Unretained(shell.get()), id));
+    }, weak, id);
+  };
+  auto row_layout = [](views::View* row, gfx::Insets insets, int spacing, bool vertical) {
+    auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        vertical ? views::BoxLayout::Orientation::kVertical : views::BoxLayout::Orientation::kHorizontal, insets, spacing));
+    if (!vertical) layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    return layout;
+  };
+  auto add_row = [&](const std::string& id) {
+    const auto ids = ShortcutRowIds(id);
+    const bool group = ids.size() > 1;
+    const auto title = ShortcutRowTitle(id);
+    auto keys_for = [&](const ui::Accelerator& chord) {
+      auto keys = ShortcutKeycaps(chord);
+      if (group && !keys.empty()) keys.back() = u"1–9";
+      return keys;
+    };
+    auto pretty = [&](const ui::Accelerator& chord) {
+      const auto keys = keys_for(chord);
+      return keys.empty() ? T(u"Nie ustawiono") : base::JoinString(keys, u" + ");
+    };
+    const auto chord = current(ids.front());
+    if (shortcut_recording_ == id) {
+      auto* row = list->AddChildView(std::make_unique<ShortcutRowView>(ShortcutRowView::Style::kRecording));
+      row_layout(row, gfx::Insets::TLBR(8, 8, 10, 8), 6, true);
+      auto* top = row->AddChildView(std::make_unique<views::View>());
+      auto* top_layout = row_layout(top, gfx::Insets(), 10, false);
+      top_layout->SetFlexForView(AddToolsCopy(top, title, kInk, 0, 600, false), 1);
+      auto* recorder = top->AddChildView(std::make_unique<ShortcutKeycapsButton>(
+          views::Button::PressedCallback(), std::vector<std::u16string>(), ShortcutKeycapsButton::Mode::kRecording,
+          base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string id, const ui::KeyEvent& event) {
+            if (shell) shell->RecordShortcutKey(id, event);
+          }, weak, id)));
+      recorder->GetViewAccessibility().SetName(TF(u"Nagrywanie skrótu: {}. Naciśnij klawisze, Esc anuluje, Backspace usuwa skrót.", {title}));
+      shortcut_keycaps_[id] = recorder;
+      views::AsViewClass<SceneTextButton>(AddAction(ActionGroup(top, false, 0), cancel(id), T(u"Anuluj")))->SetQuiet();
+      auto* hint = row->AddChildView(std::make_unique<views::View>());
+      auto* hint_layout = row_layout(hint, gfx::Insets(), 6, false);
+      views::View* text = nullptr;
+      if (!shortcut_error_.empty()) {
+        hint->AddChildView(std::make_unique<ShortcutGlyph>(views::Button::PressedCallback(), ShortcutGlyph::Kind::kWarning, u""));
+        text = AddToolsCopy(hint, shortcut_error_, Palette(root_).warn, -1, 500, true);
+      } else {
+        text = AddToolsCopy(hint, T(u"Esc anuluje · Backspace usuwa skrót · F1–F24 działają bez modyfikatora"), kMuted, -1, 500, true);
+      }
+      hint_layout->SetFlexForView(text, 1);
+      return;
+    }
+    if (shortcut_conflict_ && shortcut_conflict_->id == id) {
+      const auto& conflict = *shortcut_conflict_;
+      auto* row = list->AddChildView(std::make_unique<ShortcutRowView>(ShortcutRowView::Style::kConflict));
+      row->SetProperty(views::kMarginsKey, gfx::Insets::VH(4, 0));
+      row_layout(row, gfx::Insets::TLBR(10, 12, 12, 12), 10, true);
+      auto* top = row->AddChildView(std::make_unique<views::View>());
+      auto* top_layout = row_layout(top, gfx::Insets(), 10, false);
+      top_layout->SetFlexForView(AddToolsCopy(top, title, kInk, 0, 600, false), 1);
+      const auto proposed = conflict.chords.empty() ? ui::Accelerator() : conflict.chords.front().second;
+      auto* keys = top->AddChildView(std::make_unique<ShortcutKeycapsButton>(
+          record(id), keys_for(proposed), ShortcutKeycapsButton::Mode::kConflict, base::RepeatingCallback<void(const ui::KeyEvent&)>()));
+      keys->GetViewAccessibility().SetName(TF(u"{}: {}. Naciśnij, aby nagrać nowy skrót.", {title, pretty(proposed)}));
+      shortcut_keycaps_[id] = keys;
+      auto* message = row->AddChildView(std::make_unique<views::View>());
+      auto* message_layout = row_layout(message, gfx::Insets(), 8, false);
+      message_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStart);
+      message->AddChildView(std::make_unique<ShortcutGlyph>(views::Button::PressedCallback(), ShortcutGlyph::Kind::kWarning, u""));
+      std::u16string owner = base::UTF8ToUTF16(conflict.other);
+      for (const auto& item : tools_.shortcuts) if (item.id == conflict.other) owner = item.title;
+      auto* text = AddToolsCopy(message, TF(u"{} jest już przypisany do: {}. Jeśli użyjesz go tutaj, ta akcja zostanie bez skrótu.", {pretty(proposed), owner}), kInk, 0, 400, true);
+      message_layout->SetFlexForView(text, 1);
+      auto* actions = ActionGroup(row, false, 8);
+      auto* swap = AddAction(actions, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        if (!shell) return;
+        shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell) {
+          if (!shell->shortcut_conflict_) return;
+          const auto conflict = *shell->shortcut_conflict_;
+          shell->shortcut_conflict_.reset();
+          // Free each chord first, then give it to this action.
+          for (const auto& [member, chord] : conflict.chords) {
+            const auto owner = shell->ShortcutFor(chord);
+            if (!owner.empty() && owner != member) shell->SetShortcut(owner, "");
+          }
+          for (const auto& [member, chord] : conflict.chords) shell->SetShortcut(member, FormatShortcut(chord));
+          shell->shortcut_focus_ = conflict.id;
+        }, base::Unretained(shell.get())));
+      }, weak), TF(u"Użyj dla: {}", {title}));
+      views::AsViewClass<SceneTextButton>(swap)->SetPrimary();
+      AddAction(actions, record(id), T(u"Nagraj ponownie"));
+      views::AsViewClass<SceneTextButton>(AddAction(actions, cancel(id), T(u"Anuluj")))->SetQuiet();
+      return;
+    }
+    const bool modified = ShortcutModified(id);
+    auto* row = list->AddChildView(std::make_unique<ShortcutRowView>(ShortcutRowView::Style::kRow));
+    auto* layout = row_layout(row, gfx::Insets::TLBR(0, 8, 0, 4), 10, false);
+    layout->set_minimum_cross_axis_size(40);
+    layout->SetFlexForView(AddToolsCopy(row, title, kInk, 0, 400, false), 1);
+    if (modified) row->AddChildView(std::make_unique<ShortcutBadge>(T(u"Zmieniony")));
+    auto* keys = row->AddChildView(std::make_unique<ShortcutKeycapsButton>(
+        record(id), keys_for(chord), ShortcutKeycapsButton::Mode::kRest, base::RepeatingCallback<void(const ui::KeyEvent&)>()));
+    keys->GetViewAccessibility().SetName(TF(u"{}: {}. Naciśnij, aby nagrać nowy skrót.", {title, pretty(chord)}));
+    keys->SetTooltipText(T(u"Naciśnij, aby nagrać nowy skrót."));
+    shortcut_keycaps_[id] = keys;
+    if (modified) {
+      row->AddChildView(std::make_unique<ShortcutGlyph>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
+        if (!shell) return;
+        shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell, std::string id) {
+          const auto ids = shell->ShortcutRowIds(id);
+          std::vector<std::pair<std::string, ui::Accelerator>> chords;
+          for (const auto& item : ArcShortcuts())
+            if (std::find(ids.begin(), ids.end(), item.id) != ids.end()) chords.emplace_back(item.id, item.accelerator);
+          // A default taken by another action meanwhile asks first, like a recording does.
+          for (const auto& [member, chord] : chords) {
+            if (chord.key_code() == ui::VKEY_UNKNOWN) continue;
+            const auto owner = shell->ShortcutFor(chord);
+            if (!owner.empty() && std::find(ids.begin(), ids.end(), owner) == ids.end()) {
+              shell->shortcut_conflict_ = ShortcutConflict{id, chords, owner};
+              return;
+            }
+          }
+          for (const auto& [member, chord] : chords) shell->SetShortcut(member, "");
+          for (const auto& [member, chord] : chords) shell->SetShortcut(member, FormatShortcut(chord));
+          shell->shortcut_focus_ = id;
+        }, base::Unretained(shell.get()), id));
+      }, weak, id), ShortcutGlyph::Kind::kReset, TF(u"Przywróć domyślny skrót: {}", {title})));
+    } else {
+      row->AddChildView(std::make_unique<views::View>())->SetPreferredSize(gfx::Size(28, 28));
+    }
+  };
+  bool any = false;
+  const std::array<std::pair<const char*, std::u16string>, 5> order{{
+      {"navigation", T(u"Nawigacja")}, {"tabs", T(u"Karty")}, {"workspaces", T(u"Przestrzenie")}, {"split", T(u"Split View")}, {"browser", T(u"Przeglądarka")}}};
+  for (const auto& [key, label] : order) {
+    const auto found = by_category.find(key);
+    if (found == by_category.end() || found->second.empty()) continue;
+    auto* heading = list->AddChildView(std::make_unique<views::View>());
+    row_layout(heading, gfx::Insets::TLBR(any ? 16 : 4, 8, 6, 8), 8, false);
+    AddToolsCopy(heading, base::i18n::ToUpper(label), kMuted, -2, 600, false);
+    AddToolsCopy(heading, base::NumberToString16(found->second.size()), kMuted, -2, 400, false);
+    any = true;
+    for (const auto& id : found->second) add_row(id);
+  }
+  if (!any) {
+    auto* empty = list->AddChildView(std::make_unique<views::View>());
+    auto* layout = row_layout(empty, gfx::Insets::VH(64, 24), 10, true);
+    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    AddToolsCopy(empty, T(u"Nic nie pasuje"), kInk, 14, 400, false);
+    AddToolsCopy(empty, shortcut_query_.empty() ? T(u"Nie zmieniono jeszcze żadnego skrótu.")
+        : TF(u"Żadna akcja nie pasuje do „{}”. Wpisz nazwę albo włącz Szukaj po klawiszach.", {shortcut_query_}),
+        kMuted, 0, 400, true);
+  }
+}
+void WorkspaceShell::BuildGesturesTab() {
+  auto weak = weak_factory_.GetWeakPtr();
+  CancelChoiceInteractions(tools_body_);
+  tools_body_->RemoveAllChildViews(); shortcut_keycaps_.clear(); gesture_pickers_.clear(); shortcut_list_ = nullptr;
+  const bool on = tools_.mouse_gestures_enabled;
+  auto* page = tools_body_->AddChildView(std::make_unique<views::View>());
+  page->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 14));
+  // The switch, with how gestures are drawn.
+  auto* card = page->AddChildView(std::make_unique<ShortcutRowView>(ShortcutRowView::Style::kTile));
+  auto* card_layout = card->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(12, 16), 16));
+  card_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+  auto* copy = card->AddChildView(std::make_unique<views::View>());
+  copy->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+  AddToolsCopy(copy, T(u"Włącz gesty myszy"), kInk, 0, 600, false);
+  AddToolsCopy(copy, T(u"Przytrzymaj Alt i prawy przycisk myszy. Przesuń co najmniej 48 px w kierunku strzałek i puść przycisk. Escape anuluje gest. Zwykłe kliknięcia pozostają bez zmian. Gesty są domyślnie wyłączone."),
+        kMuted, -1, 500, true);
+  card_layout->SetFlexForView(copy, 1);
+  auto* toggle = PreferenceToggle(card, T(u"Włącz gesty myszy"));
+  SetToggleOn(toggle, on);
   SetActionCallback(toggle, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* toggle) {
     if (!shell) return;
-    shell->SetMouseGesturesEnabled(ToggleOn(toggle));
-    SetPanelText(shell->tools_status_, shell->tools_.mouse_gestures_enabled ? T(u"Gesty myszy włączone.") : T(u"Gesty myszy wyłączone."));
+    shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell, bool value) {
+      shell->SetMouseGesturesEnabled(value); shell->gesture_tried_ = false; shell->gesture_hit_.clear();
+    }, base::Unretained(shell.get()), ToggleOn(toggle)));
   }, weak, base::Unretained(toggle)));
-  gesture_choice_ = ChoicePicker(tools_body_, T(u"Gest do edycji"), {u"←", u"→", u"↑", u"↓", u"↑ ↓", u"↓ ↑", u"← →", u"→ ←"});
-  views::AsViewClass<SceneSelect>(gesture_choice_)->SetTone(3);
-  SetPickerIndex(gesture_choice_, 0);
-  std::vector<std::u16string> commands{T(u"Wyłącz ten gest")}; gesture_commands_ = {""};
+  // One tile per gesture: its stroke and the action it runs.
+  std::vector<std::u16string> commands{T(u"Wyłącz ten gest")};
+  gesture_commands_ = {""};
   for (const auto& binding : tools_.shortcuts) if (ValidMouseGestureCommand(binding.id)) {
     gesture_commands_.push_back(binding.id); commands.push_back(binding.title);
   }
-  gesture_command_ = ChoicePicker(tools_body_, T(u"Akcja gestu"), commands);
-  views::AsViewClass<SceneSelect>(gesture_command_)->SetTone(3);
-  SetPickerCallback(gesture_choice_, base::BindRepeating(&WorkspaceShell::RefreshMouseGestureChoice, weak));
-  RefreshMouseGestureChoice();
-  auto* actions = ActionGroup(tools_body_, false, 8);
-  action(actions, T(u"Zapisz gest"), 31);
-  auto* defaults=action(actions, T(u"Przywróć domyślne gesty"), 32);
-  auto* defaults_button=views::AsViewClass<SceneTextButton>(defaults);defaults_button->SetQuiet();defaults_button->SetText(T(u"Przywróć domyślne"));
-  defaults->SetTooltipText(T(u"Przywróć domyślne gesty"));defaults->GetViewAccessibility().SetName(T(u"Przywróć domyślne gesty"));
-}
-void WorkspaceShell::RefreshMouseGestureChoice() {
-  const auto index = PickerIndex(gesture_choice_).value_or(0);
-  if (index >= tools_.mouse_gestures.size()) return;
-  const auto found = std::find(gesture_commands_.begin(), gesture_commands_.end(), tools_.mouse_gestures[index].command);
-  SetPickerIndex(gesture_command_, found == gesture_commands_.end() ? 0 : found - gesture_commands_.begin());
-}
-void WorkspaceShell::InputConfigurationAction(int action) {
-  if (!tools_widget_ || !tools_widget_->IsVisible() || ToolsPage() != 1) return;
-  if (action == 30) {
-    auto* picker = views::AsViewClass<SceneSelect>(tools_picker_);
-    if (!picker) return;
-    const auto draft = tools_form_->form->tools_choice_draft(picker->SelectedKey());
-    if (!draft.valid) return;
-    for (const auto& binding : ArcShortcuts()) if (binding.id == std::string(draft.target)) {
-      const auto owner = ShortcutFor(binding.accelerator);
-      if (!owner.empty() && owner != binding.id) {
-        for (const auto& other : tools_.shortcuts) if (other.id == owner)
-          SetPanelText(tools_status_, TF(u"Ta kombinacja jest przypisana do: {}. Wyłącz ją dla tej akcji lub wybierz inną.", {other.title}));
-        return;
-      }
-      if (SetShortcut(binding.id, FormatShortcut(binding.accelerator))) {
-        FilterShortcutChoices(); SetPanelText(tools_status_, T(u"Przywrócono domyślny skrót."));
-      }
-      return;
+  const std::array<std::pair<const char*, std::u16string>, 8> gestures{{
+      {"L", T(u"W lewo")}, {"R", T(u"W prawo")}, {"U", T(u"W górę")}, {"D", T(u"W dół")},
+      {"UD", T(u"W górę i w dół")}, {"DU", T(u"W dół i w górę")}, {"LR", T(u"W lewo i w prawo")}, {"RL", T(u"W prawo i w lewo")}}};
+  const int available = tools_body_->width() > 0 ? tools_body_->width() - 8
+      : std::max(400, tools_widget_->GetWindowBoundsInScreen().width() - 48);
+  const int tile_width = std::max(120, (available - 30) / 4);
+  views::View* line = nullptr;
+  std::u16string hit_label;
+  for (size_t i = 0; i < gestures.size(); ++i) {
+    const std::string direction = gestures[i].first;
+    if (i % 4 == 0) {
+      line = page->AddChildView(std::make_unique<views::View>());
+      line->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 10));
     }
+    const bool hit = gesture_tried_ && gesture_hit_ == direction;
+    auto* tile = line->AddChildView(std::make_unique<ShortcutRowView>(hit ? ShortcutRowView::Style::kTileHit : ShortcutRowView::Style::kTile));
+    tile->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(10), 8));
+    tile->SetFixedWidth(tile_width);
+    auto* head = tile->AddChildView(std::make_unique<views::View>());
+    auto* head_layout = head->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
+    head_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    head->AddChildView(std::make_unique<GestureGlyphView>(direction));
+    auto* name = AddToolsCopy(head, base::i18n::ToUpper(gestures[i].second), kMuted, -2, 600, true);
+    head_layout->SetFlexForView(name, 1);
+    size_t index = 0;
+    for (const auto& binding : tools_.mouse_gestures) if (binding.direction == direction) {
+      const auto found = std::find(gesture_commands_.begin(), gesture_commands_.end(), binding.command);
+      if (found != gesture_commands_.end()) index = found - gesture_commands_.begin();
+    }
+    if (hit) hit_label = gestures[i].second + u" → " + commands[index];
+    auto* picker = ChoicePicker(tile, TF(u"Akcja gestu: {}", {gestures[i].second}), commands);
+    SetPickerIndex(picker, index);
+    picker->SetEnabled(on);
+    SetPickerCallback(picker, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string direction, views::View* picker) {
+      if (!shell) return;
+      const auto index = PickerIndex(picker).value_or(0);
+      if (index < shell->gesture_commands_.size()) shell->SetMouseGesture(direction, shell->gesture_commands_[index]);
+    }, weak, direction, base::Unretained(picker)));
+    gesture_pickers_[direction] = picker;
   }
-  if (action == 31) {
-    const auto gesture = PickerIndex(gesture_choice_).value_or(0), command = PickerIndex(gesture_command_).value_or(0);
-    if (gesture >= tools_.mouse_gestures.size() || command >= gesture_commands_.size()) return;
-    SetMouseGesture(tools_.mouse_gestures[gesture].direction, gesture_commands_[command]);
-    SetPanelText(tools_status_, T(u"Zapisano gesty myszy.")); return;
-  } else if (action == 32) {
-    tools_.mouse_gestures = DefaultMouseGestures(); RefreshMouseGestureChoice();
-  } else return;
-  gestures_dirty_ = true; SaveTools();
-  SetPanelText(tools_status_, T(u"Zapisano gesty myszy."));
+  // „Wypróbuj tutaj”: draw with the right button held to see what runs.
+  auto* pad = page->AddChildView(std::make_unique<GesturePadView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string directions) {
+    if (!shell) return;
+    shell->PostShortcutsChange(base::BindOnce([](WorkspaceShell* shell, std::string directions) {
+      shell->gesture_tried_ = true; shell->gesture_hit_.clear();
+      for (const auto& binding : shell->tools_.mouse_gestures) if (binding.direction == directions) shell->gesture_hit_ = directions;
+    }, base::Unretained(shell.get()), directions));
+  }, weak)));
+  pad->SetEnabled(on);
+  auto* pad_layout = pad->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(22, 16), 4));
+  pad_layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kCenter);
+  pad_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+  std::u16string title = T(u"Wypróbuj tutaj");
+  std::u16string hint = T(u"Przytrzymaj prawy przycisk myszy w tym polu, narysuj gest i puść.");
+  if (!on) { title = T(u"Gesty myszy są wyłączone"); hint = T(u"Włącz je powyżej, aby wypróbować."); }
+  else if (gesture_tried_ && !hit_label.empty()) { title = hit_label; hint = T(u"Rozpoznano. Narysuj kolejny, aby sprawdzić inny."); }
+  else if (gesture_tried_) { title = T(u"To nie jest gest"); hint = T(u"Przesuń co najmniej 48 px w linii prostej, potem możesz raz zawrócić."); }
+  AddToolsCopy(pad, title, kInk, 0, 600, false);
+  AddToolsCopy(pad, hint, kMuted, -1, 500, true);
 }
 void WorkspaceShell::RefreshToolsChoiceFields(){
   if(!tools_form_)return;auto* scene=views::AsViewClass<SceneSelect>(tools_picker_);if(!scene)return;
@@ -10577,7 +11274,7 @@ void WorkspaceShell::ToolsAction(int action,std::optional<std::string> choice_ke
     if (action == 22) ok = RemoveSearchProvider(previous);
   }
   auto outcome=tools_form_->form->tools_outcome(ok,false);
-  if(outcome.refresh){if(ToolsPage()==1)FilterShortcutChoices();else RefreshTools();if(callbacks_.operation_pending&&callbacks_.operation_pending.Run())outcome=tools_form_->form->tools_outcome(true,true);}
+  if(outcome.refresh){if(ToolsPage()==1)BuildShortcutsPage();else RefreshTools();if(callbacks_.operation_pending&&callbacks_.operation_pending.Run())outcome=tools_form_->form->tools_outcome(true,true);}
   SetPanelText(tools_status_,base::UTF8ToUTF16(std::string(outcome.status)));
 }
 
