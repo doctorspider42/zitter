@@ -1,15 +1,19 @@
 # Windows updates
 
-Starting with 0.3.0, an installed Windows x64 copy checks the latest stable
-GitHub release 30 seconds after startup and every six hours while running.
-Portable copies and executables outside their registered installation do not
-check or install updates. Launching with `--disable-zitter-updates` disables the
-updater for that run. Benchmark runs also disable it.
+Open **About Zitter** in the Zitter menu or go to **Preferences → Downloads**
+and select **Check for updates**. The result appears in place. Preferences
+also let you control automatic checks and downloads independently.
 
-To check immediately, open the Zitter menu in the main window and choose
-**Check for updates…**. Zitter reports when no Windows update is available or a
-check or download fails. If a verified installer is ready, the notification
-offers the same **Install** action as an automatic check.
+Automatic checks are on by default. They run 30 seconds after startup and
+every six hours while the browser is running. Zitter notifies you when a newer version is available.
+Automatic downloads are on by default for installed Windows x64 copies and
+off by default on macOS. With automatic downloads off, Windows offers a
+**Download update** action. macOS links to the release page. Installation is
+always a separate action.
+
+Portable Windows copies and executables outside their registered installation
+cannot use the updater. Launching with `--disable-zitter-updates` or running an
+application benchmark disables update checks for that run.
 
 The updater accepts only a strictly newer three-component version and the exact
 `Zitter-vVERSION-windows-x64-setup.exe` asset from
@@ -43,7 +47,14 @@ The digest verifies the downloaded GitHub artifact; it does not constitute an
 Authenticode signature.
 
 Versions before 0.3.0 have no updater and need one manual installer update.
-macOS automatic updates are not implemented.
+
+## macOS updates
+
+Zitter selects the newest recent stable release with a disk image for the
+running architecture, regardless of which release GitHub labels Latest. With automatic downloads enabled, it verifies the disk
+image against GitHub’s size and SHA-256 digest before making it available in the
+user-data directory’s `Updates` folder. **Show installer** reveals the downloaded
+disk image in Finder for manual installation.
 
 ## Publishing
 

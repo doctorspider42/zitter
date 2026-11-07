@@ -81,9 +81,7 @@
 #include "ui/color/color_provider.h"
 #include "ui/gfx/image/canvas_image_source.h"
 #include "components/version_info/version_info.h"
-#if !BUILDFLAG(IS_MAC)
 #include "chromium/app/zitter_version.h"
-#endif
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/style/typography_provider.h"
@@ -368,6 +366,8 @@ struct Appearance {
   // Time Machine records each workspace's tabs (on by default) for 7, 30 or 90 days.
   bool time_machine = true;
   int time_machine_days = 30;
+  bool auto_update_check = true;
+  bool auto_update_download = BUILDFLAG(IS_WIN);
 };
 Appearance ReadAppearance(const base::FilePath& path) {
   Appearance result;
@@ -402,6 +402,8 @@ Appearance ReadAppearance(const base::FilePath& path) {
   result.time_machine = dict->FindBool("time_machine").value_or(true);
   const int days = dict->FindInt("time_machine_days").value_or(30);
   result.time_machine_days = days == 7 || days == 90 ? days : 30;
+  result.auto_update_check = dict->FindBool("auto_update_check").value_or(result.auto_update_check);
+  result.auto_update_download = dict->FindBool("auto_update_download").value_or(result.auto_update_download);
   return result;
 }
 bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
@@ -411,7 +413,8 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
                std::optional<std::pair<std::string, std::string>> emoji,
                std::optional<bool> workspace_names,
                std::optional<bool> folders_collapsed,
-               std::optional<std::pair<bool, int>> time_machine) {
+               std::optional<std::pair<bool, int>> time_machine,
+               std::optional<std::pair<bool, bool>> updates) {
   auto appearance = ReadAppearance(path);
   if (id) appearance.colors[*id] = color;
   if (pinned) appearance.pinned = *pinned;
@@ -422,6 +425,10 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   if (folders_collapsed) appearance.folders_collapsed = *folders_collapsed;
   if (sidebar_width) appearance.sidebar_width = *sidebar_width;
   if (time_machine) { appearance.time_machine = time_machine->first; appearance.time_machine_days = time_machine->second; }
+  if (updates) {
+    appearance.auto_update_check = updates->first;
+    appearance.auto_update_download = updates->second;
+  }
   if (emoji && emoji->second.empty()) appearance.emoji.erase(emoji->first);
   else if (emoji) appearance.emoji[emoji->first] = emoji->second;
   base::DictValue dict;
@@ -435,6 +442,8 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   if (appearance.sidebar_width) dict.Set("sidebar_width", *appearance.sidebar_width);
   dict.Set("time_machine", appearance.time_machine);
   dict.Set("time_machine_days", appearance.time_machine_days);
+  dict.Set("auto_update_check", appearance.auto_update_check);
+  dict.Set("auto_update_download", appearance.auto_update_download);
   base::DictValue emoji_dict;
   for (const auto& [key, value] : appearance.emoji) emoji_dict.Set(key, value);
   dict.Set("workspace_emoji", std::move(emoji_dict));
@@ -1211,6 +1220,7 @@ class SceneActionGroup final : public views::View {
   void Share(base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed){shared_visible_=std::move(visible);shared_changed_=std::move(changed);nodes_.Share(bool(shared_visible_));SetSidebarPanelLayout(this,false,gfx::Insets(),nodes_.Style().spacing);}
   bool shared() const{return bool(shared_visible_);}
   void UseFrameBackground(){frame_background_=true;Schedule();}
+  void UseDialogBackground(){dialog_background_=true;Schedule();}
   void Append(std::vector<sidebar::Item>& items,gfx::Point origin,gfx::Rect clip) const{auto next=Items(origin.x(),origin.y(),gfx::RectF(clip));items.insert(items.end(),std::make_move_iterator(next.begin()),std::make_move_iterator(next.end()));}
   views::View* AddAction(views::Button::PressedCallback callback,std::u16string text,ui::ButtonStyle style){auto* button=AddChildView(nodes_.Make<SceneTextButton>(std::move(callback),std::move(text),style,base::BindRepeating(&SceneActionGroup::Schedule,weak_factory_.GetWeakPtr())));if(shared())button->UseNativeMinimum();return button;}
   bool metal_visible() const{return shared()?shared_visible_.Run():surface_&&surface_->visible();}
@@ -1231,9 +1241,10 @@ class SceneActionGroup final : public views::View {
   sidebar::FormLayout Geometry(int width,int height,bool preferred=false) const {std::vector<sidebar::FormMeasure> measured;for(const auto& child:children())if(child->GetVisible()){const auto size=child->GetPreferredSize();measured.push_back({nodes_.Id(child.get()),size.width(),size.height()});}auto* provider=views::LayoutProvider::Get();const auto insets=provider->GetInsetsMetric(views::INSETS_DIALOG_BUTTON_ROW);auto geometry=nodes_.Geometry(width,height,preferred,provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH),insets.top(),insets.left(),insets.bottom(),insets.right(),measured);CHECK(geometry.admitted);return geometry;}
   std::vector<sidebar::Item> Items(float dx,float dy,gfx::RectF clip) const {std::vector<sidebar::Item> out;for(const auto& child:children())if(child->GetVisible()){auto bounds=gfx::RectF(child->GetMirroredBounds());bounds.Offset(dx,dy);auto local=bounds;local.Intersect(clip);out.push_back(static_cast<SceneTextButton*>(child.get())->Scene(bounds,local));}return out;}
   void Schedule(){for(const auto& child:children())static_cast<SceneTextButton*>(child.get())->SyncViewportVisibility();if(shared()){shared_changed_.Run();return;}if(pending_)return;pending_=true;base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(&SceneActionGroup::UpdateMetal,weak_factory_.GetWeakPtr()));}
-  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,frame_background_?FrameVoid(WindowWorkspaceColor(this),this):nodes_.Style().dialog?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
+  void UpdateMetal(){pending_=false;if(!GetWidget())return;GetWidget()->LayoutRootViewIfNecessary();const bool was=metal_visible();const auto local=GetVisibleBounds();if(!SceneIsVisible(this)||local.IsEmpty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));surface_->Update(GetWidget()->GetNativeWindow(),frame,items,frame_background_?FrameVoid(WindowWorkspaceColor(this),this):(dialog_background_||nodes_.Style().dialog)?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=metal_visible())SchedulePaint();}
   base::RepeatingCallback<bool()> shared_visible_;base::RepeatingClosure shared_changed_;
   bool frame_background_=false;
+  bool dialog_background_=false;
   bool pending_=false;std::unique_ptr<SidebarMetal> surface_;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneActionGroup::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneActionGroup> weak_factory_{this};
 };
 BEGIN_METADATA(SceneActionGroup)
@@ -2721,7 +2732,7 @@ class SceneParagraph final : public views::View {
  public:
   void SyncWindowVisibility(){if(!SceneIsVisible(this)&&surface_)surface_->Hide();Schedule();}
 
-  SceneParagraph(std::u16string text,int delta,bool bold,SkColor ink):text_(std::move(text)),delta_(delta),bold_(bold),ink_(ink) {
+  SceneParagraph(std::u16string text,int delta,bool bold,SkColor ink,bool dialog_background=false):text_(std::move(text)),delta_(delta),bold_(bold),ink_(ink),dialog_background_(dialog_background) {
     GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);
   }
   void SetText(std::u16string text){if(text==text_)return;text_=std::move(text);GetViewAccessibility().SetName(text_);measured_width_=-1;PreferredSizeChanged();SchedulePaint();Schedule();}
@@ -2763,9 +2774,9 @@ class SceneParagraph final : public views::View {
     if(!SceneIsVisible(this)||local.IsEmpty()||text_.empty()){if(surface_)surface_->Hide();if(was)SchedulePaint();return;}
     if(!surface_)surface_=CreateSidebarMetal();if(!surface_)return;
     auto frame=GetBoundsInScreen();frame.Offset(local.x(),local.y());frame.set_size(local.size());const auto items=Items(-local.x(),-local.y(),gfx::RectF(gfx::Rect(frame.size())));
-    surface_->Update(GetWidget()->GetNativeWindow(),frame,items,Tone(this,kCard));if(was!=surface_->visible())SchedulePaint();
+    surface_->Update(GetWidget()->GetNativeWindow(),frame,items,dialog_background_?GetColorProvider()->GetColor(ui::kColorDialogBackground):Tone(this,kCard));if(was!=surface_->visible())SchedulePaint();
   }
-  std::u16string text_;int delta_;bool bold_;SkColor ink_;uint32_t style_=0;mutable int measured_width_=-1,measured_font_=0;mutable std::vector<std::string> lines_;
+  std::u16string text_;int delta_;bool bold_;SkColor ink_;bool dialog_background_;uint32_t style_=0;mutable int measured_width_=-1,measured_font_=0;mutable std::vector<std::string> lines_;
   std::unique_ptr<SidebarMetal> surface_;bool pending_=false;SceneWindowObserver window_visibility_{base::BindRepeating(&SceneParagraph::SyncWindowVisibility,base::Unretained(this))};base::WeakPtrFactory<SceneParagraph> weak_factory_{this};
 };
 BEGIN_METADATA(SceneParagraph)
@@ -4779,6 +4790,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         shell->RebuildWorkspaceDots();
         shell->RefreshWorkspaceHeading();
         shell->appearance_ready_ = true;
+        if (!shell->general_dirty_.contains("updates")) {
+          shell->auto_update_check_ = appearance.auto_update_check;
+          shell->auto_update_download_ = appearance.auto_update_download;
+          if (shell->configure_updates_)
+            shell->configure_updates_.Run(shell->auto_update_check_, shell->auto_update_download_);
+        }
         shell->ApplyAppearance();
         shell->FitInitialSidebarWidth();
         // The pinned sidebar already appeared with the window; reorder panels
@@ -4958,6 +4975,10 @@ void WorkspaceShell::Detach() {
   if (print_widget_) print_widget_->RemoveObserver(this);
   print_widget_.reset(); print_delegate_.reset();
   scrim_widget_.reset(); scrim_delegate_.reset();
+  about_view_ = nullptr; about_dialog_.reset(); about_delegate_.reset();
+  update_preferences_status_ = nullptr; update_preferences_check_ = nullptr;
+  update_preferences_action_ = nullptr;
+  auto_update_check_toggle_ = nullptr; auto_update_download_toggle_ = nullptr;
   quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset(); clear_dialog_.reset(); clear_dialog_delegate_.reset();
   site_menu_runner_.reset(); site_menu_.reset(); site_rows_.clear(); site_data_row_ = nullptr; site_header_ = nullptr; site_body_ = nullptr;
   site_panel_.reset(); site_panel_delegate_.reset();
@@ -8003,7 +8024,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   if (theme_mode_ != ThemeMode::kSystem) mode = theme_mode_ == ThemeMode::kDark
       ? ui::ColorProviderKey::ColorMode::kDark : ui::ColorProviderKey::ColorMode::kLight;
   for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(),
-       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get(), pin_url_dialog_.get()}) {
+       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get(), pin_url_dialog_.get(), about_dialog_.get()}) {
     if (!panel) continue;
     if (panel->color_mode_override() != mode) {
       panel->SetColorModeOverride(mode);
@@ -8206,22 +8227,27 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   auto strings=[&](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(text(value));return output;};
   auto copy=[&](views::View* parent,std::u16string value,SkColor tone,int delta,gfx::Font::Weight weight,bool multiline){return AddPreferenceCopy(parent,std::move(value),tone,delta,static_cast<int>(weight),multiline);};
   // Assistant permissions and safeguards share a card each, under one heading.
-  auto group_of=[](const std::string& key)->int{
+  auto group_of=[](const sidebar::PreferenceSpec& spec)->int{
+    if (spec.kind == Kind::Updates || spec.kind == Kind::AutoUpdateCheck ||
+        spec.kind == Kind::AutoUpdateDownload) return 2;
+    const std::string key(spec.key);
     for(const char* k:{"assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web"})if(key==k)return 0;
     for(const char* k:{"assistant_confirm_clicks","assistant_background","assistant_confirm_background"})if(key==k)return 1;
     return -1;
   };
-  std::array<views::View*,2> group_cards{};
+  std::array<views::View*,3> group_cards{};
   auto make_row=[&](const sidebar::PreferenceSpec& spec)->views::View*{
     CHECK_LT(spec.category,preference_sections_.size());
-    if(const int group=group_of(std::string(spec.key));group>=0){
+    if(const int group=group_of(spec);group>=0){
       auto*& card=group_cards[group];
       if(!card){
         card=preference_sections_[spec.category].view->AddChildView(std::make_unique<PreferenceSurface>(false,base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak)));
         SetSidebarPanelLayout(card,true,gfx::Insets(16),16);
-        auto* heading=card->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(heading,true,gfx::Insets(),5);
-        copy(heading,group?T(u"Zabezpieczenia"):T(u"Uprawnienia nowych sesji"),kInk,1,gfx::Font::Weight::SEMIBOLD,true);
-        copy(heading,group?T(u"Nie dają asystentowi dostępu. Dokładają blokadę do tego, co już może."):T(u"Każda nowa sesja startuje z tymi uprawnieniami. Ograniczenie działa od razu, także w trwającej sesji; szerszy dostęp obowiązuje od nowej sesji."),kMuted,-1,gfx::Font::Weight::NORMAL,true);
+        if (group < 2) {
+          auto* heading=card->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(heading,true,gfx::Insets(),5);
+          copy(heading,group?T(u"Zabezpieczenia"):T(u"Uprawnienia nowych sesji"),kInk,1,gfx::Font::Weight::SEMIBOLD,true);
+          copy(heading,group?T(u"Nie dają asystentowi dostępu. Dokładają blokadę do tego, co już może."):T(u"Każda nowa sesja startuje z tymi uprawnieniami. Ograniczenie działa od razu, także w trwającej sesji; szerszy dostęp obowiązuje od nowej sesji."),kMuted,-1,gfx::Font::Weight::NORMAL,true);
+        }
         preference_groups_.push_back({card,{}});
       }
       auto* row=card->AddChildView(std::make_unique<views::View>());
@@ -8282,6 +8308,22 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
           default:CHECK(false);
         }
         auto* button=PreferenceAction(row,{},text(spec.button));BindFormCommand(button,command);button->SetTooltipText(text(spec.button_ax));button->GetViewAccessibility().SetName(text(spec.button_ax));break;
+      }
+      case Kind::Updates: {
+        auto* labels = row->children().front().get();
+        update_preferences_status_ = copy(labels, u"", kInk, 0, gfx::Font::Weight::NORMAL, true);
+        update_preferences_check_ = PreferenceAction(row, {}, T(u"Sprawdź aktualizacje"));
+        SetActionCallback(update_preferences_check_, base::BindRepeating(&WorkspaceShell::CheckForUpdates, weak));
+        update_preferences_action_ = PreferenceAction(labels, {}, T(u"Otwórz stronę wydania"));
+        SetActionCallback(update_preferences_action_, base::BindRepeating(&WorkspaceShell::RunUpdateAction, weak));
+        break;
+      }
+      case Kind::AutoUpdateCheck:
+      case Kind::AutoUpdateDownload: {
+        auto& toggle = spec.kind == Kind::AutoUpdateCheck ? auto_update_check_toggle_ : auto_update_download_toggle_;
+        toggle = PreferenceToggle(row, title);
+        SetActionCallback(toggle, base::BindRepeating(&WorkspaceShell::SetAutomaticUpdates, weak));
+        break;
       }
       case Kind::Directory:
         download_directory_button_=PreferenceAction(row,{},text(spec.button));BindFormCommand(download_directory_button_,sidebar::FormCommand::PreferenceDirectory);download_directory_button_->SetTooltipText(text(spec.button_ax));download_directory_button_->GetViewAccessibility().SetName(text(spec.button_ax));download_directory_label_=copy(row->children().front().get(),u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);break;
@@ -8405,6 +8447,7 @@ void WorkspaceShell::RefreshGeneralControls() {
     control->SetEnabled(it != values.end() && it->second.editable);
     if (it != values.end()) SyncPickerIndex(control,it->second.value < 0 ? std::nullopt : std::optional<size_t>(it->second.value));
   }
+  RefreshUpdateControls();
   BuildAssistantPreferences();
   BuildAdBlockingPreferences();
 }
@@ -8908,11 +8951,12 @@ void WorkspaceShell::ApplyPinnedFoldersCollapsed(bool collapsed) {
 }
 void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search,
     std::optional<bool> animations, std::optional<bool> workspace_names, std::optional<bool> folders_collapsed,
-    std::optional<std::pair<bool, int>> time_machine) {
+    std::optional<std::pair<bool, int>> time_machine,
+    std::optional<std::pair<bool, bool>> updates) {
   if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed, time_machine),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed, time_machine, updates),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -10496,8 +10540,8 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   auto delegate = std::make_unique<AppMenuDelegate>(
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string action) {
         if (!shell) return;
-        if (action == "install_update") { if (shell->install_update_) shell->install_update_.Run(); }
-        else if (action == "check_update") { if (shell->check_update_) shell->check_update_.Run(); }
+        if (action == "install_update") shell->RunUpdateAction();
+        else if (action == "check_update") shell->CheckForUpdates();
         else if (action == "about") shell->ShowAbout();
         else if (shell->callbacks_.run_shortcut) shell->callbacks_.run_shortcut.Run(std::move(action));
       }, weak_factory_.GetWeakPtr()));
@@ -10521,8 +10565,11 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
     commands.push_back({action});
     chord(action);
   };
-  if (!update_version_.empty()) {
-    add("install_update", TF(u"Zainstaluj aktualizację {}…", {base::UTF8ToUTF16(update_version_)}), kMenuDownloadsIcon);
+  if (install_update_) {
+    const auto version = base::UTF8ToUTF16(update_version_);
+    add("install_update", update_offer_label_ == T(u"Pobierz aktualizację")
+        ? TF(u"Pobierz aktualizację {}…", {version})
+        : TF(u"Zainstaluj aktualizację {}…", {version}), kMenuDownloadsIcon);
     model->AddSeparator(ui::NORMAL_SEPARATOR);
   }
   add("new_tab", T(u"Command Center…"), kMenuNewTabIcon);
@@ -10638,7 +10685,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
   if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -10665,7 +10712,7 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
-                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool) {
         if (shell) --shell->pending_writes_;
       }, weak_factory_.GetWeakPtr()));
@@ -10696,7 +10743,7 @@ void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -10749,7 +10796,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
                      std::nullopt, std::nullopt,
-                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt, std::nullopt, std::nullopt),
+                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -11682,48 +11729,205 @@ void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(Wel
   welcome_widget_->Show();
 }
 #endif
-void WorkspaceShell::SetUpdateCheckCallback(base::RepeatingClosure check) {
+class WorkspaceShell::AboutView final : public views::View {
+ public:
+  AboutView(std::u16string version, base::RepeatingClosure check,
+            base::RepeatingClosure action) {
+    SetSidebarPanelLayout(this, true, gfx::Insets(), Metrics().space_3);
+    AddChildView(std::make_unique<SceneParagraph>(
+        TF(u"Wersja {} · Chromium {}", {version,
+           base::UTF8ToUTF16(version_info::GetVersionNumber())}),
+        0, false, kMuted, true));
+    status_ = AddChildView(std::make_unique<SceneParagraph>(
+        std::u16string(), 0, false, kInk, true));
+    auto* actions = AddChildView(std::make_unique<SceneActionGroup>(false, 8));
+    actions->UseDialogBackground();
+    check_ = actions->AddAction(std::move(check), T(u"Sprawdź aktualizacje"),
+                                ui::ButtonStyle::kDefault);
+    action_ = views::AsViewClass<SceneTextButton>(actions->AddAction(
+        std::move(action), T(u"Otwórz stronę wydania"), ui::ButtonStyle::kDefault));
+  }
+
+  void Refresh(const std::u16string& status, const std::u16string& label,
+               bool available, bool pending) {
+    status_->SetText(status);
+    status_->SetVisible(!status.empty());
+    check_->SetEnabled(!pending);
+    check_->parent()->SetVisible(available);
+    action_->SetText(label);
+    action_->SetVisible(!label.empty());
+    if (GetWidget()) {
+      GetWidget()->widget_delegate()->AsBubbleDialogDelegate()->SizeToContents();
+      if (!status.empty() && status != announced_) GetViewAccessibility().AnnouncePolitely(status);
+    }
+    announced_ = status;
+  }
+
+ private:
+  raw_ptr<SceneParagraph> status_ = nullptr;
+  raw_ptr<views::View> check_ = nullptr;
+  raw_ptr<SceneTextButton> action_ = nullptr;
+  std::u16string announced_;
+};
+
+void WorkspaceShell::SetUpdateCheckCallback(
+    base::RepeatingCallback<void(UpdateCheckDone)> check,
+    base::RepeatingCallback<void(bool, bool)> configure) {
   check_update_ = std::move(check);
+  configure_updates_ = std::move(configure);
+  if (configure_updates_) configure_updates_.Run(auto_update_check_, auto_update_download_);
+  RefreshUpdateControls();
 }
 
-void WorkspaceShell::ShowUpdateCheckMessage(std::u16string message) {
-  ShowToast(std::move(message), {}, {});
+void WorkspaceShell::SetAutomaticUpdates() {
+  if (!configure_updates_) return;
+  auto_update_check_ = ToggleOn(auto_update_check_toggle_);
+  auto_update_download_ = ToggleOn(auto_update_download_toggle_);
+  general_dirty_.insert("updates");
+  configure_updates_.Run(auto_update_check_, auto_update_download_);
+  RefreshUpdateControls();
+  SaveGeneralPatch(std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+                   std::nullopt, std::nullopt, std::pair(auto_update_check_, auto_update_download_));
 }
 
-void WorkspaceShell::ShowUpdateReady(std::string version, base::RepeatingClosure install) {
+bool WorkspaceShell::UpdatePreferencesVisible() const {
+  return update_preferences_check_ && update_preferences_check_->IsDrawn() &&
+         general_widget_ && general_widget_->IsVisible();
+}
+
+void WorkspaceShell::CheckForUpdates() {
+  if (!check_update_ || update_check_pending_) return;
+  DownloadUpdate(base::BindOnce(check_update_));
+}
+
+void WorkspaceShell::DownloadUpdate(base::OnceCallback<void(UpdateCheckDone)> download) {
+  if (update_check_pending_) return;
+  update_check_pending_ = true;
+  update_check_message_ = T(u"Sprawdzanie aktualizacji…");
+  RefreshUpdateControls();
+  if (!about_dialog_ && !UpdatePreferencesVisible()) ShowToast(update_check_message_, {}, {});
+  std::move(download).Run(base::BindOnce(&WorkspaceShell::FinishUpdateCheck,
+                                  weak_factory_.GetWeakPtr()));
+}
+
+void WorkspaceShell::FinishUpdateCheck(std::u16string message, GURL release_url) {
+  update_check_pending_ = false;
+  update_check_message_ = std::move(message);
+  update_release_url_ = std::move(release_url);
+  RefreshUpdateControls();
+  if (!about_dialog_ && !UpdatePreferencesVisible() && !update_check_message_.empty())
+    ShowToast(update_check_message_, {}, {});
+}
+
+void WorkspaceShell::ShowUpdateReady(std::string version, base::RepeatingClosure install,
+                                     bool notify_again) {
+  auto message = TF(u"Pobrano instalator wersji {}.", {base::UTF8ToUTF16(version)});
+  ShowUpdateOffer(std::move(version), std::move(message),
+#if BUILDFLAG(IS_MAC)
+                  T(u"Pokaż instalator"),
+#else
+                  T(u"Zainstaluj aktualizację"),
+#endif
+                  std::move(install), notify_again);
+}
+
+void WorkspaceShell::ShowUpdateOffer(std::string version, std::u16string message,
+                                     std::u16string label, base::RepeatingClosure action,
+                                     bool notify_again) {
+  const bool changed = update_version_ != version || update_offer_label_ != label;
   update_version_ = std::move(version);
-  install_update_ = std::move(install);
+  update_offer_message_ = std::move(message);
+  update_offer_label_ = std::move(label);
+  install_update_ = std::move(action);
+  if (!update_check_pending_) update_check_message_.clear();
+  RefreshUpdateControls();
 #if !BUILDFLAG(IS_MAC)
   if (root_) if (auto* button = views::AsViewClass<AppMenuButton>(static_cast<ShellRoot*>(root_.get())->app_menu))
     button->SetUpdateAvailable(true);
 #endif
-  ShowToast(T(u"Dostępna aktualizacja: "), base::UTF8ToUTF16(update_version_),
-      base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
-        if (shell && shell->install_update_) shell->install_update_.Run();
-      }, weak_factory_.GetWeakPtr()), T(u"Zainstaluj"));
+  if ((changed || notify_again) && !about_dialog_ && !UpdatePreferencesVisible()) {
+    ShowToast(update_offer_message_, {},
+        base::BindOnce([](base::RepeatingClosure action) { if (action) action.Run(); },
+                       install_update_), update_offer_label_);
+  }
 }
 
-void WorkspaceShell::ShowAbout() {
-#if !BUILDFLAG(IS_MAC)
-  if (!widget_ || !widget_->IsVisible()) return;
-  if (quit_dialog_) quit_dialog_->CloseNow();
-  // Design: Dialog with a single button, as macOS's About panel.
-  auto dialog = std::make_unique<SceneModalDialog>(std::make_unique<SceneParagraph>(
-      TF(u"Wersja {} · Chromium {}", {base::WideToUTF16(std::wstring(ZITTER_VERSION_SHORT)), base::UTF8ToUTF16(version_info::GetVersionNumber())}),
-      0, false, kMuted), false);
-  dialog->SetTitle(u"Zitter");
+std::u16string WorkspaceShell::UpdateStatus() const {
+  return update_check_message_.empty() ? update_offer_message_ : update_check_message_;
+}
+
+std::u16string WorkspaceShell::UpdateActionLabel() const {
+  if (install_update_) return update_offer_label_;
+  return update_release_url_.is_valid() ? T(u"Otwórz stronę wydania") : std::u16string();
+}
+
+void WorkspaceShell::RunUpdateAction() {
+  // Some actions close a widget that contains the button.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+      base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+        if (!shell) return;
+        if (shell->about_dialog_ && shell->update_offer_label_ != T(u"Pobierz aktualizację"))
+          shell->about_dialog_->Close();
+        if (shell->install_update_) {
+          auto action = shell->install_update_;
+          action.Run();
+        } else if (shell->callbacks_.navigate && shell->update_release_url_.is_valid()) {
+          shell->CloseOverlays();
+          shell->callbacks_.navigate.Run(shell->update_release_url_, true);
+        }
+      }, weak_factory_.GetWeakPtr()));
+}
+
+void WorkspaceShell::RefreshUpdateControls() {
+  const auto status = UpdateStatus();
+  const auto label = UpdateActionLabel();
+  if (about_view_)
+    about_view_->Refresh(status, label, bool(check_update_), update_check_pending_);
+  if (!update_preferences_check_) return;
+  update_preferences_check_->SetEnabled(check_update_ && !update_check_pending_);
+  SetPanelText(update_preferences_status_, check_update_ ? status :
+      T(u"Aktualizacje są niedostępne w tej instalacji."));
+  update_preferences_status_->SetVisible(!status.empty() || !check_update_);
+  views::AsViewClass<SceneTextButton>(update_preferences_action_)->SetText(label);
+  update_preferences_action_->parent()->SetVisible(!label.empty());
+  auto_update_check_toggle_->SetEnabled(bool(configure_updates_));
+  auto_update_download_toggle_->SetEnabled(bool(configure_updates_));
+  SetToggleOn(auto_update_check_toggle_, configure_updates_ && auto_update_check_);
+  SetToggleOn(auto_update_download_toggle_, configure_updates_ && auto_update_download_);
+}
+
+void WorkspaceShell::ShowAbout(std::string version) {
+  if (!widget_ || !widget_->IsVisible() || about_dialog_ || quit_dialog_) return;
+  if (version.empty()) version = base::WideToUTF8(ZITTER_VERSION_SHORT);
+  auto body = std::make_unique<AboutView>(
+      base::UTF8ToUTF16(version),
+      base::BindRepeating(&WorkspaceShell::CheckForUpdates, weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&WorkspaceShell::RunUpdateAction, weak_factory_.GetWeakPtr()));
+  about_view_ = body.get();
+  RefreshUpdateControls();
+  auto dialog = std::make_unique<SceneModalDialog>(std::move(body), bool(check_update_));
+  dialog->SetTitle(T(u"O Zitter"));
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, T(u"Zamknij"));
-  quit_dialog_delegate_ = std::move(dialog);
-  auto* about = views::DialogDelegate::CreateDialogWidget(quit_dialog_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView());
-  quit_dialog_.reset(about);
+  about_delegate_ = std::move(dialog);
+  auto* about = views::DialogDelegate::CreateDialogWidget(
+      about_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView());
+  about_dialog_.reset(about);
   about->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
-    if (shell) { shell->quit_dialog_.reset(); shell->quit_dialog_delegate_.reset(); }
+    if (!shell) return;
+    shell->about_view_ = nullptr;
+    shell->about_dialog_.reset();
+    shell->about_delegate_.reset();
   }, weak_factory_.GetWeakPtr()));
   about->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_MAC)
+  const auto mode = about->color_mode_override();
+  SetWorkspaceNativeAppearance(about, mode ? std::optional<bool>(
+      *mode == ui::ColorProviderKey::ColorMode::kDark) : std::nullopt);
+  InstallWorkspaceKeyboardRouting(about, true);
+#endif
   PreparePanelText(about->GetRootView());
   about->Show();
-#endif
 }
 
 namespace {

@@ -2,13 +2,17 @@
 #define ZITTER_CHROMIUM_APP_RUNTIME_H_
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 #include "base/memory/raw_ptr.h"
 
 #include "base/containers/flat_set.h"
 #include "base/callback_list.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
@@ -20,6 +24,8 @@ class Profile;
 class ScopedKeepAlive;
 class ScopedProfileKeepAlive;
 class BrowserCollection;
+namespace base { class FilePath; }
+namespace network { class SimpleURLLoader; }
 namespace zitter::prototype { class WorkspaceWindow; }
 
 namespace zitter {
@@ -53,8 +59,27 @@ class Runtime final : public ChromeBrowserMainExtraParts,
  private:
   void ReplaceStockWindow(BrowserWindowInterface* browser);
   void WindowReady();
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  using UpdateCheckDone =
+      base::OnceCallback<void(std::u16string, GURL)>;
+  void CheckForUpdates(UpdateCheckDone done);
+  void ConfigureUpdates(bool check, bool download);
+  void CheckInBackground();
+  base::OneShotTimer update_startup_timer_;
+  base::RepeatingTimer update_timer_;
+  bool auto_download_updates_ = false;
+#endif
 #if BUILDFLAG(IS_WIN)
-  void CheckForUpdates();
+  void CheckWindowsUpdate(bool download, UpdateCheckDone done);
+#endif
+#if BUILDFLAG(IS_MAC)
+  struct MacInstaller;
+  void StartMacCheck(UpdateCheckDone done, bool background);
+  void PrepareMacInstaller(MacInstaller installer);
+  void DownloadMacInstaller(MacInstaller installer, bool already_cached);
+  void MacInstallerDownloaded(MacInstaller installer, base::FilePath temporary);
+  void MacInstallerReady(MacInstaller installer, bool verified);
+  void MacUpdateChecked(std::optional<std::string> body);
 #endif
   void OpenPrivateWindow();
   void ClosePrivateWindow(prototype::WorkspaceWindow* window);
@@ -78,6 +103,12 @@ class Runtime final : public ChromeBrowserMainExtraParts,
 #endif
 #if BUILDFLAG(IS_MAC)
   std::unique_ptr<UiLab> ui_lab_;
+  std::unique_ptr<network::SimpleURLLoader> update_loader_;
+  std::vector<UpdateCheckDone> update_checks_;
+  std::unique_ptr<network::SimpleURLLoader> update_download_;
+  bool background_update_check_ = false;
+  bool preparing_mac_installer_ = false;
+  std::string downloaded_mac_version_;
 #endif
   base::ScopedObservation<BrowserCollection, BrowserCollectionObserver> browsers_{this};
   // Stock windows awaiting closure; dropped if they close first.

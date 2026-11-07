@@ -646,7 +646,11 @@ if (is_mac || is_linux || is_win) {
       ]
       deps += [
         "//chrome/browser:chrome_browser_application_mac",
+        "//chrome/browser:primitives",
         "//chrome/browser/mac",
+        "//crypto",
+        "//net",
+        "//services/network/public/cpp",
       ]
       data_deps += [ "//chrome:chrome_framework" ]
       ldflags = [ "-Wl,-ObjC" ]

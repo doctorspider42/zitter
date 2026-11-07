@@ -1,6 +1,8 @@
 #ifndef ZITTER_CHROMIUM_APP_APP_SHELL_MAC_H_
 #define ZITTER_CHROMIUM_APP_APP_SHELL_MAC_H_
 
+#include <string>
+
 class GURL;
 
 namespace zitter {
@@ -28,6 +30,7 @@ enum class AppCommand {
   kDevInspect,
   kHardReload,
   kRss,
+  kAbout,
 };
 
 class AppShellDelegate {
@@ -48,6 +51,7 @@ class AppShellDelegate {
 void InstallAppShell();
 // Reuse upstream native in-progress download consent before destroying Zitter.
 bool ConfirmDownloadShutdown();
+std::string MacAppVersion();
 // Sets (or, with nullptr, clears) the receiver. Setting one flushes queued
 // URLs and installs Zitter's main menu.
 void SetAppShellDelegate(AppShellDelegate* delegate);

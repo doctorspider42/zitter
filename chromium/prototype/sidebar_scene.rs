@@ -63,7 +63,7 @@ mod ffi {
     struct ToolsFormChoice { key: String, label: Vec<u16> }
     struct ToolsFormChoices { choices: Vec<ToolsFormChoice>, enabled: bool }
     struct ToolsChoiceDraft { valid: bool, page: usize, create: bool, target: String, chord: Vec<u16>, name: Vec<u16>, keyword: Vec<u16>, url: Vec<u16>, stop_recording: bool }
-    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language, TimeMachine, TimeMachineDays, AssistantBackends, AssistantModels, AdBlocking, AdBlockingSites, AdBlockingRules }
+    enum PreferenceRowKind { Theme, Pinned, Animations, Search, Toggle, Text, Picker, Action, Directory, SiteEditor, SiteRules, ClearData, ShortcutHint, WorkspaceNames, FoldersCollapsed, Language, TimeMachine, TimeMachineDays, AssistantBackends, AssistantModels, AdBlocking, AdBlockingSites, AdBlockingRules, Updates, AutoUpdateCheck, AutoUpdateDownload }
     #[repr(u32)]
     #[derive(Debug)]
     enum FormCommand { None, WorkspaceSave, WorkspaceToggle, WorkspaceRemove, WorkspaceProfiles, WorkspaceImport, ProfileCreate, ProfileRename, ProfileDelete, ProfileBack, ImportApply, PreferenceText, PreferenceSite, PreferenceClear, PreferenceDirectory, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, WorkspaceDismiss, PreferencesDismiss, ImportDismiss, ToolsDismiss, PreferenceCategory, PreferenceMore, WorkspaceColorPreset, WorkspaceEmojiPreset }
@@ -1160,6 +1160,9 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(5,K::Action,"",t("Zapisane hasła"),t("Przeglądaj i usuwaj loginy aktywnego profilu."),vec![],"",A::Passwords));
     rows.push(preference_spec(5,K::Action,"",t("Profile przeglądania"),t("Oddziel cookies, historię i dane logowania między profilami."),vec![],"",A::Profiles));
     rows.push(preference_spec(5,K::Action,"",t("Import z przeglądarki"),t("Przenieś profile, przestrzenie, foldery i zakładki."),vec![],"",A::Import));
+    rows.push(preference_spec(6,K::Updates,"",t("Aktualizacje Zittera"),t("Sprawdź, czy jest dostępna nowa wersja przeglądarki."),vec![],"",A::None));
+    rows.push(preference_spec(6,K::AutoUpdateCheck,"",t("Sprawdzaj aktualizacje automatycznie"),t("Sprawdzaj po uruchomieniu i co kilka godzin. Powiadom o nowej wersji."),vec![],"",A::None));
+    rows.push(preference_spec(6,K::AutoUpdateDownload,"",t("Pobieraj aktualizacje automatycznie"),t("Pobieraj instalator w tle. Instalację uruchamiasz samodzielnie."),vec![],"",A::None));
     rows.push(preference_spec(6,K::Toggle,"download_prompt",t("Pytaj, gdzie zapisać każdy plik"),t("Wybieraj miejsce zapisu przy każdym pobieraniu."),vec![],"",A::None));
     rows.push(preference_spec(6,K::Directory,"",t("Folder pobierania"),t("Domyślne miejsce zapisu plików w tym profilu."),vec![],"",A::None));
     rows.push(preference_spec(7,K::Text,"accept_languages",t("Preferowane języki witryn"),t("Kody języków w kolejności preferencji, oddzielone przecinkami. Np. pl, en-US, en. Zmiana dotyczy treści witryn; język interfejsu Zitter wybierasz osobno."),vec![],"pl, en-US, en",A::None));
@@ -4234,10 +4237,10 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),78);
-        let mut counts=[0;12];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,2,3,1,6,12,5]);
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),81);
+        let mut counts=[0;12];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,4,8,7,12,5,5,3,1,6,12,5]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),41);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),77);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),80);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();

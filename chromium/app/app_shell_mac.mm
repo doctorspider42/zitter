@@ -101,7 +101,7 @@ NSMenu* BuildMainMenu() {
   zitter::prototype::ApplyUiLanguage("");
   NSMenu* bar = [[NSMenu alloc] initWithTitle:@""];
   Submenu(bar, @"Zitter", @[
-    Item(Text(u"O Zitter"), @selector(orderFrontStandardAboutPanel:), @""),
+    Command(Text(u"O Zitter"), AppCommand::kAbout, @""),
     NSMenuItem.separatorItem,
     Command(@"Time Machine…", AppCommand::kTimeline, @"y", kCmdShift),
     Command(Text(u"Historia…"), AppCommand::kHistory, @"y", kCmd),
@@ -171,6 +171,10 @@ NSMenu* DockMenu() {
 }  // namespace
 
 namespace zitter {
+
+std::string MacAppVersion() {
+  return base::SysNSStringToUTF8([NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]);
+}
 
 bool ConfirmDownloadShutdown() {
   const int count = DownloadCoreService::BlockingShutdownCountAllProfiles();

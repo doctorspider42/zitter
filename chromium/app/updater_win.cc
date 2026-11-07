@@ -21,7 +21,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
-#include "base/task/single_thread_task_runner.h"
 #include "base/version.h"
 #include "base/win/registry.h"
 #include "chromium/app/zitter_version.h"
@@ -104,7 +103,7 @@ base::File OpenVerifiedInstaller(const base::FilePath& path, const updates::Rele
   return file;
 }
 
-updates::CheckResult Download(const base::FilePath& cache, std::string_view current_version) {
+updates::CheckResult Download(const base::FilePath& cache, std::string_view current_version, bool download) {
   using updates::CheckStatus;
   std::string json;
   if (!Fetch(kLatest, 2 * 1024 * 1024, &json)) return {CheckStatus::kFailed};
@@ -115,10 +114,11 @@ updates::CheckResult Download(const base::FilePath& cache, std::string_view curr
   }
   auto release = ParseReleaseFields(*value, current_version);
   if (!release) return {CheckStatus::kNoUpdate};
-  if (!base::CreateDirectory(cache)) return {CheckStatus::kFailed};
   const auto installer = InstallerPath(cache, *release);
   if (updates::VerifyInstaller(installer, *release))
     return {CheckStatus::kReady, std::move(release)};
+  if (!download) return {CheckStatus::kAvailable, std::move(release)};
+  if (!base::CreateDirectory(cache)) return {CheckStatus::kFailed};
   const auto partial = installer.AddExtension(FILE_PATH_LITERAL("partial"));
   {
     base::File file(partial, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
@@ -171,7 +171,7 @@ std::optional<updates::Release> ParseReleaseFields(
 
 namespace updates {
 CheckResult DownloadLatest(const base::FilePath& cache, std::string current_version) {
-  return Download(cache, current_version);
+  return Download(cache, current_version, true);
 }
 std::optional<Release> ParseRelease(std::string_view json, std::string_view current_version) {
   const auto value = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
@@ -183,8 +183,8 @@ bool VerifyInstaller(const base::FilePath& path, const Release& release) {
 }
 }  // namespace updates
 
-WindowsUpdater::WindowsUpdater(const base::FilePath& user_data, Ready ready)
-    : cache_(user_data.Append(FILE_PATH_LITERAL("Updates"))), ready_(std::move(ready)) {}
+WindowsUpdater::WindowsUpdater(const base::FilePath& user_data)
+    : cache_(user_data.AppendASCII("Updates")) {}
 WindowsUpdater::~WindowsUpdater() = default;
 
 bool WindowsUpdater::Start() {
@@ -194,50 +194,50 @@ bool WindowsUpdater::Start() {
   const auto installation = Installation();
   if (!installation) return false;
   directory_ = installation->first;
-  // Leave first paint/startup alone; retry every six hours while running.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
-      base::BindOnce(&WindowsUpdater::Check, weak_factory_.GetWeakPtr()), base::Seconds(30));
-  timer_.Start(FROM_HERE, base::Hours(6), this, &WindowsUpdater::Check);
   return true;
 }
 
-void WindowsUpdater::CheckNow(base::OnceCallback<void(updates::CheckStatus)> done) {
+void WindowsUpdater::CheckNow(bool download, CheckedCallback done) {
   if (directory_.empty()) {
-    std::move(done).Run(updates::CheckStatus::kFailed);
+    std::move(done).Run({updates::CheckStatus::kFailed});
     return;
   }
   if (pending_) {
-    ready_.Run(pending_->version);
-    std::move(done).Run(updates::CheckStatus::kReady);
+    std::move(done).Run({updates::CheckStatus::kReady, pending_});
     return;
   }
-  // A manual request can join a startup or periodic check already in progress.
-  manual_check_done_ = std::move(done);
-  Check();
+  checks_.push_back(std::move(done));
+  download_requested_ |= download;
+  if (!busy_) Check(download);
 }
 
-void WindowsUpdater::Check() {
-  if (busy_ || pending_ || directory_.empty()) return;
+void WindowsUpdater::Check(bool download) {
   busy_ = true;
+  download_requested_ = false;
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
-      {base::MayBlock(), manual_check_done_ ? base::TaskPriority::USER_VISIBLE
-                                           : base::TaskPriority::BEST_EFFORT,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce(&updates::DownloadLatest, cache_, base::WideToUTF8(ZITTER_VERSION_SHORT)),
+      base::BindOnce([](base::FilePath cache, bool download) {
+        return Download(cache, base::WideToUTF8(ZITTER_VERSION_SHORT), download);
+      }, cache_, download),
       base::BindOnce(&WindowsUpdater::Checked, weak_factory_.GetWeakPtr()));
 }
+
 void WindowsUpdater::Checked(updates::CheckResult result) {
+  // An explicit download can join a metadata-only check that is still running.
+  if (result.status == updates::CheckStatus::kAvailable && download_requested_) {
+    Check(true);
+    return;
+  }
   busy_ = false;
-  pending_ = std::move(result.release);
-  auto done = std::move(manual_check_done_);
-  if (pending_) ready_.Run(pending_->version);
-  if (done) std::move(done).Run(result.status);
+  if (result.status == updates::CheckStatus::kReady) pending_ = result.release;
+  for (auto& done : std::exchange(checks_, {})) std::move(done).Run(result);
 }
+
 void WindowsUpdater::RequestInstall() {
   install_requested_ = pending_.has_value();
 }
 void WindowsUpdater::InstallOnExit() {
-  timer_.Stop();
   weak_factory_.InvalidateWeakPtrs();
   if (!install_requested_ || !pending_ || directory_.empty()) return;
   // Hashing hundreds of MB must not block the browser's UI/shutdown thread.

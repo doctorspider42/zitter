@@ -6,11 +6,11 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "base/timer/timer.h"
 
 namespace zitter {
 // Recognized before Chromium starts; waits for the browser and verifies the
@@ -23,7 +23,7 @@ struct Release {
   std::string sha256;
   int64_t size = 0;
 };
-enum class CheckStatus { kReady, kNoUpdate, kFailed };
+enum class CheckStatus { kReady, kAvailable, kNoUpdate, kFailed };
 struct CheckResult {
   CheckStatus status;
   std::optional<Release> release = std::nullopt;
@@ -40,25 +40,24 @@ CheckResult DownloadLatest(const base::FilePath& cache,
 // builds. Downloads in the background; installs on exit after an explicit click.
 class WindowsUpdater {
  public:
-  using Ready = base::RepeatingCallback<void(std::string)>;
-  WindowsUpdater(const base::FilePath& user_data, Ready ready);
+  using CheckedCallback = base::OnceCallback<void(const updates::CheckResult&)>;
+  explicit WindowsUpdater(const base::FilePath& user_data);
   ~WindowsUpdater();
   bool Start();
-  void CheckNow(base::OnceCallback<void(updates::CheckStatus)> done);
+  void CheckNow(bool download, CheckedCallback done);
   void RequestInstall();
   void InstallOnExit();
 
  private:
-  void Check();
+  void Check(bool download);
   void Checked(updates::CheckResult result);
   base::FilePath directory_;
   base::FilePath cache_;
   bool busy_ = false;
   bool install_requested_ = false;
-  Ready ready_;
-  base::OnceCallback<void(updates::CheckStatus)> manual_check_done_;
+  bool download_requested_ = false;
+  std::vector<CheckedCallback> checks_;
   std::optional<updates::Release> pending_;
-  base::RepeatingTimer timer_;
   base::WeakPtrFactory<WindowsUpdater> weak_factory_{this};
 };
 }  // namespace zitter

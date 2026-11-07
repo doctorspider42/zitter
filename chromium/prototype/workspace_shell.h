@@ -36,6 +36,7 @@
 #include "ui/native_theme/native_theme_observer.h"
 #include "ui/views/view_tracker.h"
 #include "url/gurl.h"
+#include "build/build_config.h"
 
 namespace zitter::sidebar { struct Item; struct Timeline; struct SidebarPinTree; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; }
@@ -320,11 +321,17 @@ class WorkspaceShell final : public ui::EventHandler,
   // 0 history, 1 cookies, 2 cache, 3 downloads, 4 passwords, 5 forms, 6 site settings, 7 Time Machine.
   void SetClearDataChoiceForTesting(size_t kind, bool checked);
   void SetClearDataAdvancedForTesting(bool advanced) { SetClearDataAdvanced(advanced); }
-  // The |z⟩ menu's „O Zitter”: Zitter's and Chromium's versions.
-  void ShowAbout();
-  void ShowUpdateReady(std::string version, base::RepeatingClosure install = {});
-  void SetUpdateCheckCallback(base::RepeatingClosure check);
-  void ShowUpdateCheckMessage(std::u16string message);
+  void ShowAbout(std::string version = {});
+  void ShowUpdateReady(std::string version, base::RepeatingClosure install = {},
+                       bool notify_again = true);
+  using UpdateCheckDone =
+      base::OnceCallback<void(std::u16string, GURL)>;
+  void SetUpdateCheckCallback(base::RepeatingCallback<void(UpdateCheckDone)> check,
+                              base::RepeatingCallback<void(bool, bool)> configure = {});
+  void DownloadUpdate(base::OnceCallback<void(UpdateCheckDone)> download);
+  void ShowUpdateOffer(std::string version, std::u16string message,
+                       std::u16string label, base::RepeatingClosure action,
+                       bool notify_again = false);
   // Find in page (design: Find & Print): the bar over the active page's top
   // right. `find` gets the text, the direction and case matching; `closed`
   // runs when the bar hides.
@@ -886,7 +893,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ShowAssistantBackendInput(views::Widget* owner, std::string provider, std::u16string value);
   void BuildAdBlockingPreferences();
   void SaveSitePreference();
-  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt);
+  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt, std::optional<std::pair<bool, bool>> updates = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
   void RebuildTabs(std::string_view previous, bool catalogue_changed);
   void StopWorkspaceAnimation();
@@ -1171,7 +1178,10 @@ class WorkspaceShell final : public ui::EventHandler,
   // Removing a space asks first (design: Dialog), then removes with an undo toast.
   std::unique_ptr<views::DialogDelegate> remove_dialog_delegate_;
   std::unique_ptr<views::Widget> remove_dialog_;
-  // The quit-while-downloading prompt or the About dialog, one at a time.
+  class AboutView;
+  std::unique_ptr<views::DialogDelegate> about_delegate_;
+  std::unique_ptr<views::Widget> about_dialog_;
+  raw_ptr<AboutView> about_view_ = nullptr;
   std::unique_ptr<views::DialogDelegate> quit_dialog_delegate_;
   std::unique_ptr<views::Widget> quit_dialog_;
   std::unique_ptr<views::DialogDelegate> danger_dialog_delegate_;
@@ -1317,7 +1327,28 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t sidebar_context_visit_count_ = 0;
   std::string update_version_;
   base::RepeatingClosure install_update_;
-  base::RepeatingClosure check_update_;
+  void CheckForUpdates();
+  void FinishUpdateCheck(std::u16string message, GURL release_url);
+  void RunUpdateAction();
+  void RefreshUpdateControls();
+  void SetAutomaticUpdates();
+  bool UpdatePreferencesVisible() const;
+  std::u16string UpdateStatus() const;
+  std::u16string UpdateActionLabel() const;
+  base::RepeatingCallback<void(UpdateCheckDone)> check_update_;
+  base::RepeatingCallback<void(bool, bool)> configure_updates_;
+  bool auto_update_check_ = true;
+  bool auto_update_download_ = BUILDFLAG(IS_WIN);
+  std::u16string update_check_message_;
+  std::u16string update_offer_message_;
+  std::u16string update_offer_label_;
+  raw_ptr<views::View> update_preferences_status_ = nullptr;
+  raw_ptr<views::View> update_preferences_check_ = nullptr;
+  raw_ptr<views::View> update_preferences_action_ = nullptr;
+  raw_ptr<views::View> auto_update_check_toggle_ = nullptr;
+  raw_ptr<views::View> auto_update_download_toggle_ = nullptr;
+  GURL update_release_url_;
+  bool update_check_pending_ = false;
   size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::View> profile_picker_ = nullptr;
   raw_ptr<EditorControl> workspace_input_ = nullptr;
