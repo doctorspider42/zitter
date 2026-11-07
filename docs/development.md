@@ -587,6 +587,32 @@ through stderr receipt; split visual-state callbacks acknowledge renderer work,
 not physical presentation. These samples complement the browser-test metrics
 above and must not be mixed with them in a before/after comparison.
 
+On macOS, add `--window-timing` to the startup scenario to time the first
+on-screen workspace window. Run in a logged-in graphical session with the
+Xcode command-line tools available.
+
+```sh
+python3 tools/benchmark_app.py --app build/ZitterRustMetal.app \
+  --scenario startup --window-timing --iterations 10 --tabs 25
+```
+
+The timer starts just before spawning the bundle executable. The observer polls
+WindowServer for an on-screen workspace window owned by that PID without screen
+capture or Screen Recording permission. This measures window presence and
+includes the polling delay. LaunchServices and pixel presentation are outside
+the measured interval. Compare `app_process_window_onscreen_ms` separately from
+workspace readiness and the page's first paint.
+
+The driver passes `--zitter-startup-timing` to collect monotonic phase markers
+from the browser process. The JSON reports elapsed time to each milestone and
+the interval ending there. The interval ending at `main_entry` includes process
+launch, loader work and any other activity before entering the executable.
+`shell_built`, `widget_initialized`, `shell_attached` and `widget_shown` break down
+window construction. `startup_show_to_window_onscreen_ms` measures from the
+request to show the window until the observer sees it. Pass
+`--zitter-startup-timing` directly when you only need the internal markers on
+stderr.
+
 For a controlled renderer-pool experiment, `--spare-renderers 2` passes
 `--enable-features=MultipleSpareRPHs:count/2` to this run only. Extra browser
 arguments are recorded in its JSON. Compare against the default with the same

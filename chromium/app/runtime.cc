@@ -1,6 +1,7 @@
 #include "chromium/app/runtime.h"
 #include <algorithm>
 #include "chromium/app/performance_probe.h"
+#include "chromium/app/startup_timing.h"
 
 #include "base/check.h"
 #include "base/command_line.h"
@@ -43,7 +44,12 @@ namespace zitter {
 Runtime::Runtime() = default;
 Runtime::~Runtime() = default;
 
+void Runtime::PreProfileInit() {
+  MarkStartup("pre_profile_init");
+}
+
 void Runtime::PreBrowserStart() {
+  MarkStartup("pre_browser_start");
   keep_alive_ = std::make_unique<ScopedKeepAlive>(
       KeepAliveOrigin::BROWSER, KeepAliveRestartOption::DISABLED);
 #if BUILDFLAG(IS_WIN)
@@ -60,6 +66,7 @@ void Runtime::PreBrowserStart() {
 }
 
 void Runtime::PreMainMessageLoopRun() {
+  MarkStartup("pre_main_loop");
 #if BUILDFLAG(IS_MAC)
   InstallAppShell();
 #endif
@@ -90,6 +97,7 @@ void Runtime::PreMainMessageLoopRun() {
 }
 
 void Runtime::WindowReady() {
+  MarkStartup("workspace_restored");
 #if BUILDFLAG(IS_WIN)
   updater_ = std::make_unique<WindowsUpdater>(g_browser_process->profile_manager()->user_data_dir(),
       base::BindRepeating([](base::WeakPtr<Runtime> runtime, std::string version) {
@@ -127,6 +135,7 @@ void Runtime::WindowReady() {
   SetAppShellDelegate(this);
   window_->shell()->SyncShortcuts();
 #endif
+  MarkStartup("workspace_ready");
   LOG(INFO) << "Zitter ready; persistent data: " << g_browser_process->profile_manager()->user_data_dir();
   if (base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-app-benchmark")) {
     performance_probe_ = std::make_unique<AppPerformanceProbe>(window_.get(),

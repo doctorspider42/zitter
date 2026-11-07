@@ -38,6 +38,7 @@ class Runtime final : public ChromeBrowserMainExtraParts,
  public:
   Runtime();
   ~Runtime() override;
+  void PreProfileInit() override;
   void PreBrowserStart() override;
   void PreMainMessageLoopRun() override;
   void PostMainMessageLoopRun() override;

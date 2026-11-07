@@ -4705,8 +4705,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueRowsOrderCo
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueToolsRoutes) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
+  EXPECT_FALSE(shell->tools_widget());
+  EXPECT_FALSE(shell->time_machine_for_testing());
   const std::vector<std::pair<std::u16string,int>> routes={{u"Time Machine przestrzeni",0},{u"Skróty klawiszowe",1},{u"Wyszukiwarki i prefiksy",2}};
-  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget()->IsVisible());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_input()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
+  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()&&shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_input()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
   // Its History row opens Zitter's History window.
   ASSERT_TRUE(window_->Select("work"));const auto tabs=window_->tab_count("work");
   shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Historia przeglądania",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();
@@ -6072,7 +6074,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterSearchAndDispatch
   EXPECT_EQ("shortcuts", shell->suggestions().front().command_id);
   ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
   EXPECT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
-  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_widget()->IsVisible(); }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_widget() && shell->tools_widget()->IsVisible(); }));
   EXPECT_FALSE(shell->address_visible());
   shell->CloseOverlays();
   window_->OpenCommandPalette(); SetPaletteQuery(u"> zapisz snapshot");

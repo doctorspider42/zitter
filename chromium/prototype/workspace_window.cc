@@ -8,6 +8,7 @@
 #include "chromium/prototype/assistant_panel.h"
 #include "ui/views/view_tracker.h"
 #include "chromium/prototype/timeline_store.h"
+#include "chromium/app/startup_timing.h"
 #include "base/time/default_clock.h"
 #include "chromium/prototype/i18n.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
@@ -871,6 +872,7 @@ WorkspaceWindow::WorkspaceWindow(Profile* work, Profile* personal)
 WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_import, Profile* private_profile)
     : controller_(model_, *this), private_profile_(private_profile), data_directory_(std::move(data_directory)), offer_import_(offer_import && !private_profile) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (!is_private()) MarkStartup("workspace_begin");
   // The UI language is fixed for the run, before any text is built.
   ApplyUiLanguage(g_browser_process->GetApplicationLocale());
   configuration_path_ = data_directory_.AppendASCII("ZitterWorkspaces.json");
@@ -979,6 +981,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   shell_ = std::make_unique<WorkspaceShell>(
       data_directory_.AppendASCII("ZitterAppearance.json"), std::move(callbacks));
   auto root = shell_->Build();
+  if (!is_private()) MarkStartup("shell_built");
   // Chrome's post-install bubble opens (and needs) a stock browser window;
   // Zitter confirms a new extension with the puzzle's tremor instead.
   extension_install_ui_ = std::make_unique<base::AutoReset<bool>>(
@@ -1055,13 +1058,16 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   }
 #endif
   widget_->Init(std::move(params));
+  if (!is_private()) MarkStartup("widget_initialized");
 #if BUILDFLAG(IS_WIN)
   if (!is_private()) SetWorkspaceCommandHandler(widget_.get(), base::BindRepeating(
       [](base::WeakPtr<WorkspaceWindow> window, std::string command) { if (window) window->RunExternalCommand(std::move(command)); },
       weak_factory_.GetWeakPtr()), data_directory_);
 #endif
   shell_->Attach(widget_.get(), this);
+  if (!is_private()) MarkStartup("shell_attached");
   widget_->Show();
+  if (!is_private()) MarkStartup("widget_shown");
   if (is_private()) {
     profiles_.push_back({{"private-profile", base::UTF16ToUTF8(T(u"Tryb prywatny")), "", ""}, nullptr});
     model_.Add({"private", "private-profile", base::UTF16ToUTF8(T(u"Tryb prywatny"))});
@@ -1085,7 +1091,9 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
       base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::array<std::string, 3> data) {
         if (!window) return;
         window->session_json_ = std::move(data[1]);
+        MarkStartup("workspace_files_read");
         window->LoadTimeline(std::move(data[2]));
+        MarkStartup("timeline_loaded");
         window->RestoreConfiguration(std::move(data[0]));
       }, weak_factory_.GetWeakPtr()));
 }

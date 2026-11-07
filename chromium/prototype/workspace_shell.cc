@@ -4098,6 +4098,35 @@ void WorkspaceShell::SetPanes(std::vector<views::View*> panes, std::vector<doubl
   ScheduleMetalSplit();
 }
 
+void WorkspaceShell::CreatePanelWidget(
+    std::unique_ptr<views::View> contents,
+    std::unique_ptr<views::WidgetDelegate>& delegate,
+    std::unique_ptr<views::Widget>& panel,
+    std::u16string title,
+    bool activatable) {
+  delegate = std::make_unique<views::WidgetDelegate>();
+  delegate->SetTitle(title);
+  delegate->SetContentsView(std::move(contents));
+  views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,
+                                   views::Widget::InitParams::TYPE_BUBBLE);
+  params.delegate = delegate.get();
+  params.SetParent(widget_);
+  // A key panel retargets keystrokes to itself (workspace_keyboard_mac.mm),
+  // so the always-visible sidebar, which has no text input, never takes key.
+  if (!activatable) params.activatable = views::Widget::InitParams::Activatable::kNo;
+  params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
+  params.rounded_corners = gfx::RoundedCornersF(12);
+  panel = std::make_unique<views::Widget>();
+#if BUILDFLAG(IS_WIN)
+  if (!activatable) ConfigureNonActivatingPanel(panel.get(), params);
+#endif
+  panel->Init(std::move(params));
+
+  PreparePanelText(panel->GetRootView());
+  panel->AddObserver(this);
+  RegisterKeys(panel.get(), accelerator_target_, tools_, true);
+}
+
 void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target) {
   widget_ = widget;
   accelerator_target_ = target;
@@ -4223,7 +4252,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   SetSidebarPanelLayout(sidebar.get(), true, gfx::Insets::TLBR(2, 4, 8, 4), 2, scroll);
 
   // Workspace settings: profile and color live here, not in the sidebar.
-  workspace_form_=std::make_unique<WorkspaceFormState>();tools_form_=std::make_unique<ToolsFormState>();
+  workspace_form_=std::make_unique<WorkspaceFormState>();
   std::array<std::u16string,17> workspace_copy={T(u"Nazwa przestrzeni"),T(u"Np. Projekt lub Klient"),T(u"Profil przeglądania"),T(u"Profil przestrzeni"),T(u"Wspólny profil = wspólne logowanie i cookies.\nZmiana profilu zamknie karty tej przestrzeni."),T(u"Zapisz poniżej nazwę i profil. Wygląd zapisuje się od razu."),T(u"Zamknij ustawienia przestrzeni"),T(u"Wygląd · zapis automatyczny"),T(u"Kolor przestrzeni"),T(u"Kolor przestrzeni #RRGGBB"),T(u"Emoji przestrzeni"),T(u"Emoji przestrzeni"),T(u"Inne… (⌃⌘Spacja)"),T(u"Więcej opcji"),T(u"Zarządzaj profilami"),T(u"Importuj z przeglądarki…"),T(u"Usuń przestrzeń")};
   {const auto c=sidebar::workspace_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};workspace_copy={text(c.name_label),text(c.placeholder),text(c.profile_label),text(c.profile_ax),text(c.profile_hint),text(c.save_hint),text(c.close),text(c.appearance),text(c.color),text(c.color_ax),text(c.emoji),text(c.emoji_ax),text(c.emoji_placeholder),text(c.more),text(c.manage),text(c.import_label),text(c.remove_label)};}
   auto settings_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
@@ -4669,85 +4698,32 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   peek_host_=peek->AddChildView(std::make_unique<views::View>());peek_host_->SetLayoutManager(std::make_unique<views::FillLayout>());
   SetSidebarPanelLayout(peek.get(),true,gfx::Insets(8),8,peek_host_);
 
-  auto tools_panel = std::make_unique<views::View>();
-  tools_root_ = tools_panel.get();
-  tools_chrome_=std::make_unique<PreferenceChromeState>(tools_root_);
-  auto* tools_heading = tools_panel->AddChildView(std::make_unique<views::View>());
-  tools_title_ = AddToolsCopy(tools_heading,u"Time Machine",kInk,5,static_cast<int>(gfx::Font::Weight::SEMIBOLD),false);
-  auto dismiss_tools=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
-    if(shell){shell->SetShortcutRecording(false);shell->tools_widget_->Hide();shell->RestorePageFocus();}
-  },weak);
-  {auto* controls=tools_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));tools_close_=controls->AddControl({},T(u"Zamknij narzędzia"));BindFormCommand(tools_close_,sidebar::FormCommand::ToolsDismiss);}
-  SetSidebarPanelLayout(tools_heading,false,gfx::Insets(),8,tools_title_);
-  PanelViewport* tools_viewport=nullptr;auto tools_scroll=CreatePanelViewport(&tools_viewport,base::BindRepeating(&WorkspaceShell::RefreshToolsViewport,weak));tools_scroll_=tools_viewport;
-  auto tools_body = std::make_unique<views::View>(); tools_body_ = tools_body.get();
-  SetSidebarPanelLayout(tools_body_,true,gfx::Insets::TLBR(0,0,8,8),10);
-  tools_scroll_->SetPanelContents(std::move(tools_body)); tools_panel->AddChildView(std::move(tools_scroll));
-  tools_status_ = AddToolsCopy(tools_panel.get(),u"",kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  SetSidebarPanelLayout(tools_panel.get(),true,gfx::Insets(20),12,tools_scroll_->view());
-
-  auto make_panel = [&](std::unique_ptr<views::View> contents,
-                        std::unique_ptr<views::WidgetDelegate>& delegate,
-                        std::unique_ptr<views::Widget>& panel, std::u16string title,
-                        bool activatable = true) {
-    delegate = std::make_unique<views::WidgetDelegate>();
-    delegate->SetTitle(title);
-    delegate->SetContentsView(std::move(contents));
-    views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,
-                                     views::Widget::InitParams::TYPE_BUBBLE);
-    params.delegate = delegate.get();
-    params.SetParent(widget_);
-    // A key panel retargets keystrokes to itself (workspace_keyboard_mac.mm),
-    // so the always-visible sidebar, which has no text input, never takes key.
-    if (!activatable) params.activatable = views::Widget::InitParams::Activatable::kNo;
-    params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
-    params.rounded_corners = gfx::RoundedCornersF(12);
-    panel = std::make_unique<views::Widget>();
-#if BUILDFLAG(IS_WIN)
-    if (!activatable) ConfigureNonActivatingPanel(panel.get(), params);
-#endif
-    panel->Init(std::move(params));
-
-    PreparePanelText(panel->GetRootView());
-    panel->AddObserver(this);
-    RegisterKeys(panel.get(), target, tools_, true);
-  };
-  make_panel(std::move(sidebar), sidebar_delegate_, sidebar_widget_, T(u"Zitter — Karty"), false);
+  CreatePanelWidget(std::move(sidebar), sidebar_delegate_, sidebar_widget_, T(u"Zitter — Karty"), false);
   sidebar_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
   sidebar_root_->SetPaintToLayer();
   sidebar_root_->layer()->SetFillsBoundsOpaquely(false);
   sidebar_widget_->GetRootView()->SetPaintToLayer();
   sidebar_widget_->GetRootView()->layer()->SetMasksToBounds(true);
-  make_panel(std::move(palette), address_delegate_, address_widget_, T(u"Zitter — Paleta poleceń"));
+  CreatePanelWidget(std::move(palette), address_delegate_, address_widget_, T(u"Zitter — Paleta poleceń"));
   PanelViewport* settings_viewport=nullptr;
   auto settings_scroll=CreatePanelViewport(&settings_viewport,base::BindRepeating(&WorkspaceShell::RefreshFormViewports,weak),{0,10000,false});
   settings_scroll_=settings_viewport;settings_viewport->SetPanelContents(std::move(settings));
-  make_panel(std::move(settings_scroll), settings_delegate_, settings_widget_, T(u"Zitter — Ustawienia przestrzeni"));
-  make_panel(std::move(profiles_panel), profiles_delegate_, profiles_widget_, T(u"Zitter — Profile"));
+  CreatePanelWidget(std::move(settings_scroll), settings_delegate_, settings_widget_, T(u"Zitter — Ustawienia przestrzeni"));
+  CreatePanelWidget(std::move(profiles_panel), profiles_delegate_, profiles_widget_, T(u"Zitter — Profile"));
   PanelViewport* import_viewport=nullptr;
   auto import_scroll=CreatePanelViewport(&import_viewport,base::BindRepeating(&WorkspaceShell::RefreshFormViewports,weak),{0,10000,false});
   import_scroll_=import_viewport;import_viewport->SetPanelContents(std::move(import_panel));
-  make_panel(std::move(import_scroll), import_delegate_, import_widget_, T(u"Zitter — Import danych"));
-  make_panel(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
-  make_panel(std::move(general), general_delegate_, general_widget_, T(u"Zitter — Ustawienia"));
-  make_panel(std::move(tools_panel), tools_delegate_, tools_widget_, T(u"Zitter — Narzędzia"));
-  {TimeMachineView::Host host;
-   host.timeline=callbacks_.timeline;host.now=callbacks_.timeline_now;host.restore=callbacks_.restore_timeline;
-   host.palette=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->time_machine_?Palette(shell->time_machine_.get()):sidebar::design_palette(true,kDefaultWorkspaceColor);},weak);
-   // Only the system's reduced motion stills Time Machine; „Animacje przestrzeni” is about switching spaces.
-   host.animations=base::BindRepeating([]{return !gfx::Animation::PrefersReducedMotion();});
-   host.enable=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetTimeMachine(true,shell->time_machine_days_);},weak);
-   host.close=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell&&shell->time_machine_widget_){shell->time_machine_widget_->Hide();shell->RestorePageFocus();}},weak);
-   auto view=std::make_unique<TimeMachineView>(std::move(host));time_machine_=view.get();
-   make_panel(std::move(view), time_machine_delegate_, time_machine_widget_, u"Zitter — Time Machine");}
+  CreatePanelWidget(std::move(import_scroll), import_delegate_, import_widget_, T(u"Zitter — Import danych"));
+  CreatePanelWidget(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
+  CreatePanelWidget(std::move(general), general_delegate_, general_widget_, T(u"Zitter — Ustawienia"));
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
-   toast_=toast.get();make_panel(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
+   toast_=toast.get();CreatePanelWidget(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
   {auto cue=std::make_unique<DownloadCueView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(!shell)return;if(shell->callbacks_.downloads)shell->callbacks_.downloads.Run();shell->HideDownloadCue();},weak));
-   download_cue_=cue.get();make_panel(std::move(cue), download_cue_delegate_, download_cue_widget_, T(u"Zitter — Pobieranie"), false);
+   download_cue_=cue.get();CreatePanelWidget(std::move(cue), download_cue_delegate_, download_cue_widget_, T(u"Zitter — Pobieranie"), false);
    download_cue_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);}
   CreateSplitDrop();
-  make_panel(std::make_unique<ScrimView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+  CreatePanelWidget(std::make_unique<ScrimView>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
     if (!shell) return;
     shell->CloseOverlays(true);
     shell->RestorePageFocus();
@@ -4781,7 +4757,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     if (!shell->pending_command_uses_.empty()) {
       shell->pending_command_uses_.clear(); shell->command_usage_dirty_ = true; shell->SaveTools();
     }
-    if (shell->tools_widget_->IsVisible()) shell->RefreshTools();
+    if (shell->tools_widget_ && shell->tools_widget_->IsVisible()) shell->RefreshTools();
   }, weak));
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(ReadAppearance, settings_path_),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, Appearance appearance) {
@@ -4885,7 +4861,7 @@ void WorkspaceShell::Detach() {
   weak_factory_.InvalidateWeakPtrs();
   if (!widget_) return;
   accelerator_target_ = nullptr;
-  ResetToolsForm();
+  tools_form_.reset();
   new_tab_button_ = nullptr;
   widget_->RemoveObserver(this);
   for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()})
@@ -9695,9 +9671,65 @@ bool WorkspaceShell::ToolsRecording() const {
 void WorkspaceShell::ResetToolsForm() {
   if(tools_form_)tools_form_->form->tools_reset();
 }
+void WorkspaceShell::CreateTimeMachinePanel() {
+  auto weak = weak_factory_.GetWeakPtr();
+  TimeMachineView::Host host;
+  host.timeline = callbacks_.timeline;
+  host.now = callbacks_.timeline_now;
+  host.restore = callbacks_.restore_timeline;
+  host.palette = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    return shell && shell->time_machine_ ? Palette(shell->time_machine_.get())
+                                         : sidebar::design_palette(true, kDefaultWorkspaceColor);
+  }, weak);
+  // Only the system's reduced motion setting stills Time Machine.
+  host.animations = base::BindRepeating([] { return !gfx::Animation::PrefersReducedMotion(); });
+  host.enable = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if (shell) shell->SetTimeMachine(true, shell->time_machine_days_);
+  }, weak);
+  host.close = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell || !shell->time_machine_widget_) return;
+    shell->time_machine_widget_->Hide();
+    shell->RestorePageFocus();
+  }, weak);
+  auto view = std::make_unique<TimeMachineView>(std::move(host));
+  time_machine_ = view.get();
+  CreatePanelWidget(std::move(view), time_machine_delegate_, time_machine_widget_,
+                    u"Zitter — Time Machine");
+}
+
+void WorkspaceShell::CreateToolsPanel() {
+  auto weak = weak_factory_.GetWeakPtr();
+  tools_form_ = std::make_unique<ToolsFormState>();
+  auto panel = std::make_unique<views::View>();
+  tools_root_ = panel.get();
+  tools_chrome_ = std::make_unique<PreferenceChromeState>(tools_root_);
+  auto* heading = panel->AddChildView(std::make_unique<views::View>());
+  tools_title_ = AddToolsCopy(heading, u"Time Machine", kInk, 5,
+                              static_cast<int>(gfx::Font::Weight::SEMIBOLD), false);
+  auto* controls = heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));
+  tools_close_ = controls->AddControl({}, T(u"Zamknij narzędzia"));
+  BindFormCommand(tools_close_, sidebar::FormCommand::ToolsDismiss);
+  SetSidebarPanelLayout(heading, false, gfx::Insets(), 8, tools_title_);
+
+  PanelViewport* viewport = nullptr;
+  auto scroll = CreatePanelViewport(&viewport,
+      base::BindRepeating(&WorkspaceShell::RefreshToolsViewport, weak));
+  tools_scroll_ = viewport;
+  auto body = std::make_unique<views::View>();
+  tools_body_ = body.get();
+  SetSidebarPanelLayout(tools_body_, true, gfx::Insets::TLBR(0, 0, 8, 8), 10);
+  tools_scroll_->SetPanelContents(std::move(body));
+  panel->AddChildView(std::move(scroll));
+  tools_status_ = AddToolsCopy(panel.get(), u"", kMuted, -1,
+                               static_cast<int>(gfx::Font::Weight::NORMAL), true);
+  SetSidebarPanelLayout(panel.get(), true, gfx::Insets(20), 12, tools_scroll_->view());
+  CreatePanelWidget(std::move(panel), tools_delegate_, tools_widget_, T(u"Zitter — Narzędzia"));
+}
+
 void WorkspaceShell::OpenTimeMachine() {
-  if (!widget_ || !time_machine_widget_ || !time_machine_) return;
+  if (!widget_) return;
   CloseOverlays(true);
+  if (!time_machine_widget_) CreateTimeMachinePanel();
   // The current state joins the timeline first, so "now" is on the axis.
   if (callbacks_.record_timeline) callbacks_.record_timeline.Run();
   PositionPanels(); ApplyTheme();
@@ -9709,8 +9741,9 @@ void WorkspaceShell::OpenTimeMachine() {
 bool WorkspaceShell::time_machine_visible() const { return time_machine_widget_ && time_machine_widget_->IsVisible(); }
 void WorkspaceShell::OpenTools(int page) {
   if (page == 0) { OpenTimeMachine(); return; }
-  if (!widget_ || !tools_widget_) return;
+  if (!widget_) return;
   CloseOverlays(true);
+  if (!tools_widget_) CreateToolsPanel();
   if(tools_form_)tools_form_->form->tools_select(std::clamp(page,1,2));
   RefreshTools(); RefreshKeyRegistrations(); PositionPanels(); ApplyTheme();
   tools_widget_->LayoutRootViewIfNecessary();

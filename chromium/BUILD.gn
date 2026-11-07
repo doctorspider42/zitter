@@ -193,6 +193,7 @@ source_set("shell") {
     "chromium/prototype/assistant_visuals.cc",
     "chromium/prototype/assistant_visuals.h",
     "chromium/prototype/workspace_assistant.cc",
+    "chromium/app/startup_timing.h",
     "chromium/prototype/workspace_window.cc",
     "chromium/prototype/password_csv_import.cc",
     "chromium/prototype/password_csv_import.h",

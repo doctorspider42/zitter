@@ -50,6 +50,21 @@ class RegularAppBenchmarkTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "workload or profile assignment"):
                     benchmark.verify_restored_session(directory, 25)
 
+    def test_window_timing_separates_pre_main_show_and_window_server(self):
+        lines = [f"ZITTER_STARTUP {stage} {10_000 + index * 1_000}"
+                 for index, stage in enumerate(benchmark.STARTUP_STAGES)]
+        timings = benchmark.window_timing("\n".join(lines), 5_000_000, 18_500_000)
+        self.assertEqual(5, timings["startup_stage_ending_at_main_entry_ms"])
+        self.assertEqual(1, timings["startup_stage_ending_at_shell_attached_ms"])
+        self.assertEqual(0.5, timings["startup_show_to_window_onscreen_ms"])
+        self.assertEqual(13.5, timings["app_process_window_onscreen_ms"])
+        self.assertGreater(timings["startup_to_workspace_ready_ms"],
+                           timings["app_process_window_onscreen_ms"])
+        with self.assertRaisesRegex(ValueError, "Missing, duplicate, or out-of-order"):
+            benchmark.window_timing("\n".join(lines[:-1]), 5_000_000, 18_500_000)
+        with self.assertRaisesRegex(ValueError, "before Zitter requested Show"):
+            benchmark.window_timing("\n".join(lines), 5_000_000, 17_500_000)
+
     def run_stub(self, lines):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

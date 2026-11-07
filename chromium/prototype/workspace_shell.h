@@ -763,6 +763,13 @@ class WorkspaceShell final : public ui::EventHandler,
  private:
   using Suggestion = PaletteResult;
 
+  void CreatePanelWidget(std::unique_ptr<views::View> contents,
+                         std::unique_ptr<views::WidgetDelegate>& delegate,
+                         std::unique_ptr<views::Widget>& panel,
+                         std::u16string title,
+                         bool activatable = true);
+  void CreateTimeMachinePanel();
+  void CreateToolsPanel();
   void PositionPanels();
   void ApplySidebarWidth(int width,bool done);
   void HideMetalSidebarGrip();

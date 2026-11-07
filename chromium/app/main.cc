@@ -20,6 +20,7 @@
 #endif
 #include "chromium/app/browser_client.h"
 #include "chromium/app/network_policy.h"
+#include "chromium/app/startup_timing.h"
 #include "content/public/app/content_main.h"
 #include "content/public/common/content_switches.h"
 
@@ -77,6 +78,7 @@ const base::CommandLine& GetInitialBrowserCommandLine() {
 // One executable for every process, as content_shell does: Chrome splits
 // chrome.exe and chrome.dll, Zitter links Chromium into zitter.exe.
 int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
+  const auto main_entry = base::TimeTicks::Now();
   // chrome_elf (loaded with this executable) owns the install details that
   // //chrome reads; this module takes its copy, as chrome.dll does.
   install_static::InitializeFromPrimaryModule();
@@ -85,11 +87,13 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
   if (const auto update = zitter::RunWindowsUpdateHelper()) return *update;
 #else
 int main(int argc, const char** argv) {
+  const auto main_entry = base::TimeTicks::Now();
   // Unlike Chrome's small macOS launcher, this executable links Chromium
   // directly. PartitionAlloc initializes before main; registering its early
   // delegating zone here would register the allocator twice in static builds.
   base::CommandLine::Init(argc, argv);
 #endif
+  zitter::MarkStartup("main_entry", main_entry);
   auto* command = base::CommandLine::ForCurrentProcess();
   if (!command->HasSwitch(switches::kProcessType)) {
 #if BUILDFLAG(IS_WIN)
@@ -155,5 +159,6 @@ int main(int argc, const char** argv) {
   params.argc = argc;
   params.argv = argv;
 #endif
+  zitter::MarkStartup("content_main");
   return content::ContentMain(std::move(params));
 }
