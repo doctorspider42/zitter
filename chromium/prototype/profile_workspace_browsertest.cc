@@ -644,6 +644,90 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPermissionsAndPageRed
   EXPECT_TRUE(cross_profile.Get().GetDict().FindString("error"));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantDebuggingRequiresDocumentConsent) {
+  auto* page = window_->contents("work");
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::NavigateToURL(page, url));
+  ASSERT_TRUE(content::ExecJs(page, R"(
+    document.body.innerHTML = '<h1 id="demo">Before</h1><div data-private>PRIVATE_DEBUG_TEXT</div>';
+    console.error('buffered debug error');
+  )"));
+  const AssistantPermissions access{true, true, true, false, false, false};
+  auto run = [&](const char* tool, base::DictValue args, bool confirmed = false,
+                 AssistantPermissions permissions = {true, true, true, false, false, false}) {
+    base::test::TestFuture<base::Value> reply;
+    args.Set("tab", "@current");
+    window_->AssistantTool(tool, std::move(args), permissions, reply.GetCallback(), confirmed);
+    return reply.Take();
+  };
+  EXPECT_TRUE(run("debug_console", {}, false, {}).GetDict().FindString("error"));
+  EXPECT_TRUE(run("debug_console", {}, true).GetDict().FindString("error"));
+  auto console = run("debug_console", {});
+  ASSERT_TRUE(console.GetDict().FindBool("confirmation_required").value_or(false));
+  const auto* console_document = console.GetDict().FindString("debug_document");
+  ASSERT_TRUE(console_document);
+  auto entries = run("debug_console", base::DictValue().Set("_debug_document", *console_document), true);
+  ASSERT_TRUE(entries.GetDict().FindList("entries")) << entries.DebugString();
+  EXPECT_TRUE(base::WriteJson(entries).value_or("").contains("buffered debug error"));
+
+  auto dom = run("debug_dom", base::DictValue().Set("selector", "h1, [data-private]"));
+  const auto* dom_document = dom.GetDict().FindString("debug_document");
+  ASSERT_TRUE(dom_document);
+  auto inspected = run("debug_dom", base::DictValue().Set("selector", "h1, [data-private]")
+      .Set("_debug_document", *dom_document), true);
+  const auto* matches = inspected.GetDict().FindList("matches");
+  ASSERT_TRUE(matches) << inspected.DebugString();
+  ASSERT_EQ(1u, matches->size());
+  EXPECT_EQ("Before", *matches->front().GetDict().FindString("text"));
+  EXPECT_FALSE(base::WriteJson(inspected).value_or("").contains("PRIVATE_DEBUG_TEXT"));
+
+  auto edit = base::DictValue().Set("selector", "#demo").Set("operation", "text").Set("value", "After");
+  auto read_only = access;
+  read_only.actions = false;
+  EXPECT_TRUE(run("debug_edit_dom", edit.Clone(), false, read_only).GetDict().FindString("error"));
+  auto proposed = run("debug_edit_dom", edit.Clone().Set("confirmed", true));
+  ASSERT_TRUE(proposed.GetDict().FindBool("confirmation_required").value_or(false));
+  EXPECT_EQ("Before", content::EvalJs(page, "document.querySelector('#demo').textContent"));
+  const auto* document = proposed.GetDict().FindString("debug_document");
+  ASSERT_TRUE(document);
+  EXPECT_TRUE(run("debug_edit_dom", edit.Clone().Set("_debug_document", *document), true)
+      .GetDict().FindBool("ok").value_or(false));
+  EXPECT_EQ("After", content::EvalJs(page, "document.querySelector('#demo').textContent"));
+
+  // The actual consent bubble allows one action, even when click confirmation
+  // is disabled for the conversation.
+  window_->ShowAssistant();
+  auto* panel = window_->assistant();
+  panel->ConfigureForTesting("ollama", "test-local", access);
+  panel->RunActionsForTesting(base::ListValue().Append(base::DictValue().Set("tool", "debug_edit_dom")
+      .Set("args", edit.Clone().Set("tab", "@current").Set("value", "Approved in panel"))));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->assistant_consent_for_testing() != nullptr; }));
+  for (const auto& child : window_->shell()->assistant_consent_for_testing()->children())
+    EXPECT_FALSE(views::AsViewClass<views::Checkbox>(child.get()));
+  EXPECT_EQ("After", content::EvalJs(page, "document.querySelector('#demo').textContent"));
+  panel->ConsentForTesting(true);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, "document.querySelector('#demo').textContent") == "Approved in panel";
+  }));
+  panel->Stop();
+
+  auto reload = run("debug_hard_reload", {});
+  const auto* reload_document = reload.GetDict().FindString("debug_document");
+  ASSERT_TRUE(reload_document);
+  class ReloadObserver final : public content::WebContentsObserver {
+   public:
+    explicit ReloadObserver(content::WebContents* page) : WebContentsObserver(page) {}
+    void DidStartNavigation(content::NavigationHandle* handle) override {
+      if (handle->IsInPrimaryMainFrame()) type = handle->GetReloadType();
+    }
+    content::ReloadType type = content::ReloadType::NONE;
+  } observed(page);
+  EXPECT_TRUE(run("debug_hard_reload", base::DictValue().Set("_debug_document", *reload_document), true)
+      .GetDict().FindBool("ok").value_or(false));
+  EXPECT_EQ(content::ReloadType::BYPASSING_CACHE, observed.type);
+  EXPECT_TRUE(run("debug_edit_dom", edit.Clone().Set("_debug_document", *document), true).GetDict().FindString("error"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantKeyboardTypesAtFocusButNotIntoSecrets) {
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), embedded_test_server()->GetURL("/storage_probe.html")));
   auto* page=window_->contents("work");
@@ -2289,12 +2373,49 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperModeDetectionAndPersi
   ASSERT_TRUE(window_->RunShortcut("devtools_console"));
   auto* tools = DevToolsWindow::GetInstanceForInspectedWebContents(window_->contents("work")); ASSERT_TRUE(tools);
   base::test::TestFuture<void> loaded; tools->SetLoadCompletedCallback(loaded.GetCallback()); ASSERT_TRUE(loaded.Wait());
-  EXPECT_FALSE(DevToolsWindow::GetInTabWebContents(window_->contents("work"), nullptr));
-  EXPECT_TRUE(DevToolsWindowTesting::Get(tools)->browser());
+  EXPECT_TRUE(DevToolsWindow::GetInTabWebContents(window_->contents("work"), nullptr));
+  EXPECT_FALSE(DevToolsWindowTesting::Get(tools)->browser());
   auto* frontend = DevToolsWindowTesting::Get(tools)->main_web_contents(); ASSERT_TRUE(frontend);
   EXPECT_TRUE(frontend->GetVisibleURL().SchemeIs("devtools"));
+  EXPECT_EQ(window_->widget()->GetNativeWindow(), frontend->GetTopLevelNativeWindow());
+  EXPECT_EQ(42, content::EvalJs(frontend, "6 * 7"));
+  const auto dock = [&](const char* side) {
+    ASSERT_TRUE(content::ExecJs(frontend, content::JsReplace(R"(
+      (async () => {
+        const UI = await import('./ui/legacy/legacy.js');
+        UI.DockController.DockController.instance().setDockSide($1);
+      })()
+    )", side)));
+  };
+  ASSERT_NO_FATAL_FAILURE(dock("undocked"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    // Chromium keeps a separate device emulation toolbox in the page card
+    // while the main frontend is in its own window.
+    return DevToolsWindowTesting::Get(tools)->browser() &&
+           DevToolsWindow::GetInTabWebContents(window_->contents("work"), nullptr) != frontend;
+  }));
+  EXPECT_NE(window_->widget()->GetNativeWindow(), frontend->GetTopLevelNativeWindow());
+  ASSERT_NO_FATAL_FAILURE(dock("bottom"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !DevToolsWindowTesting::Get(tools)->browser() &&
+           DevToolsWindow::GetInTabWebContents(window_->contents("work"), nullptr) == frontend;
+  }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    const int height = window_->contents("work")->GetRenderWidgetHostView()->GetViewBounds().height();
+    return height > 0 && height < window_->widget()->GetWindowBoundsInScreen().height() - 100;
+  }));
   content::WebContentsDestroyedWatcher closed(frontend);
   ASSERT_TRUE(window_->RunShortcut("devtools")); closed.Wait();
+  // Reopening keeps the user's docking choice and remounts the frontend.
+  DevToolsWindowCreationObserver reopened;
+  ASSERT_TRUE(window_->RunShortcut("devtools_console")); reopened.WaitForLoad();
+  DevToolsContentsResizingStrategy strategy;
+  ASSERT_TRUE(DevToolsWindow::GetInTabWebContents(window_->contents("work"), &strategy));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    DevToolsWindow::GetInTabWebContents(window_->contents("work"), &strategy);
+    return strategy.dock_side() == devtools::DockSide::kBottom;
+  }));
+  reopened.CloseAllSync();
   shell->SetDeveloperMode("on"); EXPECT_TRUE(control->IsDrawn());
   shell->SetDeveloperMode("auto");
   ASSERT_TRUE(window_->Select("personal"));
@@ -2310,6 +2431,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperModeDetectionAndPersi
   DevToolsWindowCreationObserver created;
   ASSERT_TRUE(window_->RunShortcut("devtools_panel")); created.WaitForLoad();
   EXPECT_TRUE(DevToolsWindow::GetInstanceForInspectedWebContents(focused));
+  EXPECT_TRUE(DevToolsWindow::GetInTabWebContents(focused, nullptr));
   EXPECT_FALSE(DevToolsWindow::GetInstanceForInspectedWebContents(window_->pane_contents(false)));
   created.CloseAllSync();
   ASSERT_TRUE(window_->Select("personal")); EXPECT_FALSE(control->IsDrawn());
@@ -2321,6 +2443,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperModeDetectionAndPersi
   DevToolsWindowCreationObserver peek_created;
   ASSERT_TRUE(window_->RunShortcut("devtools_panel")); peek_created.WaitForLoad();
   EXPECT_TRUE(DevToolsWindow::GetInstanceForInspectedWebContents(peek));
+  EXPECT_TRUE(DevToolsWindow::GetInTabWebContents(peek, nullptr));
   auto* peek_tools=DevToolsWindow::GetInstanceForInspectedWebContents(peek); ASSERT_TRUE(peek_tools);
   content::WebContentsDestroyedWatcher detached(peek_tools->GetDevToolsWebContents());
   window_->ClosePeek(); detached.Wait();
@@ -2962,6 +3085,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperToolsVisuals) {
     shell->SetThemeMode(mode); window_->widget()->LayoutRootViewIfNecessary();
     const std::string suffix = mode == ThemeMode::kDark ? "-dark.png" : "-light.png";
     ASSERT_NO_FATAL_FAILURE(capture(window_->widget(),"developer-header"+suffix));
+    DevToolsWindowCreationObserver docked;
+    ASSERT_TRUE(window_->RunShortcut("devtools_console")); docked.WaitForLoad();
+    ASSERT_TRUE(DevToolsWindow::GetInTabWebContents(window_->contents("work"), nullptr));
+    ASSERT_NO_FATAL_FAILURE(capture(window_->widget(),"developer-docked"+suffix));
+    docked.CloseAllSync();
     shell->ShowDeveloperMenu();
     auto* controller=views::MenuController::GetActiveInstance(); ASSERT_TRUE(controller);
     auto* item=controller->GetSelectedMenuItem(); ASSERT_TRUE(item);

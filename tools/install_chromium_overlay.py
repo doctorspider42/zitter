@@ -13,6 +13,7 @@ import tempfile
 
 import content_blocking_patch as content_blocking
 import editor_service_patch as editor_services
+import devtools_docking_patch as devtools_docking
 import fingerprint_protection_patch as fingerprint_protection
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -904,6 +905,7 @@ def install(checkout, dry_run=False):
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip()
     if revision != lock["revision"]:
         raise ValueError(f"Chromium revision mismatch: {revision}; expected {lock['revision']}")
+    docking_patch = devtools_docking.prepare(checkout)
     editor_patch = editor_services.prepare(checkout)
     fingerprint_patch = fingerprint_protection.prepare(checkout)
     build = checkout / "chrome/test/BUILD.gn"
@@ -997,6 +999,7 @@ def install(checkout, dry_run=False):
             for path, text in extensions_logo_patched.items():
                 if text != extensions_logo[path]:
                     write(path, text)
+            devtools_docking.apply(docking_patch)
             editor_services.apply(editor_patch)
             fingerprint_protection.apply(fingerprint_patch)
             # browser_prefs.cc carries both patches: plan this one after the first.
@@ -1006,6 +1009,8 @@ def install(checkout, dry_run=False):
                 shutil.rmtree(destination)
             if backup.exists():
                 backup.rename(destination)
+            for path, (original_text, _) in docking_patch.items():
+                write(path, original_text)
             write(build, original)
             write(keychain, keychain_original)
             write(autofill, autofill_original)

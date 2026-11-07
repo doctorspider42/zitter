@@ -87,6 +87,10 @@ std::string TraceOf(const std::string& tool, const base::DictValue& args, const 
   base::DictValue result;
   if (const auto* dict = value.GetIfDict()) {
     for (const auto [key, item] : *dict) {
+      if (key == "debug_document") continue;
+      if (IsAssistantDebugTool(tool) && (key == "entries" || key == "matches") && item.is_list()) {
+        result.Set(key, static_cast<int>(item.GetList().size())); continue;
+      }
       if (key == "image") { result.Set("image", base::StringPrintf("%d×%d", dict->FindInt("width").value_or(0), dict->FindInt("height").value_or(0))); continue; }
       if (key == "elements" && item.is_list()) { result.Set("elements", static_cast<int>(item.GetList().size())); continue; }
       if (key == "pages" && item.is_list()) { result.Set("pages", static_cast<int>(item.GetList().size())); continue; }
@@ -97,6 +101,7 @@ std::string TraceOf(const std::string& tool, const base::DictValue& args, const 
   } else if (value.is_list()) result.Set("items", static_cast<int>(value.GetList().size()));
   else result.Set("value", clip(base::WriteJson(value).value_or(""), 300));
   auto shown = args.Clone();
+  shown.Remove("_debug_document");
   if (const auto* text = shown.FindString("text")) shown.Set("text", clip(*text, 300));
   return base::WriteJson(base::DictValue().Set("tool", tool).Set("args", std::move(shown)).Set("result", std::move(result))).value_or("{}");
 }
@@ -107,6 +112,10 @@ AssistantMark MarkFor(const AssistantChip& chip) {
 }
 std::u16string ToolStatus(const std::string& tool) {
   if (tool == "read_page") return T(u"Czytam stronę…");
+  if (tool == "debug_console") return T(u"Czytam konsolę karty…");
+  if (tool == "debug_dom") return T(u"Sprawdzam DOM karty…");
+  if (tool == "debug_edit_dom") return T(u"Zmieniam DOM karty…");
+  if (tool == "debug_hard_reload") return T(u"Przeładowuję kartę bez pamięci podręcznej…");
   if (tool == "list_tabs") return T(u"Sprawdzam otwarte karty…");
   if (tool == "type" || tool == "insert_text") return T(u"Wpisuję tekst…");
   if (tool == "press_key") return T(u"Naciskam klawisz…");
@@ -127,7 +136,7 @@ base::RepeatingClosure Later(base::RepeatingClosure work) {
   return base::BindRepeating([](base::RepeatingClosure work) { base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, work); }, std::move(work));
 }
 bool PageTool(const std::string& tool) {
-  return tool == "read_page" || tool == "click" || tool == "type" || tool == "scroll" || tool == "navigate" ||
+  return IsAssistantDebugTool(tool) || tool == "read_page" || tool == "click" || tool == "type" || tool == "scroll" || tool == "navigate" ||
          tool == "insert_text" || tool == "press_key" || tool == "select" || tool == "mouse" || tool == "screenshot" ||
          tool == "wait" || tool == "dialog" || tool == "adblock_inspect" || tool == "adblock_add_rules" || tool == "adblock_diagnose";
 }
@@ -1648,7 +1657,7 @@ void AssistantPanel::RunNext(Session& session) {
   if (&session == &selected()) RenderConversation();
   UpdatePageControl(); RenderBackground();
   // Session consent lasts across turns, in memory only; background defaults also apply.
-  const bool confirmed = session.auto_confirm || (session.background && !session.confirm_background);
+  const bool confirmed = !IsAssistantDebugTool(tool) && (session.auto_confirm || (session.background && !session.confirm_background));
   window_->AssistantTool(tool, action.GetDict().FindDict("args")->Clone(), session.permissions,
       base::BindOnce(&AssistantPanel::ToolFinished, weak_factory_.GetWeakPtr(), session.key, session.epoch),
       confirmed, session.background ? session.key : std::string());
@@ -1664,6 +1673,8 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
   }
   if (value.is_dict() && value.GetDict().FindBool("confirmation_required").value_or(false)) {
     session->confirmation = session->queue[session->index].GetDict().Clone();
+    if (const auto* document = value.GetDict().FindString("debug_document"))
+      session->confirmation->FindDict("args")->Set("_debug_document", *document);
     const auto* label = value.GetDict().FindString("label");
     session->confirm_label = base::UTF8ToUTF16(label ? label->substr(0, 120) : "Click");
     session->confirm_key = value.GetDict().FindBool("key").value_or(false);
@@ -1691,8 +1702,11 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
               self->Consent(*session, choice != 0);
             }, self, key, epoch, choice));
           };
-          auto bubble = CreateAssistantConsentBubble(!session->confirm_prompt.empty() ? session->confirm_prompt : session->confirm_key ? TF(u"Nacisnąć {}?", {session->confirm_label}) : TF(u"Kliknąć „{}”?", {session->confirm_label}), session->status == T(u"Czeka na zgodę") && !session->title.empty() ? session->title : T(u"Asystent prosi o zgodę"),
-              base::BindRepeating(act, self, key, epoch, 1), base::BindRepeating(act, self, key, epoch, 0), base::BindRepeating(act, self, key, epoch, 2));
+          const bool debug = IsAssistantDebugTool(*session->confirmation->FindString("tool"));
+          auto bubble = CreateAssistantConsentBubble(!session->confirm_prompt.empty() ? session->confirm_prompt : session->confirm_key ? TF(u"Nacisnąć {}?", {session->confirm_label}) : TF(u"Kliknąć „{}”?", {session->confirm_label}),
+              debug ? session->confirm_label : session->status == T(u"Czeka na zgodę") && !session->title.empty() ? session->title : T(u"Asystent prosi o zgodę"),
+              base::BindRepeating(act, self, key, epoch, 1), base::BindRepeating(act, self, key, epoch, 0),
+              debug ? base::RepeatingClosure() : base::BindRepeating(act, self, key, epoch, 2));
           auto* allow = AssistantConsentAllowButton(bubble.get());
           self->window_->shell()->SetAssistantConsent(std::move(bubble), anchor);
           if (allow) allow->RequestFocus();
@@ -1772,7 +1786,9 @@ void AssistantPanel::Consent(Session& session, bool allow) {
   if (session.profile != window_->AssistantProfileId()) { StopSession(session); return; }
   auto action = std::move(*session.confirmation); session.confirmation.reset();
   window_->shell()->SetAssistantConsent(nullptr, std::nullopt);
-  session.status = allow ? T(u"Klikam na stronie…") : T(u"Pominięto kliknięcie");
+  const bool debug = IsAssistantDebugTool(*action.FindString("tool"));
+  session.status = debug ? (allow ? ToolStatus(*action.FindString("tool")) : T(u"Pominięto debugowanie")) :
+      (allow ? T(u"Klikam na stronie…") : T(u"Pominięto kliknięcie"));
   UpdatePageControl(); RenderBackground();
   if (!allow) {
     if (!pinned_) WatchPointer();
@@ -1781,7 +1797,7 @@ void AssistantPanel::Consent(Session& session, bool allow) {
       window_->AssistantTool("adblock_clear_preview", action.FindDict("args")->Clone(), session.permissions, base::DoNothing(),
                              false, session.background ? session.key : std::string());
     session.results.Append(base::DictValue().Set("tool", *action.FindString("tool")).Set("result",
-        base::DictValue().Set("skipped", true).Set("detail", "The user declined this click. Do not retry it; continue another way or ask.")));
+        base::DictValue().Set("skipped", true).Set("detail", debug ? "The user declined this debugging action. Do not retry it." : "The user declined this click. Do not retry it; continue another way or ask.")));
     ++session.index; RunNext(session); return;
   }
   session.tool_running = true;

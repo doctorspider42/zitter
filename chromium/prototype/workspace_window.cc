@@ -258,7 +258,55 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
       : views::WebView(profile), handler_(std::move(handler)), open_(std::move(open)), menu_(std::move(menu)),
         adopt_(std::move(adopt)), created_(std::move(created)), changed_(std::move(changed)), interacted_(std::move(interacted)), fullscreen_(std::move(fullscreen)),
         image_previews_(std::move(image_previews)), peek_(std::move(peek)), gestures_enabled_(std::move(gestures_enabled)), gesture_(std::move(gesture)) {}
-  ~WorkspaceWebView() override { UnmountReader(false); if (GetFocusManager() && GetFocusManager()->HasFocusChangeListener(this)) GetFocusManager()->RemoveFocusChangeListener(this); if (is_fullscreen_) fullscreen_.Run(web_contents(), false); }
+  ~WorkspaceWebView() override {
+    if (devtools_view_) devtools_view_->SetWebContents(nullptr);
+    if (web_contents()) web_contents()->RemoveUserData(DevToolsWindow::kEmbedderDockingHostKey);
+    UnmountReader(false); if (GetFocusManager() && GetFocusManager()->HasFocusChangeListener(this)) GetFocusManager()->RemoveFocusChangeListener(this); if (is_fullscreen_) fullscreen_.Run(web_contents(), false); }
+  void SetWebContents(content::WebContents* page) override {
+    if (page != web_contents()) {
+      if (devtools_view_) devtools_view_->SetWebContents(nullptr);
+      if (web_contents()) web_contents()->RemoveUserData(DevToolsWindow::kEmbedderDockingHostKey);
+    }
+    views::WebView::SetWebContents(page);
+    if (page && !DevToolsWindow::GetEmbedderDockingHost(page)) {
+      page->SetUserData(DevToolsWindow::kEmbedderDockingHostKey,
+          std::make_unique<DevToolsWindow::EmbedderDockingHost>(base::BindRepeating(
+              &WorkspaceWebView::UpdateDockedDevTools, base::Unretained(this))));
+    }
+  }
+  void UpdateDockedDevTools() {
+    auto* frontend = DevToolsWindow::GetInTabWebContents(web_contents(), &devtools_strategy_);
+    if (frontend && !devtools_view_) {
+      devtools_view_ = AddChildViewAt(std::make_unique<views::WebView>(
+          web_contents()->GetBrowserContext()), 0);
+      devtools_view_->set_allow_accelerators(true);
+    }
+    if (devtools_view_) {
+      devtools_view_->SetWebContents(frontend);
+      devtools_view_->SetVisible(frontend != nullptr);
+    }
+    // Expose both native web trees while the frontend is embedded.
+    set_lock_child_ax_tree_id_override(frontend || rss_);
+    if (frontend) {
+      GetViewAccessibility().RemoveChildTreeID();
+      GetViewAccessibility().SetIsIgnored(false);
+      GetViewAccessibility().SetRole(ax::mojom::Role::kGenericContainer);
+    } else if (!rss_) {
+      GetViewAccessibility().SetRole(ax::mojom::Role::kWebView);
+      views::WebView::AXTreeIDForMainFrameHasChanged();
+    }
+    LayoutDockedDevTools();
+  }
+  void LayoutDockedDevTools() {
+    gfx::Rect page_bounds = GetLocalBounds();
+    if (devtools_view_ && devtools_view_->web_contents()) {
+      gfx::Rect tools_bounds;
+      ApplyDevToolsContentsResizingStrategy(devtools_strategy_, GetLocalBounds(),
+                                            &tools_bounds, &page_bounds);
+      devtools_view_->SetBoundsRect(tools_bounds);
+    }
+    if (!rss_) holder()->SetBoundsRect(page_bounds);
+  }
   std::array<uint64_t,2> sidebar_identity() const {return {sidebar_identity_.GetHighForSerialization(),sidebar_identity_.GetLowForSerialization()};}
   void ResetImagePreview() { if (image_preview_) image_preview_->Reset(); }
   bool image_preview_visible() const { return image_preview_ && image_preview_->visible_for_testing(); }
@@ -303,6 +351,8 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
       views::WebView::AXTreeIDForMainFrameHasChanged();
     }
   }
+  raw_ptr<views::WebView> devtools_view_ = nullptr;
+  DevToolsContentsResizingStrategy devtools_strategy_;
   std::unique_ptr<RssPanel> rss_;
   base::RepeatingCallback<void(GURL)> rss_open_;
   void AddedToWidget() override {
@@ -311,10 +361,11 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
   }
   void OnWillChangeFocus(views::View*, views::View*) override {}
   void OnDidChangeFocus(views::View*, views::View* now) override {
-    if (rss_ && now && Contains(now)) interacted_.Run(this);
+    if (now && Contains(now)) interacted_.Run(this);
   }
   void OnBoundsChanged(const gfx::Rect& previous) override {
     views::WebView::OnBoundsChanged(previous);
+    LayoutDockedDevTools();
     if (rss_ && rss_->view()) {
       holder()->SetVisible(false);
       // WebView also calls this for every descendant hierarchy change. Setting
@@ -329,7 +380,7 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
                 : views::WebView::SkipDefaultKeyEventProcessing(event);
   }
   gfx::NativeViewAccessible GetNativeViewAccessible() override {
-    return rss_ ? views::View::GetNativeViewAccessible()
+    return (rss_ || (devtools_view_ && devtools_view_->web_contents())) ? views::View::GetNativeViewAccessible()
                 : views::WebView::GetNativeViewAccessible();
   }
   void OnFocus() override {
@@ -2898,8 +2949,8 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
         return true;
       }
     }
-    // Chromium's WebContents overload finds no Browser dock for Zitter and
-    // owns an undocked TYPE_DEVTOOLS window, including target teardown.
+    // The page's docking host embeds Chromium's frontend; its Dock side menu
+    // can still transfer ownership to a separate TYPE_DEVTOOLS window.
     const auto action = id == "devtools" ? DevToolsToggleAction::Toggle() :
         id == "devtools_console" ? DevToolsToggleAction::ShowConsolePanel() :
         id == "devtools_inspect" ? DevToolsToggleAction::Inspect() : DevToolsToggleAction::Show();

@@ -49,6 +49,64 @@
     }
     return { x, y, width: r.width, height: r.height };
   };
+  if (args.tool === 'debug_dom' || args.tool === 'debug_edit_dom') {
+    // Keep private subtrees private across open shadow roots and same-origin frames.
+    const protectedNode = node => {
+      for (let e = node; e;) {
+        if (sensitive(e) || e.matches('script,style,link,meta,base,object,embed,input,textarea,select,option')) return true;
+        const root = e.getRootNode();
+        e = root.host ?? e.ownerDocument.defaultView?.frameElement;
+      }
+      return false;
+    };
+    const matches = [];
+    try {
+      for (const root of roots()) {
+        for (const node of root.querySelectorAll(args.selector)) {
+          if (!protectedNode(node)) matches.push(node);
+          if (matches.length >= 13) break;
+        }
+        if (matches.length >= 13) break;
+      }
+    } catch {
+      return {error: 'Invalid CSS selector'};
+    }
+    if (args.tool === 'debug_dom') {
+      const styles = ['display', 'visibility', 'opacity', 'position', 'width', 'height',
+        'margin', 'padding', 'color', 'background-color', 'font-size', 'overflow', 'z-index'];
+      return {matches: matches.slice(0, 12).map(e => {
+        const computed = style(e);
+        const text = visible(e) ? Array.from(e.childNodes).filter(n => n.nodeType === Node.TEXT_NODE)
+          .map(n => n.nodeValue).join(' ').trim().slice(0, 400) : '';
+        return {tag: e.localName, id: (e.id || '').slice(0, 120), classes: (e.getAttribute('class') || '').slice(0, 200),
+          role: (e.getAttribute('role') || '').slice(0, 80), text, visible: visible(e), bounds: box(e),
+          styles: Object.fromEntries(styles.map(name => [name, computed.getPropertyValue(name)]))};
+      }), truncated: matches.length > 12};
+    }
+    if (matches.length !== 1) return {error: 'A DOM edit requires exactly one unprotected matching element'};
+    const e = matches[0];
+    if (e.matches('html,head,body,iframe,frame,form') || e.closest('[contenteditable]'))
+      return {error: 'This element cannot be edited'};
+    const value = args.value;
+    if (args.operation === 'text' && typeof value === 'string') {
+      if (e.childElementCount) return {error: 'Text edits require a leaf element'};
+      e.textContent = value;
+    } else if (args.operation === 'style' && typeof value === 'string' && e.style) {
+      const editable = /^(?:color|background-color|display|visibility|opacity|position|(?:min-|max-)?(?:width|height)|(?:margin|padding)(?:-(?:top|right|bottom|left))?|font-size|font-weight|line-height|text-align|overflow(?:-[xy])?|z-index|border-(?:color|style|width|radius)|gap|align-items|justify-content)$/;
+      if (!editable.test(args.property) || (value && !CSS.supports(args.property, value)))
+        return {error: 'Unsupported style property or value'};
+      if (value) e.style.setProperty(args.property, value);
+      else e.style.removeProperty(args.property);
+    } else if (['add_class', 'remove_class'].includes(args.operation) && typeof value === 'string' && /^[\w-]{1,100}$/.test(value)) {
+      if (args.operation === 'add_class') e.classList.add(value);
+      else e.classList.remove(value);
+    } else if (args.operation === 'hide' || args.operation === 'show') {
+      e.toggleAttribute('hidden', args.operation === 'hide');
+    } else {
+      return {error: 'Unsupported DOM edit or invalid value'};
+    }
+    return {ok: true, tag: e.localName, operation: args.operation};
+  }
   // Where a real click on `e` lands: its centre, or another visible spot of it
   // when an overlay covers the centre.
   const point = e => {

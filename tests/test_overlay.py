@@ -91,6 +91,23 @@ def seed_extension_tabs(checkout):
 
 
 class OverlayTests(unittest.TestCase):
+    def test_devtools_docking_hook_is_idempotent_and_guarded(self):
+        patch = overlay.devtools_docking
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            for name in {name for name, _, _ in patch.PATCHES}:
+                path = checkout / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("\n".join(old for file, old, _ in patch.PATCHES if file == name))
+            plan = patch.prepare(checkout)
+            patch.apply(plan)
+            self.assertTrue(all(old != new for old, new in plan.values()))
+            self.assertTrue(all(old == new for old, new in patch.prepare(checkout).values()))
+            header = checkout / "chrome/browser/devtools/devtools_window.h"
+            header.write_text("unexpected upstream version")
+            with self.assertRaises(ValueError):
+                patch.prepare(checkout)
+
     def test_component_exclusion_hook_is_narrow_and_idempotent(self):
         source = ('#include "base/check.h"\n'
                   'bool CrxUpdateService::RegisterComponent(\n'
@@ -253,6 +270,10 @@ class OverlayTests(unittest.TestCase):
         revision = json.loads((overlay.ROOT / "chromium/revision.json").read_text())["revision"]
         with tempfile.TemporaryDirectory() as directory:
             checkout = Path(directory)
+            for name in {name for name, _, _ in overlay.devtools_docking.PATCHES}:
+                path = checkout / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("\n".join(old for file, old, _ in overlay.devtools_docking.PATCHES if file == name))
             editor_service_fixture.seed(checkout)
             fingerprint_protection_fixture.seed(checkout)
             content_blocking_fixture.seed(checkout)

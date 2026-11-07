@@ -1,11 +1,13 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/workspace_window.h"
 
+#include <deque>
 #include <map>
 #if BUILDFLAG(IS_POSIX)
 #include <unistd.h>
 #endif
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/devtools/devtools_window.h"
 #include "components/os_crypt/async/browser/os_crypt_async.h"
 #include "components/os_crypt/async/common/encryptor.h"
 #include "base/files/scoped_temp_dir.h"
@@ -43,9 +45,13 @@
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "ui/events/base_event_utils.h"
+#include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/devtools_agent_host_client.h"
+#include "content/public/browser/document_user_data.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "ui/events/event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
@@ -53,6 +59,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/uuid.h"
 #include "chrome/browser/profiles/profile.h"
@@ -653,6 +660,195 @@ void SaveAdblockRules(content::WebContents* page, std::vector<std::string> rules
         .Set("detail", "Saved in Settings > Ad blocking > Your rules; network rules apply from the next load.")));
   }, saved, network, static_cast<int>(replaces.size()), std::move(done)));
 }
+// Consent belongs to the loaded document, even when a navigation reuses the
+// same tab or frame. This identifier never leaves the native consent flow.
+class AssistantDebugDocument final
+    : public content::DocumentUserData<AssistantDebugDocument> {
+ public:
+  const std::string id = base::Uuid::GenerateRandomV4().AsLowercaseString();
+
+ private:
+  friend class content::DocumentUserData<AssistantDebugDocument>;
+  explicit AssistantDebugDocument(content::RenderFrameHost* frame)
+      : DocumentUserData(frame) {}
+  DOCUMENT_USER_DATA_KEY_DECL();
+};
+DOCUMENT_USER_DATA_KEY_IMPL(AssistantDebugDocument);
+
+// Read only Chromium's buffered console and diagnostic events. This client
+// dispatches two fixed commands and does not expose protocol access to models.
+class AssistantConsoleReader final : public content::DevToolsAgentHostClient {
+ public:
+  AssistantConsoleReader(content::WebContents* page, int limit)
+      : document_(page->GetPrimaryMainFrame()->GetWeakDocumentPtr()),
+        host_(content::DevToolsAgentHost::GetOrCreateFor(page)), limit_(limit) {}
+  ~AssistantConsoleReader() override {
+    if (attached_ && host_) host_->DetachClient(this);
+  }
+  bool Start() {
+    attached_ = host_ && host_->AttachClient(this);
+    if (!attached_) return false;
+    Send(R"({"id":1,"method":"Runtime.enable"})");
+    Send(R"({"id":2,"method":"Log.enable"})");
+    return true;
+  }
+  base::Value Result() {
+    auto* frame = document_.AsRenderFrameHostIfValid();
+    if (!frame || !frame->IsActive() || !host_) return Error("The approved document changed or closed");
+    if (!ready_) return Error("The page console did not respond");
+    base::ListValue entries;
+    for (auto& entry : messages_) entries.Append(std::move(entry));
+    return base::Value(base::DictValue().Set("entries", std::move(entries))
+        .Set("url", SafeURL(frame->GetLastCommittedURL())));
+  }
+
+ private:
+  void Send(std::string_view command) {
+    if (host_) host_->DispatchProtocolMessage(this, base::as_byte_span(command));
+  }
+  bool MayAttachToURL(const GURL& url, bool is_webui) override {
+    return !is_webui && url.SchemeIsHTTPOrHTTPS();
+  }
+  bool MayReadLocalFiles() override { return false; }
+  bool MayWriteLocalFiles() override { return false; }
+  void AgentHostClosed(content::DevToolsAgentHost*) override { host_.reset(); }
+  void DispatchProtocolMessage(content::DevToolsAgentHost*,
+                               base::span<const uint8_t> bytes) override {
+    if (bytes.size() > 128 * 1024) return;
+    auto message = base::JSONReader::ReadDict(base::as_string_view(bytes), base::JSON_PARSE_RFC);
+    if (!message) return;
+    if (message->FindInt("id") == 1 && message->FindDict("result")) ready_ = true;
+    const auto* method = message->FindString("method");
+    const auto* params = message->FindDict("params");
+    if (!method || !params) return;
+    const auto field = [](const base::DictValue& dict, std::string_view name) {
+      const auto* value = dict.FindString(name);
+      return value ? *value : std::string();
+    };
+    std::string level, text, source;
+    int line = 0;
+    if (*method == "Log.entryAdded") {
+      const auto* entry = params->FindDict("entry");
+      if (!entry) return;
+      level = field(*entry, "level");
+      text = field(*entry, "text");
+      source = field(*entry, "url");
+      line = entry->FindInt("lineNumber").value_or(-1) + 1;
+    } else if (*method == "Runtime.consoleAPICalled") {
+      level = field(*params, "type");
+      if (const auto* args = params->FindList("args")) {
+        for (const auto& arg : *args) {
+          const auto* object = arg.GetIfDict();
+          if (!object) continue;
+          if (!text.empty()) text += ' ';
+          if (const auto* value = object->Find("value")) {
+            text += value->is_string() ? value->GetString() : base::WriteJson(*value).value_or("");
+          } else {
+            text += field(*object, "description");
+          }
+          if (text.size() >= 800) break;
+        }
+      }
+      if (const auto* stack = params->FindDict("stackTrace")) {
+        if (const auto* frames = stack->FindList("callFrames"); frames && !frames->empty() && frames->front().is_dict()) {
+          const auto& first = frames->front().GetDict();
+          source = field(first, "url");
+          line = first.FindInt("lineNumber").value_or(-1) + 1;
+        }
+      }
+    } else if (*method == "Runtime.exceptionThrown") {
+      const auto* exception = params->FindDict("exceptionDetails");
+      if (!exception) return;
+      level = "error";
+      text = field(*exception, "text");
+      if (const auto* error = exception->FindDict("exception")) text += " " + field(*error, "description");
+      source = field(*exception, "url");
+      line = exception->FindInt("lineNumber").value_or(-1) + 1;
+    } else {
+      return;
+    }
+    if (text.empty()) return;
+    if (messages_.size() == static_cast<size_t>(limit_)) messages_.pop_front();
+    std::string clipped;
+    base::TruncateUTF8ToByteSize(text, 800, &clipped);
+    messages_.push_back(base::DictValue().Set("level", level).Set("message", clipped)
+        .Set("url", SafeURL(GURL(source))).Set("line", line));
+  }
+
+  content::WeakDocumentPtr document_;
+  scoped_refptr<content::DevToolsAgentHost> host_;
+  std::deque<base::DictValue> messages_;
+  const int limit_;
+  bool attached_ = false;
+  bool ready_ = false;
+};
+
+void RunAssistantDebugTool(content::WebContents* page, const std::string& tool,
+                           base::DictValue args, bool confirmed,
+                           base::OnceCallback<void(base::Value)> done) {
+  auto* frame = page->GetPrimaryMainFrame();
+  if (!frame->IsRenderFrameLive() || OpenDialog(page) ||
+      !DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(page->GetBrowserContext()), page)) {
+    std::move(done).Run(Error("Developer tools are unavailable for this page"));
+    return;
+  }
+  const auto* selector = args.FindString("selector");
+  if ((tool == "debug_dom" || tool == "debug_edit_dom") &&
+      (!selector || selector->empty() || selector->size() > 240)) {
+    std::move(done).Run(Error("Give a CSS selector of up to 240 bytes"));
+    return;
+  }
+  if (tool == "debug_edit_dom") {
+    const auto* operation = args.FindString("operation");
+    const auto* value = args.FindString("value");
+    const auto* property = args.FindString("property");
+    if (!operation || !std::ranges::contains(std::to_array<std::string_view>({
+            "text", "style", "add_class", "remove_class", "hide", "show"}), *operation) ||
+        (value && value->size() > 1000) || (property && property->size() > 64)) {
+      std::move(done).Run(Error("Give a supported DOM edit with bounded arguments"));
+      return;
+    }
+  }
+  auto* approval = AssistantDebugDocument::GetOrCreateForCurrentDocument(frame);
+  if (!confirmed) {
+    std::u16string prompt = tool == "debug_console" ? T(u"Udostępnić konsolę tej karty?") :
+        tool == "debug_dom" ? T(u"Sprawdzić DOM tej karty?") :
+        tool == "debug_edit_dom" ? T(u"Zmienić DOM tej karty?") : T(u"Przeładować kartę bez pamięci podręcznej?");
+    std::string label = frame->GetLastCommittedOrigin().Serialize();
+    if (selector) label += " · " + *selector;
+    std::move(done).Run(base::Value(base::DictValue().Set("confirmation_required", true)
+        .Set("prompt", base::UTF16ToUTF8(prompt)).Set("label", label).Set("debug_document", approval->id)));
+    return;
+  }
+  const auto* approved = args.FindString("_debug_document");
+  if (!approved || *approved != approval->id) {
+    std::move(done).Run(Error("The approved document changed; ask again for this page"));
+    return;
+  }
+  if (tool == "debug_console") {
+    auto reader = std::make_unique<AssistantConsoleReader>(page, std::clamp(args.FindInt("limit").value_or(25), 1, 40));
+    if (!reader->Start()) {
+      std::move(done).Run(Error("Could not read the page console"));
+      return;
+    }
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce(
+        [](std::unique_ptr<AssistantConsoleReader> reader, base::OnceCallback<void(base::Value)> done) {
+          auto result = reader->Result();
+          reader.reset();
+          std::move(done).Run(std::move(result));
+        }, std::move(reader), std::move(done)), base::Milliseconds(650));
+    return;
+  }
+  if (tool == "debug_hard_reload") {
+    page->GetController().Reload(content::ReloadType::BYPASSING_CACHE, true);
+    Settle(page->GetWeakPtr(), base::Milliseconds(300), std::move(done));
+    return;
+  }
+  args.Remove("_debug_document");
+  args.Set("tool", tool);
+  PageOp(page, std::move(args), std::move(done));
+}
+
 // Everything the assistant does inside one page, visible or in the background.
 // `confirmed` is native user consent, never a model-supplied argument.
 void ActOnPage(content::WebContents* page, std::string tool, base::DictValue args, bool confirmed, base::OnceCallback<void(base::Value)> done) {
@@ -1371,8 +1567,12 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
     }
     return;
   }
-  const bool read = tool == "read_page" || tool == "screenshot" || tool == "wait" || tool == "adblock_inspect" || tool == "adblock_clear_preview";
-  const bool mutation = tool == "open_tab" || tool == "navigate" || tool == "activate_tab" || tool == "close_tab" ||
+  const bool debug = IsAssistantDebugTool(tool);
+  if (debug && (hidden || !permissions.pages || !permissions.tabs)) {
+    fail("Debugging needs page and tab access in a foreground conversation"); return;
+  }
+  const bool read = tool == "debug_console" || tool == "debug_dom" || tool == "read_page" || tool == "screenshot" || tool == "wait" || tool == "adblock_inspect" || tool == "adblock_clear_preview";
+  const bool mutation = tool == "debug_edit_dom" || tool == "debug_hard_reload" || tool == "open_tab" || tool == "navigate" || tool == "activate_tab" || tool == "close_tab" ||
                         tool == "click" || tool == "type" || tool == "scroll" || tool == "pin_tab" || tool == "unpin_tab" ||
                         tool == "insert_text" || tool == "press_key" || tool == "select" || tool == "mouse" || tool == "dialog" ||
                         tool == "adblock_add_rules" || tool == "adblock_diagnose";
@@ -1386,6 +1586,9 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
   if (requested_id.starts_with("@tab:")) requested_id.erase(0, 5);
   const auto reader_key = ReaderKey(requested_id);
   const bool reader = !reader_key.empty();
+  if (debug && (reader || requested_id.starts_with("@pin:"))) {
+    fail("Debugging requires an open tab in this profile"); return;
+  }
   if (reader) {
     const auto found = assistant_background_.find(reader_key);
     if (found == assistant_background_.end() || found->second.profile_id != AssistantProfileId()) { fail("Open a page with visit first"); return; }
@@ -1495,6 +1698,10 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
     if (!url.SchemeIsHTTPOrHTTPS() || url.has_username() || url.has_password()) { fail("Only HTTP(S) URLs without credentials are allowed"); return; }
     page->GetController().LoadURL(url, content::Referrer(), ui::PAGE_TRANSITION_TYPED, {});
     Settle(page->GetWeakPtr(), base::Milliseconds(300), std::move(done)); return;
+  }
+  if (debug) {
+    RunAssistantDebugTool(page, tool, std::move(args), user_confirmed, std::move(done));
+    return;
   }
   if (tool == "screenshot" && page->GetSize().IsEmpty()) page->Resize(gfx::Rect(shell_->content_host()->size()));
   // Saved rules change the browser for good: they always ask, whatever the

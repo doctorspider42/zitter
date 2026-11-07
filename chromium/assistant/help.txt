@@ -5,8 +5,11 @@ Time Machine stores layouts and closed tabs, not forms or page contents. Setting
 privacy, shortcuts, search engines, profiles, imports, history and downloads. Assistant is optional;
 the right panel overlays pages unless pinned. Each session has its own provider, model and permissions.
 @current refers to the active tab; @tab:<id> and @pin:<id> refer to listed tabs and pins.
-Passwords, cookies, tokens, payment inputs and private profiles are never available to assistant tools.
+Private profiles, protected form inputs and browser credential stores are unavailable to assistant tools.
 History access, page reading, tab discovery, web research and browser actions are separate permissions.
 Conversations are saved in the profile until the user deletes them in the history; research caches live only in memory.
 Ad blocking is built in (EasyList, EasyPrivacy), per profile, with a shield button in the toolbar showing what was blocked and
 a per-site switch. The assistant can write rules for a site the lists miss; they are kept in Settings, Ad blocking, Your rules.
+For debugging, the assistant can inspect a tab’s console and DOM, make temporary DOM edits, and reload without the cache.
+Debugging requires tab and page access, plus action access for edits or reloads. Each operation asks for approval in the
+browser. Console access shares what the site logged with the selected model after approval.

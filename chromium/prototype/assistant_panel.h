@@ -29,6 +29,10 @@ class EditorControl;
 class PanelScene;
 class PanelViewport;
 class AssistantMenuPresses;
+inline bool IsAssistantDebugTool(std::string_view tool) {
+  return tool == "debug_console" || tool == "debug_dom" ||
+         tool == "debug_edit_dom" || tool == "debug_hard_reload";
+}
 struct AssistantPermissions {
   bool tabs = false, pages = false, actions = false, history = false, web = true;
   bool confirm_clicks = true;
