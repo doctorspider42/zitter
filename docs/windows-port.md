@@ -385,13 +385,14 @@ updates and is intended for local testing.
 
 ## Windows integration
 
-- Links from other apps: a second `zitter.exe` forwards its command line to
-  the running one (Chrome's process singleton). `main()` used to add
-  `--no-startup-window` to every process, so the forwarded line carried it and
-  Chrome dropped the URLs; the switch now goes on in `PreBrowserStart`, in the
-  process that owns the profile. Forwarded links open as external links (the
-  active space, domain rules) through `ReplaceStockWindow`, and a named startup
-  profile keeps Chrome's profile picker away from launches without a URL.
+- Links from other apps: a second `zitter.exe` sends HTTP and HTTPS URLs to a
+  workspace window for the same executable and data directory. The sender uses
+  the directory resolved by `chrome_elf`, which is also how Chromium chooses
+  the profile and singleton. Stable builds without an explicit profile or
+  policy use `%LOCALAPPDATA%\Chromium\User Data`. The workspace applies domain
+  rules and otherwise opens the link in the active space. If there is no
+  matching workspace window, Chromium's startup and singleton handle the
+  launch.
 - Jump list (`jump_list_win.cc`): the spaces, then New tab and Command
   Center. Each entry runs `zitter.exe --zitter-command=…`; a running Zitter
   takes it through `WM_COPYDATA` before the second process starts Chromium,
@@ -481,7 +482,7 @@ open during resizing, dragging, and its menus or settings.
 | Design | Done ([canvas](https://claude.ai/artifact/V1fAXXfmYYMv3QMbAURWjJ)) |
 | 0 — environment | Done: vanilla `chrome.exe` runs (`out/ZitterWin`), the overlay installs |
 | 1 — non-Mac build | Done: `:shell` compiles on `text_services_skia.cc`; `sidebar_scene_unittests` (532), `zitter_network_policy_tests` (3) and `editor_text_layout_unittests` (6) pass. The `zitter` target for `is_win` moves to phase 2 |
-| 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart; data in `%LOCALAPPDATA%\Zitter`. The download shutdown prompt moves to phase 3 |
+| 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart. The download shutdown prompt moves to phase 3 |
 | 3 — native look | Done: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, Snap Layouts (HTMAXBUTTON, Windows 11), the Zitter menu with icons and mono shortcuts, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, centered dialogs, clickable sidebar and toasts, the jump list, the first-run wizard, links from other apps, the app icon, design fonts. verify-ui: Noc and Papier, restored and maximized, 125% and 150%. The Snap Layouts flyout itself awaits a Windows 11 machine |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, CSV passwords, no cookie option, sandbox checked, network audit clean after two fixes |
 | 5 — tests and tools | Done but the docs: the full browser suite passes (226), Rust (532) and Python (83) tests pass, verify-ui works on Windows. Open: Windows sections in CLAUDE.md and README, waiting on their rewrite |

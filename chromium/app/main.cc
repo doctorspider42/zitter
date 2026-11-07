@@ -170,22 +170,30 @@ int main(int argc, const char** argv) {
 #endif
     zitter::ConfigureSafeBrowsingKey();
     zitter::ConfigureNetworkPolicy(*command);
-    if (!command->HasSwitch(switches::kUserDataDir))
-      command->AppendSwitchPath(switches::kUserDataDir, DefaultDataDirectory());
 #if BUILDFLAG(IS_WIN)
-    // Hand external URLs and jump-list commands directly to the matching
-    // workspace window, before Chromium's stock-window startup can consume them.
-    if (zitter::prototype::ForwardCommandToRunningZitter(*command)) return 0;
-#endif
-#if !BUILDFLAG(IS_WIN)
-    // Chrome initializes services/profiles, but only our Views window is opened.
-    command->AppendSwitch(switches::kNoStartupWindow);
-#else
+    // Chromium uses chrome_elf's resolution of the original OS command line
+    // for the profile and process singleton. Use that same path for workspace
+    // IPC and jump-list shortcuts, including existing stable installations.
+    wchar_t effective[MAX_PATH];
+    wchar_t invalid[MAX_PATH];
+    if (GetUserDataDirectoryThunk(effective, std::size(effective), invalid, std::size(invalid))) {
+      const base::FilePath data_directory(effective);
+      if (command->GetSwitchValuePath(switches::kUserDataDir) != data_directory) {
+        command->RemoveSwitch(switches::kUserDataDir);
+        command->AppendSwitchPath(switches::kUserDataDir, data_directory);
+      }
+      if (zitter::prototype::ForwardCommandToRunningZitter(*command)) return 0;
+    }
     // A second zitter.exe forwards this command line (runtime.cc). Zitter keeps
     // several profiles, and without a named one Chrome would answer a launch
     // without a URL with its profile picker instead of a window to replace.
     if (!command->HasSwitch(switches::kProfileDirectory))
       command->AppendSwitchASCII(switches::kProfileDirectory, "Default");
+#else
+    if (!command->HasSwitch(switches::kUserDataDir))
+      command->AppendSwitchPath(switches::kUserDataDir, DefaultDataDirectory());
+    // Chrome initializes services/profiles, but only our Views window is opened.
+    command->AppendSwitch(switches::kNoStartupWindow);
 #endif
     command->AppendSwitch(switches::kNoFirstRun);
     InitialCommandLine() = *command;
