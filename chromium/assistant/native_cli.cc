@@ -269,7 +269,21 @@ std::string PerformCLI(std::string id, const base::DictValue& request) {
 #endif
   if (!in.IsValid() || !out.IsValid() || !diagnostics.IsValid())
     return Failure("Could not prepare provider streams");
+#if BUILDFLAG(IS_WIN)
+  // CommandLine drops empty Windows arguments. Claude needs them after
+  // --tools and --setting-sources to disable both features.
+  std::wstring command_line;
+  for (const auto& arg : command.argv()) {
+    if (!command_line.empty())
+      command_line += L' ';
+    command_line += arg.empty()
+                        ? L"\"\""
+                        : base::CommandLine::QuoteForCommandLineToArgvW(arg);
+  }
+  auto process = base::LaunchProcess(command_line, options);
+#else
   auto process = base::LaunchProcess(command, options);
+#endif
   if (!process.IsValid())
     return Failure(
         "Provider CLI could not start. Check installation and login.");
