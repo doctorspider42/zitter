@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn builtin_list_redirects_what_other_lists_block() {
         let list = builtin_list();
-        assert!(list.lines().filter(|l| !is_comment(l)).all(|l| check_rule(l).kind == 1), "every line is a valid network rule");
+        assert!(list.lines().filter(|l| !is_comment(l)).all(|l| check_rule(l).kind != 0), "every line is a valid rule");
         // Alone it blocks nothing; with a list that blocks adsbygoogle, the page gets the stand-in.
         let alone = new_engine(&vec![list.clone()]);
         let url = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js";
@@ -509,6 +509,56 @@ mod tests {
         let check = both.check_request(url, "https://news.test/", "script");
         assert_eq!(check.verdict, 1);
         assert!(check.redirect.starts_with("data:application/javascript;base64,"));
+    }
+
+    #[test]
+    fn adblock_analytics_stand_ins_apply_across_sites() {
+        let list = builtin_list();
+        let alone = new_engine(&vec![list.clone()]);
+        let e = new_engine(&vec!["||adblockanalytics.com^".into(), list]);
+        let probes = [
+            ("https://www.adblockanalytics.com/google-adsense.js", "script", "application/javascript"),
+            ("https://adsserver.adblockanalytics.com/", "script", "application/javascript"),
+            ("https://www.adblockanalytics.com/ad-choices.png?0.1", "image", "image/png"),
+        ];
+        for site in ["https://www.detectadblock.com/", "https://news.test/"] {
+            for (url, kind, mime) in probes {
+                let probe = e.check_request(url, site, kind);
+                assert_eq!(probe.verdict, 1, "{url}");
+                assert!(probe.redirect.starts_with(&format!("data:{mime};base64,")), "{url}");
+                assert_eq!(alone.check_request(url, site, kind).verdict, 0, "{url}");
+            }
+        }
+        let unrelated = e.check_request(
+            "https://adsserver.adblockanalytics.com/unrelated.js", "https://news.test/", "script");
+        assert_eq!(unrelated.verdict, 1);
+        assert!(unrelated.redirect.is_empty());
+    }
+
+    #[test]
+    fn detectadblock_google_probes_and_bait_exceptions_are_site_scoped() {
+        let site = "https://www.detectadblock.com/";
+        let other = "https://news.test/";
+        let filters = "||googlesyndication.com^\n||doubleclick.net^\n\
+                       ##.ad-banner-728x90\n##.AdvertContainer\n##.ad-container-300x250\n##.SponsoredLinksModule";
+        let e = new_engine(&vec![filters.into(), builtin_list()]);
+        let probes = [
+            ("https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", "xmlhttprequest", "text/plain"),
+            ("https://securepubads.g.doubleclick.net/tag/js/gpt.js", "xmlhttprequest", "text/plain"),
+        ];
+        for (url, kind, mime) in probes {
+            let probe = e.check_request(url, site, kind);
+            assert_eq!(probe.verdict, 1, "{url}");
+            assert!(probe.redirect.starts_with(&format!("data:{mime};base64,")), "{url}");
+            let outside = e.check_request(url, other, kind);
+            assert_eq!(outside.verdict, 1, "{url}");
+            assert!(outside.redirect.is_empty(), "{url}");
+        }
+        let bait = ["ad-banner-728x90", "AdvertContainer", "ad-container-300x250", "SponsoredLinksModule"]
+            .map(String::from).to_vec();
+        let hidden = |page| e.hidden_class_id_selectors(&bait, &vec![], &e.cosmetic_resources(page).exceptions);
+        assert!(hidden(site).is_empty());
+        assert_eq!(hidden(other).len(), bait.len());
     }
 
     #[test]

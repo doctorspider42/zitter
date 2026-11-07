@@ -1044,6 +1044,15 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
     window->AskAssistant(TF(u"Moje reguły blokowania na tej stronie od kilku wizyt nic nie ukrywają, reklamy pewnie się zmieniły. Znajdź te reklamy ponownie i zapisz nowe reguły, zastępując nimi stare (replaces): {}",
                             {base::UTF8ToUTF16(base::JoinString(stale, "\n"))}));
   }, base::Unretained(this));
+  extension_callbacks.diagnose_blocking_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
+    if (!window->assistant_settings_.enabled) return;
+    window->ShowAssistant();
+    if (window->assistant_) {
+      window->assistant_->PreparePageAction(
+          T(u"Sprawdź, czy ta strona wykrywa blokowanie reklam. Użyj adblock_diagnose na bieżącej karcie. Jeśli strona wykrywa blokowanie, przetestuj reguły tylko dla tej witryny z adblock_add_rules (check: true). Zostaw blokowanie reklam i śledzenia włączone. Poproś o zapis tylko reguł, które działają."),
+          /*needs_actions=*/true, /*needs_web=*/false);
+    }
+  }, base::Unretained(this));
   ad_blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating([](WorkspaceWindow* window) {
     if (window->shell_) window->shell_->RefreshAdBlockingPreferences();
     if (window->ad_blocking_rules_panel_) window->ad_blocking_rules_panel_->Refresh();

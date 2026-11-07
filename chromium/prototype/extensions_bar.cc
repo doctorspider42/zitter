@@ -1192,8 +1192,14 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
       return row;
     };
     site_row_ = add_row(kShieldOffIcon, &ExtensionsBar::ToggleSiteBlocking);
-    if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run() && bar_->callbacks_.block_with_assistant)
-      assistant_row_ = add_row(kAssistantSparkIcon, &ExtensionsBar::BlockWithAssistant);
+    if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run()) {
+      if (bar_->callbacks_.block_with_assistant)
+        assistant_row_ = add_row(kAssistantSparkIcon, &ExtensionsBar::BlockWithAssistant);
+      if (bar_->callbacks_.diagnose_blocking_with_assistant) {
+        diagnose_row_ = add_row(kAssistantSparkIcon, &ExtensionsBar::DiagnoseBlockingWithAssistant);
+        diagnose_row_->SetText(T(u"Obejdź wykrywanie adblocka"), {}, false, 16);
+      }
+    }
     auto* settings = add_row(kGearIcon, &ExtensionsBar::OpenAdBlockingSettings);
     settings->SetText(T(u"Ustawienia blokowania"), {}, false, 16);
     settings->SetRing(true);
@@ -1213,6 +1219,7 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
       assistant_row_->SetText(stale ? T(u"Napraw niedziałające reguły z asystentem") : T(u"Zablokuj więcej z asystentem"), {}, false, 16);
       assistant_row_->SchedulePaint();
     }
+    if (diagnose_row_) diagnose_row_->SetEnabled(count >= 0 && url.SchemeIsHTTPOrHTTPS());
     // Another site's detail may take another number of lines.
     if (GetWidget() && !GetWidget()->IsClosed()) SizeToContents();
   }
@@ -1222,6 +1229,7 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
   raw_ptr<ShieldCard> card_ = nullptr;
   raw_ptr<MenuRow> site_row_ = nullptr;
   raw_ptr<MenuRow> assistant_row_ = nullptr;
+  raw_ptr<MenuRow> diagnose_row_ = nullptr;
 };
 
 // A local action launcher: merely opening it never starts a model request.
@@ -1677,6 +1685,10 @@ void ExtensionsBar::ToggleSiteBlocking() {
 void ExtensionsBar::BlockWithAssistant() {
   if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
   if (callbacks_.block_with_assistant) callbacks_.block_with_assistant.Run();
+}
+void ExtensionsBar::DiagnoseBlockingWithAssistant() {
+  if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
+  if (callbacks_.diagnose_blocking_with_assistant) callbacks_.diagnose_blocking_with_assistant.Run();
 }
 void ExtensionsBar::OpenAdBlockingSettings() {
   if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
