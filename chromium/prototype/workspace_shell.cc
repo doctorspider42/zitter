@@ -77,6 +77,11 @@
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/color/color_id.h"
 #include "ui/base/models/image_model.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/views/controls/button/image_button.h"
+#include "ui/views/controls/menu/menu_item_view.h"
+#include "ui/views/controls/menu/menu_model_adapter.h"
+#include "ui/views/controls/menu/submenu_view.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/image/canvas_image_source.h"
@@ -536,11 +541,52 @@ gfx::RoundedCornersF ZitterMenuCorners() { return gfx::RoundedCornersF(12); }
 class DesignMenuModel final : public ui::SimpleMenuModel {
  public:
   using ui::SimpleMenuModel::SimpleMenuModel;
+  std::unique_ptr<views::MenuItemView> CreateViewMenu() {
+    view_adapter_ = std::make_unique<views::MenuModelAdapter>(this);
+    return view_adapter_->CreateMenu();
+  }
   std::optional<ui::ColorId> GetForegroundColorId(size_t index) override {
     static constexpr std::array<int, 4> kDanger = {10, 12, 30, 38};
     return std::ranges::contains(kDanger, GetCommandIdAt(index)) ? std::optional<ui::ColorId>(ui::kColorAlertHighSeverity) : std::nullopt;
   }
+
+ private:
+  std::unique_ptr<views::MenuModelAdapter> view_adapter_;
 };
+
+ui::ImageModel MenuIcon(const gfx::VectorIcon& icon,
+                        ui::ColorId color = ui::kColorMenuIcon) {
+  return ui::ImageModel::FromVectorIcon(icon, color, 16);
+}
+
+class PageMenuNavigationButton final : public views::ImageButton {
+  METADATA_HEADER(PageMenuNavigationButton, views::ImageButton)
+
+ public:
+  PageMenuNavigationButton(PressedCallback callback, const gfx::VectorIcon& icon,
+                          const std::u16string& name)
+      : views::ImageButton(std::move(callback)) {
+    SetImageModel(STATE_NORMAL, MenuIcon(icon));
+    SetImageModel(STATE_HOVERED, MenuIcon(icon, ui::kColorMenuItemForeground));
+    SetImageModel(STATE_DISABLED, MenuIcon(icon, ui::kColorMenuItemForegroundDisabled));
+    SetImageHorizontalAlignment(ALIGN_CENTER);
+    SetImageVerticalAlignment(ALIGN_MIDDLE);
+    SetPreferredSize(gfx::Size(44, 30));
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    SetTooltipText(name);
+    GetViewAccessibility().SetName(name);
+  }
+
+ protected:
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED)
+      FillRound(canvas, GetLocalBounds(), 8,
+                GetColorProvider()->GetColor(ui::kColorMenuItemBackgroundSelected));
+    views::ImageButton::PaintButtonContents(canvas);
+  }
+};
+BEGIN_METADATA(PageMenuNavigationButton)
+END_METADATA
 #if BUILDFLAG(IS_WIN)
 // The first-run wizard's view stops reporting (defined with it, below).
 void AbandonWelcome(views::View* contents);
@@ -2006,7 +2052,25 @@ class RustRowView final : public views::View {
   void ProjectPinAdapter(Spec spec){CHECK(PinBinding().valid);CancelInput();ClearSidebarVisuals(spec);spec_=std::move(spec);SyncSidebarAX();PreferredSizeChanged();SchedulePaint();}
   void RefreshPinProperties(){CHECK(PinBinding().valid);CancelInput();SyncSidebarAX();SchedulePaint();}
   Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;spec.favicon=spec_.favicon;spec.favorite=spec_.favorite;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?&vector_icons::kFolderFilledIcon:nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
-  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds,gfx::RectF clip) const{auto scene=state_->sidebar_scene({bounds.x(),bounds.y(),bounds.width(),bounds.height()},{clip.x(),clip.y(),clip.width(),clip.height()},{float(Font(0).GetFontSize()),Tone(this,kInk),Tone(this,kCard),HoverWash(this),Hairline(this),Palette(this).focus,Tone(this,kMuted)},has_close_button(),close_button_visible());scene.item.favicon=rust::Vec<uint32_t>();for(auto pixel:spec_.favicon)scene.item.favicon.push_back(pixel);scene.item.favorite=spec_.favorite;if(spec_.favorite){scene.item.tile=true;scene.item.fill=SkColorSetA(Tone(this,kCard),scene.item.active?0xFF:scene.item.hovered?0x8C:0x59);}return scene;}
+  sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds, gfx::RectF clip) const {
+    const auto palette = Palette(this);
+    auto scene = state_->sidebar_scene(
+        {bounds.x(), bounds.y(), bounds.width(), bounds.height()},
+        {clip.x(), clip.y(), clip.width(), clip.height()},
+        {float(Font(0).GetFontSize()), Tone(this,kInk), Tone(this,kCard),
+         HoverWash(this), Hairline(this), palette.focus, Tone(this,kMuted)},
+        has_close_button(), close_button_visible());
+    for (auto pixel : spec_.favicon) scene.item.favicon.push_back(pixel);
+    auto& item = scene.item;
+    item.favorite = spec_.favorite;
+    if (item.favorite) {
+      item.tile = true;
+      item.fill = item.hovered ? Mix(palette.ink, Tone(this,kCard), 16)
+                               : SkColorSetA(Tone(this,kCard), item.active ? 0xFF : 0x59);
+      if (item.hovered) item.edge = palette.line_strong;
+    }
+    return scene;
+  }
   void SetFavicon(const std::vector<uint32_t>& pixels,bool favorite){if(spec_.favicon==pixels&&spec_.favorite==favorite)return;spec_.favicon=pixels;spec_.favorite=favorite;SchedulePaint();}
   void ConfigureTabClose(bool wanted,views::Button::PressedCallback callback,const SidebarNodeBinding& binding){
     if(close_){auto* control=views::AsViewClass<RustActionView>(close_.get());if(!wanted||!control||!binding.scope||!control->BelongsTo(*binding.scope)||!control->LogicalNodeId()){auto* old=close_.get();close_=nullptr;RemoveChildViewT(old);}}
@@ -2054,7 +2118,7 @@ class RustRowView final : public views::View {
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();SchedulePaint();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
   void CancelInput(){const bool changed=state_->action_cancel();if(close_)CancelActionInput(close_);UpdateClose();UpdateWatch();if(changed)SchedulePaint();}
-  void SyncViewport(){if(!Interactive())CancelInput();else if(close_){if(auto* close=views::AsViewClass<RustActionView>(close_.get()))close->SyncViewportVisibility();}}
+  void SyncViewport(){if(!PointerInputVisible())CancelInput();else if(close_){if(auto* close=views::AsViewClass<RustActionView>(close_.get()))close->SyncViewportVisibility();}}
   void PaintChildren(const views::PaintInfo& info) override{if(!spec_.scene_visible||!spec_.scene_visible.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{
     if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){
@@ -2087,6 +2151,10 @@ class RustRowView final : public views::View {
   void SyncSidebarAX(){const auto title=state_->sidebar_title();const std::u16string text(title.begin(),title.end());SetTooltipText(text);GetViewAccessibility().SetName(text);}
   sidebar::RowLayout Geometry() const{if(spec_.stacked){auto g=sidebar::row_layout(width(),height(),0,false,false,close_!=nullptr);const int lead=50,half=height()/2;const int w=std::max(0,g.title.width+g.title.x-lead);g.title={lead,2,w,half-2};g.detail={lead,half,w,half-4};return g;}if(spec_.address)return sidebar::address_layout(width(),height(),scene_title_width());return sidebar::row_layout(width(),height(),scene_title_width(),!spec_.detail.empty(),spec_.chip,close_!=nullptr);}
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
+  // Opening the profile slot can move the captured row below the viewport.
+  bool PointerInputVisible() const {
+    return SceneIsVisible(this) && (dragging_ || !GetVisibleBounds().IsEmpty());
+  }
   void SyncEnabled(){if(!state_->action_enabled(GetEnabledInViewsSubtree()))return;auto& ax=GetViewAccessibility();if(GetEnabledInViewsSubtree())ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else ax.RemoveDefaultActionVerb();UpdateClose();UpdateWatch();SchedulePaint();}
   void EnabledChanged(){SyncEnabled();}
   void WindowChanged(){CancelInput();state_->action_focus(HasFocus());SchedulePaint();}
@@ -2103,7 +2171,7 @@ class RustRowView final : public views::View {
   void EndDrag(){if(!dragging_)return;dragging_=false;if(spec_.drag){auto drag=spec_.drag;drag.Run(this,grab_,std::nullopt);}}
   bool dragging_=false;
   gfx::Point grab_;
-  bool PointerInput(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_row_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),Interactive(),!spec_.drop.is_null()),event,before);}
+  bool PointerInput(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_row_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),PointerInputVisible(),!spec_.drop.is_null()),event,before);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_key(pressed,event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true,Interactive()),event,before);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before){UpdateClose();UpdateWatch();if(result.visual!=before)SchedulePaint();const bool handled=result.handled;if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}if(result.action==sidebar::RowAction::Drop&&spec_.drop){auto drop=spec_.drop;drop.Run(display::Screen::Get()->GetCursorScreenPoint());return handled;}return handled;}
   Spec spec_;views::Button::PressedCallback callback_;base::RepeatingClosure changed_;Watch watch_;raw_ptr<views::View> close_=nullptr;mutable std::optional<int> measured_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustRowView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustRowView::EnabledChanged,base::Unretained(this)))};base::WeakPtrFactory<RustRowView> weak_factory_{this};
@@ -3041,6 +3109,13 @@ class SidebarView final : public views::View {
     leave_.Run(GetBoundsInScreen().Contains(display::Screen::Get()->GetCursorScreenPoint()),event.IsLeftMouseButton());
   }
   void OnMouseEntered(const ui::MouseEvent& event) override { leave_.Run(true, event.IsLeftMouseButton()); }
+  gfx::Size GetMinimumSize() const override {
+    // The shell constrains the width. The contents' preferred width would
+    // otherwise prevent the native panel from shrinking to the resize handle.
+    auto minimum = views::View::GetMinimumSize();
+    minimum.set_width(0);
+    return minimum;
+  }
   void Layout(PassKey) override {
     LayoutSuperclass<views::View>(this);
     if (grip) {
@@ -5251,6 +5326,7 @@ bool WorkspaceShell::PatchPinnedItems(TabListCache& cache,
 }
 
 void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catalogue_changed) {
+  if (previous_workspace != state_.workspace_id) SetProfileDropSlotVisible(false);
   if (state_.workspace_id.empty()) return;
   // A pin opened elsewhere (Command Center, keyboard) shows under its collapsed
   // folders on its own; the folders stay collapsed.
@@ -5797,7 +5873,9 @@ void WorkspaceShell::UpdateMetalSidebar() {
     sidebar::Item item{};
     item.x = rect.x(); item.y = rect.y(); item.width = rect.width(); item.height = rect.height();
     item.clip = {clip.x(), clip.y(), clip.width(), clip.height()};
-    if (IsRow(view)) {
+    if (view == profile_drop_slot_.view()) {
+      items.push_back(ProfileDropPreview(rect, clip));
+    } else if (IsRow(view)) {
       auto* row=view;
       if(auto* rust_row=views::AsViewClass<RustRowView>(row)){auto scene=rust_row->SidebarScene(rect,clip);if(scene.valid){
         // The row being dragged stays in place as a faded placeholder.
@@ -5910,11 +5988,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
     items.push_back(std::move(item));
   }
   const bool profile_slot = sidebar_reorder_ && sidebar_reorder_->profile_slot;
-  if (profile_slot) {
-    auto rect = sidebar_reorder_->indicator;
-    rect.Offset(-bounds.x(), -bounds.y());
-    items.push_back(ProfileDropPreview(rect));
-  } else if (sidebar_reorder_) {
+  if (sidebar_reorder_ && !profile_slot) {
     // Drop target: a line where the row lands, or a wash over the folder that receives it.
     auto rect=gfx::RectF(sidebar_reorder_->indicator);rect.Offset(-bounds.x(),-bounds.y());
     const auto list=gfx::RectF(list_origin.x(),list_origin.y(),list_bounds.width(),list_bounds.height());
@@ -6525,6 +6599,10 @@ constexpr int kDuplicateTab = 200;
 constexpr int kPinProfileTab = 201;
 constexpr int kMoveTabSubmenu = 202;
 constexpr int kReloadWorkspaceIcons = 203;
+constexpr int kPageNavigation = 204;
+constexpr int kCopyPageAddress = 205;
+constexpr int kCopyLinkAddress = 206;
+constexpr int kCopyTabAddress = 208;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
@@ -6692,28 +6770,83 @@ void WorkspaceShell::ShowPeek(std::u16string title) {
   peek_widget_->Show(); peek_widget_->Activate();
 }
 void WorkspaceShell::HidePeek() { if (peek_widget_) peek_widget_->Hide(); }
-void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace) {
+void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
+                                   const PageMenuNavigation* page) {
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
+  page_menu_url_ = page ? page->url : GURL();
   route_workspaces_ = state_.workspaces;
   route_menu_ = std::make_unique<DesignMenuModel>(this);
   link_menu_ = std::make_unique<DesignMenuModel>(this);
+  if (page) {
+    link_menu_->AddItem(kPageNavigation, {});
+    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    link_menu_->AddItemWithIcon(kCopyPageAddress, T(u"Kopiuj adres karty"),
+                                MenuIcon(vector_icons::kContentCopyIcon));
+    if (context_url_.SchemeIsHTTPOrHTTPS())
+      link_menu_->AddItemWithIcon(kCopyLinkAddress, T(u"Kopiuj adres linku"),
+                                  MenuIcon(vector_icons::kLinkIcon));
+  }
+  if (!context_url_.SchemeIsHTTPOrHTTPS()) return;
   for (const auto& entry : sidebar::link_context_menu(LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_))) {
     const auto label = base::UTF8ToUTF16(std::string(entry.label));
     switch (entry.kind) {
       case 1: link_menu_->AddSeparator(ui::NORMAL_SEPARATOR); break;
       case 2: link_menu_->AddSubMenu(entry.command, label, route_menu_.get()); break;
       case 3: route_menu_->AddRadioItem(entry.command, label, 2); break;
-      default: link_menu_->AddItem(entry.command, label);
+      case 0:
+        if (entry.command == kLinkPeek)
+          link_menu_->AddItemWithIcon(entry.command, label, MenuIcon(kMenuSidebarIcon));
+        else if (entry.command == kLinkNewTab)
+          link_menu_->AddItemWithIcon(entry.command, label, MenuIcon(kMenuNewTabIcon));
+        else if (entry.command == kLinkSplit)
+          link_menu_->AddItemWithIcon(entry.command, label, MenuIcon(vector_icons::kOpenInNewFlippableIcon));
+        else
+          link_menu_->AddItem(entry.command, label);
+        break;
     }
   }
 }
 
-void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point, base::RepeatingClosure inspect) {
-  BuildLinkMenu(std::move(url), std::move(source_workspace));
+void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
+                                  gfx::Point point, base::RepeatingClosure inspect,
+                                  std::optional<PageMenuNavigation> navigation) {
+  BuildLinkMenu(std::move(url), std::move(source_workspace), navigation ? &*navigation : nullptr);
   inspect_element_ = std::move(inspect);
-  if (inspect_element_) { link_menu_->AddSeparator(ui::NORMAL_SEPARATOR); link_menu_->AddItem(19010, T(u"Zbadaj element")); }
-  link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
+  if (inspect_element_) {
+    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    link_menu_->AddItemWithIcon(19010, T(u"Zbadaj element"), MenuIcon(vector_icons::kCodeIcon));
+  }
+  if (navigation) {
+    auto menu = static_cast<DesignMenuModel*>(link_menu_.get())->CreateViewMenu();
+    menu->GetSubmenu()->set_minimum_preferred_width(248);
+    auto* item = menu->GetMenuItemByID(kPageNavigation);
+    auto* bar = item->AddChildView(std::make_unique<views::View>());
+    bar->GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
+    bar->GetViewAccessibility().SetName(T(u"Nawigacja"));
+    auto* layout = bar->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 4), 4));
+    const auto add_button = [&](PageCommand command, const gfx::VectorIcon& icon,
+                                const std::u16string& name, bool enabled) {
+      auto* button = bar->AddChildView(std::make_unique<PageMenuNavigationButton>(
+          base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,
+                                 base::RepeatingCallback<void(PageCommand)> run,
+                                 PageCommand action) {
+            if (!shell) return;
+            base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+                FROM_HERE, base::BindOnce(run, action));
+            shell->link_menu_runner_->Cancel();
+          }, weak_factory_.GetWeakPtr(), navigation->run, command), icon, name));
+      button->SetEnabled(enabled);
+      layout->SetFlexForView(button, 1);
+    };
+    add_button(PageCommand::kBack, vector_icons::kArrowBackIcon, T(u"Wstecz"), navigation->can_go_back);
+    add_button(PageCommand::kForward, vector_icons::kArrowForwardIcon, T(u"Dalej"), navigation->can_go_forward);
+    add_button(PageCommand::kReload, vector_icons::kReloadCustomIcon, T(u"Odśwież"), navigation->can_reload);
+    link_menu_runner_ = std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
+  } else {
+    link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
+  }
   link_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft,
       ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
 }
@@ -7067,8 +7200,12 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     if (!context_pin_.empty()) for (const auto& pin : state_.pins) if (pin.id == context_pin_) url = pin.url;
     context_url_ = url; link_source_workspace_ = state_.workspace_id;
     folder_parent_id_.clear();context_workspace_id_=state_.workspace_id;
-    workspace_menu_->AddItem(kDuplicateTab, T(u"Duplikuj kartę"));
-    workspace_menu_->AddItem(kPinProfileTab, T(u"Przypnij do profilu"));
+    workspace_menu_->AddItemWithIcon(kCopyTabAddress, T(u"Kopiuj adres karty"),
+                                     MenuIcon(vector_icons::kLinkIcon));
+    workspace_menu_->AddItemWithIcon(kDuplicateTab, T(u"Duplikuj kartę"),
+                                     MenuIcon(vector_icons::kContentCopyIcon));
+    workspace_menu_->AddItemWithIcon(kPinProfileTab, T(u"Przypnij do profilu"),
+                                     MenuIcon(vector_icons::kStarOldIcon));
     move_tab_menu_ = std::make_unique<DesignMenuModel>(this);
     move_tab_workspaces_.clear();
     for (const auto& space : state_.workspaces) {
@@ -7076,12 +7213,22 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
       move_tab_menu_->AddItem(kMoveTabBase + move_tab_workspaces_.size(), base::UTF8ToUTF16(space.name));
       move_tab_workspaces_.push_back(space.id);
     }
-    if (!move_tab_workspaces_.empty()) workspace_menu_->AddSubMenu(kMoveTabSubmenu, T(u"Przenieś do przestrzeni"), move_tab_menu_.get());
+    if (!move_tab_workspaces_.empty()) {
+      workspace_menu_->AddSubMenu(kMoveTabSubmenu, T(u"Przenieś do przestrzeni"), move_tab_menu_.get());
+      workspace_menu_->SetIcon(workspace_menu_->GetItemCount() - 1,
+                               MenuIcon(vector_icons::kFolderOpenIcon));
+    }
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
     if(metal_sidebar_) {
       const auto target=ResolveSidebarTarget(context_workspace_id_,context_tab_identity_,context_pin_);
       const auto plan=sidebar::tab_context_menu(RowMenuState(state_,target.tab,target.valid,url,context_pin_));
-      for(const auto& entry:plan){if(entry.command==0)workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);else workspace_menu_->AddItem(entry.command,base::UTF8ToUTF16(std::string(entry.label)));}
+      for (const auto& entry : plan) {
+        if (entry.command == 0) workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+        else if (entry.command == kCloseTab)
+          workspace_menu_->AddItemWithIcon(kCloseTab, T(u"Zamknij kartę"),
+              MenuIcon(vector_icons::kCloseSmallIcon, ui::kColorAlertHighSeverity));
+        else workspace_menu_->AddItem(entry.command, base::UTF8ToUTF16(std::string(entry.label)));
+      }
       return;
     }
     workspace_menu_->AddItem(kNewFolder, T(u"Nowy folder…"));
@@ -7107,8 +7254,6 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
       workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
       workspace_menu_->AddItem(kSeparateSplit, T(u"Rozdziel"));
       if (state_.split_tabs.size() > 2) workspace_menu_->AddItem(kCloseSplit, T(u"Wyjmij kartę ze splitu"));
-      workspace_menu_->AddItem(kCloseTab, T(u"Zamknij kartę"));
-      workspace_menu_->AddItem(kCloseSplitTabs, T(u"Zamknij wszystkie karty w splicie"));
     } else {
       workspace_menu_->AddItem(kOpenSplit, T(u"Otwórz obok w Split View"));
     }
@@ -7118,10 +7263,17 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
       if (std::any_of(state_.link_rules.begin(), state_.link_rules.end(), [&](const auto& rule) { return rule.host == url.host(); }))
         workspace_menu_->AddItem(kRemoveRule, TF(u"Wyłącz automatyczny wybór przestrzeni dla {}", {base::UTF8ToUTF16(url.host())}));
     }
+    if (context_tab_) {
+      workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+      workspace_menu_->AddItemWithIcon(kCloseTab, T(u"Zamknij kartę"),
+          MenuIcon(vector_icons::kCloseSmallIcon, ui::kColorAlertHighSeverity));
+      if (paired)
+        workspace_menu_->AddItem(kCloseSplitTabs, T(u"Zamknij wszystkie karty w splicie"));
+    }
 }
 void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType source_type) {
   BuildTabMenu(context_tab_,context_pin_);
-  workspace_menu_runner_=std::make_unique<views::MenuRunner>(workspace_menu_.get(),kZitterMenuRun);
+  workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
   workspace_menu_runner_->RunMenuAt(widget_,nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source_type, gfx::NativeView(), ZitterMenuCorners());
 }
 
@@ -7160,6 +7312,13 @@ std::string WorkspaceShell::ContextPinId() const {
   return std::any_of(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; }) ? pin : std::string();
 }
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
+  if (command_id == kCopyPageAddress) return IsWorkspaceTabUrl(page_menu_url_);
+  if (command_id == kCopyLinkAddress) return context_url_.SchemeIsHTTPOrHTTPS();
+  if (command_id == kCopyTabAddress) {
+    const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
+    return target.valid && callbacks_.tab_menu_url &&
+        IsWorkspaceTabUrl(callbacks_.tab_menu_url.Run(target.tab, target.pin));
+  }
   if (command_id == kReloadWorkspaceIcons)
     return state_.configuration_ready && !state_.profiles_busy && std::ranges::any_of(state_.workspaces,[&](const auto& space){return space.id==context_workspace_id_;});
   if (command_id == kDuplicateTab || command_id == kPinProfileTab || command_id == kMoveTabSubmenu ||
@@ -7203,16 +7362,16 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
   if (!sidebar_visible() || !sidebar_root_ ||
       !sidebar_root_->GetBoundsInScreen().Contains(point))
     return std::nullopt;
-  const auto address = url_pill_->parent()->GetBoundsInScreen();
   const auto list = tab_list_->parent()->GetBoundsInScreen();
-  if (point.y() >= address.y() && point.y() < list.y()) {
-    if (!allow_profile || !state_.configuration_ready || state_.profiles_busy)
-      return std::nullopt;
+  if (!list.Contains(point)) return std::nullopt;
+  const auto* profile_slot = profile_drop_slot_.view();
+  if (allow_profile && state_.configuration_ready && !state_.profiles_busy &&
+      profile_slot && profile_slot->IsDrawn() &&
+      profile_slot->GetBoundsInScreen().Contains(point)) {
     SidebarReorder out;
     out.pinned = true;
     out.parent = "@profile";
     out.profile_slot = true;
-    out.indicator = address;
     return out;
   }
   const auto found=tab_lists_.find(state_.workspace_id);
@@ -7358,7 +7517,8 @@ void WorkspaceShell::CreateSplitDrop() {
 void WorkspaceShell::HandlePaneDrag(size_t pane,std::optional<gfx::Point> point,bool drop) {
   const auto panes=state_.split_tabs;
   if(!state_.split_visible||pane>=panes.size()||!state_.configuration_ready||state_.profiles_busy){
-    SetSidebarReorder(std::nullopt);ShowSplitDrop(std::nullopt,{});return;}
+    SetProfileDropSlotVisible(false);SetSidebarReorder(std::nullopt);ShowSplitDrop(std::nullopt,{});return;}
+  if (!drop) SetProfileDropSlotVisible(point.has_value());
   const size_t tab=panes[pane];
   std::optional<SidebarReorder> reorder;std::optional<size_t> place;
   if(point){
@@ -7376,6 +7536,7 @@ void WorkspaceShell::HandlePaneDrag(size_t pane,std::optional<gfx::Point> point,
     SetSidebarReorder(std::move(reorder));
     ShowSplitDrop(place,std::move(title),panes.size()-1);return;
   }
+  SetProfileDropSlotVisible(false);
   SetSidebarReorder(std::nullopt);ShowSplitDrop(std::nullopt,{});
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,size_t tab,std::optional<SidebarReorder> reorder,std::optional<size_t> place){
     if(!shell||!shell->state_.configuration_ready||shell->state_.profiles_busy||!std::ranges::contains(shell->state_.split_tabs,tab))return;
@@ -7408,6 +7569,10 @@ void WorkspaceShell::DragHoverSettled() {
   }
 }
 void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::optional<gfx::Point> point) {
+  const auto* rust_row = views::AsViewClass<RustRowView>(row);
+  const bool allow_profile = !rust_row || !rust_row->PinBinding().folder;
+  SetProfileDropSlotVisible(point && allow_profile && state_.configuration_ready &&
+                            !state_.profiles_busy);
   // Another tab's row under the pointer: wait, then focus it and preview the split.
   std::optional<std::array<uint64_t,2>> hovered;
   if (point && tab_list_ && tab_list_->GetWidget() &&
@@ -7428,15 +7593,40 @@ void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::opt
     UpdateSidebarDragOverlay();
     return;
   }
-  const auto* rust_row = views::AsViewClass<RustRowView>(row);
-  SetSidebarReorder(point ? SidebarReorderAt(*point, !rust_row || !rust_row->PinBinding().folder)
-                          : std::nullopt);
+  SetSidebarReorder(point ? SidebarReorderAt(*point, allow_profile) : std::nullopt);
   ShowSplitDrop(point&&!sidebar_reorder_?SplitDropSlot(*point):std::nullopt,row?std::u16string(row->GetViewAccessibility().GetCachedName()):std::u16string());
 }
 
 namespace {
 constexpr auto kProfileDropReveal = base::Milliseconds(120);
 }  // namespace
+
+void WorkspaceShell::SetProfileDropSlotVisible(bool visible) {
+  if (visible == (profile_drop_slot_.view() != nullptr)) return;
+  if (!visible) {
+    auto* slot = profile_drop_slot_.view();
+    slot->parent()->RemoveChildViewT(slot);
+    return;
+  }
+  const auto found = tab_lists_.find(state_.workspace_id);
+  if (found == tab_lists_.end()) return;
+  auto& cache = found->second;
+  auto* parent = cache.root.get();
+  size_t index = 0;
+  const auto favorite = std::ranges::find(cache.pins, true, &PinnedItem::profile_pin);
+  if (favorite != cache.pins.end()) {
+    const auto button = cache.pin_buttons.find(favorite->id);
+    if (button == cache.pin_buttons.end()) return;
+    parent = button->second->parent()->parent();
+    index = parent->children().size();
+  }
+  auto slot = std::make_unique<views::View>();
+  slot->SetPreferredSize(gfx::Size(0, 44));
+  slot->SetCanProcessEventsWithinSubtree(false);
+  slot->GetViewAccessibility().SetIsIgnored(true);
+  profile_drop_slot_.SetView(parent->AddChildViewAt(std::move(slot), index));
+  if (sidebar_widget_) sidebar_widget_->LayoutRootViewIfNecessary();
+}
 
 void WorkspaceShell::SetSidebarReorder(std::optional<SidebarReorder> reorder) {
   const bool was_over_profile = sidebar_reorder_ && sidebar_reorder_->profile_slot;
@@ -7458,32 +7648,38 @@ void WorkspaceShell::StepProfileDropPreview() {
   UpdateSidebarDragOverlay();
 }
 
-sidebar::Item WorkspaceShell::ProfileDropPreview(gfx::Rect bounds) const {
+sidebar::Item WorkspaceShell::ProfileDropPreview(gfx::RectF bounds, gfx::RectF clip) const {
   const auto palette = Palette(root_, workspace_color(state_.workspace_id));
   const auto elapsed = base::TimeTicks::Now() - profile_drop_preview_start_;
   const double reveal = profile_drop_preview_timer_.IsRunning()
       ? std::clamp(elapsed / kProfileDropReveal, 0.0, 1.0)
       : 1.0;
-  const int progress = static_cast<int>(100 * reveal);
+  const int progress = sidebar_reorder_ && sidebar_reorder_->profile_slot
+      ? static_cast<int>(100 * reveal) : 0;
   sidebar::Item item{};
   item.kind = 31;
   item.x = bounds.x();
   item.y = bounds.y();
   item.width = bounds.width();
   item.height = bounds.height();
-  item.clip = {item.x, item.y, item.width, item.height};
-  item.badge = pinned_ ? palette.bg_base : Mix(palette.bg_base, palette.bg_raised, 70);
+  item.clip = {clip.x(), clip.y(), clip.width(), clip.height()};
   item.fill = Mix(palette.accent_soft, palette.bg_hover, progress);
   item.edge = Mix(palette.accent_ink, palette.line_strong, progress);
   item.ink = palette.accent_ink;
-  item.font_size = 14 + 4 * reveal;
+  item.font_size = 15;
+  const auto label = std::ranges::any_of(state_.pins, &PinnedItem::profile_pin)
+      ? T(u"Upuść") : T(u"Upuść, by przypiąć");
+  const auto base_font = Font(0);
+  const auto font = base_font.DeriveWithSizeDelta(11 - base_font.GetFontSize());
+  if (gfx::GetStringWidth(label, font) + 12 <= bounds.width())
+    item.title = base::UTF16ToUTF8(label);
   return item;
 }
 
 void WorkspaceShell::UpdateSidebarDragOverlay() {
   ScheduleMetalSidebar();
   if (!sidebar_root_) return;
-  if (!drag_point_ && !sidebar_reorder_) {
+  if (!drag_point_ && !sidebar_reorder_ && !profile_drop_slot_.view()) {
     if (drag_overlay_) drag_overlay_->SetVisible(false);
     return;
   }
@@ -7503,10 +7699,14 @@ void WorkspaceShell::PaintSidebarDrag(gfx::Canvas* canvas,views::View* overlay) 
   // The row stays in place as a faded placeholder.
   if (row && drag_point_)
     FillRound(canvas,local(row->GetBoundsInScreen()),10,SkColorSetA(pinned_?tint:Mix(tint,Tone(root_,kCard),70),0xB3));
-  if (sidebar_reorder_ && sidebar_reorder_->profile_slot) {
-    PaintSceneRecipe(canvas, ProfileDropPreview(local(sidebar_reorder_->indicator)), Font(0), true);
-    return;
+  if (auto* slot = profile_drop_slot_.view(); slot && slot->IsDrawn()) {
+    const gfx::RectF bounds(local(slot->GetBoundsInScreen()));
+    auto clip = bounds;
+    clip.Intersect(gfx::RectF(local(tab_list_->parent()->GetBoundsInScreen())));
+    if (!clip.IsEmpty())
+      PaintSceneRecipe(canvas, ProfileDropPreview(bounds, clip), Font(0), true);
   }
+  if (sidebar_reorder_ && sidebar_reorder_->profile_slot) return;
   if(sidebar_reorder_) {
     gfx::ScopedCanvas clipped(canvas);canvas->ClipRect(local(tab_list_->parent()->GetBoundsInScreen()));
     const SkColor accent=workspace_color(state_.workspace_id);
@@ -7616,6 +7816,29 @@ bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator*
   return false;
 }
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
+  if (command_id == kPageNavigation) return;
+  if (command_id == kCopyPageAddress || command_id == kCopyLinkAddress) {
+    if (IsCommandIdEnabled(command_id)) {
+      const auto& url = command_id == kCopyPageAddress ? page_menu_url_ : context_url_;
+      ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
+          .WriteText(base::UTF8ToUTF16(url.spec()));
+    }
+    return;
+  }
+  if (command_id == kCopyTabAddress) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::WeakPtr<WorkspaceShell> shell, std::string workspace,
+           std::array<uint64_t, 2> identity, std::string pin) {
+          if (!shell || !shell->callbacks_.tab_menu_url) return;
+          const auto target = shell->ResolveSidebarTarget(workspace, identity, pin);
+          if (!target.valid) return;
+          const auto url = shell->callbacks_.tab_menu_url.Run(target.tab, target.pin);
+          if (IsWorkspaceTabUrl(url))
+            ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
+                .WriteText(base::UTF8ToUTF16(url.spec()));
+        }, weak_factory_.GetWeakPtr(), context_workspace_id_, context_tab_identity_, context_pin_));
+    return;
+  }
   if (command_id == kReloadWorkspaceIcons) {
     if (IsCommandIdEnabled(command_id)) base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(
         [](base::WeakPtr<WorkspaceShell> shell,std::string workspace){if(shell&&shell->callbacks_.reload_workspace_favicons)shell->callbacks_.reload_workspace_favicons.Run(std::move(workspace));},weak_factory_.GetWeakPtr(),context_workspace_id_));

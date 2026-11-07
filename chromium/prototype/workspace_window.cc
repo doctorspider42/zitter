@@ -993,6 +993,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
     }
   }, base::Unretained(this));
   callbacks.page_command = base::BindRepeating(&WorkspaceWindow::RunPageCommand, base::Unretained(this));
+  callbacks.tab_menu_url = base::BindRepeating(&WorkspaceWindow::GetTabMenuUrl, base::Unretained(this));
   shell_ = std::make_unique<WorkspaceShell>(
       data_directory_.AppendASCII("ZitterAppearance.json"), std::move(callbacks));
   auto root = shell_->Build();
@@ -2280,14 +2281,28 @@ content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source
   return nullptr;
 }
 void WorkspaceWindow::ShowPageMenu(content::WebContents* source, content::RenderFrameHost* frame, const content::ContextMenuParams& params) {
-  const auto url = params.link_url.SchemeIsHTTPOrHTTPS() ? params.link_url : source->GetLastCommittedURL();
+  const auto url = params.link_url.SchemeIsHTTPOrHTTPS() ? params.link_url : GURL();
+  auto& controller = source->GetController();
+  PageMenuNavigation navigation{
+      .url = source->GetLastCommittedURL(),
+      .can_go_back = controller.CanGoBack(),
+      .can_go_forward = controller.CanGoForward(),
+      .can_reload = true,
+      .run = base::BindRepeating(
+          [](base::WeakPtr<WorkspaceWindow> window, base::WeakPtr<content::WebContents> page,
+             PageCommand command) {
+            if (!window || !page) return;
+            const auto* focused = window->peek_contents() ? window->peek_contents()
+                                                          : window->contents(window->active_id());
+            window->RunPageCommandOn(page.get(), command, focused == page.get());
+          }, weak_factory_.GetWeakPtr(), source->GetWeakPtr())};
   shell_->ShowLinkMenu(url, WorkspaceForPage(source), source->GetContainerBounds().origin() + gfx::Vector2d(params.x, params.y),
       DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(source->GetBrowserContext()), source) ? base::BindRepeating([](content::WeakDocumentPtr document, int x, int y) {
         auto* target = document.AsRenderFrameHostIfValid();
         if (!target) return;
         auto* page = content::WebContents::FromRenderFrameHost(target);
         if (DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(page->GetBrowserContext()), page)) DevToolsWindow::InspectElement(target, x, y);
-      }, frame->GetWeakDocumentPtr(), params.x, params.y) : base::RepeatingClosure());
+      }, frame->GetWeakDocumentPtr(), params.x, params.y) : base::RepeatingClosure(), std::move(navigation));
 }
 
 void WorkspaceWindow::ActivatePaletteResult(PaletteResult result) {
@@ -2974,6 +2989,11 @@ void WorkspaceWindow::CloseActiveTab() {
 void WorkspaceWindow::RunPageCommand(PageCommand command) {
   auto* page = peek_contents() ? peek_contents() : contents(active_id());
   if (!page) return;
+  RunPageCommandOn(page, command, true);
+}
+
+void WorkspaceWindow::RunPageCommandOn(content::WebContents* page,
+                                       PageCommand command, bool focused) {
   if (command == PageCommand::kReload && IsRssTabUrl(page->GetVisibleURL())) {
     RssReader::For(Profile::FromBrowserContext(page->GetBrowserContext()))->Refresh();
     return;
@@ -2987,11 +3007,22 @@ void WorkspaceWindow::RunPageCommand(PageCommand command) {
       if (controller.CanGoForward()) controller.GoForward();
       break;
     case PageCommand::kReload:
-      shell_->AnimateReload();
+      if (focused) shell_->AnimateReload();
       controller.Reload(content::ReloadType::NORMAL, true);
       break;
   }
-  page->Focus();
+  if (focused) page->Focus();
+}
+
+GURL WorkspaceWindow::GetTabMenuUrl(std::optional<size_t> tab, std::string_view pin) const {
+  const auto host = std::ranges::find(hosts_, active_id(), &Host::workspace_id);
+  if (host == hosts_.end()) return {};
+  if (tab) return *tab < host->tabs.size() ? TabUrl(*host, host->tabs[*tab]) : GURL();
+  if (const auto found = host->pin_tabs.find(std::string(pin)); found != host->pin_tabs.end())
+    return TabUrl(*host, found->second);
+  const auto& pins = pinned_items(active_id());
+  const auto item = std::ranges::find(pins, pin, &PinnedItem::id);
+  return item != pins.end() && !item->folder ? item->url : GURL();
 }
 
 bool WorkspaceWindow::NavigateFromBar(const GURL& url, bool new_tab) {

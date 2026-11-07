@@ -268,6 +268,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool ResetPinnedUrl(std::string id);
   bool MovePin(std::string id, std::string parent, std::string before);
   void RunPageCommand(PageCommand command);
+  void RunPageCommandOn(content::WebContents* page, PageCommand command, bool focused);
+  GURL GetTabMenuUrl(std::optional<size_t> tab, std::string_view pin) const;
   // Time Machine (timeline.rs, ZitterTimeline.jsonl): every workspace's tabs over
   // time. A snapshot is a named mark on the active workspace's timeline.
   bool SaveSnapshot(std::string name);

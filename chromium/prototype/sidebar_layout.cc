@@ -376,19 +376,53 @@ std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
 class ProfileFavoritesLayout final : public views::LayoutManager {
  public:
   void Layout(views::View* host) override {
-    int index=0;const int cell=std::max(0,(host->width()-8)/2);
-    for(const auto& child:host->children()) if(child->GetVisible()) {
-      child->SetBounds((index%2)*(cell+8),(index/2)*52,cell,44);++index;
+    const auto grid = Measure(host->width());
+    int index = 0;
+    for (const auto& child : host->children()) {
+      if (!child->GetVisible()) continue;
+      const int column = index % grid.columns;
+      const int x = column * (grid.cell_width + kGap) + std::min(column, grid.remainder);
+      const int width = grid.cell_width + (column < grid.remainder ? 1 : 0);
+      child->SetBounds(x, (index / grid.columns) * (grid.cell_height + kGap),
+                       width, grid.cell_height);
+      ++index;
     }
   }
   gfx::Size GetPreferredSize(const views::View* host) const override {
-    int count=0;for(const auto& child:host->children())if(child->GetVisible())++count;
-    return gfx::Size(200,count?((count+1)/2)*52-8:0);
+    return gfx::Size(kPreferredWidth, GetPreferredHeightForWidth(host, kPreferredWidth));
   }
-  gfx::Size GetPreferredSize(const views::View* host,const views::SizeBounds&) const override {return GetPreferredSize(host);}
-  int GetPreferredHeightForWidth(const views::View* host,int) const override {return GetPreferredSize(host).height();}
+  gfx::Size GetPreferredSize(const views::View* host,
+                             const views::SizeBounds& available) const override {
+    const int width = available.width().is_bounded() ? available.width().value() : kPreferredWidth;
+    return gfx::Size(width, GetPreferredHeightForWidth(host, width));
+  }
+  int GetPreferredHeightForWidth(const views::View* host, int width) const override {
+    const auto grid = Measure(width);
+    const int count = std::ranges::count_if(host->children(), [](const auto& child) {
+      return child->GetVisible();
+    });
+    const int rows = (count + grid.columns - 1) / grid.columns;
+    return rows ? rows * (grid.cell_height + kGap) - kGap : 0;
+  }
   void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
   void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
+
+ private:
+  struct Grid {
+    int columns;
+    int cell_width;
+    int cell_height;
+    int remainder;
+  };
+  static constexpr int kGap = 8;
+  static constexpr int kMinCellWidth = 48;
+  static constexpr int kPreferredWidth = 200;
+  static Grid Measure(int width) {
+    const int columns = std::max(1, (width + kGap) / (kMinCellWidth + kGap));
+    const int available = width - (columns - 1) * kGap;
+    const int cell = available / columns;
+    return {columns, cell, cell - cell / 6, available % columns};
+  }
 };
 std::unique_ptr<views::LayoutManager> CreateProfileFavoritesLayout(){return std::make_unique<ProfileFavoritesLayout>();}
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {

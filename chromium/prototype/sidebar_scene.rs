@@ -1706,7 +1706,8 @@ fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
         if s.members.len()>2{add(6,t("Wyjmij kartę ze splitu"));}
     } else {add(5,t("Otwórz obok w Split View"));}
     if s.http{add(0,"");add(23,&tf("Otwieraj {} zawsze w przestrzeni „{}”",&[&s.host,&s.workspace]));if s.has_rule{add(24,&tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]));}}
-    if split{add(0,"");add(10,t("Zamknij kartę"));add(12,t("Zamknij wszystkie karty w splicie"));}
+    if s.has_tab{add(0,"");add(10,t("Zamknij kartę"));}
+    if split{add(12,t("Zamknij wszystkie karty w splicie"));}
     entries
 }
 
@@ -3153,8 +3154,6 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         return;
     }
     if i.kind == 31 {
-        // The address row temporarily becomes the profile favorites drop slot.
-        emit(i.x, i.y, i.width, i.height, 0.0, i.badge, "", 0.0, false);
         emit(i.x + 1.0, i.y + 1.0, i.width - 2.0, i.height - 2.0,
             design_tokens::radius::SM, i.fill, "", 0.0, false);
         let mut dashes = |length: f32, horizontal: bool| {
@@ -3176,8 +3175,21 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         };
         dashes(i.width, true);
         dashes(i.height, false);
-        emit(i.x, i.y, i.width, i.height, 0.0, i.ink, "★", i.font_size, false);
-        out.last_mut().unwrap().center = true;
+        let labeled = !i.title.is_empty();
+        let mut label = |y, height, text, size| {
+            emit(i.x, y, i.width, height, 0.0, i.ink, text, size, false);
+        };
+        if labeled {
+            label(i.y + 4.0, 18.0, "★", i.font_size);
+            label(i.y + 21.0, 17.0, &i.title, 11.0);
+        } else {
+            label(i.y, i.height, "★", i.font_size);
+        }
+        for primitive in &mut out[first_primitive..] {
+            if !primitive.text.is_empty() {
+                primitive.center = true;
+            }
+        }
         return;
     }
     if i.kind == 30 {
@@ -3823,17 +3835,21 @@ mod tests {
     #[test] fn profile_drop_preview_has_dashes_and_a_centered_star() {
         let mut item = row(177.0);
         item.kind = 31;
+        item.height = 44.0;
+        item.clip.height = 44.0;
         item.font_size = 18.0;
+        item.title = "Drop to pin".into();
         for dark in [false, true] {
             let palette = design_palette(dark, 0xff8c66ff);
-            item.badge = palette.bg_base;
             item.fill = palette.accent_soft;
             item.edge = palette.accent_ink;
             item.ink = palette.accent_ink;
             let ops = layout(std::slice::from_ref(&item));
-            let star = ops.last().unwrap();
-            assert_eq!(star.text, "★");
+            let star = ops.iter().find(|p| p.text == "★").unwrap();
+            let label = ops.last().unwrap();
             assert!(star.center && star.width == item.width && star.color == item.ink);
+            assert_eq!(label.text, item.title);
+            assert!(label.center && label.y >= star.y + star.height - 1.0);
             assert!(ops.iter().filter(|p| p.width == 4.0 && p.height == 1.0).count() > 2);
             assert!(ops.iter().filter(|p| p.width == 1.0 && p.height == 4.0).count() > 2);
             assert!(ops.iter().all(|p| p.clip.width == item.clip.width));

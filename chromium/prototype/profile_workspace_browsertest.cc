@@ -8869,6 +8869,112 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SiteFaviconsReachTabsAndProfil
   EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCopiesPageAndLink) {
+  const auto first = embedded_test_server()->GetURL("/storage_probe.html?menu-first");
+  const auto second = embedded_test_server()->GetURL("/storage_probe.html?menu-second");
+  const auto link = embedded_test_server()->GetURL("/storage_probe.html?menu-link");
+  ASSERT_TRUE(window_->NavigateFromBar(first, false));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(window_->NavigateFromBar(second, false));
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+
+  auto* shell = window_->shell();
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto click = [](gfx::Point point, gfx::NativeWindow native, ui_controls::MouseButton button) {
+    base::test::TestFuture<void> moved, clicked;
+    return ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), moved.GetCallback(), native) &&
+           moved.Wait() &&
+           ui_controls::SendMouseEventsNotifyWhenDone(button, ui_controls::DOWN | ui_controls::UP,
+               clicked.GetCallback(), ui_controls::kNoAccelerator, native) &&
+           clicked.Wait();
+  };
+  const auto click_item = [&](views::View* view) {
+    return click(view->GetBoundsInScreen().CenterPoint(),
+                 view->GetWidget()->GetNativeWindow(), ui_controls::LEFT);
+  };
+  const auto open_menu = [&] {
+    ASSERT_TRUE(click(page->GetContainerBounds().origin() + gfx::Vector2d(64, 32),
+                      window_->widget()->GetNativeWindow(), ui_controls::RIGHT));
+    ASSERT_TRUE(base::test::RunUntil([] { return views::MenuController::GetActiveInstance(); }));
+  };
+  const auto menu_item = [](int command) -> views::MenuItemView* {
+    auto* controller = views::MenuController::GetActiveInstance();
+    auto* selected = controller ? controller->GetSelectedMenuItem() : nullptr;
+    return selected ? selected->GetRootMenuItem()->GetMenuItemByID(command) : nullptr;
+  };
+  const auto click_navigation = [&](size_t button, bool forward_enabled) {
+    auto* navigation = menu_item(shell->link_menu()->GetCommandIdAt(0));
+    ASSERT_TRUE(navigation);
+    ASSERT_EQ(1u, navigation->children().size());
+    const auto& buttons = navigation->children().front()->children();
+    ASSERT_EQ(3u, buttons.size());
+    EXPECT_EQ(!forward_enabled, buttons[0]->GetEnabled());
+    EXPECT_EQ(forward_enabled, buttons[1]->GetEnabled());
+    EXPECT_TRUE(buttons[2]->GetEnabled());
+    ASSERT_TRUE(click_item(buttons[button]));
+    ASSERT_TRUE(base::test::RunUntil([] { return !views::MenuController::GetActiveInstance(); }));
+  };
+
+  shell->SetThemeMode(ThemeMode::kLight);
+  ASSERT_NO_FATAL_FAILURE(open_menu());
+  EXPECT_FALSE(menu_item(21));
+  content::TestNavigationObserver back(page);
+  ASSERT_NO_FATAL_FAILURE(click_navigation(0, false));
+  back.Wait();
+  EXPECT_EQ(first, page->GetLastCommittedURL());
+
+  shell->SetThemeMode(ThemeMode::kDark);
+  ASSERT_NO_FATAL_FAILURE(open_menu());
+  content::TestNavigationObserver forward(page);
+  ASSERT_NO_FATAL_FAILURE(click_navigation(1, true));
+  forward.Wait();
+  EXPECT_EQ(second, page->GetLastCommittedURL());
+
+  ASSERT_NO_FATAL_FAILURE(open_menu());
+  content::TestNavigationObserver reload(page);
+  ASSERT_NO_FATAL_FAILURE(click_navigation(2, false));
+  reload.Wait();
+  EXPECT_EQ(second, page->GetLastCommittedURL());
+
+  ASSERT_NO_FATAL_FAILURE(open_menu());
+  auto* copy = menu_item(205);
+  ASSERT_TRUE(copy && copy->GetEnabled());
+  ui::TestClipboard::CreateForCurrentThread();
+  const auto read_clipboard = [] {
+    base::test::TestFuture<std::u16string> copied;
+    ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste,
+                                                  std::nullopt, copied.GetCallback());
+    return copied.Get();
+  };
+  EXPECT_TRUE(click_item(copy));
+  EXPECT_EQ(base::UTF8ToUTF16(second.spec()), read_clipboard());
+  ASSERT_TRUE(content::ExecJs(page, content::JsReplace(R"(
+    const link = document.createElement('a');
+    link.href = $1;
+    link.textContent = 'Open link';
+    link.style.cssText = 'position:fixed;top:0;left:0;width:128px;height:64px';
+    document.body.append(link);
+  )", link)));
+  ASSERT_NO_FATAL_FAILURE(open_menu());
+  EXPECT_TRUE(menu_item(21));
+  auto* copy_link = menu_item(206);
+  ASSERT_TRUE(copy_link && copy_link->GetEnabled());
+  EXPECT_TRUE(click_item(copy_link));
+  EXPECT_EQ(base::UTF8ToUTF16(link.spec()), read_clipboard());
+
+  shell->BuildTabMenu(0);
+  auto* tab_menu = shell->tab_context_menu_for_testing();
+  EXPECT_FALSE(tab_menu->GetIndexOfCommandId(204));
+  EXPECT_TRUE(tab_menu->GetIndexOfCommandId(208));
+  ui::Clipboard::DestroyClipboardForCurrentThread();
+  EXPECT_EQ(second, page->GetLastCommittedURL());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DuplicateAndMoveTabsFromSidebar) {
   const auto first=embedded_test_server()->GetURL("/storage_probe.html?first");
   const auto second=embedded_test_server()->GetURL("/storage_probe.html?second");
@@ -8897,6 +9003,101 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DuplicateAndMoveTabsFromSideba
   EXPECT_EQ(first,window_->contents("personal")->GetVisibleURL());
   ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->MoveSidebarTab(0,destination));
   EXPECT_EQ(1u,window_->tab_count("work"));EXPECT_NE(original,window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfileFavoritesScaleToSidebarWidth) {
+  views::View grid;
+  auto* layout = grid.SetLayoutManager(CreateProfileFavoritesLayout());
+  for (int i = 0; i < 5; ++i) grid.AddChildView(std::make_unique<views::View>());
+  struct SizeCase { int width, columns, tile_height; };
+  for (const auto [width, columns, tile_height] :
+       {SizeCase{225, 4, 42}, SizeCase{249, 4, 47}, SizeCase{200, 3, 51}}) {
+    grid.SetBounds(0, 0, width, layout->GetPreferredHeightForWidth(&grid, width));
+    layout->Layout(&grid);
+    EXPECT_EQ(2 * tile_height + 8, grid.height());
+    for (int i = 0; i < columns; ++i)
+      EXPECT_EQ(0, grid.children()[i]->y());
+    EXPECT_EQ(tile_height, grid.children().front()->height());
+    EXPECT_EQ(tile_height + 8, grid.children()[columns]->y());
+    EXPECT_EQ(width, grid.children()[columns - 1]->bounds().right());
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfileFavoritesReflowDuringNativeSidebarResize) {
+  std::vector<PinnedItem> pins;
+  for (int i = 0; i < 9; ++i) {
+    const auto number = base::NumberToString(i);
+    pins.push_back({"favorite-" + number, {}, "Favorite " + number,
+                    embedded_test_server()->GetURL("/storage_probe.html?favorite=" + number)});
+  }
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  for (const auto& pin : pins) {
+    ASSERT_TRUE(window_->MovePin(pin.id, "@profile", ""));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  }
+
+  auto* shell = window_->shell();
+  shell->SetWorkspaceAnimations(false);
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  shell->ResizeSidebar(248 - shell->sidebar_width(), true);
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  auto* grip = shell->sidebar_grip_for_testing();
+  ASSERT_TRUE(grip);
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  const auto native = shell->sidebar_widget()->GetNativeWindow();
+  const auto move = [&](gfx::Point point) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), done.GetCallback(), native) && done.Wait();
+  };
+  const auto mouse = [&](int event) {
+    base::test::TestFuture<void> done;
+    return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, event, done.GetCallback(),
+                                                      ui_controls::kNoAccelerator, native) && done.Wait();
+  };
+  const auto check = [&](int expected_width, int columns) {
+    ASSERT_NEAR(expected_width, shell->sidebar_width(), 1);
+    EXPECT_NEAR(expected_width, shell->sidebar_view()->width(), 1);
+    auto* first = shell->pin_button(pins.front().id);
+    ASSERT_TRUE(first);
+    auto* grid = first->parent()->parent();
+    const int tile_height = first->height();
+    const int rows = (static_cast<int>(pins.size()) + columns - 1) / columns;
+    for (size_t i = 0; i < pins.size(); ++i) {
+      auto* tile = shell->pin_button(pins[i].id);
+      ASSERT_TRUE(tile);
+      EXPECT_EQ(grid, tile->parent()->parent());
+      const auto cell = tile->parent()->bounds();
+      EXPECT_EQ(static_cast<int>(i) / columns * (tile_height + 8), cell.y());
+      EXPECT_EQ(tile_height, cell.height());
+      EXPECT_LE(std::abs(first->width() - tile->width()), 1);
+      if (i % columns == columns - 1) EXPECT_EQ(grid->width(), cell.right());
+    }
+    EXPECT_EQ(rows * (tile_height + 8) - 8, grid->height());
+    LOG(INFO) << "PROFILE_GRID sidebar=" << shell->sidebar_view()->width() << " grid=" << grid->width()
+              << " columns=" << columns << " rows=" << rows
+              << " tile=" << first->width() << "x" << tile_height;
+  };
+
+  ASSERT_NO_FATAL_FAILURE(check(248, 4));
+  for (const auto [width, columns] :
+       {std::pair{200, 3}, std::pair{272, 4}, std::pair{320, 5},
+        std::pair{400, 7}, std::pair{200, 3}}) {
+    const auto start = grip->GetBoundsInScreen().CenterPoint();
+    const auto target = start + gfx::Vector2d(Indent(width - shell->sidebar_width()), 0);
+    ASSERT_TRUE(move(start));
+    ASSERT_TRUE(mouse(ui_controls::DOWN));
+    base::ScopedClosureRunner release(base::BindOnce([] {
+      ui_controls::SendMouseEvents(ui_controls::LEFT, ui_controls::UP);
+    }));
+    ASSERT_TRUE(move(target));
+    shell->sidebar_widget()->LayoutRootViewIfNecessary();
+    ASSERT_NO_FATAL_FAILURE(check(width, columns));
+    ASSERT_TRUE(mouse(ui_controls::UP));
+    static_cast<void>(release.Release());
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfileFavoritesPersistAcrossSpacesAndStayIsolated) {
@@ -9065,10 +9266,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
     ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, native));
     ASSERT_TRUE(done.Wait());
   };
-  const auto start = row->GetBoundsInScreen().CenterPoint();
-  const auto target = shell->tab_button(2)->GetBoundsInScreen().bottom_center() - gfx::Vector2d(0, 4);
+  const auto original_bounds = row->GetBoundsInScreen();
+  const auto start = original_bounds.CenterPoint();
   move(start);
   button(ui_controls::DOWN);
+  move(start + gfx::Vector2d(0, 16));
+  ASSERT_TRUE(shell->profile_drop_slot_for_testing());
+  const auto target = shell->tab_button(2)->GetBoundsInScreen().bottom_center() - gfx::Vector2d(0, 4);
   for (int step = 1; step <= 6; ++step) move(start + gfx::Vector2d(0, (target.y() - start.y()) * step / 6));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(row, shell->sidebar_drag_row_for_testing());
@@ -9082,7 +9286,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
     // deliberately leaves its compositor layer empty.
     ASSERT_TRUE(base::test::RunUntil([&] {
       const auto frame=shell->metal_sidebar_screen_bounds_for_testing();
-      const auto origin=target-(start-row->GetBoundsInScreen().origin())-frame.OffsetFromOrigin();
+      const auto origin=target-(start-original_bounds.origin())-frame.OffsetFromOrigin();
       return shell->metal_sidebar_contains_rect_for_testing(gfx::RectF(origin.x(),origin.y(),row->width(),row->height()),gfx::RectF(gfx::SizeF(frame.size())));
     }));
   } else {
@@ -9104,21 +9308,39 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
   EXPECT_FALSE(FindButton(shell->sidebar_view(), u"Nowa karta"));
   for (const auto mode : {ThemeMode::kLight, ThemeMode::kDark}) {
     shell->SetThemeMode(mode);
-    auto* address = shell->sidebar_address_for_testing();
     views::View* source = nullptr;
     for (size_t tab = 0; tab < window_->tab_count("work") && !source; ++tab)
       source = shell->tab_button(tab);
-    ASSERT_TRUE(source && address);
-    const auto slot = address->parent()->GetBoundsInScreen();
-    move(source->GetBoundsInScreen().CenterPoint());
+    ASSERT_TRUE(source);
+    const auto pin_drag_start = source->GetBoundsInScreen().CenterPoint();
+    move(pin_drag_start);
     button(ui_controls::DOWN);
+    move(pin_drag_start + gfx::Vector2d(20, 0));
+    const auto* target_slot = shell->profile_drop_slot_for_testing();
+    ASSERT_TRUE(target_slot);
+    const auto slot = target_slot->GetBoundsInScreen();
+    if (mode == ThemeMode::kLight) {
+      EXPECT_EQ(44, slot.height());
+      EXPECT_EQ(source->width(), slot.width());
+    } else {
+      const auto& pins = window_->pinned_items("work");
+      const auto favorite = std::ranges::find(pins, true, &PinnedItem::profile_pin);
+      ASSERT_NE(pins.end(), favorite);
+      auto* tile = shell->pin_button(favorite->id);
+      ASSERT_TRUE(tile);
+      const auto bounds = tile->GetBoundsInScreen();
+      EXPECT_EQ(bounds.y(), slot.y());
+      EXPECT_LE(std::abs(bounds.width() - slot.width()), 1);
+      EXPECT_EQ(bounds.height(), slot.height());
+      EXPECT_FALSE(bounds.Intersects(slot));
+    }
     move(slot.CenterPoint());
     EXPECT_TRUE(shell->sidebar_drop_target_for_testing());
     if (shell->metal_sidebar_visible()) {
       EXPECT_TRUE(base::test::RunUntil([&] { return shell->metal_sidebar_contains_text_for_testing("★"); }));
     } else {
       const auto bitmap = views::test::PaintViewToBitmap(overlay);
-      auto center = slot.CenterPoint();
+      auto center = gfx::Point(slot.CenterPoint().x(), slot.y() + 13);
       views::View::ConvertPointFromScreen(overlay, &center);
       // The center contains the star, with the slot's flat fill on each side.
       const auto fill = bitmap.getColor(center.x() - 12, center.y());
@@ -9136,6 +9358,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
       EXPECT_LT(dash_pixels, 40);
     }
     button(ui_controls::UP);
+    EXPECT_FALSE(shell->profile_drop_slot_for_testing());
     ASSERT_TRUE(base::test::RunUntil([&] {
       const auto& pins = window_->pinned_items("work");
       return std::ranges::count_if(pins, &PinnedItem::profile_pin) ==
@@ -11757,8 +11980,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragTakesTabOutOfSplit) 
     base::test::TestFuture<void> done;
     return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, sidebar_window) && done.Wait();
   };
-  ASSERT_TRUE(move(shell->tab_button(1)->GetBoundsInScreen().CenterPoint()));
+  const auto start = shell->tab_button(1)->GetBoundsInScreen().CenterPoint();
+  ASSERT_TRUE(move(start));
   ASSERT_TRUE(mouse(ui_controls::DOWN));
+  ASSERT_TRUE(move(start + gfx::Vector2d(20, 0)));
   const auto below = shell->tab_button(2)->GetBoundsInScreen();
   ASSERT_TRUE(move(gfx::Point(below.CenterPoint().x(), below.bottom() - 6)));
   ASSERT_TRUE(move(gfx::Point(below.CenterPoint().x(), below.bottom() - 3)));
@@ -11789,8 +12014,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NativeDragOverTabFocusesItAndS
     base::test::TestFuture<void> done;
     return ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, sidebar_window) && done.Wait();
   };
-  ASSERT_TRUE(move(shell->tab_button(2)->GetBoundsInScreen().CenterPoint()));
+  const auto start = shell->tab_button(2)->GetBoundsInScreen().CenterPoint();
+  ASSERT_TRUE(move(start));
   ASSERT_TRUE(mouse(ui_controls::DOWN));
+  ASSERT_TRUE(move(start + gfx::Vector2d(20, 0)));
   const auto over = shell->tab_button(1)->GetBoundsInScreen().CenterPoint();
   ASSERT_TRUE(move(over + gfx::Vector2d(0, -4)));ASSERT_TRUE(move(over));
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->drag_hover_split_for_testing(); }));

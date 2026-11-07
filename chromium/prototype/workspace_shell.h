@@ -77,6 +77,13 @@ enum class ThemeMode { kSystem, kLight, kDark };
 enum class SearchEngine { kDuckDuckGo, kGoogle, kBing };
 
 enum class PageCommand { kBack, kForward, kReload };
+struct PageMenuNavigation {
+  GURL url;
+  bool can_go_back = false;
+  bool can_go_forward = false;
+  bool can_reload = false;
+  base::RepeatingCallback<void(PageCommand)> run;
+};
 
 struct ShellTab {
   std::u16string title;
@@ -152,6 +159,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string)> duplicate_pin;
     base::RepeatingCallback<bool(size_t, std::string)> move_tab_to_workspace;
     base::RepeatingCallback<void(PageCommand)> page_command;
+    base::RepeatingCallback<GURL(std::optional<size_t>, std::string_view)> tab_menu_url;
     base::RepeatingCallback<void(std::u16string)> search;
     base::RepeatingCallback<void(PaletteResult)> activate_result;
     base::RepeatingCallback<std::vector<PaletteResult>(std::u16string)> commands;
@@ -277,8 +285,11 @@ class WorkspaceShell final : public ui::EventHandler,
   void ShowPeek(std::u16string title);
   void SetPeekTitle(std::u16string title);
   void HidePeek();
-  void BuildLinkMenu(GURL url, std::string source_workspace);
-  void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point, base::RepeatingClosure inspect = {});
+  void BuildLinkMenu(GURL url, std::string source_workspace,
+                     const PageMenuNavigation* page = nullptr);
+  void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point,
+                    base::RepeatingClosure inspect = {},
+                    std::optional<PageMenuNavigation> navigation = std::nullopt);
   void SetDeveloperPage(GURL url, bool allowed = true, bool compare = true);
   void SetDeveloperMode(std::string mode);
   void ShowDeveloperMenu();
@@ -968,12 +979,14 @@ class WorkspaceShell final : public ui::EventHandler,
   std::optional<SidebarReorder> SidebarReorderAt(gfx::Point screen_point,
                                                bool allow_profile = true) const;
   void SetSidebarReorder(std::optional<SidebarReorder> reorder);
+  void SetProfileDropSlotVisible(bool visible);
   void StepProfileDropPreview();
   void UpdateSidebarDragOverlay();
-  sidebar::Item ProfileDropPreview(gfx::Rect bounds) const;
+  sidebar::Item ProfileDropPreview(gfx::RectF bounds, gfx::RectF clip) const;
   // Live drag feedback for `row`, grabbed at `grab` (row-local); nullopt ends the drag.
   void HandleSidebarDrag(views::View* row, gfx::Point grab, std::optional<gfx::Point> screen_point);
   std::optional<SidebarReorder> sidebar_reorder_;
+  views::ViewTracker profile_drop_slot_;
   base::TimeTicks profile_drop_preview_start_;
   base::RepeatingTimer profile_drop_preview_timer_;
   // The dragged row follows the pointer as a lifted copy; the original dims.
@@ -988,6 +1001,7 @@ class WorkspaceShell final : public ui::EventHandler,
   const views::View* sidebar_drag_row_for_testing() const { return drag_row_.view(); }
   bool sidebar_drop_target_for_testing() const { return sidebar_reorder_.has_value(); }
   views::View* sidebar_drag_overlay_for_testing() const { return drag_overlay_; }
+  const views::View* profile_drop_slot_for_testing() const { return profile_drop_slot_.view(); }
  private:
   void OpenPalette(bool commands);
   void QueueTabCommand(int command);
@@ -1172,6 +1186,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<ui::SimpleMenuModel> route_menu_;
   std::unique_ptr<views::MenuRunner> link_menu_runner_;
   GURL context_url_;
+  GURL page_menu_url_;
   std::string link_source_workspace_;
   std::vector<Workspace> route_workspaces_;
   std::unique_ptr<views::DialogDelegate> rust_folder_dialog_delegate_;
