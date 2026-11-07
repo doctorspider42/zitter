@@ -49,6 +49,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     // The assistant, asked to block what the lists miss on the page; shown
     // only while `assistant_available` says so.
     base::RepeatingClosure block_with_assistant;
+    base::RepeatingClosure diagnose_blocking_with_assistant;
     base::RepeatingCallback<bool()> assistant_available;
     // Opens the conversation from the quick-action menu.
     base::RepeatingClosure toggle_assistant;
@@ -173,6 +174,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void RunAssistantCommand(int command);
   void ToggleSiteBlocking();
   void BlockWithAssistant();
+  void DiagnoseBlockingWithAssistant();
   void OpenAdBlockingSettings();
   // -1 when blocking is off for the page's site.
   int ShieldCount() const;

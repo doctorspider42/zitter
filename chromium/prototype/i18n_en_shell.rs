@@ -573,6 +573,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Zablokowano na tej stronie", "Blocked on this page"),
     ("Zablokowano na tej stronie: {}", "Blocked on this page: {}"),
     ("Zablokuj więcej z asystentem", "Block more with the assistant"),
+    ("Obejdź wykrywanie adblocka", "Bypass ad blocker detection"),
+    ("Sprawdź, czy ta strona wykrywa blokowanie reklam. Użyj adblock_diagnose na bieżącej karcie. Jeśli strona wykrywa blokowanie, przetestuj reguły tylko dla tej witryny z adblock_add_rules (check: true). Zostaw blokowanie reklam i śledzenia włączone. Poproś o zapis tylko reguł, które działają.", "Check whether this site detects ad blocking. Use adblock_diagnose on the current tab. If the site detects blocking, test rules scoped to this site with adblock_add_rules (check: true). Keep ad and tracker blocking enabled. Ask to save only rules that work."),
     ("Napraw niedziałające reguły z asystentem", "Fix broken rules with the assistant"),
     ("(nie działa)", "(not working)"),
     ("Aktualizuj", "Update"),

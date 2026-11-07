@@ -31,3 +31,14 @@
 ! Images and pixels the bait checks load
 ||pagead2.googlesyndication.com^$image,redirect-rule=1x1.gif
 ||googleads.g.doubleclick.net^$image,redirect-rule=1x1.gif
+! Adblock Analytics: stand-ins for the detector's script and image probes.
+||www.adblockanalytics.com/google-adsense.js^$script,redirect-rule=detectadblock-sentinel.js
+||adsserver.adblockanalytics.com/|$script,redirect-rule=noop.js
+||www.adblockanalytics.com/ad-choices.png^$image,redirect-rule=2x2.png
+! DetectAdblock: Google HEAD probes and offscreen bait elements.
+||pagead2.googlesyndication.com/pagead/js/adsbygoogle.js^$xmlhttprequest,domain=detectadblock.com,redirect-rule=noop.txt
+||securepubads.g.doubleclick.net/tag/js/gpt.js^$xmlhttprequest,domain=detectadblock.com,redirect-rule=noop.txt
+detectadblock.com#@#.ad-banner-728x90
+detectadblock.com#@#.AdvertContainer
+detectadblock.com#@#.ad-container-300x250
+detectadblock.com#@#.SponsoredLinksModule

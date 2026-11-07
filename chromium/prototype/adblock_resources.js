@@ -599,6 +599,15 @@ function noAdblockDetectors() {
   window.blockAdBlock = new fake();
 })();
 
+//@ redirect detectadblock-sentinel.js application/javascript
+(function () {
+  // The detector can look for the marker immediately, even from the head.
+  const marker = document.createElement('div');
+  marker.id = 'nqoybpxnanylgvpfpbz';
+  marker.hidden = true;
+  (document.body || document.documentElement).appendChild(marker);
+})();
+
 //@ redirect nofab.js application/javascript fuckadblock.js-3.2.0 fuckadblock.js
 (function () {
   // A stand-in for FuckAdBlock: it always finds no ad blocker.
