@@ -320,6 +320,7 @@ impl Timeline {
         }
         let clip = ffi::FloatRect { x: 0.0, y: 0.0, width: w, height: h };
         let rect = |x: f32, y: f32, width: f32, height: f32, radius: f32, color: u32, stroke: f32| ffi::Primitive {
+            pixels: vec![],
             x, y, width, height, radius, color, stroke, shape: 0, text: String::new(), font_size: 0.0, font_weight: 0,
             bold: false, middle: false, center: false, right_align: false, clip, editor: false, utf16: vec![],
             text_x: 0.0, baseline: 0.0, text_direction: 0, family: 0, italic: false, tracking: 0.0,

@@ -1,3 +1,9 @@
+#include <atomic>
+#include "content/public/browser/favicon_status.h"
+#include "content/public/browser/navigation_entry.h"
+#include "chrome/browser/favicon/favicon_service_factory.h"
+#include "components/favicon/core/favicon_service.h"
+#include "components/favicon_base/favicon_types.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "third_party/blink/public/common/context_menu_data/edit_flags.h"
@@ -423,6 +429,16 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     }, base::Unretained(this)));
     embedded_test_server()->RegisterRequestHandler(base::BindRepeating([](ZitterProfilesBrowserTest* self, const net::test_server::HttpRequest& request)
         -> std::unique_ptr<net::test_server::HttpResponse> {
+      if (request.relative_url == "/favicon_reload.png") {
+        ++self->favicon_reload_requests_;
+        auto response=std::make_unique<net::test_server::BasicHttpResponse>();
+        const int color=self->favicon_reload_color_;
+        if (!color) {response->set_code(net::HTTP_NOT_FOUND);return response;}
+        SkBitmap bitmap;bitmap.allocN32Pixels(32,32);bitmap.eraseColor(color==1?SkColorSetRGB(40,110,220):SkColorSetRGB(35,190,85));
+        const auto png=gfx::PNGCodec::EncodeBGRASkBitmap(bitmap,false);
+        response->set_content_type("image/png");response->AddCustomHeader("Cache-Control","public, max-age=86400");
+        response->set_content(std::string(png->begin(),png->end()));return response;
+      }
       if (request.relative_url == "/rss-large") {
         auto response = std::make_unique<net::test_server::BasicHttpResponse>(); response->set_content_type("application/rss+xml"); response->set_content(std::string(2*1024*1024+1,'x')); return response;
       }
@@ -543,6 +559,8 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     ack.Wait();
   }
 
+  std::atomic<int> favicon_reload_color_{1};
+  std::atomic<int> favicon_reload_requests_{0};
   base::Lock routing_lock_;
   std::vector<std::string> routing_cookies_ GUARDED_BY(routing_lock_);
 #if BUILDFLAG(IS_WIN)
@@ -8568,6 +8586,118 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinnedFolderKeepsActiveAndTemp
   ASSERT_TRUE(base::test::RunUntil([&] { return !drawn(pins[0]) && !drawn(pins[1]); }));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceIconsReloadWithoutNavigatingTabsAndFallbackToLetters) {
+  const auto pinned=embedded_test_server()->GetURL("favicon.test","/favicon_reload_probe.html?pinned");
+  const auto normal=embedded_test_server()->GetURL("favicon.test","/favicon_reload_probe.html?normal");
+  auto* shell=window_->shell();EXPECT_FALSE(shell->sidebar_heading_visible_for_testing());
+  ASSERT_TRUE(window_->NavigateFromBar(pinned,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->row_has_favicon_for_testing(shell->tab_button(0));}));
+  ASSERT_TRUE(window_->PinTab(0,"@profile",""));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  const auto pin=window_->pinned_items("work").front().id;
+  ASSERT_TRUE(window_->NavigateFromBar(normal,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));window_->CloseTab(0);
+  auto* page=window_->contents("work");
+  ASSERT_TRUE(base::test::RunUntil([&]{return shell->row_has_favicon_for_testing(shell->tab_button(0));}));
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(window_->NavigateFromBar(normal,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("personal")));
+  auto* personal=window_->contents("personal");
+  ASSERT_TRUE(base::test::RunUntil([&]{auto* entry=personal->GetController().GetVisibleEntry();return entry&&entry->GetFavicon().valid;}));
+  ASSERT_TRUE(window_->Select("work"));
+  const auto entry_id=page->GetController().GetVisibleEntry()->GetUniqueID();
+  const auto entries=page->GetController().GetEntryCount();const int before=favicon_reload_requests_;
+  favicon_reload_color_=2;
+  shell->BuildWorkspaceMenu("work");auto* menu=shell->workspace_menu();const auto command=menu->GetIndexOfCommandId(203);
+  ASSERT_TRUE(command);ASSERT_TRUE(menu->IsEnabledAt(*command));menu->ActivatedAt(*command,0);
+  auto green=[](const gfx::Image& image){if(image.IsEmpty())return false;const auto bitmap=image.AsBitmap();auto color=bitmap.getColor(bitmap.width()/2,bitmap.height()/2);return SkColorGetG(color)>170&&SkColorGetB(color)<120;};
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->workspace_favicons_pending_for_testing()&&green(page->GetController().GetVisibleEntry()->GetFavicon().image);}));
+  EXPECT_GT(favicon_reload_requests_,before);EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
+  base::CancelableTaskTracker tracker;base::test::TestFuture<gfx::Image> stored;
+  FaviconServiceFactory::GetForProfile(work_,ServiceAccessType::IMPLICIT_ACCESS)->GetFaviconImageForPageURL(pinned,base::BindOnce(
+      [](base::OnceCallback<void(gfx::Image)> done,const favicon_base::FaviconImageResult& result){std::move(done).Run(result.image);},stored.GetCallback()),&tracker);
+  EXPECT_TRUE(green(stored.Get()));
+  EXPECT_EQ(page,window_->contents("work"));EXPECT_EQ(normal,page->GetVisibleURL());
+  EXPECT_EQ(entry_id,page->GetController().GetVisibleEntry()->GetUniqueID());EXPECT_EQ(entries,page->GetController().GetEntryCount());
+  EXPECT_FALSE(green(personal->GetController().GetVisibleEntry()->GetFavicon().image));
+  favicon_reload_color_=0;ASSERT_TRUE(window_->ReloadWorkspaceFavicons("work"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->workspace_favicons_pending_for_testing();}));
+  EXPECT_FALSE(shell->row_has_favicon_for_testing(shell->tab_button(0)));EXPECT_EQ(u"F",shell->row_monogram_for_testing(shell->tab_button(0)));
+  EXPECT_FALSE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));EXPECT_EQ(u"F",shell->row_monogram_for_testing(shell->pin_button(pin)));
+  EXPECT_EQ(entry_id,page->GetController().GetVisibleEntry()->GetUniqueID());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SiteFaviconsReachTabsAndProfileFavorites) {
+  const auto url=embedded_test_server()->GetURL("/tab_favicon_probe.html");
+  ASSERT_TRUE(window_->NavigateFromBar(url,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* shell=window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&]{auto* row=shell->tab_button(0);return row&&shell->row_has_favicon_for_testing(row);}));
+  for(auto theme:{ThemeMode::kLight,ThemeMode::kDark}){
+    shell->SetThemeMode(theme);EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->tab_button(0)));
+    if (!shell->metal_sidebar_visible()) {
+      auto bitmap=views::test::PaintViewToBitmap(shell->tab_button(0));
+      int blue=0;for(int y=0;y<bitmap.height();++y)for(int x=0;x<bitmap.width();++x){auto c=bitmap.getColor(x,y);if(SkColorGetB(c)>180&&SkColorGetR(c)<80&&SkColorGetG(c)>70&&SkColorGetG(c)<150)++blue;}
+      EXPECT_GT(blue,40) << "The favicon must own its pixels after paint recording finishes";
+    }
+  }
+  ASSERT_TRUE(window_->PinTab(0,"@profile",""));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  const auto pin=window_->pinned_items("work").front().id;
+  EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
+  ASSERT_TRUE(window_->AddWorkspace("Favorite icons","work-profile"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DuplicateAndMoveTabsFromSidebar) {
+  const auto first=embedded_test_server()->GetURL("/storage_probe.html?first");
+  const auto second=embedded_test_server()->GetURL("/storage_probe.html?second");
+  ASSERT_TRUE(window_->NavigateFromBar(first,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->NavigateFromBar(second,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  auto* original=window_->contents("work");
+  auto* shell=window_->shell();shell->BuildTabMenu(0);
+  auto* menu=shell->tab_context_menu_for_testing();ASSERT_TRUE(menu->GetIndexOfCommandId(200));
+  EXPECT_TRUE(menu->IsEnabledAt(*menu->GetIndexOfCommandId(200)));
+  menu->ActivatedAt(*menu->GetIndexOfCommandId(200),0);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->tab_count("work")==2;}));
+  auto* copy=window_->contents("work");ASSERT_NE(copy,original);ASSERT_TRUE(content::WaitForLoadStop(copy));
+  EXPECT_EQ(second,copy->GetVisibleURL());EXPECT_TRUE(copy->GetController().CanGoBack());
+  copy->GetController().GoBack();ASSERT_TRUE(content::WaitForLoadStop(copy));
+  EXPECT_EQ(first,copy->GetVisibleURL());EXPECT_EQ(second,original->GetVisibleURL());
+  ASSERT_TRUE(window_->AddWorkspace("Second work space","work-profile"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));const auto destination=window_->active_id();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->MoveSidebarTab(1,destination));EXPECT_EQ(1u,window_->tab_count("work"));
+  ASSERT_TRUE(window_->Select(destination));window_->SelectTab(window_->tab_count(destination)-1);
+  EXPECT_EQ(copy,window_->contents(destination));EXPECT_TRUE(copy->GetController().CanGoForward());
+  ASSERT_TRUE(window_->MoveSidebarTab(window_->tab_count(destination)-1,"personal"));
+  ASSERT_TRUE(window_->Select("personal"));window_->SelectTab(window_->tab_count("personal")-1);
+  ASSERT_TRUE(content::WaitForLoadStop(window_->contents("personal")));
+  EXPECT_EQ(personal_,Profile::FromBrowserContext(window_->contents("personal")->GetBrowserContext()));
+  EXPECT_EQ(first,window_->contents("personal")->GetVisibleURL());
+  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->MoveSidebarTab(0,destination));
+  EXPECT_EQ(1u,window_->tab_count("work"));EXPECT_NE(original,window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfileFavoritesPersistAcrossSpacesAndStayIsolated) {
+  const auto url=embedded_test_server()->GetURL("/storage_probe.html?favorite");
+  ASSERT_TRUE(window_->NavigateFromBar(url,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+  ASSERT_TRUE(window_->PinTab(0,"@profile",""));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  const auto favorite=window_->pinned_items("work").front();EXPECT_TRUE(favorite.profile_pin);
+  EXPECT_TRUE(window_->pinned_items("personal").empty());
+  ASSERT_TRUE(window_->AddWorkspace("Shared favorites","work-profile"));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));const auto second=window_->active_id();
+  ASSERT_EQ(1u,window_->pinned_items(second).size());EXPECT_EQ(favorite,window_->pinned_items(second).front());
+  auto* tile=window_->shell()->pin_button(favorite.id);ASSERT_TRUE(tile);
+  window_->widget()->LayoutRootViewIfNecessary();EXPECT_GT(tile->width(),40);EXPECT_EQ(44,tile->height());
+  window_->OpenPinnedItem(favorite.id);ASSERT_TRUE(content::WaitForLoadStop(window_->contents(second)));
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
+  window_.reset();base::ThreadPoolInstance::Get()->FlushForTesting();
+  window_=std::make_unique<WorkspaceWindow>(work_,personal_);
+  ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_ready();}));
+  ASSERT_EQ(1u,window_->pinned_items("work").size());EXPECT_EQ(favorite,window_->pinned_items("work").front());
+  EXPECT_EQ(favorite,window_->pinned_items(second).front());EXPECT_TRUE(window_->pinned_items("personal").empty());
+  ASSERT_TRUE(window_->Select(second));ASSERT_TRUE(window_->UnpinItem(favorite.id,window_->tab_count(second)));
+  ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
+  EXPECT_TRUE(window_->pinned_items("work").empty());EXPECT_TRUE(window_->pinned_items(second).empty());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinnedMenuEditsResetsAndUnpinsWithoutReplacingThePage) {
   const auto original_url = embedded_test_server()->GetURL("/storage_probe.html?pin-original");
   const auto away_url = embedded_test_server()->GetURL("/storage_probe.html?pin-away");
@@ -8722,15 +8852,25 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
   auto* overlay = shell->sidebar_drag_overlay_for_testing();
   ASSERT_TRUE(overlay && overlay->GetVisible() && overlay->layer());
   EXPECT_EQ(overlay, overlay->parent()->children().back());
-  const SkBitmap painted = views::test::PaintViewToBitmap(overlay);
-  gfx::Point pointer = start + gfx::Vector2d(0, target.y() - start.y());
-  views::View::ConvertPointFromScreen(overlay, &pointer);
-  ASSERT_TRUE(gfx::Rect(painted.width(), painted.height()).Contains(pointer));
-  // PaintViewToBitmap starts from a red placeholder; the copy covers it.
-  size_t covered = 0;
-  for (int dx = -40; dx <= 40; ++dx) covered += painted.getColor(pointer.x() + dx, pointer.y()) != SK_ColorRED;
-  EXPECT_GT(covered, 70u);
-  EXPECT_EQ(SK_ColorRED, painted.getColor(2, painted.height() - 2));
+  if (shell->metal_sidebar_visible()) {
+    // Metal submits the lifted copy to its display list; the native adapter
+    // deliberately leaves its compositor layer empty.
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      const auto frame=shell->metal_sidebar_screen_bounds_for_testing();
+      const auto origin=target-(start-row->GetBoundsInScreen().origin())-frame.OffsetFromOrigin();
+      return shell->metal_sidebar_contains_rect_for_testing(gfx::RectF(origin.x(),origin.y(),row->width(),row->height()),gfx::RectF(gfx::SizeF(frame.size())));
+    }));
+  } else {
+    const SkBitmap painted = views::test::PaintViewToBitmap(overlay);
+    gfx::Point pointer = start + gfx::Vector2d(0, target.y() - start.y());
+    views::View::ConvertPointFromScreen(overlay, &pointer);
+    ASSERT_TRUE(gfx::Rect(painted.width(), painted.height()).Contains(pointer));
+    // PaintViewToBitmap starts from a red placeholder; the copy covers it.
+    size_t covered = 0;
+    for (int dx = -40; dx <= 40; ++dx) covered += painted.getColor(pointer.x() + dx, pointer.y()) != SK_ColorRED;
+    EXPECT_GT(covered, 70u);
+    EXPECT_EQ(SK_ColorRED, painted.getColor(2, painted.height() - 2));
+  }
   button(ui_controls::UP);
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->sidebar_drag_row_for_testing(); }));
   window_->SelectTab(2);

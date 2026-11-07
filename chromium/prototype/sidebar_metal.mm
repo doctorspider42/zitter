@@ -1,5 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/sidebar_metal.h"
+#include "base/hash/hash.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/sidebar_shader.h"
 #import <AppKit/AppKit.h>
@@ -252,6 +253,7 @@ class Surface final : public SidebarMetal {
         << op.height << ',' << op.clip.x << ',' << op.clip.y << ',' << op.clip.width << ',' << op.clip.height
         << ',' << op.radius << ',' << op.color << ',' << op.font_size << ',' << op.font_weight << ',' << op.family << ',' << op.italic << ',' << op.tracking << ','
         << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.right_align << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << op.text.size() << ':' << std::string(op.text);
+    for(const auto& op:ops)if(!op.pixels.empty())signature << base::FastHash(std::string_view(reinterpret_cast<const char*>(op.pixels.data()),op.pixels.size()*sizeof(uint32_t)));
     for(const auto& op:ops)if(op.editor){signature << ':' << op.utf16.size();for(uint16_t c:op.utf16)signature << ',' << c;}
     std::string fingerprint = signature.str();
     if (fingerprint == last_frame_ && !view_.hidden && !next_presentation_) return;
@@ -289,7 +291,7 @@ class Surface final : public SidebarMetal {
           last_clip->width != clip.width || last_clip->height != clip.height) {
         [encoder setScissorRect:clip]; last_clip = clip;
       }
-      const bool text = op.editor || !op.text.empty();
+      const bool text = !op.pixels.empty() || op.editor || !op.text.empty();
       if (text) {
         id<MTLTexture> texture = Text(op, scale);
         if (!texture) continue;
@@ -310,6 +312,16 @@ class Surface final : public SidebarMetal {
   }
  private:
   id<MTLTexture> Text(const sidebar::Primitive& op, double scale) {
+    if (op.pixels.size() == 1024) {
+      std::string key(reinterpret_cast<const char*>(op.pixels.data()), op.pixels.size()*sizeof(uint32_t));
+      auto found=text_.find(key);if(found!=text_.end())return found->second.texture;
+      if(text_.size()>=256||text_bytes_+4096>16*1024*1024){text_.clear();text_bytes_=0;}
+      auto* descriptor=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:32 height:32 mipmapped:NO];
+      descriptor.usage=MTLTextureUsageShaderRead;id<MTLTexture> texture=[device_ newTextureWithDescriptor:descriptor];
+      if(!texture)return nil;
+      [texture replaceRegion:MTLRegionMake2D(0,0,32,32) mipmapLevel:0 withBytes:op.pixels.data() bytesPerRow:128];
+      text_.emplace(std::move(key),TextTile{texture,4096});text_bytes_+=4096;return texture;
+    }
     std::ostringstream key;
     key << op.width << ',' << op.height << ',' << op.font_size << ',' << op.font_weight << ',' << op.family << ',' << op.italic << ',' << op.tracking << ',' << scale << ','
         << op.color << ',' << op.shape << ',' << op.stroke << ',' << op.bold << ',' << op.middle << ',' << op.center << ',' << op.right_align << ',' << op.editor << ',' << op.text_x << ',' << op.baseline << ',' << op.text_direction << ':' << std::string(op.text);

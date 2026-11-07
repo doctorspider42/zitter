@@ -77,6 +77,7 @@ struct PinnedItem {
   std::string title;
   GURL url;
   bool folder = false;
+  bool profile_pin = false;
   bool operator==(const PinnedItem&) const = default;
 };
 

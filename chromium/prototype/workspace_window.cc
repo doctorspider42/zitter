@@ -48,6 +48,16 @@
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "chromium/prototype/arc_importer.h"
 
+#include "chrome/browser/favicon/favicon_service_factory.h"
+#include "components/favicon/content/content_favicon_driver.h"
+#include "components/favicon/core/favicon_service.h"
+#include "components/favicon_base/favicon_types.h"
+#include "content/public/browser/favicon_status.h"
+#include "third_party/blink/public/mojom/favicon/favicon_url.mojom.h"
+#include "base/containers/flat_set.h"
+#include "ui/gfx/image/image_skia_operations.h"
+#include "ui/gfx/image/image_skia_rep.h"
+#include "skia/ext/image_operations.h"
 #include <utility>
 #include <algorithm>
 #include <set>
@@ -876,6 +886,10 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.leave_split = base::BindRepeating(&WorkspaceWindow::RemoveFromSplit, base::Unretained(this));
   callbacks.close_split_tabs = base::BindRepeating(&WorkspaceWindow::CloseSplitTabs, base::Unretained(this));
   callbacks.move_split_pane = base::BindRepeating(&WorkspaceWindow::MoveSplitPane, base::Unretained(this));
+  callbacks.reload_workspace_favicons = base::BindRepeating(&WorkspaceWindow::ReloadWorkspaceFavicons, base::Unretained(this));
+  callbacks.duplicate_pin = base::BindRepeating(&WorkspaceWindow::DuplicatePin, base::Unretained(this));
+  callbacks.duplicate_tab = base::BindRepeating(&WorkspaceWindow::DuplicateTab, base::Unretained(this));
+  callbacks.move_tab_to_workspace = base::BindRepeating(&WorkspaceWindow::MoveSidebarTab, base::Unretained(this));
   callbacks.move_tab = base::BindRepeating(&WorkspaceWindow::MoveTab, base::Unretained(this));
   callbacks.pin_tab = base::BindRepeating(&WorkspaceWindow::PinTab, base::Unretained(this));
   callbacks.unpin = base::BindRepeating(&WorkspaceWindow::UnpinItem, base::Unretained(this));
@@ -1133,6 +1147,8 @@ std::u16string WorkspaceWindow::TabTitle(const Host& host, views::WebView* view)
 
 void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source_hint) {
   PageServices::Attach(page);
+  favicon::ContentFaviconDriver::CreateForWebContents(page,
+      FaviconServiceFactory::GetForProfile(Profile::FromBrowserContext(page->GetBrowserContext()), ServiceAccessType::IMPLICIT_ACCESS));
   PageServices::FromWebContents(page)->SetManagePasswords(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
     if (window) window->ShowPasswords();
   }, weak_factory_.GetWeakPtr()));
@@ -1269,6 +1285,17 @@ void WorkspaceWindow::SetPageFullscreen(content::WebContents* page, bool fullscr
     page->GetPrimaryMainFrame()->GetRenderViewHost()->GetWidget()->SynchronizeVisualProperties();
 }
 
+namespace {
+std::vector<uint32_t> FaviconPixels(const gfx::Image& image) {
+  if (image.IsEmpty()) return {};
+  const auto scaled = gfx::ImageSkiaOperations::CreateResizedImage(image.AsImageSkia(), skia::ImageOperations::RESIZE_BEST, gfx::Size(32, 32));
+  const auto& bitmap = scaled.GetRepresentation(1.0f).GetBitmap();
+  std::vector<uint32_t> pixels(32 * 32);
+  if (!bitmap.readPixels(SkImageInfo::MakeN32Premul(32, 32), pixels.data(), 32 * sizeof(uint32_t), 0, 0)) return {};
+  return pixels;
+}
+}  // namespace
+
 void WorkspaceWindow::UpdateShell() {
   shell_update_pending_ = false;
   if (closing_ || !widget_) return;
@@ -1286,6 +1313,14 @@ void WorkspaceWindow::UpdateShell() {
   for (const auto& host : hosts_) {
     if (host.workspace_id != active_id()) continue;
     ShellState state;
+    for (const auto& candidate : hosts_) if (candidate.profile_id == host.profile_id) for (const auto& view : candidate.tabs) {
+      auto* page = view->web_contents();
+      auto* entry = page ? page->GetController().GetVisibleEntry() : nullptr;
+      if (!entry || !entry->GetFavicon().valid || favicon_refreshing_.contains({host.profile_id,page->GetVisibleURL().spec()})) continue;
+      auto pixels = FaviconPixels(entry->GetFavicon().image);
+      if (!pixels.empty()) favicon_cache_[{host.profile_id, page->GetVisibleURL().spec()}] = std::move(pixels);
+    }
+    for (const auto& [key, pixels] : favicon_cache_) if (key.first == host.profile_id) state.favicons[key.second] = pixels;
     std::map<views::WebView*, std::string> pin_ids;
     for (const auto& [id, view] : host.pin_tabs) pin_ids.emplace(view.get(), id);
     for (const auto& view : host.tabs) {
@@ -1312,6 +1347,19 @@ void WorkspaceWindow::UpdateShell() {
     for (const auto& other : hosts_) if (other.sleeping) state.sleeping_workspaces.insert(other.workspace_id);
     state.profiles_busy = profiles_busy();
     state.pins = pinned_items(host.workspace_id);
+    if (auto* service = FaviconServiceFactory::GetForProfile(host.profile, ServiceAccessType::IMPLICIT_ACCESS)) {
+      for (const auto& pin : state.pins) {
+        if (pin.folder || !pin.url.SchemeIsHTTPOrHTTPS()) continue;
+        const auto key = std::make_pair(host.profile_id, pin.url.spec());
+        if (favicon_refreshing_.contains(key) || favicon_cache_.contains(key) || !favicon_requests_.insert(key).second) continue;
+        service->GetFaviconImageForPageURL(pin.url, base::BindOnce(
+            [](base::WeakPtr<WorkspaceWindow> window, std::pair<std::string,std::string> key, uint64_t generation, const favicon_base::FaviconImageResult& result) {
+              if (!window || window->favicon_generations_[key]!=generation || window->favicon_refreshing_.contains(key) || result.image.IsEmpty()) return;
+              auto pixels = FaviconPixels(result.image);
+              if (!pixels.empty()) { window->favicon_cache_[key] = std::move(pixels); window->UpdateShell(); }
+            }, weak_factory_.GetWeakPtr(), key, favicon_generations_[key]), &favicon_tasks_);
+      }
+    }
     state.profile_id = host.profile_id;
     state.workspaces = model_.workspaces();
 #if BUILDFLAG(IS_WIN)
@@ -2211,6 +2259,159 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
 // A tab moves to another space of the same profile (the tabs API's window
 // spans them all). Its page, history and storage stay; it leaves any split and
 // its pin, as a closed tab would.
+bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || closing_ || !model_.Find(workspace)) return false;
+  if (workspace != active_id() && (!Select(workspace) || active_id() != workspace)) return false;
+  for (const auto& host : hosts_) {
+    if (host.workspace_id != workspace) continue;
+    auto* source = contents(workspace);
+    if (!source) return false;
+    // Only an unrealized empty page needs initialization; loaded pages keep
+    // their document, forms and navigation history throughout the refresh.
+    if (!source->GetPrimaryMainFrame()->IsRenderFrameLive() &&
+        (source->GetVisibleURL().is_empty() || source->GetVisibleURL() == GURL("about:blank")))
+      source->GetController().LoadURL(GURL("about:blank"), content::Referrer(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL, {});
+    std::map<GURL,GURL> pages;
+    for (const auto& view : host.tabs) {
+      const auto url = TabUrl(host, view);
+      if (!url.SchemeIsHTTPOrHTTPS()) continue;
+      auto& icon = pages[url];
+      if (auto* page = view->web_contents()) {
+        if (auto* entry = page->GetController().GetVisibleEntry()) icon = entry->GetFavicon().url;
+        if (!icon.is_valid()) for (const auto& candidate : page->GetFaviconURLs())
+          if (candidate->icon_url.is_valid()) { icon = candidate->icon_url; break; }
+      }
+    }
+    for (const auto& pin : pinned_items(workspace)) if (!pin.folder && pin.url.SchemeIsHTTPOrHTTPS()) pages.try_emplace(pin.url);
+    auto* service = FaviconServiceFactory::GetForProfile(host.profile, ServiceAccessType::IMPLICIT_ACCESS);
+    if (service) service->ClearUnableToDownloadFavicons();
+    for (const auto& [url, known_icon] : pages) {
+      const FaviconKey key{host.profile_id,url.spec()};
+      const uint64_t generation = ++favicon_generations_[key];
+      favicon_refreshing_.insert(key);
+      favicon_cache_.erase(key);
+      favicon_requests_.insert(key);
+      auto download = base::BindOnce(
+          [](base::WeakPtr<WorkspaceWindow> window,base::WeakPtr<content::WebContents> source,FaviconKey key,uint64_t generation,GURL known_icon,const favicon_base::FaviconImageResult& result) {
+            if (!window) return;
+            GURL icon = known_icon.is_valid() ? known_icon : result.icon_url;
+            if (!icon.is_valid()) icon = GURL(key.second).Resolve("/favicon.ico");
+            window->DownloadWorkspaceFavicon(source,std::move(key),generation,std::move(icon));
+          },weak_factory_.GetWeakPtr(),source->GetWeakPtr(),key,generation,known_icon);
+      if (service) {
+        service->SetFaviconOutOfDateForPage(url);
+        service->GetFaviconImageForPageURL(url,std::move(download),&favicon_tasks_);
+      } else std::move(download).Run(favicon_base::FaviconImageResult());
+    }
+    UpdateShell();
+    return true;
+  }
+  return false;
+}
+
+void WorkspaceWindow::DownloadWorkspaceFavicon(base::WeakPtr<content::WebContents> source,FaviconKey key,uint64_t generation,GURL icon,size_t attempt) {
+  if (closing_ || favicon_generations_[key] != generation || !favicon_refreshing_.contains(key)) return;
+  if (!source) { FinishWorkspaceFavicon(std::move(key),generation,std::move(icon),{}); return; }
+  if (!source->GetPrimaryMainFrame()->IsRenderFrameLive()) {
+    if (attempt < 40) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
+          base::BindOnce(&WorkspaceWindow::DownloadWorkspaceFavicon,weak_factory_.GetWeakPtr(),source,std::move(key),generation,std::move(icon),attempt+1),base::Milliseconds(50));
+    } else FinishWorkspaceFavicon(std::move(key),generation,std::move(icon),{});
+    return;
+  }
+  source->DownloadImage(icon,true,gfx::Size(32,32),64,true,base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window,FaviconKey key,uint64_t generation,int,int status,const GURL& icon,const std::vector<SkBitmap>& bitmaps,const std::vector<gfx::Size>&) {
+        if (!window) return;
+        gfx::Image image;
+        if (status < 400 && !bitmaps.empty() && !bitmaps.front().drawsNothing()) image = gfx::Image::CreateFrom1xBitmap(bitmaps.front());
+        window->FinishWorkspaceFavicon(std::move(key),generation,icon,std::move(image));
+      },weak_factory_.GetWeakPtr(),std::move(key),generation));
+}
+
+void WorkspaceWindow::FinishWorkspaceFavicon(FaviconKey key,uint64_t generation,GURL icon,gfx::Image image) {
+  if (closing_ || favicon_generations_[key] != generation || !favicon_refreshing_.erase(key)) return;
+  auto pixels = FaviconPixels(image);
+  if (!pixels.empty()) favicon_cache_[key] = std::move(pixels);
+  else favicon_cache_.erase(key);
+  for (const auto& host : hosts_) if (host.profile_id == key.first) for (const auto& view : host.tabs) {
+    auto* page = view->web_contents();
+    auto* entry = page ? page->GetController().GetVisibleEntry() : nullptr;
+    if (!entry || page->GetVisibleURL().spec() != key.second) continue;
+    auto& favicon = entry->GetFavicon();
+    favicon.valid = !image.IsEmpty(); favicon.url = icon; favicon.image = image;
+  }
+  if (auto* profile = ProfileFor(key.first)) if (auto* service = FaviconServiceFactory::GetForProfile(profile,ServiceAccessType::IMPLICIT_ACCESS)) {
+    const base::flat_set<GURL> pages{GURL(key.second)};
+    if (!image.IsEmpty()) service->SetFavicons(pages,icon,favicon_base::IconType::kFavicon,image);
+    else service->DeleteFaviconMappings(pages,favicon_base::IconType::kFavicon);
+  }
+  UpdateShell();
+}
+
+bool WorkspaceWindow::DuplicatePin(std::string id) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || closing_) return false;
+  for (auto& host : hosts_) if (host.workspace_id == active_id()) {
+    if (auto found=host.pin_tabs.find(id);found!=host.pin_tabs.end())
+      return DuplicateTab(std::find(host.tabs.begin(),host.tabs.end(),found->second)-host.tabs.begin());
+    const auto& pins=pinned_items(active_id());
+    const auto pin=std::ranges::find(pins,id,&PinnedItem::id);
+    if(pin==pins.end()||pin->folder)return false;
+    const GURL url=pin->url;
+    auto* view=CreatePage(host.profile);host.tabs.push_back(view);
+    SelectTab(host.tabs.size()-1);LoadWorkspaceTab(view->GetWebContents(),url,ui::PAGE_TRANSITION_AUTO_BOOKMARK);
+    return true;
+  }
+  return false;
+}
+
+bool WorkspaceWindow::DuplicateTab(size_t index) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || closing_) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
+    auto* source = EnsurePage(host.tabs[index]);
+    auto* duplicate = CreatePage(host.profile);
+    if (auto deferred = host.deferred_urls.find(host.tabs[index]); deferred != host.deferred_urls.end()) {
+      host.deferred_urls[duplicate] = deferred->second;
+      host.deferred_titles[duplicate] = TabTitle(host, host.tabs[index]);
+    } else duplicate->GetWebContents()->GetController().CopyStateFrom(&source->GetController(), true);
+    host.tabs.insert(host.tabs.begin() + index + 1, duplicate);
+    SelectTab(index + 1);
+    duplicate->GetWebContents()->GetController().LoadIfNecessary();
+    UpdateShell();
+    return true;
+  }
+  return false;
+}
+
+bool WorkspaceWindow::MoveSidebarTab(size_t index, std::string target) {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || closing_) return false;
+  const auto* space = model_.Find(target);
+  if (!space || target == active_id()) return false;
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
+    if (host.profile_id != space->profile_id) {
+      auto* source=host.tabs[index].get();
+      const GURL url=TabUrl(host,source);const auto title=TabTitle(host,source);
+      if(!IsWorkspaceTabUrl(url))return false;
+      if(GuardPages({source->web_contents()},base::BindOnce([](base::WeakPtr<WorkspaceWindow> window,std::string workspace,size_t index,std::string target){
+        if(window&&window->active_id()==workspace)window->MoveSidebarTab(index,std::move(target));
+      },weak_factory_.GetWeakPtr(),active_id(),index,target)))return true;
+      for(auto& destination:hosts_)if(destination.workspace_id==target){
+        if(destination.sleeping){auto stored=destination.sleeping->Clone();if(!RestoreHost(destination,stored))return false;}
+        auto* moved=CreatePage(destination.profile,nullptr,nullptr,false);
+        destination.deferred_urls[moved]=url;destination.deferred_titles[moved]=title;destination.tabs.push_back(moved);
+        if(host.tabs.size()==1)host.tabs.push_back(CreatePage(host.profile));
+        CloseTab(index);UpdateShell();return true;
+      }
+      return false;
+    }
+    // Keep an empty page behind when moving the final tab out of a space.
+    if (host.tabs.size() == 1) host.tabs.push_back(CreatePage(host.profile));
+    return MoveTabToSpace(EnsurePage(host.tabs[index]), target, SIZE_MAX);
+  }
+  return false;
+}
+
 bool WorkspaceWindow::MoveTabToSpace(content::WebContents* page, const std::string& target, size_t position) {
   if (!configuration_ready_ || profiles_busy_ || closing_ || !page) return false;
   Host* from = nullptr;
@@ -2221,8 +2422,9 @@ bool WorkspaceWindow::MoveTabToSpace(content::WebContents* page, const std::stri
     for (size_t i = 0; i < host.tabs.size(); ++i)
       if (host.tabs[i]->web_contents() == page) { from = &host; index = i; }
   }
-  if (!from || !to || from == to || from->profile != to->profile || from->tabs.size() < 2 || to->sleeping || !to->view)
-    return false;
+  if (!from || !to || from == to || from->profile != to->profile || from->tabs.size() < 2) return false;
+  if (to->sleeping) { auto stored = to->sleeping->Clone(); if (!RestoreHost(*to, stored)) return false; }
+  if (!to->view) return false;
   views::WebView* moving = from->tabs[index];
   std::erase_if(from->pin_tabs, [moving](const auto& entry) { return entry.second == moving; });
   const bool was_active = moving == from->view;
@@ -2648,6 +2850,7 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
 }
 
 bool WorkspaceWindow::RunShortcut(std::string id) {
+  if (id == "duplicate_tab") { for (const auto& host : hosts_) if (host.workspace_id == active_id()) return DuplicateTab(host.active_tab); return false; }
   if (id == "private_window") { if (new_private_window_) new_private_window_.Run(); return true; }
   if (id == "assistant") { ShowAssistant(); return true; }
   if (id == "assistant_hover") { ShowAssistant(true); return true; }
@@ -2966,6 +3169,12 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
     item.Set("name", entry.info.name);
     item.Set("directory", entry.info.directory);
     item.Set("source_id", entry.info.source_id);
+    base::ListValue favorites;
+    if (auto found = pins_.find("@profile:" + entry.info.id); found != pins_.end()) for (const auto& pin : found->second) {
+      base::DictValue value; value.Set("id", pin.id); value.Set("title", pin.title); value.Set("url", pin.url.spec());
+      favorites.Append(std::move(value));
+    }
+    item.Set("pins", std::move(favorites));
     profile_list.Append(std::move(item));
   }
   dict.Set("profiles", std::move(profile_list));
@@ -2981,6 +3190,7 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
     item.Set("profile_id", workspace.profile_id);
     base::ListValue pinned;
     for (const auto& pin : pinned_items(workspace.id)) {
+      if (pin.profile_pin) continue;
       base::DictValue value;
       value.Set("id", pin.id);
       value.Set("parent_id", pin.parent_id);
@@ -3214,6 +3424,17 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
         if (old.info.id == *id || old.info.directory == *directory) valid = false;
       const auto* source = entry->FindString("source_id");
       entries.push_back({{*id, *name, *directory, source ? *source : ""}, nullptr});
+      if (const auto* favorites = entry->FindList("pins")) {
+        std::set<std::string> seen;
+        for (const auto& value : *favorites) {
+          const auto* pin = value.GetIfDict();
+          const auto* key = pin ? pin->FindString("id") : nullptr;
+          const auto* title = pin ? pin->FindString("title") : nullptr;
+          const auto* url = pin ? pin->FindString("url") : nullptr;
+          if (!key || key->empty() || !seen.insert(*key).second || !title || !url || !IsWorkspaceTabUrl(GURL(*url))) { valid = false; break; }
+          restored_pins["@profile:" + *id].push_back({*key, "", *title, GURL(*url), false, true});
+        }
+      }
     }
     if (entries.empty()) valid = false;
   } else { valid = false; }
@@ -3540,9 +3761,24 @@ void WorkspaceWindow::StartWelcomeImport(ImportBrowser browser, base::OnceCallba
 #endif
 
 const std::vector<PinnedItem>& WorkspaceWindow::pinned_items(std::string_view workspace_id) const {
-  static const base::NoDestructor<std::vector<PinnedItem>> empty;
-  auto it = pins_.find(std::string(workspace_id));
-  return it == pins_.end() ? *empty : it->second;
+  std::vector<PinnedItem> combined;
+  if (const auto* space = model_.Find(workspace_id)) {
+    if (auto found = pins_.find("@profile:" + space->profile_id); found != pins_.end()) combined = found->second;
+  }
+  if (auto found = pins_.find(std::string(workspace_id)); found != pins_.end())
+    combined.insert(combined.end(), found->second.begin(), found->second.end());
+  auto& cached = combined_pins_[std::string(workspace_id)];
+  if (cached != combined) cached = std::move(combined);
+  return cached;
+}
+
+std::string WorkspaceWindow::PinStorageKey(std::string_view workspace, std::string_view pin) const {
+  if (const auto* space = model_.Find(workspace)) {
+    const std::string key = "@profile:" + space->profile_id;
+    if (auto found = pins_.find(key); found != pins_.end())
+      for (const auto& item : found->second) if (item.id == pin) return key;
+  }
+  return std::string(workspace);
 }
 
 void WorkspaceWindow::OpenPinnedItem(std::string id) {
@@ -3580,6 +3816,8 @@ std::vector<PinNode> PinNodes(const std::vector<PinnedItem>& items) {
 
 bool WorkspaceWindow::InsertPin(std::string workspace, PinnedItem item, std::string before) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace)) return false;
+  if (item.parent_id == "@profile") { item.parent_id.clear(); item.profile_pin = true; }
+  if (item.profile_pin) workspace = "@profile:" + model_.Find(workspace)->profile_id;
   auto& items = pins_[workspace];
   const auto nodes = PinNodes(items);
   if (!PinTree(nodes).CanPlace(item.id, item.parent_id)) return false;
@@ -3612,6 +3850,7 @@ bool WorkspaceWindow::PinTab(size_t index, std::string parent, std::string befor
 bool WorkspaceWindow::UpdatePinnedUrl(std::string workspace, std::string id, GURL url) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace) ||
       !url.is_valid() || !IsWorkspaceTabUrl(url)) return false;
+  workspace = PinStorageKey(workspace, id);
   auto& items = pins_[workspace];
   auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
   if (pin == items.end()) return false;
@@ -3649,7 +3888,8 @@ bool WorkspaceWindow::UnpinItem(std::string id, size_t before) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_) return false;
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || before > host.tabs.size()) continue;
-    auto& items = pins_[host.workspace_id];
+    const auto storage = PinStorageKey(host.workspace_id, id);
+    auto& items = pins_[storage];
     const auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
     if (pin == items.end()) return false;
     size_t index;
@@ -3668,7 +3908,7 @@ bool WorkspaceWindow::UnpinItem(std::string id, size_t before) {
     MoveTab(index, before);
     auto previous = items;
     items.erase(pin);
-    SaveFolderEdit(host.workspace_id, std::move(previous), {id});
+    SaveFolderEdit(storage, std::move(previous), {id});
     return true;
   }
   return false;
@@ -3678,7 +3918,26 @@ bool WorkspaceWindow::MovePin(std::string id, std::string parent, std::string be
   const auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id; });
   if (pin == items.end() || id == before) return false;
   PinnedItem moved = *pin;
-  moved.parent_id = std::move(parent);
+  if (parent == "@profile" && !moved.profile_pin) {
+    const auto* space = model_.Find(active_id());
+    if (!space || moved.folder || !configuration_ready_ || profiles_busy_) return false;
+    const auto workspace = active_id();
+    const auto storage = "@profile:" + space->profile_id;
+    auto previous = pins_[workspace];
+    auto previous_profile = pins_[storage];
+    std::erase_if(pins_[workspace], [&](const auto& item) { return item.id == id; });
+    moved.parent_id.clear(); moved.profile_pin = true;
+    pins_[storage].push_back(std::move(moved));
+    profiles_busy_ = true; UpdateShell();
+    SaveConfiguration(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string workspace, std::string storage,
+        std::vector<PinnedItem> previous, std::vector<PinnedItem> previous_profile, bool ok) {
+      if (!window) return;
+      if (!ok) { window->pins_[workspace] = std::move(previous); window->pins_[storage] = std::move(previous_profile); window->shell_->ShowFolderSaveError(); }
+      window->profiles_busy_ = false; window->UpdateShell();
+    }, weak_factory_.GetWeakPtr(), workspace, storage, std::move(previous), std::move(previous_profile)));
+    return true;
+  }
+  moved.parent_id = moved.profile_pin ? "" : std::move(parent);
   return InsertPin(active_id(), std::move(moved), std::move(before));
 }
 
@@ -3737,6 +3996,7 @@ bool WorkspaceWindow::RemovePinnedFolder(std::string workspace, std::string id, 
 }
 bool WorkspaceWindow::RestorePins(std::string workspace, std::vector<PinnedItem> items) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace)) return false;
+  std::erase_if(items, [](const auto& item) { return item.profile_pin; });
   const auto nodes = PinNodes(items);
   if (!PinTree(nodes).IsValid()) return false;
   auto previous = std::exchange(pins_[workspace], std::move(items));
@@ -3750,9 +4010,9 @@ void WorkspaceWindow::SaveFolderEdit(std::string workspace, std::vector<PinnedIt
       std::vector<PinnedItem> previous, std::set<std::string> removed, bool ok) {
     if (!window) return;
     if (!ok) window->pins_[workspace] = std::move(previous);
-    for (auto& host : window->hosts_) if (host.workspace_id == workspace) {
+    for (auto& host : window->hosts_) if (host.workspace_id == workspace || "@profile:" + host.profile_id == workspace) {
       // A rolled-back pin must not leave its page hidden behind a missing row.
-      const auto& items = window->pins_[workspace];
+      const auto& items = window->pinned_items(host.workspace_id);
       std::erase_if(host.pin_tabs, [&](const auto& item) {
         return removed.contains(item.first) || std::none_of(items.begin(), items.end(), [&](const auto& pin) { return pin.id == item.first; });
       });

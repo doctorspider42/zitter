@@ -40,6 +40,7 @@ struct ContextMenuParams;
 enum class KeyboardEventProcessingResult;
 }
 namespace input { struct NativeWebKeyboardEvent; }
+namespace gfx { class Image; }
 namespace views {
 class Label;
 class Textfield;
@@ -219,6 +220,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   content::WebContents* OpenProfileTab(Profile* profile, const GURL& url, bool active);
   // Moves a tab to another space of its profile at `position` (tabs API).
   bool MoveTabToSpace(content::WebContents* page, const std::string& target, size_t position);
+  bool MoveSidebarTab(size_t index, std::string target);
+  bool DuplicateTab(size_t index);
+  bool DuplicatePin(std::string id);
+  bool ReloadWorkspaceFavicons(std::string workspace);
+  bool workspace_favicons_pending_for_testing() const { return !favicon_refreshing_.empty(); }
   ExtensionsBar* extensions_bar() const { return extensions_bar_; }
   bool OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split = false);
   WorkspaceShell* shell() const { return shell_.get(); }
@@ -499,6 +505,14 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool import_replaces_starter_ = false;
   size_t import_preview_generation_ = 0;
   std::map<std::string, std::vector<PinnedItem>> pins_;
+  mutable std::map<std::string, std::vector<PinnedItem>> combined_pins_;
+  std::map<std::pair<std::string, std::string>, std::vector<uint32_t>> favicon_cache_;
+  using FaviconKey = std::pair<std::string,std::string>;
+  std::map<FaviconKey,uint64_t> favicon_generations_;
+  std::set<FaviconKey> favicon_refreshing_;
+  void DownloadWorkspaceFavicon(base::WeakPtr<content::WebContents> source,FaviconKey key,uint64_t generation,GURL icon,size_t attempt=0);
+  void FinishWorkspaceFavicon(FaviconKey key,uint64_t generation,GURL icon,gfx::Image image);
+  std::string PinStorageKey(std::string_view workspace, std::string_view pin) const;
   std::optional<ArcImport> pending_import_;
   base::OnceCallback<void(bool, std::u16string)> welcome_import_done_;
   std::shared_ptr<BrowsingImportData> import_browsing_data_;
@@ -532,6 +546,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   GURL last_preconnect_origin_;
   base::TimeTicks last_preconnect_time_;
   base::CancelableTaskTracker history_tasks_;
+  base::CancelableTaskTracker favicon_tasks_;
+  std::set<std::pair<std::string,std::string>> favicon_requests_;
   size_t search_generation_ = 0;
   std::unique_ptr<WorkspaceShell> shell_;
   // Widget must die before its non-owned delegate and before profiles.

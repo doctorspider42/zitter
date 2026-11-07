@@ -309,6 +309,24 @@ void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,in
 std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
   return std::make_unique<RustPaletteInputLayout>();
 }
+class ProfileFavoritesLayout final : public views::LayoutManager {
+ public:
+  void Layout(views::View* host) override {
+    int index=0;const int cell=std::max(0,(host->width()-8)/2);
+    for(const auto& child:host->children()) if(child->GetVisible()) {
+      child->SetBounds((index%2)*(cell+8),(index/2)*52,cell,44);++index;
+    }
+  }
+  gfx::Size GetPreferredSize(const views::View* host) const override {
+    int count=0;for(const auto& child:host->children())if(child->GetVisible())++count;
+    return gfx::Size(200,count?((count+1)/2)*52-8:0);
+  }
+  gfx::Size GetPreferredSize(const views::View* host,const views::SizeBounds&) const override {return GetPreferredSize(host);}
+  int GetPreferredHeightForWidth(const views::View* host,int) const override {return GetPreferredSize(host).height();}
+  void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
+  void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
+};
+std::unique_ptr<views::LayoutManager> CreateProfileFavoritesLayout(){return std::make_unique<ProfileFavoritesLayout>();}
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {
   return std::make_unique<RustColumnLayout>(spacing);
 }

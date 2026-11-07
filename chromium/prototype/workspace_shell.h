@@ -102,6 +102,7 @@ struct ShellState {
   std::u16string profile_name;
   GURL url;
   std::vector<ShellTab> tabs;
+  std::map<std::string, std::vector<uint32_t>> favicons;
   size_t active_tab = 0;
   bool split = false;          // A group exists, even while another tab is shown.
   bool split_visible = false;  // The group is on screen.
@@ -145,6 +146,9 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(const GURL&, bool)> navigate;
     base::RepeatingCallback<void(size_t)> select_tab;
     base::RepeatingCallback<void(size_t)> close_tab;
+    base::RepeatingCallback<bool(size_t)> duplicate_tab;
+    base::RepeatingCallback<bool(std::string)> duplicate_pin;
+    base::RepeatingCallback<bool(size_t, std::string)> move_tab_to_workspace;
     base::RepeatingCallback<void(PageCommand)> page_command;
     base::RepeatingCallback<void(std::u16string)> search;
     base::RepeatingCallback<void(PaletteResult)> activate_result;
@@ -213,6 +217,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, std::string, GURL)> update_pinned_url;
     base::RepeatingCallback<bool(std::string)> reset_pinned_url;
     base::RepeatingCallback<bool(std::string, std::string, std::string)> move_pin;
+    base::RepeatingCallback<bool(std::string)> reload_workspace_favicons;
   };
 
   WorkspaceShell(base::FilePath settings_path, Callbacks callbacks);
@@ -688,6 +693,9 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Widget* scrim_widget_for_testing() const { return scrim_widget_.get(); }
   views::View* tab_button(size_t index) const;
   views::View* pin_button(std::string_view id) const;
+  bool row_has_favicon_for_testing(views::View* row) const;
+  std::u16string row_monogram_for_testing(views::View* row) const;
+  bool sidebar_heading_visible_for_testing() const;
   uint64_t sidebar_node_id_for_testing(views::View* row) const;
   // Rust split pair node: {id, parent id, visible}; zeros without a Rust graph.
   std::array<uint64_t, 3> sidebar_pair_for_testing() const;
@@ -1246,6 +1254,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<ui::SimpleMenuModel> add_menu_;
   std::unique_ptr<views::MenuRunner> add_menu_runner_;
   std::map<std::string, raw_ptr<views::View>> workspace_buttons_;
+  std::unique_ptr<ui::SimpleMenuModel> move_tab_menu_;
+  std::vector<std::string> move_tab_workspaces_;
   std::string context_workspace_id_;
   std::string new_profile_workspace_id_;
   std::vector<ProfileInfo> menu_profiles_;

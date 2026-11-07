@@ -205,6 +205,7 @@ mod ffi {
         // 0: row, 1: section label, 2: split group background, 3: New Tab action, 4: address, 5: workspace heading, 6: scroll thumb, 7: control glyph, 8: pane title, 9: split grip, 10: rounded backing, 11: sidebar grip, 12: palette result, 13: result icon, 14: separator, 15: palette static text, 16: palette frame, 17: form static text, 18: appearance color swatch, 19: form text action, 20: checkbox mark, 21: closed selector, 22: preference category, 23: preferences dismiss, 24: preference surface, 25: history result row, 26: progress indicator, 27: Peek title (middle elision and physical RTL alignment), 28: workspace color hue ring, 29: workspace color saturation x tone field (both: `badge` the stored color, `tile` the dark scheme, `fill` the surface, `ink` the knob edge, `title` the ring's emoji).
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
+        favicon: Vec<u32>, favorite: bool,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
         ink: u32, fill: u32, badge: u32,
         // 1 px inset ring drawn over `fill` (0 = none); the design system's card edge.
@@ -274,6 +275,7 @@ mod ffi {
     struct Primitive {
         x: f32, y: f32, width: f32, height: f32,
         radius: f32, color: u32, stroke: f32, shape: u32,
+        pixels: Vec<u32>,
         text: String, font_size: f32, font_weight: i32, bold: bool, middle: bool, center: bool, right_align: bool, clip: FloatRect,
         editor: bool, utf16: Vec<u16>, text_x: f32, baseline: f32, text_direction: u32,
         // Design system text: 0 system font, 1 display, 2 sans, 3 mono; letter spacing in em.
@@ -1368,7 +1370,7 @@ fn toggle_scene(s:&ffi::ToggleStyle)->Vec<ffi::Primitive>{
  if ![s.width,s.height,s.progress,s.hover,s.clip.x,s.clip.y,s.clip.width,s.clip.height].iter().all(|v|v.is_finite())||s.width<=0.0||s.height<=0.0{return vec![];}
  let p=s.progress.clamp(0.0,1.0);let hover=s.hover.clamp(0.0,1.0);
  let blend=|on:u32,off:u32,t:f32|{let mut color=0;for shift in [0,8,16,24]{let a=((on>>shift)&255) as f32;let b=((off>>shift)&255) as f32;color|=((b+(a-b)*t).round() as u32)<<shift;}color};
- let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0};
+ let make=|x,y,width,height,radius,color,stroke|ffi::Primitive{pixels:vec![],x,y,width,height,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:s.clip.x,y:s.clip.y,width:s.clip.width,height:s.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0};
  // Design system Toggle (recipe::toggle): a 34×20 pill, 12 px thumb 4 px in. Off:
  // 1.5 px `line-strong` edge and an `ink-muted` thumb; on: `accent` with `on-accent`.
  let _=hover;
@@ -1524,7 +1526,7 @@ fn color_pad_target(current:u32,x:f32,y:f32,width:f32,height:f32)->u32{
 fn color_wheel_step(current:u32,axis:u32,delta:i32)->u32{design::wheel::step(design::WorkspaceColor::from_argb(current),axis,delta).to_argb()}
 fn color_wheel_description(current:u32,ring:bool)->String{design::wheel::description(design::WorkspaceColor::from_argb(current),ring)}
 fn wheel_primitive(i:&ffi::Item,x:f32,y:f32,w:f32,h:f32,radius:f32,color:u32,stroke:f32)->ffi::Primitive{
-    ffi::Primitive{x,y,width:w,height:h,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0}
+    ffi::Primitive{pixels:vec![],x,y,width:w,height:h,radius,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0}
 }
 // Kinds 28 and 29: the color wheel's ring and field, drawn from solid primitives
 // (the scene has no gradients): 120 overlapping dots make the ring, a 24 x 24
@@ -2728,7 +2730,7 @@ impl ActionControl {
     fn sidebar_set_title(&mut self,title:Vec<u16>)->bool{self.write_node(|r|{if let Some(NodeModel::SidebarPin(pin))=r.model.as_deref_mut(){let display=pin_title(&title,pin.presentation.folder,pin.collapsed);if pin.presentation.title==display{return false;}if pin.presentation.folder{pin.base_title=title;}pin.presentation.title_utf8=String::from_utf16_lossy(&display);pin.presentation.title=display;return true;}let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.title==title{return false;}p.title_utf8=String::from_utf16_lossy(&title);p.title=title;true}).unwrap_or(false)}
     fn sidebar_set_monogram(&mut self,monogram:Vec<u16>,color:u32)->bool{self.write_node(|r|{let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.monogram==monogram&&p.color==color{return false;}p.monogram_utf8=if p.folder{"📁".into()}else{String::from_utf16_lossy(&monogram)};p.monogram=monogram;p.color=color;true}).unwrap_or(false)}
     fn sidebar_scene(&self,bounds:ffi::FloatRect,clip:ffi::FloatRect,style:ffi::SidebarRowStyle,close:bool,close_visible:bool)->ffi::SidebarRowScene{
-        let mut item=ffi::Item{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,text_style:0,clip};
+        let mut item=ffi::Item{favicon:vec![],favorite:false,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,text_style:0,clip};
         let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;if !r.state.on&&!hovered{item.ink=style.muted;}item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};item.edge=if r.state.on&&!p.tile{style.edge}else{0};true}).unwrap_or(false);
         ffi::SidebarRowScene{valid,item}
     }
@@ -2971,7 +2973,7 @@ fn assistant_spark_samples(mut point:impl FnMut(f32,f32)) {
 // so Metal and the CPU recipe do not depend on native vector-icon painting.
 fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
     let mut ops=Vec::new();
-    let mut rect=|x:f32,y:f32,w:f32,h:f32,r:f32,color:u32,stroke:f32|{if w>0.0&&h>0.0{ops.push(ffi::Primitive{x,y,width:w,height:h,radius:r,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0});}};
+    let mut rect=|x:f32,y:f32,w:f32,h:f32,r:f32,color:u32,stroke:f32|{if w>0.0&&h>0.0{ops.push(ffi::Primitive{pixels:vec![],x,y,width:w,height:h,radius:r,color,stroke,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0});}};
     if i.fill>>24!=0{rect(i.x,i.y,i.width,i.height,8.0,i.fill,0.0);}
     if i.active&&i.kind==22{rect(i.x+0.5,i.y+0.5,(i.width-1.0).max(0.0),(i.height-1.0).max(0.0),8.0,i.detail_ink,1.0);}
     let cx=if i.kind==23{i.x+i.width/2.0}else if i.tile{i.x+i.width-18.0}else{i.x+18.0};let cy=i.y+i.height/2.0;
@@ -2996,7 +2998,7 @@ fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
         }
     }
     if i.focused{rect(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,0.0);}
-    if i.kind==22&&!i.title.is_empty(){let x=if i.tile{i.x+10.0}else{i.x+36.0};let w=(i.width-46.0).max(0.0);if w>0.0{ops.push(ffi::Primitive{x,y:i.y,width:w,height:i.height,radius:0.0,color:i.ink,stroke:0.0,shape:0,text:i.title.clone(),font_size:i.font_size,font_weight:0,bold:i.active,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0});}}
+    if i.kind==22&&!i.title.is_empty(){let x=if i.tile{i.x+10.0}else{i.x+36.0};let w=(i.width-46.0).max(0.0);if w>0.0{ops.push(ffi::Primitive{pixels:vec![],x,y:i.y,width:w,height:i.height,radius:0.0,color:i.ink,stroke:0.0,shape:0,text:i.title.clone(),font_size:i.font_size,font_weight:0,bold:i.active,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0});}}
     ops
 }
 
@@ -3023,6 +3025,35 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
     for i in items {
         let start = out.len();
         layout_item(i, &mut out);
+        if i.kind == 0 && (i.favicon.len() == 1024 || i.favorite) {
+            let icon_x = i.x + 12.0;
+            let icon_y = i.y + (i.height - 16.0) / 2.0;
+            let mut n = start;
+            while n < out.len() {
+                if (out[n].x - icon_x).abs() < 0.1 && (out[n].y - icon_y).abs() < 0.1 && out[n].width == 16.0 && out[n].height == 16.0 { out.remove(n); } else { n += 1; }
+            }
+            if i.favorite {
+                for p in &mut out[start..] { if !p.text.is_empty() { p.text.clear(); p.color = 0; } }
+                if let Some(p) = out[start..].iter_mut().find(|p| p.x == i.x && p.y == i.y && p.width == i.width && p.height == i.height) { p.color = i.fill; }
+            }
+            if i.favicon.len() == 1024 {
+                out.push(ffi::Primitive { pixels:i.favicon.clone(), x:if i.favorite { i.x+(i.width-20.0)/2.0 } else {icon_x}, y:if i.favorite {i.y+(i.height-20.0)/2.0} else {icon_y}, width:if i.favorite{20.0}else{16.0}, height:if i.favorite{20.0}else{16.0}, radius:0.0,color:0xffffffff,stroke:0.0,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0 });
+            } else {
+                if i.monogram == "\u{1f}RSS" {
+                    for p in &mut out[start..] {
+                        if p.x>=icon_x && p.x<icon_x+16.0 && p.y>=icon_y && p.y<icon_y+16.0 && p.width<16.0 {
+                            p.x+= (i.width-16.0)/2.0-12.0;
+                        }
+                    }
+                } else {
+                    let (fill, ink)=monogram_colors(i.badge,i.ink);
+                    let x=i.x+(i.width-20.0)/2.0;let y=i.y+(i.height-20.0)/2.0;
+                    let tile=ffi::Primitive { pixels:vec![],x,y,width:20.0,height:20.0,radius:design_tokens::radius::XS,color:fill,stroke:0.0,shape:0,text:String::new(),font_size:11.0,font_weight:700,bold:true,middle:false,center:true,right_align:false,clip:ffi::FloatRect{x:i.clip.x,y:i.clip.y,width:i.clip.width,height:i.clip.height},editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:design::family_id(design_tokens::Family::Sans),italic:false,tracking:0.0 };
+                    let mut letter=tile.clone();letter.radius=0.0;letter.color=ink;letter.text=i.monogram.clone();
+                    out.push(tile);out.push(letter);
+                }
+            }
+        }
         focus_ring(i, start, &mut out);
         apply_text_style(i, start, &mut out);
     }
@@ -3109,7 +3140,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     let first_primitive = out.len();
     let mut emit = |x, y, w: f32, h: f32, radius, color, text: &str, size, bold| {
         if w > 0.0 && h > 0.0 {
-            out.push(ffi::Primitive { x, y, width: w, height: h, radius,
+            out.push(ffi::Primitive { pixels:vec![], x, y, width: w, height: h, radius,
                 color, stroke: 0.0, shape: 0, text: text.into(), font_size: size, font_weight:0, bold, middle: false, center: false,right_align:false, editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0,
                 clip: ffi::FloatRect {x: i.clip.x, y: i.clip.y, width: i.clip.width, height: i.clip.height} });
         }
@@ -3549,13 +3580,41 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
 mod tests {
     use super::*;
     fn row(width: f32) -> ffi::Item { ffi::Item {
-        x:0.0, y:0.0, width, height:34.0, kind:0, glyph:0,
+        favicon:vec![], favorite:false, x:0.0, y:0.0, width, height:34.0, kind:0, glyph:0,
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, edge:0, focus:0, active:true, hovered:false,
         tile:false, close:true, close_visible:true, focused:false, font_size:13.0, font_height:16.0, font_weight:0, text_style:0,
         clip:ffi::FloatRect {x:0.0, y:0.0, width:width.max(0.0), height:34.0},
     }}
+    #[test] fn favicon_recipe_uses_native_pixels_and_keeps_row_clip() {
+        let mut i=row(200.0);i.favicon=vec![0xff123456;1024];i.clip.x=4.0;i.clip.width=120.0;
+        let ops=layout(std::slice::from_ref(&i));let icon=ops.iter().find(|p|!p.pixels.is_empty()).unwrap();
+        assert_eq!((icon.x,icon.y,icon.width,icon.height),(12.0,9.0,16.0,16.0));
+        assert_eq!(icon.pixels,i.favicon);assert_eq!((icon.clip.x,icon.clip.width),(4.0,120.0));
+        assert!(!ops.iter().any(|p|p.text=="Z"));assert!(ops.iter().any(|p|p.text==i.title));
+    }
+    #[test] fn profile_favorite_centers_icon_and_hides_visual_title() {
+        let mut i=row(132.0);i.favorite=true;i.tile=true;i.favicon=vec![0xffabcdef;1024];i.height=44.0;i.clip.height=44.0;
+        let ops=layout(std::slice::from_ref(&i));let icon=ops.iter().find(|p|!p.pixels.is_empty()).unwrap();
+        assert_eq!((icon.x,icon.y,icon.width,icon.height),(56.0,12.0,20.0,20.0));
+        assert!(!ops.iter().any(|p|!p.text.is_empty()));assert_eq!(i.title,"Zażółć 日本語 🦀");
+    }
+    #[test] fn missing_favorite_icon_uses_centered_letter_with_contrast() {
+        let mut i=row(132.0);i.favorite=true;i.tile=true;i.close=false;i.close_visible=false;i.height=44.0;i.clip.height=44.0;
+        for ink in [0xff101010,0xffeeeeee] {
+            i.ink=ink;let ops=layout(std::slice::from_ref(&i));
+            let letter=ops.iter().find(|p|p.text=="Z").unwrap();
+            assert!(letter.center);assert_eq!((letter.x,letter.y,letter.width,letter.height),(56.0,12.0,20.0,20.0));
+            assert!(!ops.iter().any(|p|p.text==i.title));
+            let fill=ops.iter().find(|p|p.x==letter.x&&p.y==letter.y&&p.text.is_empty()).unwrap();
+            assert_ne!(fill.color,letter.color);assert!(ops.iter().all(|p|p.pixels.is_empty()));
+        }
+    }
+    #[test] fn missing_regular_icon_keeps_its_letter_and_title() {
+        let i=row(200.0);let ops=layout(std::slice::from_ref(&i));
+        assert!(ops.iter().any(|p|p.text=="Z"&&p.center));assert!(ops.iter().any(|p|p.text==i.title));
+    }
     fn child(width: i32, height: i32) -> ffi::ColumnChild {
         ffi::ColumnChild { width, height, top: 0, left: 0, bottom: 0, right: 0 }
     }
@@ -5904,13 +5963,13 @@ fn editor_scene(state:&EditorState,placeholder:&[u16],g:&ffi::EditorGeometry,s:&
     if ![s.width,s.height,s.font_size,g.origin,g.baseline,g.clip.x,g.clip.y,g.clip.width,g.clip.height].iter().all(|v|v.is_finite())||s.width<=0.0||s.height<=0.0||s.font_size<=0.0{return ops;}
     let full=||ffi::FloatRect{x:0.0,y:0.0,width:s.width,height:s.height};
     let clip=||ffi::FloatRect{x:g.clip.x,y:g.clip.y,width:g.clip.width,height:g.clip.height};
-    let rect=|x,y,width,height,color,cl:ffi::FloatRect|ffi::Primitive{x,y,width,height,radius:0.0,color,stroke:0.0,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0};
+    let rect=|x,y,width,height,color,cl:ffi::FloatRect|ffi::Primitive{pixels:vec![],x,y,width,height,radius:0.0,color,stroke:0.0,shape:0,text:String::new(),font_size:0.0,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:false,utf16:vec![],text_x:0.0,baseline:0.0,text_direction:0,family:0,italic:false,tracking:0.0};
     let mut frame=rect(0.0,0.0,s.width,s.height,s.fill,full());frame.radius=if s.framed{5.0}else{0.0};ops.push(frame);
     if s.framed{let mut edge=rect(0.5,0.5,(s.width-1.0).max(0.0),(s.height-1.0).max(0.0),s.edge,full());edge.radius=4.5;edge.stroke=if s.focused{2.0}else{1.0};edge.shape=0;ops.push(edge);}
     for span in selection {if span.x.is_finite()&&span.width.is_finite()&&span.width>0.0{ops.push(rect(g.origin+span.x,g.caret.y,span.width,g.caret.height,s.selection_fill,clip()));}}
     let text=if state.text().is_empty(){placeholder}else{state.text()};
     if !text.is_empty() {
-        let make=|color,cl:ffi::FloatRect|ffi::Primitive{x:0.0,y:0.0,width:s.width,height:s.height,radius:0.0,color,stroke:0.0,shape:0,text:String::from_utf16_lossy(text),font_size:s.font_size,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:true,utf16:text.to_vec(),text_x:if state.text().is_empty()&&s.right_align{g.clip.x+g.clip.width-s.placeholder_width}else{g.origin},baseline:g.baseline,text_direction:s.text_direction,family:0,italic:false,tracking:0.0};
+        let make=|color,cl:ffi::FloatRect|ffi::Primitive{pixels:vec![],x:0.0,y:0.0,width:s.width,height:s.height,radius:0.0,color,stroke:0.0,shape:0,text:String::from_utf16_lossy(text),font_size:s.font_size,font_weight:0,bold:false,middle:false,center:false,right_align:false,clip:cl,editor:true,utf16:text.to_vec(),text_x:if state.text().is_empty()&&s.right_align{g.clip.x+g.clip.width-s.placeholder_width}else{g.origin},baseline:g.baseline,text_direction:s.text_direction,family:0,italic:false,tracking:0.0};
         ops.push(make(if state.text().is_empty(){s.placeholder_ink}else{s.ink},clip()));
         if !state.text().is_empty(){for span in selection{if span.x.is_finite()&&span.width.is_finite()&&span.width>0.0{let x=(g.origin+span.x).max(g.clip.x);let end=(g.origin+span.x+span.width).min(g.clip.x+g.clip.width);if end>x{ops.push(make(s.selection_ink,ffi::FloatRect{x,y:g.clip.y,width:end-x,height:g.clip.height}));}}}}
     }

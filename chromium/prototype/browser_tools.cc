@@ -54,6 +54,7 @@ std::vector<Shortcut> ArcShortcuts() {
   };
   const int p = Primary();
   add("address", T(u"Adres i wyszukiwanie"), ui::VKEY_L, p);
+  add("duplicate_tab", T(u"Duplikuj kartę"), ui::VKEY_D, p | ui::EF_SHIFT_DOWN);
   add("new_tab", T(u"Nowa karta"), ui::VKEY_T, p);
   add("private_window", T(u"Nowe okno prywatne"), ui::VKEY_N, p | ui::EF_SHIFT_DOWN);
   add("palette", T(u"Command Center"), ui::VKEY_K, p);

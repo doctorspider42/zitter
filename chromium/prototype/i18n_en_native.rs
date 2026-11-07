@@ -3,6 +3,10 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Przeładuj ikony przestrzeni", "Reload workspace icons"),
+    ("Duplikuj kartę", "Duplicate tab"),
+    ("Przypnij do profilu", "Pin to profile"),
+    ("Przenieś do przestrzeni", "Move to workspace"),
     ("Okno prywatne", "Private window"),
     ("Dodaj źródło", "Add feed"),
     ("Czytaj", "Read"),
