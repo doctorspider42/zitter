@@ -253,11 +253,18 @@ python3 tools/package_dmg.py \
 ```
 
 This command validates the source app and its ticket, copies it without changing
-the signature, adds an `Applications` shortcut and installation instructions,
-creates a compressed read-only disk image, signs it with Developer ID, and
+the signature, adds an `Applications` shortcut, renders the window background
+(`tools/render_dmg_background.swift`, the "Papier" design with the version and
+architecture in its footer) and the volume icon, lets Finder save the window
+layout, creates a compressed read-only disk image, signs it with Developer ID, and
 submits the DMG itself to Apple. It uses the same submission/resume logic as app
 notarization. `--prepare-only` stops before submission; `--submission-id` recovers
 an interrupted upload after reconciliation with Apple's history.
+The layout step runs `osascript` against Finder, so package in a logged-in
+session; the first run asks to let the terminal control Finder. The background
+is light on purpose: Finder draws icon labels in black over a background
+picture, even in Dark Mode. Finder places the icons at (200, 236) and
+(520, 236) in a 720×432 window.
 Transient DNS/connection failures on Apple status reads are retried up to three
 times. Persistent failures stop with the submission ID preserved; rerun to resume.
 Uploads and authentication failures are never retried automatically.

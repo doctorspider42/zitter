@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Create, sign and notarize a drag-to-Applications DMG from a stapled Zitter app.
 
-The app's existing signature and ticket are preserved. The DMG receives its own
-Developer ID signature, Apple submission and ticket. No GitHub upload is done.
+The app's existing signature and ticket are preserved. Finder lays out the
+window over the rendered background, so packaging needs a logged-in macOS
+session and lets Terminal control Finder. The DMG receives its own Developer ID
+signature, Apple submission and ticket. No GitHub upload is done.
 """
 import argparse
 import json
@@ -16,6 +18,81 @@ import tempfile
 
 from notarize_app import cdhash, run, save, sha256, verify_nested_signatures, wait_for_acceptance
 from package_app import BUNDLE_ID, signing_identity
+
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+VOLUME_NAME = "Zitter"
+# The Finder window shows the 720x432 background below a 28 pt title bar; the
+# icons sit at the centres the artwork leaves for them.
+WINDOW_ORIGIN = (200, 120)
+WINDOW_SIZE = (720, 432 + 28)
+ICON_POSITIONS = {"Zitter.app": (200, 236), "Applications": (520, 236)}
+ARCHITECTURE_LABELS = {"arm64": "Apple Silicon", "x86_64": "Intel", "universal": "Apple Silicon · Intel"}
+
+
+def render_background(folder, version, architecture, work):
+    """Render the drag-to-Applications artwork as a 1x/2x TIFF for Finder."""
+    run(["swift", str(REPOSITORY / "tools/render_dmg_background.swift"), str(REPOSITORY / "assets/fonts"),
+         version, ARCHITECTURE_LABELS[architecture], str(work)])
+    folder.mkdir()
+    run(["tiffutil", "-cathidpicheck", str(work / "background.png"), str(work / "background@2x.png"),
+         "-out", str(folder / "background.tiff")])
+
+
+def finder_layout_script(disk):
+    left, top = WINDOW_ORIGIN
+    width, height = WINDOW_SIZE
+    positions = "\n".join(
+        f'        set position of item "{name}" of container window to {{{x}, {y}}}'
+        for name, (x, y) in ICON_POSITIONS.items())
+    return f'''tell application "Finder"
+    tell disk "{disk}"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set bounds of container window to {{{left}, {top}, {left + width}, {top + height}}}
+        set viewOptions to the icon view options of container window
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 128
+        set text size of viewOptions to 13
+        set background picture of viewOptions to file ".background:background.tiff"
+{positions}
+        close
+        open
+        update without registering applications
+        delay 2
+        close
+    end tell
+end tell
+'''
+
+
+def build_image(payload, layout, image):
+    """Create the compressed image after Finder saves the window layout in .DS_Store."""
+    megabytes = int(run(["du", "-sm", str(payload)], capture=True).stdout.split()[0])
+    run(["hdiutil", "create", "-volname", VOLUME_NAME, "-srcfolder", str(payload),
+         "-fs", "HFS+", "-format", "UDRW", "-size", f"{megabytes + megabytes // 5 + 64}m", str(layout)])
+    attached = run(["hdiutil", "attach", str(layout), "-readwrite", "-noverify", "-noautoopen",
+                    "-plist"], capture=True).stdout
+    mounts = [entity["mount-point"] for entity in plistlib.loads(attached.encode())["system-entities"]
+              if "mount-point" in entity]
+    if len(mounts) != 1:
+        raise ValueError("Expected one mounted layout volume")
+    mount = Path(mounts[0])
+    try:
+        run(["SetFile", "-a", "C", str(mount)])
+        run(["SetFile", "-a", "V", str(mount / ".VolumeIcon.icns")])
+        run(["osascript", "-e", finder_layout_script(mount.name)])
+        if not (mount / ".DS_Store").exists():
+            raise ValueError("Finder did not save the DMG window layout")
+        shutil.rmtree(mount / ".fseventsd", ignore_errors=True)
+        run(["sync"])
+    finally:
+        run(["hdiutil", "detach", str(mount)])
+    run(["hdiutil", "convert", str(layout), "-format", "UDZO", "-imagekey", "zlib-level=9",
+         "-o", str(image)])
+    layout.unlink()
 
 
 def verify_app(app):
@@ -48,12 +125,10 @@ def prepare(source, destination, identity):
         raise ValueError("Copying the app changed its code signature")
     verify_app(app)
     (payload / "Applications").symlink_to("/Applications", target_is_directory=True)
-    (payload / "Install Zitter.txt").write_text(
-        "Install Zitter\n\n1. Drag Zitter.app to Applications.\n"
-        "2. Eject this disk image.\n3. Open Zitter from Applications.\n")
+    render_background(payload / ".background", version, architecture, destination / "background")
+    shutil.copy2(REPOSITORY / "assets/icon/Zitter.icns", payload / ".VolumeIcon.icns")
     image = destination / "submission.dmg"
-    run(["hdiutil", "create", "-volname", "Zitter", "-srcfolder", str(payload),
-         "-fs", "HFS+", "-format", "UDZO", str(image)])
+    build_image(payload, destination / "layout.dmg", image)
     run(["codesign", "--force", "--sign", identity, "--timestamp", "--identifier",
          BUNDLE_ID + ".dmg", str(image)])
     run(["codesign", "--verify", "--strict", str(image)])
@@ -80,6 +155,8 @@ def verify_image(image, expected_cdhash):
             app = mount / "Zitter.app"
             if not (mount / "Applications").is_symlink() or (mount / "Applications").readlink() != Path("/Applications"):
                 raise ValueError("DMG is missing its Applications shortcut")
+            if not (mount / ".background/background.tiff").is_file() or not (mount / ".DS_Store").is_file():
+                raise ValueError("DMG is missing its window background or layout")
             if cdhash(app) != expected_cdhash:
                 raise ValueError("The DMG contains a different app signature")
             verify_app(app)

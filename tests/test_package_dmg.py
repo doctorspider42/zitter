@@ -50,6 +50,23 @@ class DmgTests(unittest.TestCase):
             self.assertEqual('Accepted', state['status'])
             self.assertFalse(list(destination.glob('SHA256SUMS*')))
 
+    def test_finder_layout_places_icons_on_the_background_artwork(self):
+        script = dmg.finder_layout_script('Zitter 1')
+        self.assertIn('tell disk "Zitter 1"', script)
+        self.assertIn('set bounds of container window to {200, 120, 920, 580}', script)
+        self.assertIn('file ".background:background.tiff"', script)
+        self.assertIn('set position of item "Zitter.app" of container window to {200, 236}', script)
+        self.assertIn('set position of item "Applications" of container window to {520, 236}', script)
+
+    def test_background_is_rendered_for_the_version_and_architecture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            commands = []
+            with mock.patch.object(dmg, 'run', side_effect=lambda command, capture=False: commands.append(command)):
+                dmg.render_background(Path(directory) / '.background', '0.4.1', 'arm64', Path(directory) / 'work')
+            self.assertEqual(['0.4.1', 'Apple Silicon'], commands[0][3:5])
+            self.assertEqual('tiffutil', commands[1][0])
+            self.assertTrue(commands[1][-1].endswith('.background/background.tiff'))
+
 
 if __name__ == '__main__':
     unittest.main()
