@@ -139,7 +139,7 @@ def brand_notification_helpers(framework, icon):
 
 
 def package(out, destination, binary="zitter", register=True, identity=None, third_party_licenses=None,
-            app_version="0.4.3", hardened_runtime=False):
+            app_version="0.4.4", hardened_runtime=False):
     if not re.fullmatch(r"\d+\.\d+\.\d+", app_version):
         raise ValueError("App version must contain three numeric components, e.g. 0.1.0")
     if hardened_runtime and not identity:
@@ -308,7 +308,7 @@ def main():
     parser.add_argument("--binary", default="zitter", help="Regular application target basename")
     parser.add_argument("--third-party-licenses", type=Path, help="Target-audited license collection to include before signing")
     parser.add_argument("--no-register", action="store_true", help="Skip LaunchServices registration for benchmark bundles")
-    parser.add_argument("--app-version", default="0.4.3", help="Numeric application version (default: 0.4.3)")
+    parser.add_argument("--app-version", default="0.4.4", help="Numeric application version (default: 0.4.4)")
     parser.add_argument("--hardened-runtime", action="store_true", help="Sign with Chromium runtime entitlements for notarization")
     signing = parser.add_mutually_exclusive_group()
     signing.add_argument("--sign-identity", help="Permanent certificate name or SHA-1; saved locally after success")
