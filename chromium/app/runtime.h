@@ -16,6 +16,7 @@
 #include "build/build_config.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
+#include "url/gurl.h"
 #if BUILDFLAG(IS_MAC)
 #include "chromium/app/app_shell_mac.h"
 #endif
