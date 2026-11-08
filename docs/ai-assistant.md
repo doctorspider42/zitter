@@ -120,6 +120,11 @@ backends before importing browser data. Its connection cards use the same
 settings as the preferences window. The model picker shows visible models from
 enabled backends with local configuration.
 
+On macOS, automatic detection also checks `~/.local/bin` and the standard
+Homebrew binary directories. For Codex it also checks ChatGPT.app in
+`~/Applications` and `/Applications`. These locations work when Zitter starts
+from Finder with a limited PATH.
+
 Codex must support `exec --json`, `--output-schema`, `--ephemeral`,
 `--ignore-user-config` and `--ignore-rules`. An unsupported CLI fails that backend
 without falling back to Node or another provider. If automatic detection misses

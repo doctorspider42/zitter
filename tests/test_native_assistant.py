@@ -145,7 +145,7 @@ class NativeAssistantTests(unittest.TestCase):
         env['ZITTER_OLLAMA_URL'] = 'http://127.0.0.1:1'
         failed = subprocess.run([str(BINARY), '--check-provider=ollama', '--check-model=probe'], env=env, capture_output=True, timeout=30)
         self.assertEqual(failed.returncode, 1)
-        self.assertEqual(json.loads(failed.stdout), {'ok': False})
+        self.assertEqual(json.loads(failed.stdout), {'ok': False, 'error': 'Network request failed'})
 
     @classmethod
     def rpc(cls, path, value=None, method='POST', headers=None, raw=None, port=None):
@@ -334,6 +334,29 @@ class NativeAssistantTests(unittest.TestCase):
             request = self.request()
             request['config']['provider'] = provider
             self.assertEqual(self.rpc('/turn', request)[1].get('answer'), 'CLI integration complete')
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS CLI locations')
+    def test_native_cli_discovery_without_shell_path(self):
+        self.assertTrue(self.fixture.is_file(), 'Build //zitter:assistant_cli_fixture')
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            # Chromium resolves DIR_HOME through Foundation on macOS.
+            env = dict(HOME=str(home), CFFIXED_USER_HOME=str(home),
+                       CODEX_HOME=str(home / '.codex'), PATH='/usr/bin:/bin:/usr/sbin:/sbin')
+            for provider, location in [
+                ('claude', '.local/bin/claude'),
+                ('codex', 'Applications/ChatGPT.app/Contents/Resources/codex-cli/'
+                          'CodexCLI.app/Contents/MacOS/codex'),
+            ]:
+                with self.subTest(provider=provider):
+                    executable = home / location
+                    executable.parent.mkdir(parents=True)
+                    executable.symlink_to(self.fixture.resolve())
+                    result = subprocess.run(
+                        [str(BINARY), f'--check-provider={provider}', '--check-model=probe'],
+                        env=env, capture_output=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stdout.decode())
+                    self.assertEqual(json.loads(result.stdout), {'ok': True})
 
     def test_native_cli_screenshots_and_cleanup(self):
         for provider in ['codex', 'claude']:

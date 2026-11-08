@@ -52,7 +52,21 @@ inline base::FilePath NativeCommand(base::cstring_view setting, std::string name
       }
 #endif
     }
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC)
+    // Finder launches don't inherit paths set by the user's shell.
+    base::FilePath home;
+    if (base::PathService::Get(base::DIR_HOME, &home))
+      candidates.push_back(home.AppendASCII(".local/bin").AppendASCII(name));
+    for (const char* directory : {"/opt/homebrew/bin", "/usr/local/bin"})
+      candidates.push_back(base::FilePath(directory).AppendASCII(name));
+    if (name == "codex") {
+      constexpr char kBundledCodex[] =
+          "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+      if (!home.empty())
+        candidates.push_back(home.AppendASCII("Applications").AppendASCII(kBundledCodex));
+      candidates.push_back(base::FilePath("/Applications").AppendASCII(kBundledCodex));
+    }
+#elif BUILDFLAG(IS_WIN)
     if (name == "codex.exe") {
       base::FilePath local;
       if (base::PathService::Get(base::DIR_LOCAL_APP_DATA, &local)) {
