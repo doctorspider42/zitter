@@ -32,6 +32,12 @@ RESPONSES = {
                    '<rect width="160" height="70" fill="#ff6600"/></svg>', "image/svg+xml"),
     "/native": ('<!doctype html><meta name="color-scheme" content="dark">'
                 '<style>body{background:#101010;color:#ddd}</style><h1>Native dark</h1>', "text/html"),
+    "/contrast-fixture": ('''<!doctype html><meta charset="utf-8">
+        <style>body{background:#101010;color:#eee} #low{color:#343434}
+        #gradient{background-image:linear-gradient(#000,#fff)}</style>
+        <figure><figcaption id="low">Low contrast</figcaption></figure>
+        <figure><figcaption id="high">Readable</figcaption></figure>
+        <figure><figcaption id="gradient">Variable background</figcaption></figure>''', "text/html"),
 }
 BACKGROUND = "getComputedStyle(document.querySelector('#late')).backgroundColor"
 DARK = "Boolean(document.querySelector('.darkreader--user-agent'))"
@@ -109,8 +115,25 @@ def change_sheet(tab):
     return before
 
 
+def check_contrast_sample(browser, site):
+    tab = browser.tab(site + "/contrast-fixture")
+    until(lambda: tab.eval("document.readyState === 'complete' && !!document.getElementById('low')"),
+          "the contrast fixture")
+    script = (ROOT / "chromium/assistant/page.js").read_text(encoding="utf-8")
+    sample = tab.eval(script.replace("ZITTER_ARGS", '{"tool":"night_shift_inspect"}', 1))
+    captions = {candidate["path"][0]["id"]: candidate for candidate in sample["candidates"]
+                if candidate["path"][0]["tag"] == "figcaption"}
+    assert captions["low"]["contrastRatio"] < 4.5
+    assert captions["high"]["contrastRatio"] > 4.5
+    assert captions["gradient"]["contrastRatio"] is None
+    assert sample["lowContrastTargets"] == [captions["low"]["target"]]
+    assert "Low contrast" not in json.dumps(sample)
+    print("The Night Shift sample identifies low-contrast text without returning its contents")
+
+
 def check_extension(browser, port):
     site = f"http://127.0.0.1:{port}"
+    check_contrast_sample(browser, site)
     page = browser.tab(site)
     native = browser.tab(site + "/native")
     other = browser.tab(f"http://localhost:{port}")

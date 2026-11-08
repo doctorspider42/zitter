@@ -14,6 +14,34 @@
     const identifier = /^[a-z_][\w-]{0,63}$/i;
     const validTag = /^[a-z][a-z0-9-]{0,31}$/;
     const containers = 'article,section,main,aside,nav,header,footer';
+    const parseRgb = value => {
+      const match = /^rgba?\((\d+(?:\.\d+)?), (\d+(?:\.\d+)?), (\d+(?:\.\d+)?)(?:, (\d+(?:\.\d+)?))?\)$/.exec(value);
+      return match ? [...match.slice(1, 4).map(Number), Number(match[4] ?? 1)] : null;
+    };
+    const luminance = color => color.slice(0, 3).map(channel => {
+      const normalized = channel / 255;
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    const textContrast = (element, foreground) => {
+      // Restrict scoring to text on an opaque, flat surface. Keep sampling
+      // style identifiers and colors for everything else without a score.
+      if (!foreground || foreground[3] !== 1 ||
+          ![...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && /\S/.test(node.nodeValue))) return null;
+      let surface = null;
+      for (let current = element; current; current = current.parentElement) {
+        const css = style(current);
+        if (css.opacity !== '1' || css.filter !== 'none' || css.mixBlendMode !== 'normal') return null;
+        if (surface) continue;
+        if (css.backgroundImage !== 'none') return null;
+        const color = parseRgb(css.backgroundColor);
+        if (!color || (color[3] !== 0 && color[3] !== 1)) return null;
+        if (color[3] === 1) surface = color;
+      }
+      if (!surface) return null;
+      const a = luminance(foreground);
+      const b = luminance(surface);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    };
     const consider = element => {
       if (!element || seen.has(element) || candidates.length >= 48 ||
           element.closest('[data-private], [data-sensitive], form, [contenteditable]') ||
@@ -30,9 +58,11 @@
         surface = surface.parentElement;
         background = style(surface).backgroundColor;
       }
+      const ratio = textContrast(element, parseRgb(css.color));
       candidates.push({
         target: candidates.length, path: [{tag, id, classes}],
         color: css.color, background, ownBackground: css.backgroundColor,
+        contrastRatio: ratio === null ? null : Math.round(ratio * 100) / 100,
       });
     };
     consider(document.body);
@@ -50,7 +80,11 @@
         consider(element);
       }
     }
-    return {candidates};
+    return {
+      candidates,
+      lowContrastTargets: candidates.filter(candidate => candidate.contrastRatio !== null && candidate.contrastRatio < 4.5)
+        .sort((a, b) => a.contrastRatio - b.contrastRatio).map(candidate => candidate.target),
+    };
   }
   const visible = e => {
     const r = e.getBoundingClientRect(), s = style(e);
