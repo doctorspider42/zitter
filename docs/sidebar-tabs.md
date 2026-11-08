@@ -8,4 +8,4 @@ Drag a tab to the top of the sidebar (the address and New Tab area), or onto an 
 
 Favicons come from Chromium’s page favicon driver and the profile’s local favicon database. The compositor and Metal use the same clipped bitmap recipe. Pages without an available favicon show a letter from the site name; RSS keeps its RSS icon. Favorites retain their titles in tooltips and accessibility labels.
 
-Right-click a workspace in the footer and choose **Reload workspace icons** to fetch its tab and pinned-page icons again, bypassing the image cache. This updates the profile’s favicon database without reloading the open pages. Missing or failed icons fall back to letters.
+In the Command Center, run `> Refresh all favicons`. Zitter fetches page markup and icons for tabs and pinned pages in the current workspace, bypassing the cache. It updates the profile’s favicon database without reloading the open pages. Missing icons fall back to letters.

@@ -297,6 +297,7 @@ source_set("shell") {
     "//chrome/browser/preloading:prefs",
     "//services/network/public/cpp",
     "//services/data_decoder/public/cpp",
+    "//third_party/re2",
     "//chrome/browser/download",
     "//chrome/browser/extensions",
     "//chrome/browser/ui/toolbar",

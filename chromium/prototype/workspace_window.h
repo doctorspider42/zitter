@@ -42,6 +42,7 @@ enum class KeyboardEventProcessingResult;
 }
 namespace input { struct NativeWebKeyboardEvent; }
 namespace gfx { class Image; }
+namespace network { class SimpleURLLoader; }
 namespace views {
 class Label;
 class Textfield;
@@ -519,7 +520,17 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   using FaviconKey = std::pair<std::string,std::string>;
   std::map<FaviconKey,uint64_t> favicon_generations_;
   std::set<FaviconKey> favicon_refreshing_;
-  void DownloadWorkspaceFavicon(base::WeakPtr<content::WebContents> source,FaviconKey key,uint64_t generation,GURL icon,size_t attempt=0);
+  void FetchWorkspaceFavicon(Profile* profile,
+                             base::WeakPtr<content::WebContents> source,
+                             FaviconKey key, uint64_t generation, GURL known_icon);
+  void DiscoverWorkspaceFavicon(base::WeakPtr<content::WebContents> source,
+                                 FaviconKey key, uint64_t generation, GURL known_icon,
+                                 std::unique_ptr<network::SimpleURLLoader> loader,
+                                 std::optional<std::string> markup);
+  void DownloadWorkspaceFavicon(base::WeakPtr<content::WebContents> source,
+                                 FaviconKey key, uint64_t generation,
+                                 std::vector<GURL> icons, size_t index = 0,
+                                 size_t renderer_attempt = 0);
   void FinishWorkspaceFavicon(FaviconKey key,uint64_t generation,GURL icon,gfx::Image image);
   std::string PinStorageKey(std::string_view workspace, std::string_view pin) const;
   std::optional<ArcImport> pending_import_;

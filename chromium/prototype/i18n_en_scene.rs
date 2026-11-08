@@ -218,6 +218,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Otwórz systemowy magazyn certyfikatów i ustawienia zaufania.", "Open the system certificate store and trust settings."),
     ("Otwórz w nowej karcie", "Open in new tab"),
     ("Otwórz w Peek", "Open in Peek"),
+    ("Zawsze otwieraj {} w {}", "Always open {} in {}"),
     ("Otwórz →", "Open →"),
     ("\n• Pamięć podręczna", "\n• Cache"),
     ("Pamięć podręczna", "Cache"),

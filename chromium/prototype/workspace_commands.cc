@@ -73,8 +73,10 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
   }
   // Fetch all matching entries before applying learned order and the initial cap.
   std::u16string raw = u">" + query;
-  for (const auto& entry : sidebar::command_catalogue(context, base::UTF16ToUTF8(raw)))
+  for (const auto& entry : sidebar::command_catalogue(context, base::UTF16ToUTF8(raw))) {
+    if (!only && entry.id == "reload_workspace_icons") continue;
     bind(std::string(entry.id), base::UTF8ToUTF16(std::string(entry.title)), base::UTF8ToUTF16(std::string(entry.detail)), std::string(entry.target));
+  }
   const auto now = base::Time::Now();
   const auto& tools = shell_->browser_tools();
   // Score each candidate once, rather than repeating lookups and decay in
@@ -109,6 +111,7 @@ bool WorkspaceWindow::ExecuteCommand(const PaletteResult& result, bool record_us
   if (id == "assistant_settings") { shell_->OpenAssistantSettings(); return true; }
   if (id == "shortcuts" || id == "engines") { shell_->OpenTools(id == "shortcuts" ? 1 : 2); return true; }
   if (id == "spaces") { shell_->OpenWorkspaceSettings(); return true; }
+  if (id == "reload_workspace_icons") return ReloadWorkspaceFavicons(result.workspace_id);
   if (id == "profiles") { shell_->OpenProfiles(); return true; }
   if (id == "import") { shell_->OpenImport(); return true; }
   if (id == "downloads") { ShowDownloads(); return true; }

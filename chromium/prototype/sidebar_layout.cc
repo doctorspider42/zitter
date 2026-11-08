@@ -386,7 +386,7 @@ std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
 class ProfileFavoritesLayout final : public views::LayoutManager {
  public:
   void Layout(views::View* host) override {
-    const auto grid = Measure(host->width());
+    const auto grid = Measure(host->width(), VisibleCount(host));
     int index = 0;
     for (const auto& child : host->children()) {
       if (!child->GetVisible()) continue;
@@ -407,10 +407,8 @@ class ProfileFavoritesLayout final : public views::LayoutManager {
     return gfx::Size(width, GetPreferredHeightForWidth(host, width));
   }
   int GetPreferredHeightForWidth(const views::View* host, int width) const override {
-    const auto grid = Measure(width);
-    const int count = std::ranges::count_if(host->children(), [](const auto& child) {
-      return child->GetVisible();
-    });
+    const int count = VisibleCount(host);
+    const auto grid = Measure(width, count);
     const int rows = (count + grid.columns - 1) / grid.columns;
     return rows ? rows * (grid.cell_height + kGap) - kGap : 0;
   }
@@ -427,11 +425,20 @@ class ProfileFavoritesLayout final : public views::LayoutManager {
   static constexpr int kGap = 8;
   static constexpr int kMinCellWidth = 48;
   static constexpr int kPreferredWidth = 200;
-  static Grid Measure(int width) {
-    const int columns = std::max(1, (width + kGap) / (kMinCellWidth + kGap));
+  static int VisibleCount(const views::View* host) {
+    return static_cast<int>(std::ranges::count_if(host->children(), [](const auto& child) {
+      return child->GetVisible();
+    }));
+  }
+  // Favorites always span the whole sidebar: fewer favorites than fit in a row
+  // share its width. Tiles keep the height of a full row's cells.
+  static Grid Measure(int width, int count) {
+    const int fit = std::max(1, (width + kGap) / (kMinCellWidth + kGap));
+    const int full_cell = (width - (fit - 1) * kGap) / fit;
+    const int columns = count > 0 ? std::min(fit, count) : fit;
     const int available = width - (columns - 1) * kGap;
     const int cell = available / columns;
-    return {columns, cell, cell - cell / 6, available % columns};
+    return {columns, cell, full_cell - full_cell / 6, available % columns};
   }
 };
 std::unique_ptr<views::LayoutManager> CreateProfileFavoritesLayout(){return std::make_unique<ProfileFavoritesLayout>();}

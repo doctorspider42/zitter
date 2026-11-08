@@ -1716,11 +1716,15 @@ const LINK_PEEK:i32=20;const LINK_NEW_TAB:i32=21;const LINK_SPLIT:i32=22;const L
 fn link_route(command:i32,s:&ffi::LinkMenuState)->Option<&ffi::LinkRoute>{if command<LINK_ROUTE_BASE{return None;}s.routes.get((command-LINK_ROUTE_BASE) as usize)}
 fn link_context_menu(s:&ffi::LinkMenuState)->Vec<ffi::LinkMenuEntry>{
     let mut entries=Vec::new();let mut add=|command,label:String,kind|entries.push(ffi::LinkMenuEntry{command,label,kind});
-    add(LINK_PEEK,t("Otwórz w Peek").into(),0);add(LINK_NEW_TAB,t("Otwórz w nowej karcie").into(),0);add(LINK_SPLIT,t("Otwórz obok w Split View").into(),0);add(0,String::new(),1);
-    let source=s.routes.iter().find(|r|r.id==s.source).map_or(s.source.as_str(),|r|r.label.as_str());
-    add(LINK_RULE_HERE,tf("Otwieraj {} zawsze w przestrzeni „{}”",&[&s.host,source]),0);add(LINK_ROUTES,tf("Otwieraj {} w…",&[&s.host]),2);
+    // Design: Page context menu. The long rule labels sit in the routes
+    // submenu, so the menu keeps its width whatever the space is called.
+    add(LINK_NEW_TAB,t("Otwórz w nowej karcie").into(),0);add(LINK_PEEK,t("Otwórz w Peek").into(),0);add(LINK_SPLIT,t("Otwórz obok w Split View").into(),0);
+    add(LINK_ROUTES,tf("Otwieraj {} w…",&[&s.host]),2);
     for (index,route) in s.routes.iter().enumerate(){add(LINK_ROUTE_BASE+index as i32,route.label.clone(),3);}
-    if s.has_rule{add(LINK_REMOVE_RULE,tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]),0);}entries
+    // A route label is "space · profile"; the rule names the space alone.
+    let source=s.routes.iter().find(|r|r.id==s.source).map_or(s.source.as_str(),|r|r.label.rsplit_once(" · ").map_or(r.label.as_str(),|(name,_)|name));
+    add(0,String::new(),6);add(LINK_RULE_HERE,tf("Zawsze otwieraj {} w {}",&[&s.host,source]),5);
+    if s.has_rule{add(LINK_REMOVE_RULE,tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]),5);}entries
 }
 fn link_menu_enabled(command:i32,s:&ffi::LinkMenuState)->bool{
     if !s.ready{return false;}
@@ -1799,6 +1803,11 @@ fn command_catalogue(c:&ffi::CommandContext,query:&str)->Vec<ffi::CommandEntry>{
     for (id,title,detail,aliases) in [("new_tab",t("Nowa karta"),t("Otwórz pasek nowej karty"),"new tab"),("save_snapshot",t("Zapisz snapshot przestrzeni"),t("Szybki punkt przywracania w Time Machine"),"zapis sesji save snapshot backup"),("timeline","Time Machine",t("Snapshoty i zamknięte karty"),"przywróć restore historia sesji"),("settings",t("Ustawienia przeglądarki"),t("Wygląd, prywatność i ustawienia profilu"),"settings preferences"),("shortcuts",t("Konfiguruj skróty klawiszowe"),t("Nagraj lub zmień kombinacje klawiszy"),"keyboard shortcuts mouse gestures gesty myszy"),("engines",t("Konfiguruj wyszukiwarki"),t("Prefiksy i domyślna wyszukiwarka"),"search engines"),("sidebar",t("Pokaż / ukryj panel boczny"),t("Karty i przestrzenie"),"sidebar menu"),("spaces",t("Zarządzaj przestrzeniami"),t("Dodaj lub edytuj space i przypisanie profilu"),"workspace spaces"),("profiles",t("Zarządzaj profilami"),t("Dodaj profil i zarządzaj jego danymi"),"profile accounts"),("import",t("Importuj z przeglądarki"),t("Wybierz przeglądarkę i zakres importu"),"import arc chrome edge brave zakladki profile"),("history",t("Historia przeglądania"),t("Przeglądaj, szukaj i czyść historię profilu"),"history visited historia wyczysc"),("downloads",t("Pobrania"),t("Postęp, pauza, wznowienie i Finder"),"downloads pobierz pliki transfer")]{add(id,title.into(),detail,aliases,"");}
     add("rss",t("Czytnik RSS").into(),t("Subskrypcje RSS i Atom tego profilu"),"rss atom feeds reader czytnik wiadomosci","");
     add("developer",t("Narzędzia developerskie").into(),t("Wyłączony / Auto / Włączony · narzędzia projektu lokalnego"),"developer localhost devtools mode","");
+    if only {
+        add("reload_workspace_icons", t("Odśwież wszystkie favicony").into(),
+            t("Karty i przypięte strony w bieżącej przestrzeni"),
+            "refresh all favicons reload icons", "");
+    }
     if c.page{
         for (id,title,aliases) in [("devtools_panel",t("Otwórz DevTools"),"devtools network sources elements"),("devtools_console",t("Otwórz konsolę"),"devtools console"),("devtools_inspect",t("Zbadaj element"),"devtools inspect elements"),("hard_reload",t("Odśwież bez pamięci podręcznej"),"hard reload refresh bypass cache")] { add(id,title.into(),t("Narzędzia developerskie"),aliases,""); }
         add("split",(if c.split{t("Zakończ Split View")}else{t("Otwórz Split View")}).into(),t("Dwie karty obok siebie"),"split podziel porównaj compare","");
@@ -5374,7 +5383,7 @@ mod tests {
     }
     fn link_state()->ffi::LinkMenuState{ffi::LinkMenuState{ready:true,host:"example.com".into(),source:"work".into(),has_rule:true,rule_workspace:"home".into(),routes:vec![ffi::LinkRoute{id:"work".into(),label:"Praca · Główny".into()},ffi::LinkRoute{id:"home".into(),label:"Dom · Prywatny".into()}]}}
     #[test] fn link_menu_preserves_order_labels_route_submenu_and_checks() {
-        let s=link_state();let menu=link_context_menu(&s);assert_eq!(menu.iter().map(|e|(e.command,e.kind)).collect::<Vec<_>>(),vec![(20,0),(21,0),(22,0),(0,1),(23,0),(25,2),(1000,3),(1001,3),(24,0)]);assert_eq!(menu[5].label,"Otwieraj example.com w…");assert_eq!(menu[7].label,"Dom · Prywatny");assert_eq!(menu[0].label,"Otwórz w Peek");
+        let s=link_state();let menu=link_context_menu(&s);assert_eq!(menu.iter().map(|e|(e.command,e.kind)).collect::<Vec<_>>(),vec![(21,0),(20,0),(22,0),(25,2),(1000,3),(1001,3),(0,6),(23,5),(24,5)]);assert_eq!(menu[3].label,"Otwieraj example.com w…");assert_eq!(menu[5].label,"Dom · Prywatny");assert_eq!(menu[1].label,"Otwórz w Peek");assert_eq!(menu[7].label,"Zawsze otwieraj example.com w Praca");
         assert!(!link_menu_checked(1000,&s)&&link_menu_checked(1001,&s)&&!link_menu_checked(1002,&s)&&!link_menu_checked(24,&s));let mut none=link_state();none.has_rule=false;assert!(!link_menu_checked(1001,&none));
         assert!(link_menu_enabled(24,&s)&&!link_menu_enabled(24,&none)&&link_menu_enabled(23,&none)&&link_menu_enabled(1001,&s)&&!link_menu_enabled(1002,&s)&&!link_menu_enabled(999,&s)&&!link_menu_enabled(0,&s));
         let mut empty=link_state();empty.routes.clear();assert_eq!(link_context_menu(&empty).iter().filter(|e|e.kind==3).count(),0);
@@ -5443,7 +5452,7 @@ mod tests {
     fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,assistant:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}
     #[test] fn command_catalogue_lists_conditional_entries_with_targets() {
         let all=command_catalogue(&command_context(),">");let ids=all.iter().map(|e|e.id.as_str()).collect::<Vec<_>>();
-        assert_eq!(ids,vec!["new_tab","save_snapshot","timeline","settings","shortcuts","engines","sidebar","spaces","profiles","import","history","downloads","rss","developer","devtools_panel","devtools_console","devtools_inspect","hard_reload","split","reload","find","print","copy_url","back","passwords","close_tab","close_other_tabs","reopen","select_space","move_tab","sleep_space","select_space","copy_tab","sleep_others","assistant"]);
+        assert_eq!(ids,vec!["new_tab","save_snapshot","timeline","settings","shortcuts","engines","sidebar","spaces","profiles","import","history","downloads","rss","developer","reload_workspace_icons","devtools_panel","devtools_console","devtools_inspect","hard_reload","split","reload","find","print","copy_url","back","passwords","close_tab","close_other_tabs","reopen","select_space","move_tab","sleep_space","select_space","copy_tab","sleep_others","assistant"]);
         assert_eq!(all[0].detail,"Polecenie · Otwórz pasek nowej karty");assert_eq!(all.iter().find(|e|e.id=="split").unwrap().title,"Otwórz Split View");
         let wake=all.iter().find(|e|e.target=="club"&&e.id=="select_space").unwrap();assert_eq!(wake.title,"Obudź przestrzeń: Klub");assert_eq!(all.iter().find(|e|e.id=="move_tab").unwrap().target,"home");
         let mut split=command_context();split.split=true;split.can_forward=true;split.tab_count=1;split.reopen=false;split.page=true;let ids=command_catalogue(&split,">").into_iter().map(|e|e.id).collect::<Vec<_>>();
@@ -5452,7 +5461,9 @@ mod tests {
         assert!(!ids.iter().any(|i|matches!(i.as_str(),"split"|"reload"|"move_tab"|"copy_tab"|"sleep_space"|"sleep_others")));
     }
     #[test] fn command_catalogue_matches_folded_words_and_compacts_initial_view() {
-        let c=command_context();assert_eq!(command_catalogue(&c,"").len(),6);assert_eq!(command_catalogue(&c,">").len(),35);
+        let c=command_context();assert_eq!(command_catalogue(&c,"").len(),6);assert_eq!(command_catalogue(&c,">").len(),36);
+        assert!(command_catalogue(&c,"favicon").is_empty());
+        assert_eq!(command_catalogue(&c,"> refresh all favicons")[0].id,"reload_workspace_icons");
         let found=command_catalogue(&c,"PRZYWROC  karte");assert_eq!(found.iter().map(|e|e.id.as_str()).collect::<Vec<_>>(),vec!["reopen"]);
         let found=command_catalogue(&c,">  uśpij\tdom ");assert_eq!(found.iter().map(|e|(e.id.as_str(),e.target.as_str())).collect::<Vec<_>>(),vec![("sleep_space","home")]);
         assert_eq!(command_catalogue(&c,"asystent")[0].id,"assistant");

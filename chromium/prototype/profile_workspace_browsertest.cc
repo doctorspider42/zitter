@@ -436,6 +436,18 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
     }, base::Unretained(this)));
     embedded_test_server()->RegisterRequestHandler(base::BindRepeating([](ZitterProfilesBrowserTest* self, const net::test_server::HttpRequest& request)
         -> std::unique_ptr<net::test_server::HttpResponse> {
+      if (request.relative_url == "/favicon-placeholder") {
+        ++self->favicon_placeholder_requests_;
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_content_type("text/html");
+        response->AddCustomHeader("Cache-Control", "public, max-age=86400");
+        response->set_content(self->favicon_reload_color_ == 2
+            ? "<title>Favicon placeholder</title><base href='/assets/'>"
+              "<link rel='icon' href='missing.png'>"
+              "<LINK HREF='../favicon_reload.png' REL='shortcut icon'>"
+            : "<title>Favicon placeholder</title>");
+        return response;
+      }
       if (request.relative_url == "/favicon_reload.png") {
         ++self->favicon_reload_requests_;
         auto response=std::make_unique<net::test_server::BasicHttpResponse>();
@@ -587,6 +599,7 @@ class ZitterProfilesBrowserTest : public InProcessBrowserTest {
 
   std::atomic<int> favicon_reload_color_{1};
   std::atomic<int> favicon_reload_requests_{0};
+  std::atomic<int> favicon_placeholder_requests_{0};
   base::Lock routing_lock_;
   std::vector<std::string> routing_cookies_ GUARDED_BY(routing_lock_);
 #if BUILDFLAG(IS_WIN)
@@ -5419,15 +5432,17 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DomainRoutingAndPersistence) {
   { base::AutoLock guard(routing_lock_); routing_cookies_.clear(); }
   auto* shell = window_->shell();
   shell->BuildLinkMenu(target, "work");
-  auto* rules = shell->link_menu()->GetSubmenuModelAt(5);
+  // New tab, Peek, Split View, then the routes submenu.
+  auto* rules = shell->link_menu()->GetSubmenuModelAt(3);
   ASSERT_TRUE(rules); rules->ActivatedAt(1, 0);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->WorkspaceForUrl(target) == "personal"; }));
   EXPECT_FALSE(window_->SetLinkRule(GURL("file:///tmp/x"), "personal"));
   EXPECT_FALSE(window_->SetLinkRule(target, "missing"));
   EXPECT_TRUE(window_->WorkspaceForUrl(GURL("https://sub.client.test/")).empty());
   shell->BuildLinkMenu(target, "work");
-  EXPECT_TRUE(shell->link_menu()->GetSubmenuModelAt(5)->IsItemCheckedAt(1));
-  shell->link_menu()->ActivatedAt(6, 0);
+  EXPECT_TRUE(shell->link_menu()->GetSubmenuModelAt(3)->IsItemCheckedAt(1));
+  // Routes, a separator, „Zawsze otwieraj … w …”, then the rule's removal.
+  shell->link_menu()->GetSubmenuModelAt(3)->ActivatedAt(4, 0);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->WorkspaceForUrl(target).empty(); }));
   ASSERT_TRUE(window_->SetLinkRule(target, "personal"));
   ASSERT_TRUE(content::ExecJs(source, content::JsReplace("document.getElementById('route').href = $1; document.getElementById('route').click()", target)));
@@ -8831,11 +8846,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinnedFolderKeepsActiveAndTemp
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceIconsReloadWithoutNavigatingTabsAndFallbackToLetters) {
-  const auto pinned=embedded_test_server()->GetURL("favicon.test","/favicon_reload_probe.html?pinned");
+  const auto pinned=embedded_test_server()->GetURL("favicon.test","/favicon-placeholder");
   const auto normal=embedded_test_server()->GetURL("favicon.test","/favicon_reload_probe.html?normal");
   auto* shell=window_->shell();EXPECT_FALSE(shell->sidebar_heading_visible_for_testing());
   ASSERT_TRUE(window_->NavigateFromBar(pinned,false));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
-  ASSERT_TRUE(base::test::RunUntil([&]{return shell->row_has_favicon_for_testing(shell->tab_button(0));}));
+  EXPECT_FALSE(shell->row_has_favicon_for_testing(shell->tab_button(0)));
   ASSERT_TRUE(window_->PinTab(0,"@profile",""));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
   const auto pin=window_->pinned_items("work").front().id;
   ASSERT_TRUE(window_->NavigateFromBar(normal,true));ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));window_->CloseTab(0);
@@ -8848,12 +8863,21 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceIconsReloadWithoutNav
   ASSERT_TRUE(window_->Select("work"));
   const auto entry_id=page->GetController().GetVisibleEntry()->GetUniqueID();
   const auto entries=page->GetController().GetEntryCount();const int before=favicon_reload_requests_;
+  const int before_placeholder = favicon_placeholder_requests_;
+  ASSERT_FALSE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
   favicon_reload_color_=2;
-  shell->BuildWorkspaceMenu("work");auto* menu=shell->workspace_menu();const auto command=menu->GetIndexOfCommandId(203);
-  ASSERT_TRUE(command);ASSERT_TRUE(menu->IsEnabledAt(*command));menu->ActivatedAt(*command,0);
+  window_->OpenCommandPalette();
+  SetPaletteQuery(u"favicon");
+  EXPECT_TRUE(window_->CommandResults(u"favicon").empty());
+  SetPaletteQuery(u"> refresh all favicons");
+  ASSERT_EQ(1u, shell->suggestions().size());
+  EXPECT_EQ("reload_workspace_icons", shell->suggestions().front().command_id);
+  ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
+  ASSERT_TRUE(shell->address_input()->view()->OnKeyPressed(enter));
   auto green=[](const gfx::Image& image){if(image.IsEmpty())return false;const auto bitmap=image.AsBitmap();auto color=bitmap.getColor(bitmap.width()/2,bitmap.height()/2);return SkColorGetG(color)>170&&SkColorGetB(color)<120;};
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->workspace_favicons_pending_for_testing()&&green(page->GetController().GetVisibleEntry()->GetFavicon().image);}));
   EXPECT_GT(favicon_reload_requests_,before);EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
+  EXPECT_GT(favicon_placeholder_requests_, before_placeholder);
   base::CancelableTaskTracker tracker;base::test::TestFuture<gfx::Image> stored;
   FaviconServiceFactory::GetForProfile(work_,ServiceAccessType::IMPLICIT_ACCESS)->GetFaviconImageForPageURL(pinned,base::BindOnce(
       [](base::OnceCallback<void(gfx::Image)> done,const favicon_base::FaviconImageResult& result){std::move(done).Run(result.image);},stored.GetCallback()),&tracker);
@@ -8931,7 +8955,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCop
     ASSERT_TRUE(navigation);
     ASSERT_EQ(1u, navigation->children().size());
     const auto& buttons = navigation->children().front()->children();
-    ASSERT_EQ(3u, buttons.size());
+    // Back, Forward, Reload and Copy page address.
+    ASSERT_EQ(4u, buttons.size());
     EXPECT_EQ(!forward_enabled, buttons[0]->GetEnabled());
     EXPECT_EQ(forward_enabled, buttons[1]->GetEnabled());
     EXPECT_TRUE(buttons[2]->GetEnabled());
@@ -9040,6 +9065,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfileFavoritesScaleToSidebar
     EXPECT_EQ(tile_height + 8, grid.children()[columns]->y());
     EXPECT_EQ(width, grid.children()[columns - 1]->bounds().right());
   }
+  // Fewer favorites than fit in a row still span the whole sidebar, at the
+  // height of a full row's tiles.
+  while (grid.children().size() > 2) grid.RemoveChildViewT(grid.children().back().get());
+  grid.SetBounds(0, 0, 225, layout->GetPreferredHeightForWidth(&grid, 225));
+  layout->Layout(&grid);
+  EXPECT_EQ(42, grid.height());
+  EXPECT_EQ(0, grid.children()[1]->y());
+  EXPECT_EQ(225, grid.children()[1]->bounds().right());
+  EXPECT_EQ(grid.children()[0]->width(), grid.children()[1]->width() + (grid.children()[0]->width() > grid.children()[1]->width() ? 1 : 0));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfileFavoritesReflowDuringNativeSidebarResize) {

@@ -56,6 +56,14 @@
 #include "content/public/browser/favicon_status.h"
 #include "third_party/blink/public/mojom/favicon/favicon_url.mojom.h"
 #include "base/containers/flat_set.h"
+#include "base/strings/escape.h"
+#include "base/strings/string_split.h"
+#include "net/base/load_flags.h"
+#include "re2/re2.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "url/url_constants.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "skia/ext/image_operations.h"
@@ -967,7 +975,6 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.leave_split = base::BindRepeating(&WorkspaceWindow::RemoveFromSplit, base::Unretained(this));
   callbacks.close_split_tabs = base::BindRepeating(&WorkspaceWindow::CloseSplitTabs, base::Unretained(this));
   callbacks.move_split_pane = base::BindRepeating(&WorkspaceWindow::MoveSplitPane, base::Unretained(this));
-  callbacks.reload_workspace_favicons = base::BindRepeating(&WorkspaceWindow::ReloadWorkspaceFavicons, base::Unretained(this));
   callbacks.duplicate_pin = base::BindRepeating(&WorkspaceWindow::DuplicatePin, base::Unretained(this));
   callbacks.duplicate_tab = base::BindRepeating(&WorkspaceWindow::DuplicateTab, base::Unretained(this));
   callbacks.move_tab_to_workspace = base::BindRepeating(&WorkspaceWindow::MoveSidebarTab, base::Unretained(this));
@@ -2466,6 +2473,58 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
 // A tab moves to another space of the same profile (the tabs API's window
 // spans them all). Its page, history and storage stay; it leaves any split and
 // its pin, as a closed tab would.
+namespace {
+
+bool IsWorkspaceFaviconUrl(const GURL& icon) {
+  return icon.SchemeIsHTTPOrHTTPS() || icon.SchemeIs(url::kDataScheme);
+}
+
+// Inspect markup without running scripts or loading other page resources.
+std::vector<GURL> WorkspaceIconCandidates(std::string_view html, const GURL& page_url) {
+  static const base::NoDestructor<RE2> tag(
+      R"re((?is)<!--.*?-->|<(?:script|style|title|textarea)\b[^>]*>.*?</(?:script|style|title|textarea)\s*>|<(link|base)\b((?:"[^"]*"|'[^']*'|[^'">])*)>)re");
+  static const base::NoDestructor<RE2> attribute(
+      R"re(([^\s=/"'<>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+)))?)re");
+  constexpr size_t kMaxDeclaredIcons = 6;
+  std::vector<std::string> paths;
+  GURL base_url = page_url;
+  bool has_base = false;
+  std::string_view name, attributes;
+  while (RE2::FindAndConsume(&html, *tag, &name, &attributes)) {
+    if (name.empty()) continue;
+    std::string_view key, quoted, single_quoted, unquoted, href, rel;
+    while (RE2::FindAndConsume(&attributes, *attribute, &key, &quoted, &single_quoted, &unquoted)) {
+      const auto value = !quoted.empty() ? quoted : !single_quoted.empty() ? single_quoted : unquoted;
+      if (base::EqualsCaseInsensitiveASCII(key, "href") && href.empty()) href = value;
+      if (base::EqualsCaseInsensitiveASCII(key, "rel") && rel.empty()) rel = value;
+    }
+    if (href.empty()) continue;
+    std::string path = base::UTF16ToUTF8(base::UnescapeForHTML(base::UTF8ToUTF16(href)));
+    if (base::EqualsCaseInsensitiveASCII(name, "base")) {
+      if (!has_base) {
+        const GURL candidate = page_url.Resolve(path);
+        if (candidate.SchemeIsHTTPOrHTTPS()) base_url = candidate;
+        has_base = true;
+      }
+    } else if (paths.size() < kMaxDeclaredIcons) {
+      const auto lower_rel = base::ToLowerASCII(rel);
+      const auto relations = base::SplitStringPiece(lower_rel, base::kWhitespaceASCII,
+                                                     base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+      if (std::ranges::find(relations, "icon") != relations.end())
+        paths.push_back(std::move(path));
+    }
+  }
+  std::vector<GURL> icons;
+  for (const auto& path : paths) {
+    GURL url = base_url.Resolve(path);
+    if (IsWorkspaceFaviconUrl(url) && std::ranges::find(icons, url) == icons.end())
+      icons.push_back(std::move(url));
+  }
+  return icons;
+}
+
+}  // namespace
+
 bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || closing_ || !model_.Find(workspace)) return false;
   if (workspace != active_id() && (!Select(workspace) || active_id() != workspace)) return false;
@@ -2484,6 +2543,7 @@ bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
       if (!url.SchemeIsHTTPOrHTTPS()) continue;
       auto& icon = pages[url];
       if (auto* page = view->web_contents()) {
+        if (page->GetVisibleURL() != url || icon.is_valid()) continue;
         if (auto* entry = page->GetController().GetVisibleEntry()) icon = entry->GetFavicon().url;
         if (!icon.is_valid()) for (const auto& candidate : page->GetFaviconURLs())
           if (candidate->icon_url.is_valid()) { icon = candidate->icon_url; break; }
@@ -2500,10 +2560,10 @@ bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
       favicon_requests_.insert(key);
       auto download = base::BindOnce(
           [](base::WeakPtr<WorkspaceWindow> window,base::WeakPtr<content::WebContents> source,FaviconKey key,uint64_t generation,GURL known_icon,const favicon_base::FaviconImageResult& result) {
-            if (!window) return;
-            GURL icon = known_icon.is_valid() ? known_icon : result.icon_url;
-            if (!icon.is_valid()) icon = GURL(key.second).Resolve("/favicon.ico");
-            window->DownloadWorkspaceFavicon(source,std::move(key),generation,std::move(icon));
+            if (!window || window->closing_ || window->favicon_generations_[key] != generation) return;
+            auto* profile = window->ProfileFor(key.first);
+            if (!known_icon.is_valid()) known_icon = result.icon_url;
+            window->FetchWorkspaceFavicon(profile, source, std::move(key), generation, std::move(known_icon));
           },weak_factory_.GetWeakPtr(),source->GetWeakPtr(),key,generation,known_icon);
       if (service) {
         service->SetFaviconOutOfDateForPage(url);
@@ -2516,23 +2576,92 @@ bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
   return false;
 }
 
-void WorkspaceWindow::DownloadWorkspaceFavicon(base::WeakPtr<content::WebContents> source,FaviconKey key,uint64_t generation,GURL icon,size_t attempt) {
-  if (closing_ || favicon_generations_[key] != generation || !favicon_refreshing_.contains(key)) return;
-  if (!source) { FinishWorkspaceFavicon(std::move(key),generation,std::move(icon),{}); return; }
-  if (!source->GetPrimaryMainFrame()->IsRenderFrameLive()) {
-    if (attempt < 40) {
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
-          base::BindOnce(&WorkspaceWindow::DownloadWorkspaceFavicon,weak_factory_.GetWeakPtr(),source,std::move(key),generation,std::move(icon),attempt+1),base::Milliseconds(50));
-    } else FinishWorkspaceFavicon(std::move(key),generation,std::move(icon),{});
+void WorkspaceWindow::FetchWorkspaceFavicon(
+    Profile* profile, base::WeakPtr<content::WebContents> source,
+    FaviconKey key, uint64_t generation, GURL known_icon) {
+  if (!profile) {
+    FinishWorkspaceFavicon(std::move(key), generation, {}, {});
     return;
   }
-  source->DownloadImage(icon,true,gfx::Size(32,32),64,true,base::BindOnce(
-      [](base::WeakPtr<WorkspaceWindow> window,FaviconKey key,uint64_t generation,int,int status,const GURL& icon,const std::vector<SkBitmap>& bitmaps,const std::vector<gfx::Size>&) {
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL(key.second);
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DO_NOT_SAVE_COOKIES;
+  constexpr auto annotation = net::DefineNetworkTrafficAnnotation(
+      "zitter_workspace_favicon_discovery", R"(
+    semantics {
+      sender: "Zitter workspace icon refresh"
+      description: "Fetches markup to discover favicon URLs for tabs and pinned pages."
+      trigger: "The user runs Refresh all favicons in the Command Center."
+      data: "The page URL, without cookies or authentication."
+      destination: WEBSITE
+    }
+    policy {
+      cookies_allowed: NO
+      setting: "This request only occurs when the user runs the command."
+      policy_exception_justification: "User initiated icon refresh."
+    })");
+  auto loader = network::SimpleURLLoader::Create(std::move(request), annotation);
+  loader->SetTimeoutDuration(base::Seconds(10));
+  loader->SetAllowPartialResults(true);
+  auto factory = profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess();
+  auto* loading = loader.get();
+  loading->DownloadToString(factory.get(),
+      base::BindOnce(&WorkspaceWindow::DiscoverWorkspaceFavicon,
+                     weak_factory_.GetWeakPtr(), source, std::move(key), generation,
+                     std::move(known_icon), std::move(loader)), 512 * 1024);
+}
+
+void WorkspaceWindow::DiscoverWorkspaceFavicon(
+    base::WeakPtr<content::WebContents> source, FaviconKey key, uint64_t generation,
+    GURL known_icon, std::unique_ptr<network::SimpleURLLoader> loader,
+    std::optional<std::string> markup) {
+  if (closing_ || favicon_generations_[key] != generation) return;
+  const GURL& final_url = loader->GetFinalURL();
+  const GURL page_url = final_url.SchemeIsHTTPOrHTTPS() ? final_url : GURL(key.second);
+  auto icons = markup ? WorkspaceIconCandidates(*markup, page_url) : std::vector<GURL>{};
+  for (const GURL& candidate : {known_icon, page_url.Resolve("/favicon.ico")}) {
+    if (IsWorkspaceFaviconUrl(candidate) && std::ranges::find(icons, candidate) == icons.end())
+      icons.push_back(candidate);
+  }
+  DownloadWorkspaceFavicon(source, std::move(key), generation, std::move(icons));
+}
+
+void WorkspaceWindow::DownloadWorkspaceFavicon(
+    base::WeakPtr<content::WebContents> source, FaviconKey key, uint64_t generation,
+    std::vector<GURL> icons, size_t index, size_t renderer_attempt) {
+  if (closing_ || favicon_generations_[key] != generation || !favicon_refreshing_.contains(key)) return;
+  if (!source || index == icons.size()) {
+    FinishWorkspaceFavicon(std::move(key), generation, {}, {});
+    return;
+  }
+  if (!source->GetPrimaryMainFrame()->IsRenderFrameLive()) {
+    if (renderer_attempt < 40) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE,
+          base::BindOnce(&WorkspaceWindow::DownloadWorkspaceFavicon, weak_factory_.GetWeakPtr(),
+                         source, std::move(key), generation, std::move(icons),
+                         index, renderer_attempt + 1), base::Milliseconds(50));
+    } else {
+      FinishWorkspaceFavicon(std::move(key), generation, {}, {});
+    }
+    return;
+  }
+  const GURL icon = icons[index];
+  source->DownloadImage(icon, true, gfx::Size(32, 32), 64, true, base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window, base::WeakPtr<content::WebContents> source,
+         FaviconKey key, uint64_t generation, std::vector<GURL> icons, size_t index,
+         int, int status, const GURL& icon, const std::vector<SkBitmap>& bitmaps,
+         const std::vector<gfx::Size>&) {
         if (!window) return;
-        gfx::Image image;
-        if (status < 400 && !bitmaps.empty() && !bitmaps.front().drawsNothing()) image = gfx::Image::CreateFrom1xBitmap(bitmaps.front());
-        window->FinishWorkspaceFavicon(std::move(key),generation,icon,std::move(image));
-      },weak_factory_.GetWeakPtr(),std::move(key),generation));
+        if (status < 400 && !bitmaps.empty() && !bitmaps.front().drawsNothing()) {
+          window->FinishWorkspaceFavicon(std::move(key), generation, icon,
+                                         gfx::Image::CreateFrom1xBitmap(bitmaps.front()));
+        } else {
+          window->DownloadWorkspaceFavicon(source, std::move(key), generation,
+                                           std::move(icons), index + 1);
+        }
+      }, weak_factory_.GetWeakPtr(), source, std::move(key), generation, std::move(icons), index));
 }
 
 void WorkspaceWindow::FinishWorkspaceFavicon(FaviconKey key,uint64_t generation,GURL icon,gfx::Image image) {
@@ -3096,6 +3225,12 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     return true;
   }
   if (id == "developer") { shell_->ShowDeveloperMenu(); return true; }
+  if (id == "view_source") {
+    // The page's source opens beside it, in a new tab of the same space.
+    auto* page = peek_contents() ? peek_contents() : contents(active_id());
+    if (!page || !page->GetVisibleURL().SchemeIsHTTPOrHTTPS()) return false;
+    return OpenLink(GURL("view-source:" + page->GetVisibleURL().spec()), active_id(), true, false);
+  }
   if (id.starts_with("devtools") || id == "hard_reload" || id == "project_split") {
     auto* page = peek_contents() ? peek_contents() : contents(active_id());
     if (!page) return false;

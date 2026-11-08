@@ -6851,10 +6851,10 @@ constexpr int kResetPinnedUrl = 28;
 constexpr int kDuplicateTab = 200;
 constexpr int kPinProfileTab = 201;
 constexpr int kMoveTabSubmenu = 202;
-constexpr int kReloadWorkspaceIcons = 203;
 constexpr int kPageNavigation = 204;
 constexpr int kCopyPageAddress = 205;
 constexpr int kCopyLinkAddress = 206;
+constexpr int kViewSource = 207;
 constexpr int kCopyTabAddress = 208;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
@@ -6891,6 +6891,13 @@ constexpr gfx::VectorIconRep kMenuNewTabRep[]={{kMenuNewTabPath}};
 constexpr gfx::VectorIconRep kMenuSidebarRep[]={{kMenuSidebarPath}};
 constexpr gfx::VectorIcon kMenuNewTabIcon(kMenuNewTabRep,1,"zitter_menu_new_tab");
 constexpr gfx::VectorIcon kMenuSidebarIcon(kMenuSidebarRep,1,"zitter_menu_sidebar");
+constexpr gfx::PathElement kMenuSpacesPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,2.5f,4.5f,4.5f,1,ROUND_RECT,9,2.5f,4.5f,4.5f,1,ROUND_RECT,2.5f,9,4.5f,4.5f,1,ROUND_RECT,9,9,4.5f,4.5f,1};
+constexpr gfx::VectorIconRep kMenuSpacesRep[]={{kMenuSpacesPath}};
+constexpr gfx::PathElement kMenuSourcePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,9.5f,2.5f,H_LINE_TO,4.5f,V_LINE_TO,13.5f,H_LINE_TO,11.5f,V_LINE_TO,4.5f,LINE_TO,9.5f,2.5f,
+    MOVE_TO,7,8,LINE_TO,6,9.25f,LINE_TO,7,10.5f,MOVE_TO,9,8,LINE_TO,10,9.25f,LINE_TO,9,10.5f};
+constexpr gfx::VectorIconRep kMenuSourceRep[]={{kMenuSourcePath}};
+constexpr gfx::VectorIcon kMenuSpacesIcon(kMenuSpacesRep,1,"zitter_menu_spaces");
+constexpr gfx::VectorIcon kMenuSourceIcon(kMenuSourceRep,1,"zitter_menu_source");
 #if !BUILDFLAG(IS_MAC)
 // The |z⟩ menu's row icons (design: Main, Menu Zitter), 16 px at `.zt-icon`'s 1.6 stroke.
 constexpr gfx::PathElement kMenuAddressPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,7,7,4,MOVE_TO,10,10,LINE_TO,13,13};
@@ -7031,22 +7038,25 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   route_workspaces_ = state_.workspaces;
   route_menu_ = std::make_unique<DesignMenuModel>(this);
   link_menu_ = std::make_unique<DesignMenuModel>(this);
-  if (page) {
-    link_menu_->AddItem(kPageNavigation, {});
-    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-    link_menu_->AddItemWithIcon(kCopyPageAddress, T(u"Kopiuj adres karty"),
-                                MenuIcon(vector_icons::kContentCopyIcon));
-    if (context_url_.SchemeIsHTTPOrHTTPS())
-      link_menu_->AddItemWithIcon(kCopyLinkAddress, T(u"Kopiuj adres linku"),
-                                  MenuIcon(vector_icons::kLinkIcon));
-  }
+  // Design: Page context menu. Back, Forward, Reload and Copy page address
+  // share one icon row; a link gets its own section under a header.
+  if (page) link_menu_->AddItem(kPageNavigation, {});
   if (!context_url_.SchemeIsHTTPOrHTTPS()) return;
+  if (page) {
+    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    std::u16string where = base::UTF8ToUTF16(std::string(context_url_.host()) + std::string(context_url_.path()));
+    if (where.ends_with(u"/")) where.pop_back();
+    if (where.size() > 34) where = where.substr(0, 33) + u"…";
+    link_menu_->AddTitle(base::i18n::ToUpper(T(u"Link")) + u"  " + where);
+  }
   for (const auto& entry : sidebar::link_context_menu(LinkMenuStateFor(state_, context_url_, link_source_workspace_, route_workspaces_))) {
     const auto label = base::UTF8ToUTF16(std::string(entry.label));
     switch (entry.kind) {
       case 1: link_menu_->AddSeparator(ui::NORMAL_SEPARATOR); break;
-      case 2: link_menu_->AddSubMenu(entry.command, label, route_menu_.get()); break;
+      case 2: link_menu_->AddSubMenuWithIcon(entry.command, label, route_menu_.get(), MenuIcon(kMenuSpacesIcon)); break;
       case 3: route_menu_->AddRadioItem(entry.command, label, 2); break;
+      case 5: route_menu_->AddItem(entry.command, label); break;
+      case 6: route_menu_->AddSeparator(ui::NORMAL_SEPARATOR); break;
       case 0:
         if (entry.command == kLinkPeek)
           link_menu_->AddItemWithIcon(entry.command, label, MenuIcon(kMenuSidebarIcon));
@@ -7059,6 +7069,9 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
         break;
     }
   }
+  if (page)
+    link_menu_->AddItemWithIcon(kCopyLinkAddress, T(u"Kopiuj adres linku"),
+                                MenuIcon(vector_icons::kLinkIcon));
 }
 
 void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
@@ -7066,14 +7079,18 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
                                   std::optional<PageMenuNavigation> navigation) {
   BuildLinkMenu(std::move(url), std::move(source_workspace), navigation ? &*navigation : nullptr);
   inspect_element_ = std::move(inspect);
-  if (inspect_element_) {
-    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+  const bool source = navigation && navigation->url.SchemeIsHTTPOrHTTPS();
+  if (inspect_element_ || source) link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+  if (inspect_element_)
     link_menu_->AddItemWithIcon(19010, T(u"Zbadaj element"), MenuIcon(vector_icons::kCodeIcon));
-  }
+  if (source)
+    link_menu_->AddItemWithIcon(kViewSource, T(u"Pokaż źródło strony"), MenuIcon(kMenuSourceIcon));
   if (navigation) {
     auto menu = static_cast<DesignMenuModel*>(link_menu_.get())->CreateViewMenu();
-    menu->GetSubmenu()->set_minimum_preferred_width(248);
+    menu->GetSubmenu()->set_minimum_preferred_width(264);
     auto* item = menu->GetMenuItemByID(kPageNavigation);
+    // One 32 px icon row instead of a full-height menu item.
+    item->set_vertical_margin(2);
     auto* bar = item->AddChildView(std::make_unique<views::View>());
     bar->GetViewAccessibility().SetRole(ax::mojom::Role::kGroup);
     bar->GetViewAccessibility().SetName(T(u"Nawigacja"));
@@ -7096,6 +7113,14 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
     add_button(PageCommand::kBack, vector_icons::kArrowBackIcon, T(u"Wstecz"), navigation->can_go_back);
     add_button(PageCommand::kForward, vector_icons::kArrowForwardIcon, T(u"Dalej"), navigation->can_go_forward);
     add_button(PageCommand::kReload, vector_icons::kReloadCustomIcon, T(u"Odśwież"), navigation->can_reload);
+    auto* copy = bar->AddChildView(std::make_unique<PageMenuNavigationButton>(
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          if (!shell) return;
+          shell->ExecuteCommand(kCopyPageAddress, 0);
+          shell->link_menu_runner_->Cancel();
+        }, weak_factory_.GetWeakPtr()), vector_icons::kContentCopyIcon, T(u"Kopiuj adres strony")));
+    copy->SetEnabled(IsWorkspaceTabUrl(page_menu_url_));
+    layout->SetFlexForView(copy, 1);
     link_menu_runner_ = std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
   } else {
     link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
@@ -7130,7 +7155,6 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
         case 4: model->AddCheckItem(entry.command, label); break;
         default: model->AddItem(entry.command, label);
       }
-      if (entry.group == 0 && entry.command == kWorkspaceSettings) model->AddItem(kReloadWorkspaceIcons,T(u"Przeładuj ikony przestrzeni"));
     }
     return;
   }
@@ -7157,7 +7181,6 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   workspace_menu_->AddSubMenu(kEmojiMenu, T(u"Ikonka przestrzeni"), emoji_menu_.get());
   workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
   workspace_menu_->AddItem(kWorkspaceSettings, T(u"Nazwa i ustawienia…"));
-  workspace_menu_->AddItem(kReloadWorkspaceIcons,T(u"Przeładuj ikony przestrzeni"));
   workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);  // The destructive action last.
   workspace_menu_->AddItem(kRemoveWorkspace, T(u"Usuń przestrzeń"));
 }
@@ -7572,8 +7595,6 @@ bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
     return target.valid && callbacks_.tab_menu_url &&
         IsWorkspaceTabUrl(callbacks_.tab_menu_url.Run(target.tab, target.pin));
   }
-  if (command_id == kReloadWorkspaceIcons)
-    return state_.configuration_ready && !state_.profiles_busy && std::ranges::any_of(state_.workspaces,[&](const auto& space){return space.id==context_workspace_id_;});
   if (command_id == kDuplicateTab || command_id == kPinProfileTab || command_id == kMoveTabSubmenu ||
       (command_id >= kMoveTabBase && command_id < kMoveTabBase + static_cast<int>(move_tab_workspaces_.size()))) {
     const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
@@ -8063,13 +8084,24 @@ void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin, std:
 }
 
 bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator* accelerator) const {
-  if (command_id != kAddTab && command_id != kDuplicateTab) return false;
+  // Inspect element shows its DevTools chord, as designed for the page menu.
+  if (command_id != kAddTab && command_id != kDuplicateTab && command_id != 19010 && command_id != kViewSource) return false;
+  const char* id = command_id == kDuplicateTab ? "duplicate_tab" : command_id == 19010 ? "devtools_inspect" :
+      command_id == kViewSource ? "view_source" : "new_tab";
   for (const auto& shortcut : tools_.shortcuts)
-    if (shortcut.id == (command_id == kDuplicateTab ? "duplicate_tab" : "new_tab") && shortcut.accelerator.key_code() != ui::VKEY_UNKNOWN) {*accelerator = shortcut.accelerator; return true;}
+    if (shortcut.id == id && shortcut.accelerator.key_code() != ui::VKEY_UNKNOWN) {*accelerator = shortcut.accelerator; return true;}
   return false;
 }
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
   if (command_id == kPageNavigation) return;
+  if (command_id == kViewSource) {
+    if (!page_menu_url_.SchemeIsHTTPOrHTTPS() || !callbacks_.run_shortcut) return;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::WeakPtr<WorkspaceShell> shell) {
+          if (shell) shell->callbacks_.run_shortcut.Run("view_source");
+        }, weak_factory_.GetWeakPtr()));
+    return;
+  }
   if (command_id == kCopyPageAddress || command_id == kCopyLinkAddress) {
     if (IsCommandIdEnabled(command_id)) {
       const auto& url = command_id == kCopyPageAddress ? page_menu_url_ : context_url_;
@@ -8090,11 +8122,6 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
             ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
                 .WriteText(base::UTF8ToUTF16(url.spec()));
         }, weak_factory_.GetWeakPtr(), context_workspace_id_, context_tab_identity_, context_pin_));
-    return;
-  }
-  if (command_id == kReloadWorkspaceIcons) {
-    if (IsCommandIdEnabled(command_id)) base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce(
-        [](base::WeakPtr<WorkspaceShell> shell,std::string workspace){if(shell&&shell->callbacks_.reload_workspace_favicons)shell->callbacks_.reload_workspace_favicons.Run(std::move(workspace));},weak_factory_.GetWeakPtr(),context_workspace_id_));
     return;
   }
   if (command_id == kDuplicateTab || command_id == kPinProfileTab ||
@@ -11055,6 +11082,7 @@ void WorkspaceShell::BuildShortcutRows() {
       views::AsViewClass<SceneTextButton>(AddAction(actions, cancel(id), T(u"Anuluj")))->SetQuiet();
       return;
     }
+    const auto current_chord = current(ids.front());
     const bool modified = ShortcutModified(id);
     auto* row = list->AddChildView(std::make_unique<ShortcutRowView>(ShortcutRowView::Style::kRow));
     auto* layout = row_layout(row, gfx::Insets::TLBR(0, 8, 0, 4), 10, false);

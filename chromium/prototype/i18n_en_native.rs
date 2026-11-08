@@ -3,7 +3,8 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
-    ("Przeładuj ikony przestrzeni", "Reload workspace icons"),
+    ("Odśwież wszystkie favicony", "Refresh all favicons"),
+    ("Karty i przypięte strony w bieżącej przestrzeni", "Tabs and pinned pages in the current workspace"),
     ("Duplikuj kartę", "Duplicate tab"),
     ("Przypnij do profilu", "Pin to profile"),
     ("Upuść, by przypiąć", "Drop to pin"),
@@ -253,6 +254,9 @@ pub static EN: &[(&str, &str)] = &[
     ("Kopiuj adres", "Copy address"),
     ("Kopiuj adres karty", "Copy tab address"),
     ("Kopiuj adres linku", "Copy link address"),
+    ("Link", "Link"),
+    ("Pokaż źródło strony", "View source"),
+    ("Kopiuj adres strony", "Copy page address"),
     ("Nawigacja", "Navigation"),
     ("Lista", "List"),
     ("Nic w historii nie pasuje do „{}”.", "Nothing in history matches “{}”."),

@@ -227,7 +227,6 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, std::string, GURL)> update_pinned_url;
     base::RepeatingCallback<bool(std::string)> reset_pinned_url;
     base::RepeatingCallback<bool(std::string, std::string, std::string)> move_pin;
-    base::RepeatingCallback<bool(std::string)> reload_workspace_favicons;
   };
 
   WorkspaceShell(base::FilePath settings_path, Callbacks callbacks);

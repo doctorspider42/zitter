@@ -73,6 +73,11 @@ std::vector<Shortcut> ArcShortcuts() {
   add("devtools_console", T(u"Otwórz konsolę"), ui::VKEY_J, dev);
   add("devtools_inspect", T(u"Zbadaj element"), ui::VKEY_C, dev);
   add("hard_reload", T(u"Odśwież bez pamięci podręcznej"), ui::VKEY_R, p | ui::EF_SHIFT_DOWN);
+#if BUILDFLAG(IS_MAC)
+  add("view_source", T(u"Pokaż źródło strony"), ui::VKEY_U, p | ui::EF_ALT_DOWN);
+#else
+  add("view_source", T(u"Pokaż źródło strony"), ui::VKEY_U, p);
+#endif
   add("reload", T(u"Odśwież stronę"), ui::VKEY_R, p);
 #if BUILDFLAG(IS_WIN)
   // Design: Teksty i skróty. Ctrl+Y is Redo on Windows.
