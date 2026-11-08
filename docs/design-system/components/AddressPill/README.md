@@ -6,6 +6,6 @@ The address pill at the top of the sidebar shows the host in bold `ink` and the 
 
 - Resting: `bg-raised` + `shadow-card`, 36 px high, `radius-pill`.
 - Cmd+L / Ctrl+L switches to `editing`: a 2 px `--accent` outline, an `--accent` caret, the full URL in `ink`, and `↵` on the right.
-- A 28 px link button beside the pill copies the current page URL without opening the address palette. Its icon is 16 px, with a tooltip and an accessible name. It is disabled for pages without an HTTP(S) URL.
+- A 28 px link button beside the pill copies the current page URL without opening the address palette. Privacy preferences control whether copies from the button and the full address field remove known tracking parameters. This is enabled by default. Its icon is 16 px, with a tooltip and an accessible name. It is disabled for pages without an HTTP(S) URL.
 - Copying the address makes the pill tremble once (`zt-tremor`, `dur-tremor`), with no toast.
 - Hide `https://` and `www.` in the resting address.

@@ -39,6 +39,7 @@
 #include "content/public/browser/render_widget_host.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom.h"
 #include "chromium/prototype/browser_preferences.h"
+#include "chromium/prototype/clean_url.h"
 #include "chromium/prototype/link_navigation.h"
 #include "chromium/prototype/image_link_preview.h"
 #include "base/task/single_thread_task_runner.h"
@@ -1000,6 +1001,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
     }
   }, base::Unretained(this));
   callbacks.page_command = base::BindRepeating(&WorkspaceWindow::RunPageCommand, base::Unretained(this));
+  callbacks.clean_address_copies = base::BindRepeating(&WorkspaceWindow::clean_address_copies, base::Unretained(this));
   callbacks.tab_menu_url = base::BindRepeating(&WorkspaceWindow::GetTabMenuUrl, base::Unretained(this));
   shell_ = std::make_unique<WorkspaceShell>(
       data_directory_.AppendASCII("ZitterAppearance.json"), std::move(callbacks));
@@ -1693,6 +1695,7 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   if (!profile) return result;
   result["image_link_previews"] = {image_link_previews_, !configuration_invalid_};
   result["shift_click_peek"] = {shift_click_peek_, !configuration_invalid_};
+  result["clean_address_copies"] = {clean_address_copies(), !configuration_invalid_};
   {
     // Assistant rows depend on the master switch and on the click permission.
     const auto& a = assistant_settings_;
@@ -1807,6 +1810,12 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
       else return false;
     }
     SetAssistantSettings(std::move(settings));
+    return true;
+  }
+  if (key == "clean_address_copies") {
+    if (value != 0 && value != 1) return false;
+    clean_address_copies_ = value != 0;
+    SaveConfiguration();
     return true;
   }
   if (key == "image_link_previews" || key == "shift_click_peek") {
@@ -3220,7 +3229,10 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
     // The address pill trembles once: the copy's only confirmation (design: AddressPill).
     auto* page = peek_contents() ? peek_contents() : contents(active_id());
     if (!page || !IsWorkspaceTabUrl(page->GetVisibleURL())) return false;
-    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(page->GetVisibleURL().spec()));
+    const GURL& url = page->GetVisibleURL();
+    const auto clean = clean_address_copies() ? CleanUrlForCopy(url) : std::nullopt;
+    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
+        .WriteText(base::UTF8ToUTF16(clean ? *clean : url.spec()));
     shell_->TremorAddress();
     return true;
   }
@@ -3522,6 +3534,7 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   base::DictValue dict;
   dict.Set("image_link_previews", image_link_previews_);
   dict.Set("shift_click_peek", shift_click_peek_);
+  dict.Set("clean_address_copies", clean_address_copies_);
   dict.Set("assistant", assistant_settings_.ToValue());
   const auto* replaced_starter = import_replaces_starter_ ? model_.Find(starter_workspace_id_) : nullptr;
   base::ListValue profile_list;
@@ -3859,6 +3872,7 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
     pins_ = std::move(restored_pins);
     image_link_previews_ = dict->FindBool("image_link_previews").value_or(false);
     shift_click_peek_ = dict->FindBool("shift_click_peek").value_or(true);
+    clean_address_copies_ = dict->FindBool("clean_address_copies").value_or(true);
     assistant_settings_ = AssistantSettings::FromValue(dict->FindDict("assistant"));
     shell_->SetAssistantAllowed(assistant_settings_.enabled);
     onboarding_complete_ = dict->FindBool("onboarding_complete").value_or(true);

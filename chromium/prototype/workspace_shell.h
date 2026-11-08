@@ -160,6 +160,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(size_t, std::string)> move_tab_to_workspace;
     base::RepeatingCallback<void(PageCommand)> page_command;
     base::RepeatingCallback<GURL(std::optional<size_t>, std::string_view)> tab_menu_url;
+    base::RepeatingCallback<bool()> clean_address_copies;
     base::RepeatingCallback<void(std::u16string)> search;
     base::RepeatingCallback<void(PaletteResult)> activate_result;
     base::RepeatingCallback<std::vector<PaletteResult>(std::u16string)> commands;

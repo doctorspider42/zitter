@@ -282,6 +282,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Przejdź do lewej karty Split View", "Go to the left Split View tab"),
     ("Przejdź do prawej karty Split View", "Go to the right Split View tab"),
     ("Przejdź do space", "Go to space"),
+    ("Kopiuj adres bez trackerów", "Copy address without trackers"),
+    ("Usuwaj znane parametry śledzące przy kopiowaniu z paska adresu.", "Remove known tracking parameters when copying from the address bar."),
     ("Przekazuj adres strony odsyłającej", "Send the referring page address"),
     (" Przeniesiono {} stron historii i {} ciasteczek.", " Moved {} history pages and {} cookies."),
     ("Przenieś kartę do: {}", "Move tab to: {}"),

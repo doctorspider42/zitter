@@ -102,6 +102,16 @@
       "rationale": "Design system typeface bundled in Contents/Resources/Fonts (tools/package_app.py) from google/fonts ofl/."
     },
     {
+      "Name": "Brave Clean URLs",
+      "dir": "zitter/third_party/brave_clean_urls",
+      "License": "MPL-2.0",
+      "License File": [
+        "@root/third_party/brave_clean_urls/LICENSE",
+        "@root/third_party/brave_clean_urls/NOTICE"
+      ],
+      "rationale": "Unmodified, pinned Brave rules embedded for clipboard URL cleaning. NOTICE identifies the exact source."
+    },
+    {
       "Name": "adblock-rust (Brave)",
       "dir": "third_party/rust/zitter_vendor/adblock",
       "License": "MPL-2.0",

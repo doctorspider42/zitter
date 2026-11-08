@@ -257,6 +257,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Link", "Link"),
     ("Pokaż źródło strony", "View source"),
     ("Kopiuj adres strony", "Copy page address"),
+    ("Kopiuj bez trackerów", "Copy Without Trackers"),
     ("Nawigacja", "Navigation"),
     ("Lista", "List"),
     ("Nic w historii nie pasuje do „{}”.", "Nothing in history matches “{}”."),

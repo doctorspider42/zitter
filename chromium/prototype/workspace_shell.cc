@@ -9,6 +9,7 @@
 #include "ui/base/class_property.h"
 #include "ui/views/window/dialog_client_view.h"
 #include "chromium/prototype/page_dialogs.h"
+#include "chromium/prototype/clean_url.h"
 #include "base/i18n/time_formatting.h"
 #include "chromium/prototype/workspace_shell.h"
 #include "chromium/prototype/rss_reader.h"
@@ -4794,6 +4795,15 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   search_icon->SetCanProcessEventsWithinSubtree(false);
   address_ = AddEditor(input_row);
   address_->SetTabCompletionEnabled(true);
+  address_->SetCopyTransform(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell, std::u16string_view text) {
+        if (shell && !shell->command_palette_ &&
+            (!shell->callbacks_.clean_address_copies || shell->callbacks_.clean_address_copies.Run())) {
+          if (const auto clean = CleanUrlForCopy(GURL(text)))
+            return base::UTF8ToUTF16(*clean);
+        }
+        return std::u16string(text);
+      }, weak));
   address_->GetViewAccessibility().SetName(T(u"Szukaj lub wpisz adres"));
   address_->SetPlaceholderText(T(u"Szukaj lub wpisz adres"));
   address_->SetPresentation(17,0,false,Tone(root_,kCard));
@@ -6856,6 +6866,9 @@ constexpr int kCopyPageAddress = 205;
 constexpr int kCopyLinkAddress = 206;
 constexpr int kViewSource = 207;
 constexpr int kCopyTabAddress = 208;
+constexpr int kCopyCleanPageAddress = 209;
+constexpr int kCopyCleanLinkAddress = 210;
+constexpr int kCopyCleanTabAddress = 211;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
@@ -7040,7 +7053,13 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   link_menu_ = std::make_unique<DesignMenuModel>(this);
   // Design: Page context menu. Back, Forward, Reload and Copy page address
   // share one icon row; a link gets its own section under a header.
-  if (page) link_menu_->AddItem(kPageNavigation, {});
+  if (page) {
+    link_menu_->AddItem(kPageNavigation, {});
+    if (context_url_.is_empty() && CleanUrlForCopy(page_menu_url_)) {
+      link_menu_->AddItemWithIcon(kCopyCleanPageAddress, T(u"Kopiuj bez trackerów"),
+                                  MenuIcon(vector_icons::kLinkIcon));
+    }
+  }
   if (!context_url_.SchemeIsHTTPOrHTTPS()) return;
   if (page) {
     link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -7072,6 +7091,10 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   if (page)
     link_menu_->AddItemWithIcon(kCopyLinkAddress, T(u"Kopiuj adres linku"),
                                 MenuIcon(vector_icons::kLinkIcon));
+  if (CleanUrlForCopy(context_url_)) {
+    link_menu_->AddItemWithIcon(kCopyCleanLinkAddress, T(u"Kopiuj bez trackerów"),
+                                MenuIcon(vector_icons::kLinkIcon));
+  }
 }
 
 void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
@@ -7478,6 +7501,12 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     folder_parent_id_.clear();context_workspace_id_=state_.workspace_id;
     workspace_menu_->AddItemWithIcon(kCopyTabAddress, T(u"Kopiuj adres karty"),
                                      MenuIcon(vector_icons::kLinkIcon));
+    const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
+    if (target.valid && callbacks_.tab_menu_url &&
+        CleanUrlForCopy(callbacks_.tab_menu_url.Run(target.tab, target.pin))) {
+      workspace_menu_->AddItemWithIcon(kCopyCleanTabAddress, T(u"Kopiuj bez trackerów"),
+                                       MenuIcon(vector_icons::kLinkIcon));
+    }
     workspace_menu_->AddItemWithIcon(kDuplicateTab, T(u"Duplikuj kartę"),
                                      MenuIcon(vector_icons::kContentCopyIcon));
     workspace_menu_->AddItemWithIcon(kPinProfileTab, T(u"Przypnij do profilu"),
@@ -7496,7 +7525,6 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     }
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
     if(metal_sidebar_) {
-      const auto target=ResolveSidebarTarget(context_workspace_id_,context_tab_identity_,context_pin_);
       const auto plan=sidebar::tab_context_menu(RowMenuState(state_,target.tab,target.valid,url,context_pin_));
       for (const auto& entry : plan) {
         if (entry.command == 0) workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -7590,10 +7618,14 @@ std::string WorkspaceShell::ContextPinId() const {
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
   if (command_id == kCopyPageAddress) return IsWorkspaceTabUrl(page_menu_url_);
   if (command_id == kCopyLinkAddress) return context_url_.SchemeIsHTTPOrHTTPS();
-  if (command_id == kCopyTabAddress) {
+  if (command_id == kCopyCleanPageAddress) return CleanUrlForCopy(page_menu_url_).has_value();
+  if (command_id == kCopyCleanLinkAddress) return CleanUrlForCopy(context_url_).has_value();
+  if (command_id == kCopyTabAddress || command_id == kCopyCleanTabAddress) {
     const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
-    return target.valid && callbacks_.tab_menu_url &&
-        IsWorkspaceTabUrl(callbacks_.tab_menu_url.Run(target.tab, target.pin));
+    if (!target.valid || !callbacks_.tab_menu_url) return false;
+    const auto url = callbacks_.tab_menu_url.Run(target.tab, target.pin);
+    return command_id == kCopyCleanTabAddress ? CleanUrlForCopy(url).has_value()
+                                             : IsWorkspaceTabUrl(url);
   }
   if (command_id == kDuplicateTab || command_id == kPinProfileTab || command_id == kMoveTabSubmenu ||
       (command_id >= kMoveTabBase && command_id < kMoveTabBase + static_cast<int>(move_tab_workspaces_.size()))) {
@@ -8110,18 +8142,27 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
     }
     return;
   }
-  if (command_id == kCopyTabAddress) {
+  if (command_id == kCopyCleanPageAddress || command_id == kCopyCleanLinkAddress) {
+    const auto& url = command_id == kCopyCleanPageAddress ? page_menu_url_ : context_url_;
+    if (const auto clean = CleanUrlForCopy(url))
+      ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(*clean));
+    return;
+  }
+  if (command_id == kCopyTabAddress || command_id == kCopyCleanTabAddress) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
         [](base::WeakPtr<WorkspaceShell> shell, std::string workspace,
-           std::array<uint64_t, 2> identity, std::string pin) {
+           std::array<uint64_t, 2> identity, std::string pin, bool clean_copy) {
           if (!shell || !shell->callbacks_.tab_menu_url) return;
           const auto target = shell->ResolveSidebarTarget(workspace, identity, pin);
           if (!target.valid) return;
           const auto url = shell->callbacks_.tab_menu_url.Run(target.tab, target.pin);
-          if (IsWorkspaceTabUrl(url))
-            ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
-                .WriteText(base::UTF8ToUTF16(url.spec()));
-        }, weak_factory_.GetWeakPtr(), context_workspace_id_, context_tab_identity_, context_pin_));
+          if (!IsWorkspaceTabUrl(url)) return;
+          const auto clean = clean_copy ? CleanUrlForCopy(url) : std::nullopt;
+          if (clean_copy && !clean) return;
+          ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
+              .WriteText(base::UTF8ToUTF16(clean ? *clean : url.spec()));
+        }, weak_factory_.GetWeakPtr(), context_workspace_id_, context_tab_identity_,
+        context_pin_, command_id == kCopyCleanTabAddress));
     return;
   }
   if (command_id == kDuplicateTab || command_id == kPinProfileTab ||

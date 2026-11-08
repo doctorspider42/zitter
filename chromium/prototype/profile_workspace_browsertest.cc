@@ -97,6 +97,7 @@
 #include "chromium/prototype/workspace_shell.h"
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #include "chromium/prototype/browser_preferences.h"
+#include "chromium/prototype/clean_url.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -4754,7 +4755,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueRowsOrderCo
   const std::vector<std::vector<Copy>> expected={
     {{u"Motyw aplikacji",u"Kolory interfejsu i stron obsługujących motyw systemowy."},{u"Zawsze widoczny panel kart",u"Przypnij karty i przestrzenie przy lewej krawędzi."},{u"Animacje przestrzeni",u"Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."},{u"Nazwa aktywnej przestrzeni",u"Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart."},{u"Język interfejsu",u"Zmiana zadziała po ponownym uruchomieniu Zitter."},{u"Zwinięte foldery przypiętych",u"Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty."},{u"Kolor i nazwa przestrzeni",u"Własny akcent kolorystyczny i przypisanie profilu."},{u"Zapisuj historię kart",u"Time Machine pamięta, jakie karty były otwarte w każdej przestrzeni. Tylko adresy, tytuły i układ, nigdy treść stron. Okna prywatne nie są zapisywane."},{u"Przechowuj historię kart",u"Starsze zmiany znikają same."},{u"Time Machine przestrzeni",u"Cofnij przestrzeń do dowolnej chwili z historii kart."},{u"Wyczyść historię kart",u"Usuń historię Time Machine wszystkich przestrzeni na tym komputerze."}},
     {{u"Domyślna wyszukiwarka",u"Używana, gdy wpiszesz zapytanie w pasku adresu."},{u"Wyszukiwarki i prefiksy",u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…"},{u"Skróty klawiszowe",u"Schemat Arc, własne kombinacje i wykrywanie konfliktów."},{u"Szybciej z klawiaturą",u"⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"}},
-    {{u"Przekazuj adres strony odsyłającej",u"Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów."},{u"Zawsze używaj HTTPS",u"Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie."},{u"Blokuj cookies innych firm",u"Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies."},{u"Wysyłaj Do Not Track",u"Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny."},{u"Ochrona przed fingerprintingiem",u"Dodawaj niewidoczny szum do odczytów canvas, WebGL i dźwięku. Każda witryna widzi wtedy inny odcisk przeglądarki, nowy po ponownym uruchomieniu lub po zmianie ikoną odcisku w pasku. Może zakłócić edytory grafiki. Dotyczy tego profilu."},{u"Wstępne połączenia ze stronami",u"Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu."},{u"Raporty kliknięć w linki",u"Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika."},{u"Historia przeglądania",u"Wyszukuj odwiedzone strony i czyść historię tego profilu."}},
+    {{u"Kopiuj adres bez trackerów",u"Usuwaj znane parametry śledzące przy kopiowaniu z paska adresu."},{u"Przekazuj adres strony odsyłającej",u"Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów."},{u"Zawsze używaj HTTPS",u"Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie."},{u"Blokuj cookies innych firm",u"Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies."},{u"Wysyłaj Do Not Track",u"Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny."},{u"Ochrona przed fingerprintingiem",u"Dodawaj niewidoczny szum do odczytów canvas, WebGL i dźwięku. Każda witryna widzi wtedy inny odcisk przeglądarki, nowy po ponownym uruchomieniu lub po zmianie ikoną odcisku w pasku. Może zakłócić edytory grafiki. Dotyczy tego profilu."},{u"Wstępne połączenia ze stronami",u"Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu."},{u"Raporty kliknięć w linki",u"Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika."},{u"Historia przeglądania",u"Wyszukuj odwiedzone strony i czyść historię tego profilu."}},
     {{u"Kamera",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Mikrofon",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Lokalizacja",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Powiadomienia",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Odczyt schowka",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Wyjątek dla witryny",u"Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu."},{u"Zapisane wyjątki",u"Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu."}},
     {{u"Domyślne powiększenie",u"Skala stron bez własnego, zapisanego powiększenia."},{u"Rozmiar tekstu",u"Domyślna wielkość czcionki na stronach."},{u"Minimalny rozmiar tekstu",u"Zapobiegaj wyświetlaniu zbyt drobnych liter."},{u"Rozmiar tekstu o stałej szerokości",u"Domyślna wielkość tekstu w blokach kodu i elementach monospace."},{u"Czcionka standardowa",u"Nazwa rodziny czcionki używanej, gdy witryna nie wybierze własnej."},{u"Czcionka szeryfowa",u"Rodzina dla tekstu serif. Musi być zainstalowana w systemie."},{u"Czcionka bezszeryfowa",u"Rodzina dla tekstu sans-serif. Musi być zainstalowana w systemie."},{u"Czcionka o stałej szerokości",u"Rodzina monospace, używana m.in. w blokach kodu."},{u"JavaScript",u"Skrypty potrzebne do działania większości aplikacji internetowych."},{u"Wyświetlaj obrazy",u"Pozwól witrynom ładować zdjęcia i grafiki."},{u"Wyskakujące okna",u"Pozwól stronom otwierać dodatkowe okna. Domyślnie zablokowane."},{u"Dźwięk na stronach",u"Domyślna zgoda na odtwarzanie dźwięku."}},
     {{u"Proponuj zapisywanie haseł",u"Zapisuj dane logowania w menedżerze haseł tego profilu."},{u"Automatyczne logowanie",u"Korzystaj z zapisanych danych logowania, gdy witryna na to pozwala."},{u"Zapisane hasła",u"Przeglądaj i usuwaj loginy aktywnego profilu."},{u"Profile przeglądania",u"Oddziel cookies, historię i dane logowania między profilami."},{u"Import z przeglądarki",u"Przenieś profile, przestrzenie, foldery i zakładki."}},
@@ -6241,6 +6242,20 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressTabCompletesSelectionWi
   EXPECT_EQ(original, window_->contents("work")->GetLastCommittedURL());
 }
 
+TEST(CleanUrlForCopyTest, MatchesBraveRulesAndPreservesFunctionalUrlParts) {
+  EXPECT_EQ("https://www.youtube.com/watch?v=video&keep=a%2Bb&keep=#t=3",
+            CleanUrlForCopy(GURL("https://www.youtube.com/watch?v=video&si=1"
+                                "&keep=a%2Bb&si=2&keep=&utm_medium=mail#t=3")));
+  EXPECT_FALSE(CleanUrlForCopy(GURL("https://www.youtube.com/playlist?si=1")));
+  EXPECT_FALSE(CleanUrlForCopy(GURL("https://youtube.com.example.org/watch?si=1")));
+  EXPECT_FALSE(CleanUrlForCopy(GURL("https://app.hive.co/?h_sid=1")));
+  EXPECT_EQ("https://example.org/#section",
+            CleanUrlForCopy(GURL("https://example.org/?h_sid=1#section")));
+  EXPECT_FALSE(CleanUrlForCopy(
+      GURL("https://example.org/?%58-Amz-Signature=signed&utm_source=mail")));
+  EXPECT_FALSE(CleanUrlForCopy(GURL("file:///tmp/example?utm_source=mail")));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressClipboardUsesPlatformShortcuts) {
   auto previous = ui::Clipboard::TakeForCurrentThread();
   ui::TestClipboard::CreateForCurrentThread();
@@ -6250,10 +6265,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressClipboardUsesPlatformSh
   }, std::move(previous)));
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
-  shell->OpenAddress(true);
+  shell->OpenAddress(false);
   auto* field = shell->address_input();
   field->RequestFocus();
-  SetPaletteQuery(u"https://example.com/clipboard");
+  constexpr char16_t full_url[] = u"https://example.com/clipboard?utm_source=test&id=a%2Bb#part";
+  constexpr char16_t clean_url[] = u"https://example.com/clipboard?id=a%2Bb#part";
+  SetPaletteQuery(full_url);
 #if BUILDFLAG(IS_MAC)
   constexpr int primary = ui::EF_COMMAND_DOWN;
 #else
@@ -6263,22 +6280,31 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AddressClipboardUsesPlatformSh
     ui::KeyEvent event(ui::EventType::kKeyPressed, code, primary);
     return field->view()->OnKeyPressed(event);
   };
+  const auto copy = [&] {
+    EXPECT_TRUE(key(ui::VKEY_C));
+    base::test::TestFuture<std::u16string> copied;
+    ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, copied.GetCallback());
+    return copied.Get();
+  };
   ASSERT_TRUE(key(ui::VKEY_A));
-  ASSERT_TRUE(key(ui::VKEY_C));
-  base::test::TestFuture<std::u16string> copied;
-  ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, copied.GetCallback());
-  EXPECT_EQ(u"https://example.com/clipboard", copied.Get());
+  EXPECT_EQ(clean_url, copy());
+  EXPECT_EQ(full_url, field->GetText());
+  field->SelectRange(gfx::Range(0, 19));
+  EXPECT_EQ(u"https://example.com", copy());
+  ASSERT_TRUE(key(ui::VKEY_A));
+  ASSERT_TRUE(window_->WritePreference("clean_address_copies", 0));
+  EXPECT_EQ(full_url, copy());
   ASSERT_TRUE(key(ui::VKEY_X));
   EXPECT_TRUE(field->GetText().empty());
   ASSERT_TRUE(key(ui::VKEY_V));
-  ASSERT_TRUE(base::test::RunUntil([&] { return field->GetText() == u"https://example.com/clipboard"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return field->GetText() == full_url; }));
   EXPECT_TRUE(shell->address_visible());
 #if !BUILDFLAG(IS_MAC)
   ui::KeyEvent altgr(ui::EventType::kKeyPressed, ui::VKEY_A, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN);
   EXPECT_FALSE(field->view()->OnKeyPressed(altgr));
-  EXPECT_EQ(u"https://example.com/clipboard", field->GetText());
+  EXPECT_EQ(full_url, field->GetText());
   field->input_client()->InsertChar(ui::KeyEvent::FromCharacter(u'ą', ui::VKEY_A, ui::DomCode::US_A, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN));
-  EXPECT_EQ(u"https://example.com/clipboardą", field->GetText());
+  EXPECT_EQ(std::u16string(full_url) + u"ą", field->GetText());
 #endif
 }
 
@@ -6436,14 +6462,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, CommandCenterCopiesThePageAddr
   base::test::TestFuture<std::u16string> text;
   ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, text.GetCallback());
   EXPECT_EQ(base::UTF8ToUTF16(url.spec()), text.Get());
-  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html?copy-button"), false));
+  const auto tracked = embedded_test_server()->GetURL("/storage_probe.html?utm_source=copy&copy-button#fragment");
+  const auto clean = embedded_test_server()->GetURL("/storage_probe.html?copy-button#fragment");
+  ASSERT_TRUE(window_->NavigateFromBar(tracked, false));
   ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
   auto* button = window_->shell()->copy_url_button_for_testing();
   ASSERT_TRUE(button);
   ActivateSidebarRow(button);
   base::test::TestFuture<std::u16string> button_text;
   ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, button_text.GetCallback());
-  EXPECT_EQ(base::UTF8ToUTF16(window_->contents("work")->GetLastCommittedURL().spec()), button_text.Get());
+  EXPECT_EQ(base::UTF8ToUTF16(clean.spec()), button_text.Get());
+  EXPECT_EQ(tracked, window_->contents("work")->GetLastCommittedURL());
+  ASSERT_TRUE(window_->WritePreference("clean_address_copies", 0));
+  ActivateSidebarRow(button);
+  base::test::TestFuture<std::u16string> raw_text;
+  ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste, std::nullopt, raw_text.GetCallback());
+  EXPECT_EQ(base::UTF8ToUTF16(tracked.spec()), raw_text.Get());
   ui::Clipboard::DestroyClipboardForCurrentThread();
 }
 
@@ -8914,8 +8948,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SiteFaviconsReachTabsAndProfil
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCopiesPageAndLink) {
   const auto first = embedded_test_server()->GetURL("/storage_probe.html?menu-first");
-  const auto second = embedded_test_server()->GetURL("/storage_probe.html?menu-second");
-  const auto link = embedded_test_server()->GetURL("/storage_probe.html?menu-link");
+  const auto second = embedded_test_server()->GetURL("/storage_probe.html?menu-second&utm_medium=copy");
+  const auto clean_second = embedded_test_server()->GetURL("/storage_probe.html?menu-second");
+  const auto link = embedded_test_server()->GetURL("/storage_probe.html?menu-link&fbclid=copy");
+  const auto clean_link = embedded_test_server()->GetURL("/storage_probe.html?menu-link");
   ASSERT_TRUE(window_->NavigateFromBar(first, false));
   auto* page = window_->contents("work");
   ASSERT_TRUE(content::WaitForLoadStop(page));
@@ -8967,6 +9003,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCop
   shell->SetThemeMode(ThemeMode::kLight);
   ASSERT_NO_FATAL_FAILURE(open_menu());
   EXPECT_FALSE(menu_item(21));
+  EXPECT_TRUE(menu_item(209));
   content::TestNavigationObserver back(page);
   ASSERT_NO_FATAL_FAILURE(click_navigation(0, false));
   back.Wait();
@@ -8974,6 +9011,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCop
 
   shell->SetThemeMode(ThemeMode::kDark);
   ASSERT_NO_FATAL_FAILURE(open_menu());
+  EXPECT_FALSE(menu_item(209));
   content::TestNavigationObserver forward(page);
   ASSERT_NO_FATAL_FAILURE(click_navigation(1, true));
   forward.Wait();
@@ -8986,8 +9024,6 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCop
   EXPECT_EQ(second, page->GetLastCommittedURL());
 
   ASSERT_NO_FATAL_FAILURE(open_menu());
-  auto* copy = menu_item(205);
-  ASSERT_TRUE(copy && copy->GetEnabled());
   ui::TestClipboard::CreateForCurrentThread();
   const auto read_clipboard = [] {
     base::test::TestFuture<std::u16string> copied;
@@ -8995,7 +9031,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCop
                                                   std::nullopt, copied.GetCallback());
     return copied.Get();
   };
-  EXPECT_TRUE(click_item(copy));
+  const auto activate_menu_item = [](views::MenuItemView* item) {
+    auto* controller = views::MenuController::GetActiveInstance();
+    ASSERT_TRUE(controller);
+    controller->SelectItemAndOpenSubmenu(item);
+    ui::KeyEvent enter(ui::EventType::kKeyPressed, ui::VKEY_RETURN, 0);
+    controller->OnWillDispatchKeyEvent(&enter);
+    ASSERT_TRUE(base::test::RunUntil([] { return !views::MenuController::GetActiveInstance(); }));
+  };
+  ASSERT_NO_FATAL_FAILURE(click_navigation(3, false));
   EXPECT_EQ(base::UTF8ToUTF16(second.spec()), read_clipboard());
   ASSERT_TRUE(content::ExecJs(page, content::JsReplace(R"(
     const link = document.createElement('a');
@@ -9003,18 +9047,33 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCop
     link.textContent = 'Open link';
     link.style.cssText = 'position:fixed;top:0;left:0;width:128px;height:64px';
     document.body.append(link);
+    new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   )", link)));
   ASSERT_NO_FATAL_FAILURE(open_menu());
   EXPECT_TRUE(menu_item(21));
   auto* copy_link = menu_item(206);
   ASSERT_TRUE(copy_link && copy_link->GetEnabled());
-  EXPECT_TRUE(click_item(copy_link));
+  ASSERT_NO_FATAL_FAILURE(activate_menu_item(copy_link));
   EXPECT_EQ(base::UTF8ToUTF16(link.spec()), read_clipboard());
+
+  ASSERT_TRUE(window_->WritePreference("clean_address_copies", 0));
+  for (auto theme : {ThemeMode::kLight, ThemeMode::kDark}) {
+    shell->SetThemeMode(theme);
+    ASSERT_NO_FATAL_FAILURE(open_menu());
+    auto* clean = menu_item(210);
+    ASSERT_TRUE(clean && clean->GetEnabled());
+    ASSERT_NO_FATAL_FAILURE(activate_menu_item(clean));
+    EXPECT_EQ(base::UTF8ToUTF16(clean_link.spec()), read_clipboard());
+  }
 
   shell->BuildTabMenu(0);
   auto* tab_menu = shell->tab_context_menu_for_testing();
   EXPECT_FALSE(tab_menu->GetIndexOfCommandId(204));
   EXPECT_TRUE(tab_menu->GetIndexOfCommandId(208));
+  ASSERT_TRUE(tab_menu->GetIndexOfCommandId(211));
+  tab_menu->ActivatedAt(*tab_menu->GetIndexOfCommandId(211));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(base::UTF8ToUTF16(clean_second.spec()), read_clipboard());
   ui::Clipboard::DestroyClipboardForCurrentThread();
   EXPECT_EQ(second, page->GetLastCommittedURL());
 }
@@ -10631,12 +10690,25 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceActionsScenesCan
 
 IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, PreferenceSwitchesRustScenesCancellationAndScroll) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();
-  for(const auto* key:{"sidebar","animations","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration"}){
+  for(const auto* key:{"sidebar","animations","clean_address_copies","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration"}){
     auto* control=shell->preference_switch_for_testing(key);ASSERT_TRUE(control)<<key;EXPECT_FALSE(views::AsViewClass<views::ToggleButton>(control));EXPECT_TRUE(control->children().empty());EXPECT_FALSE(views::AsViewClass<views::Button>(control));
     ui::AXNodeData node;control->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(ax::mojom::Role::kSwitch,node.role);EXPECT_EQ(shell->preference_switch_checked_for_testing(key)?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse,node.GetCheckedState());
   }
   auto filter=[&](std::u16string query){auto* field=shell->preferences_search();field->SelectRange(gfx::Range(0,field->GetText().size()));if(query.empty())DeleteEditorRange(field->input_client(),gfx::Range(0,field->GetText().size()));else field->input_client()->InsertText(query,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();};
   auto expect_checked=[](views::View* control,bool checked){ui::AXNodeData node;control->GetViewAccessibility().GetAccessibleNodeData(&node);EXPECT_EQ(checked?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse,node.GetCheckedState());};
+  filter(u"Kopiuj adres bez trackerów");
+  auto* clean_copy = shell->preference_switch_for_testing("clean_address_copies");
+  ASSERT_TRUE(clean_copy && clean_copy->IsDrawn());
+  for (auto theme : {ThemeMode::kLight, ThemeMode::kDark}) {
+    shell->SetThemeMode(theme);
+    if (MetalPresents()) ASSERT_TRUE(base::test::RunUntil([&] {
+      return shell->preference_switch_metal_visible_for_testing("clean_address_copies");
+    }));
+    const bool checked = shell->preference_switch_checked_for_testing("clean_address_copies");
+    ClickControl(clean_copy);
+    EXPECT_EQ(!checked, window_->clean_address_copies());
+    expect_checked(clean_copy, !checked);
+  }
   filter(u"Kamera");auto* camera=shell->preference_toggle("camera");camera->ScrollRectToVisible(camera->GetLocalBounds());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return shell->preference_switch_metal_visible_for_testing("camera");}));
   const gfx::Point point(12,12);ui::MouseEvent press(ui::EventType::kMousePressed,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);ui::MouseEvent release(ui::EventType::kMouseReleased,point,point,base::TimeTicks(),ui::EF_LEFT_MOUSE_BUTTON,ui::EF_LEFT_MOUSE_BUTTON);
   ASSERT_TRUE(camera->OnMousePressed(press));ASSERT_TRUE(window_->Select("personal"));camera->OnMouseReleased(release);EXPECT_EQ(1,window_->ReadPreferences().at("camera").value);

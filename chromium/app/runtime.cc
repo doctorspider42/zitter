@@ -501,6 +501,10 @@ void Runtime::OpenPrivateWindow() {
   }
   auto window = std::make_unique<prototype::WorkspaceWindow>(
       g_browser_process->profile_manager()->user_data_dir(), false, private_profile_);
+  window->SetAddressCopyPreferenceSource(base::BindRepeating(
+      [](base::WeakPtr<Runtime> runtime) {
+        return !runtime || !runtime->window_ || runtime->window_->clean_address_copies();
+      }, weak_factory_.GetWeakPtr()));
   auto* pointer = window.get();
 #if BUILDFLAG(IS_MAC)
   const auto* command_line = base::CommandLine::ForCurrentProcess();

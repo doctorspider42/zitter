@@ -100,6 +100,10 @@ class SceneEditor final : public views::View, public EditorControl,
     const auto size=std::clamp(font_size,1,256);if(font_size_!=size){font_size_=size;line_.reset();}
     inset_=std::isfinite(inset)?std::max(0.f,inset):0.f;framed_=framed;fill_=fill;Schedule();NotifyCaret();
   }
+  void SetCopyTransform(
+      base::RepeatingCallback<std::u16string(std::u16string_view)> transform) override {
+    copy_transform_ = std::move(transform);
+  }
   void SetCallbacks(base::RepeatingClosure committed,base::RepeatingCallback<bool(const ui::KeyEvent&)> key) override {committed_=std::move(committed);key_=std::move(key);}
   void SetTabCompletionEnabled(bool enabled) override { tab_completion_ = enabled; }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(120,32);}
@@ -378,7 +382,20 @@ class SceneEditor final : public views::View, public EditorControl,
       case C::REDO:Apply(sidebar::editor_redo(*state_));return true;
       case C::SELECT_ALL:Apply(sidebar::editor_select(*state_,0,text_.size(),false));return true;
       case C::SELECT_WORD:Apply(sidebar::editor_select_word(*state_));return true;
-      case C::COPY:case C::CUT:{const auto r=GetSelectedRange();{ui::ScopedClipboardWriter writer(ui::ClipboardBuffer::kCopyPaste);writer.WriteText(text_.substr(r.GetMin(),r.length()));}if(command==C::CUT)Apply(sidebar::editor_insert(*state_,rust::Slice<const uint16_t>(),false));return true;}
+      case C::COPY:
+      case C::CUT: {
+        const auto range = GetSelectedRange();
+        {
+          ui::ScopedClipboardWriter writer(ui::ClipboardBuffer::kCopyPaste);
+          if (command == C::COPY && copy_transform_ && range.length() == text_.size())
+            writer.WriteText(copy_transform_.Run(text_));
+          else
+            writer.WriteText(text_.substr(range.GetMin(), range.length()));
+        }
+        if (command == C::CUT)
+          Apply(sidebar::editor_insert(*state_, rust::Slice<const uint16_t>(), false));
+        return true;
+      }
       case C::PASTE:{const auto context=context_,generation=edit_generation_;const auto i=sidebar::editor_info(*state_);ui::Clipboard::GetForCurrentThread()->ReadText(ui::ClipboardBuffer::kCopyPaste,std::nullopt,base::BindOnce([](base::WeakPtr<SceneEditor> self,uint64_t context,uint64_t generation,size_t anchor,size_t focus,std::u16string text){if(!self||!self->Editable()||!self->HasFocus()||self->context_!=context||self->edit_generation_!=generation)return;auto i=sidebar::editor_info(*self->state_);if(i.anchor!=anchor||i.focus!=focus||i.composing)return;self->InsertText(text,InsertTextCursorBehavior::kMoveCursorAfterText);},weak_factory_.GetWeakPtr(),context,generation,i.anchor,i.focus));return true;}
       case C::DELETE_BACKWARD:case C::DELETE_FORWARD:case C::DELETE_WORD_BACKWARD:case C::DELETE_WORD_FORWARD:if(!Editable())return false;Apply(sidebar::editor_erase(*state_,command==C::DELETE_BACKWARD||command==C::DELETE_WORD_BACKWARD,command==C::DELETE_WORD_BACKWARD||command==C::DELETE_WORD_FORWARD));return true;
       case C::DELETE_TO_BEGINNING_OF_LINE:case C::DELETE_TO_BEGINNING_OF_PARAGRAPH:DeleteBoundary(false);return true;
@@ -464,6 +481,7 @@ class SceneEditor final : public views::View, public EditorControl,
   bool tab_completion_ = false;
   mutable rust::Box<sidebar::EditorState> state_;std::u16string text_,placeholder_;mutable std::unique_ptr<EditorTextLayout> line_;mutable sidebar::EditorGeometry geometry_{};
   ui::ImeTextSpans clauses_;std::optional<base::i18n::TextDirection> direction_;std::optional<bool> align_right_;bool read_only_=false,pending_=false,blink_visible_=true,dragging_=false,drag_candidate_=false,drag_started_=false;uint64_t text_revision_=0,context_=0,edit_generation_=0,menu_generation_=0,drag_revision_=0;gfx::Range drag_selection_;
+  base::RepeatingCallback<std::u16string(std::u16string_view)> copy_transform_;
   base::RepeatingClosure committed_;base::RepeatingCallback<bool(const ui::KeyEvent&)> key_;
   ui::TextEditCommand pending_command_=ui::TextEditCommand::INVALID_COMMAND;base::RepeatingTimer blink_,selection_scroll_;float last_drag_x_=0;base::CallbackListSubscription enabled_subscription_;std::unique_ptr<SidebarMetal> surface_;std::unique_ptr<MenuDelegate> menu_delegate_;std::unique_ptr<ui::SimpleMenuModel> menu_;std::unique_ptr<views::MenuRunner> runner_;
   SceneWindowObserver window_{base::BindRepeating(&SceneEditor::SyncLifecycle,base::Unretained(this))};base::WeakPtrFactory<SceneEditor> weak_factory_{this};

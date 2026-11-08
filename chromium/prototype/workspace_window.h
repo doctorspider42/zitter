@@ -77,6 +77,13 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   explicit WorkspaceWindow(base::FilePath data_directory, bool offer_import = true, Profile* private_profile = nullptr);
   bool is_private() const { return private_profile_ != nullptr; }
   Profile* active_profile() const;
+  bool clean_address_copies() const {
+    return address_copy_preference_source_ ? address_copy_preference_source_.Run()
+                                           : clean_address_copies_;
+  }
+  void SetAddressCopyPreferenceSource(base::RepeatingCallback<bool()> source) {
+    address_copy_preference_source_ = std::move(source);
+  }
   void SetNewPrivateWindowCallback(base::RepeatingClosure callback) { new_private_window_ = std::move(callback); }
   ~WorkspaceWindow() override;
   WorkspaceWindow(const WorkspaceWindow&) = delete;
@@ -481,6 +488,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // App-wide interaction preferences, persisted with the workspace catalogue.
   bool image_link_previews_ = false;
   bool shift_click_peek_ = true;
+  bool clean_address_copies_ = true;
+  base::RepeatingCallback<bool()> address_copy_preference_source_;
   std::string peek_workspace_id_;
   struct ProfileEntry {
     ProfileInfo info;

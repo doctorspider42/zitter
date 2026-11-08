@@ -269,6 +269,8 @@ source_set("shell") {
     "chromium/prototype/sidebar_layout.h",
     "chromium/prototype/sidebar_tree.cc",
     "chromium/prototype/sidebar_tree.h",
+    "chromium/prototype/clean_url.cc",
+    "chromium/prototype/clean_url.h",
     "chromium/prototype/workspace_shell.cc",
     "chromium/prototype/editor_control.h",
     "chromium/prototype/editor_text_layout.h",
@@ -282,6 +284,7 @@ source_set("shell") {
     ":assistant_cli_path",
     ":assistant_page_script",
     ":content_blocking_engine",
+    ":brave_clean_urls_json",
     ":content_blocking_probe_script",
     ":content_blocking_script",
     ":core",
@@ -412,6 +415,13 @@ action("content_blocking_probe_script") {
   sources = [ "chromium/prototype/content_blocking_probe.js" ]
   outputs = [ "$target_gen_dir/content_blocking_probe_script.h" ]
   args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingProbeScript" ]
+}
+
+action("brave_clean_urls_json") {
+  script = "chromium/assistant/embed.py"
+  sources = [ "third_party/brave_clean_urls/clean-urls.json" ]
+  outputs = [ "$target_gen_dir/brave_clean_urls_json.h" ]
+  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kBraveCleanUrlsJson" ]
 }
 
 action("content_blocking_script") {

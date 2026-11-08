@@ -33,6 +33,9 @@ class EditorControl {
   // The domain reads current text in its callback; no borrowed text survives it.
   virtual void SetCallbacks(base::RepeatingClosure committed,
       base::RepeatingCallback<bool(const ui::KeyEvent&)> key)=0;
+  // Transforms a full-field copy. Partial selections and cuts use the original text.
+  virtual void SetCopyTransform(
+      base::RepeatingCallback<std::u16string(std::u16string_view)> transform) = 0;
   virtual bool rust_editor() const=0;
   virtual bool metal_visible() const=0;
   virtual bool scene_contains(std::string_view) const=0;
