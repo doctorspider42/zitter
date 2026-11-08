@@ -12977,10 +12977,12 @@ class NightShiftBrowserTest : public ZitterProfilesBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
   ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
   if (MetalPresents()) {
-    window_->shell()->SetPinned(true);
+    shell->SetPinned(true);
+    shell->SetThemeMode(ThemeMode::kDark);
     ASSERT_TRUE(base::test::RunUntil([&] {
-      return window_->shell()->metal_sidebar_frame_count() > 0;
+      return shell->metal_sidebar_visible() && shell->metal_header_visible();
     }));
   }
   const auto* extension = extensions::ExtensionRegistry::Get(work_)
@@ -13017,16 +13019,31 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
 
   auto* bar = window_->extensions_bar();
   for (const auto theme : {ThemeMode::kLight, ThemeMode::kDark}) {
-    window_->shell()->SetThemeMode(theme);
+    const bool dark = theme == ThemeMode::kDark;
+    const auto sidebar_frames = shell->metal_sidebar_frame_count();
+    const auto header_frames = shell->metal_header_frame_count();
+    shell->SetThemeMode(theme);
     bar->RunAction(kNightShiftId);
     ASSERT_TRUE(base::test::RunUntil([&] {
       return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible();
     }));
     auto* popup = bar->popup_contents_for_testing();
     ASSERT_TRUE(content::WaitForLoadStop(popup));
-    EXPECT_EQ(theme == ThemeMode::kDark ? "dark" : "light",
-              content::EvalJs(popup, "getComputedStyle(document.documentElement).colorScheme"));
-    if (theme == ThemeMode::kLight) {
+    EXPECT_EQ(dark ? "dark" : "light", content::EvalJs(
+        popup, "getComputedStyle(document.documentElement).colorScheme"));
+    EXPECT_EQ(dark ? "rgb(26, 28, 36)" : "rgb(250, 249, 246)", content::EvalJs(
+        popup, "getComputedStyle(document.documentElement).backgroundColor"));
+    if (MetalPresents()) {
+      ASSERT_TRUE(base::test::RunUntil([&] {
+        return shell->metal_sidebar_visible() && shell->metal_header_visible() &&
+               shell->metal_sidebar_frame_count() > sidebar_frames &&
+               shell->metal_header_frame_count() > header_frames;
+      }));
+    } else {
+      EXPECT_FALSE(shell->metal_sidebar_visible());
+      EXPECT_FALSE(shell->metal_header_visible());
+    }
+    if (!dark) {
       ASSERT_TRUE(content::ExecJs(popup, "window.close()"));
       ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
     }

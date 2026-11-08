@@ -37,10 +37,12 @@ checks both upstream archives and uses a pinned esbuild version.
 ## Browser verification
 
 The Chromium-backed `NightShiftBrowserTest.NativeActionReviewsScopedRepair`
-opens the real extension action popup in both appearance modes and clicks the
-repair action. A loopback model fixture drives the native assistant tool
-round-trip, including refusal of an unrelated tool, then verifies preview,
-save and undo in the inspected tab.
+opens the real extension action popup in both appearance modes and checks its
+rendered background. Each appearance change must produce fresh Metal frames in
+the browser header and sidebar when Metal is requested. The compositor run
+checks that both Metal surfaces are hidden. A loopback model fixture drives the
+native assistant tool round-trip, including refusal of an unrelated tool, then
+verifies preview, save and undo in the inspected tab.
 
 On macOS, build `zitter_prototype` and run the case once with
 `--zitter-rust-raster=compositor` and once with `--zitter-rust-raster=metal`.
