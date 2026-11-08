@@ -279,6 +279,10 @@ class OverlayTests(unittest.TestCase):
             content_blocking_fixture.seed(checkout)
             seed_extension_tabs(checkout)
             seed_extensions_logo(checkout)
+            allowlist = checkout / "chrome/browser/extensions/component_extensions_allowlist/allowlist.cc"
+            allowlist.parent.mkdir(parents=True)
+            allowlist_source = "      extension_misc::kPdfExtensionId,\n"
+            allowlist.write_text(allowlist_source, newline="\n")
             build = checkout / "chrome/test/BUILD.gn"
             build.parent.mkdir(parents=True)
             original = ('# Existing local build configuration\n'
@@ -317,8 +321,10 @@ class OverlayTests(unittest.TestCase):
                 overlay.install(checkout, dry_run=True)
                 self.assertFalse((checkout / "zitter").exists())
                 self.assertEqual(build.read_text(), original)
+                self.assertEqual(allowlist.read_text(), allowlist_source)
                 overlay.install(checkout)
                 overlay.install(checkout)
+                self.assertEqual(allowlist.read_text().count("kdpnmnbnedpcomicojommdikkdepclio"), 1)
                 self.assertIn("if (needs_uia_disconnect &&", renderer.read_text())
                 self.assertEqual(build.read_text().replace(overlay.DEPENDENCY, ""), original)
                 source = checkout / "zitter/zitter/core/workspace_model.cc"
