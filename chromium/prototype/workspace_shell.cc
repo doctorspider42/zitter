@@ -6885,11 +6885,15 @@ constexpr gfx::VectorIconRep kAddSpaceRep[]={{kAddSpacePath}};
 constexpr gfx::VectorIcon kAddTabIcon(kAddTabRep,1,"zitter_add_tab");
 constexpr gfx::VectorIcon kAddFolderIcon(kAddFolderRep,1,"zitter_add_folder");
 constexpr gfx::VectorIcon kAddSpaceIcon(kAddSpaceRep,1,"zitter_add_space");
+constexpr gfx::PathElement kMenuNewTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,3,V_LINE_TO,13,MOVE_TO,3,8,H_LINE_TO,13};
+constexpr gfx::PathElement kMenuSidebarPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,3,11,10,2,MOVE_TO,6.5f,3,V_LINE_TO,13};
+constexpr gfx::VectorIconRep kMenuNewTabRep[]={{kMenuNewTabPath}};
+constexpr gfx::VectorIconRep kMenuSidebarRep[]={{kMenuSidebarPath}};
+constexpr gfx::VectorIcon kMenuNewTabIcon(kMenuNewTabRep,1,"zitter_menu_new_tab");
+constexpr gfx::VectorIcon kMenuSidebarIcon(kMenuSidebarRep,1,"zitter_menu_sidebar");
 #if !BUILDFLAG(IS_MAC)
 // The |z⟩ menu's row icons (design: Main, Menu Zitter), 16 px at `.zt-icon`'s 1.6 stroke.
-constexpr gfx::PathElement kMenuNewTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,3,V_LINE_TO,13,MOVE_TO,3,8,H_LINE_TO,13};
 constexpr gfx::PathElement kMenuAddressPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,7,7,4,MOVE_TO,10,10,LINE_TO,13,13};
-constexpr gfx::PathElement kMenuSidebarPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,3,11,10,2,MOVE_TO,6.5f,3,V_LINE_TO,13};
 constexpr gfx::PathElement kMenuHistoryPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,8,8,5.5f,MOVE_TO,8,5,V_LINE_TO,8,LINE_TO,10,9.5f};
 constexpr gfx::PathElement kMenuTimelinePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,3,8,R_ARC_TO,5,5,0,1,0,1.5f,-3.5f,MOVE_TO,3,2.5f,V_LINE_TO,5.5f,H_LINE_TO,6,MOVE_TO,8,5.5f,V_LINE_TO,8,LINE_TO,9.5f,9.5f};
 constexpr gfx::PathElement kMenuDownloadsPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,2.5f,V_LINE_TO,10.5f,MOVE_TO,4.5f,7,LINE_TO,8,10.5f,LINE_TO,11.5f,7,MOVE_TO,3,13.5f,H_LINE_TO,13};
@@ -6912,18 +6916,14 @@ constexpr gfx::VectorIconRep kMenuFindRep[]={{kMenuFindPath}};
 constexpr gfx::VectorIconRep kMenuPrintRep[]={{kMenuPrintPath}};
 constexpr gfx::VectorIcon kMenuFindIcon(kMenuFindRep,1,"zitter_menu_find");
 constexpr gfx::VectorIcon kMenuPrintIcon(kMenuPrintRep,1,"zitter_menu_print");
-constexpr gfx::VectorIconRep kMenuNewTabRep[]={{kMenuNewTabPath}};
 constexpr gfx::VectorIconRep kMenuAddressRep[]={{kMenuAddressPath}};
-constexpr gfx::VectorIconRep kMenuSidebarRep[]={{kMenuSidebarPath}};
 constexpr gfx::VectorIconRep kMenuHistoryRep[]={{kMenuHistoryPath}};
 constexpr gfx::VectorIconRep kMenuTimelineRep[]={{kMenuTimelinePath}};
 constexpr gfx::VectorIconRep kMenuDownloadsRep[]={{kMenuDownloadsPath}};
 constexpr gfx::VectorIconRep kMenuSettingsRep[]={{kMenuSettingsPath}};
 constexpr gfx::VectorIconRep kMenuAboutRep[]={{kMenuAboutPath}};
 constexpr gfx::VectorIconRep kMenuQuitRep[]={{kMenuQuitPath}};
-constexpr gfx::VectorIcon kMenuNewTabIcon(kMenuNewTabRep,1,"zitter_menu_new_tab");
 constexpr gfx::VectorIcon kMenuAddressIcon(kMenuAddressRep,1,"zitter_menu_address");
-constexpr gfx::VectorIcon kMenuSidebarIcon(kMenuSidebarRep,1,"zitter_menu_sidebar");
 constexpr gfx::VectorIcon kMenuHistoryIcon(kMenuHistoryRep,1,"zitter_menu_history");
 constexpr gfx::VectorIcon kMenuTimelineIcon(kMenuTimelineRep,1,"zitter_menu_timeline");
 constexpr gfx::VectorIcon kMenuDownloadsIcon(kMenuDownloadsRep,1,"zitter_menu_downloads");
@@ -10987,7 +10987,6 @@ void WorkspaceShell::BuildShortcutRows() {
       const auto keys = keys_for(chord);
       return keys.empty() ? T(u"Nie ustawiono") : base::JoinString(keys, u" + ");
     };
-    const auto chord = current(ids.front());
     if (shortcut_recording_ == id) {
       auto* row = list->AddChildView(std::make_unique<ShortcutRowView>(ShortcutRowView::Style::kRecording));
       row_layout(row, gfx::Insets::TLBR(8, 8, 10, 8), 6, true);
@@ -11062,9 +11061,10 @@ void WorkspaceShell::BuildShortcutRows() {
     layout->set_minimum_cross_axis_size(40);
     layout->SetFlexForView(AddToolsCopy(row, title, kInk, 0, 400, false), 1);
     if (modified) row->AddChildView(std::make_unique<ShortcutBadge>(T(u"Zmieniony")));
+    const auto current_chord = current(ids.front());
     auto* keys = row->AddChildView(std::make_unique<ShortcutKeycapsButton>(
-        record(id), keys_for(chord), ShortcutKeycapsButton::Mode::kRest, base::RepeatingCallback<void(const ui::KeyEvent&)>()));
-    keys->GetViewAccessibility().SetName(TF(u"{}: {}. Naciśnij, aby nagrać nowy skrót.", {title, pretty(chord)}));
+        record(id), keys_for(current_chord), ShortcutKeycapsButton::Mode::kRest, base::RepeatingCallback<void(const ui::KeyEvent&)>()));
+    keys->GetViewAccessibility().SetName(TF(u"{}: {}. Naciśnij, aby nagrać nowy skrót.", {title, pretty(current_chord)}));
     keys->SetTooltipText(T(u"Naciśnij, aby nagrać nowy skrót."));
     shortcut_keycaps_[id] = keys;
     if (modified) {

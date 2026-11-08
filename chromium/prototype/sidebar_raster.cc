@@ -159,6 +159,7 @@ class PanelOverlayThumb final : public views::BaseScrollBarThumb {
   void OnPaint(gfx::Canvas* canvas) override;
   void OnBoundsChanged(const gfx::Rect& previous) override;
   void OnStateChanged() override;
+  bool IsActive() const { return GetState() != views::Button::STATE_NORMAL; }
  private:
   raw_ptr<PanelOverlayScrollBar> bar_;
 };
@@ -193,7 +194,7 @@ class PanelOverlayScrollBar final : public views::ScrollBar {
     canvas->DrawRoundRect(gfx::RectF(Pill(GetTrackBounds())), kPanelThumbHover / 2.f, flags);
   }
   bool Wide() const {
-    return IsMouseHovered() || GetThumb()->GetState() != views::Button::STATE_NORMAL;
+    return IsMouseHovered() || static_cast<PanelOverlayThumb*>(GetThumb())->IsActive();
   }
   // The pill inside `area` (the thumb or the track), flush with the far edge.
   gfx::Rect Pill(gfx::Rect area) const {
@@ -211,7 +212,7 @@ class PanelOverlayScrollBar final : public views::ScrollBar {
     Fade(1.f, kPanelFadeIn);
   }
   void StartHideCountdown() {
-    if (IsMouseHovered() || GetThumb()->GetState() != views::Button::STATE_NORMAL) return;
+    if (Wide()) return;
     hide_timer_.Start(FROM_HERE, kPanelHideDelay, base::BindOnce(&PanelOverlayScrollBar::Hide, base::Unretained(this)));
   }
  private:
