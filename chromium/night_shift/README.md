@@ -36,6 +36,24 @@ checks both upstream archives and uses a pinned esbuild version.
 
 ## Browser verification
 
+The Chromium-backed `NightShiftBrowserTest.NativeActionReviewsScopedRepair`
+opens the real extension action popup in both appearance modes and clicks the
+repair action. A loopback model fixture drives the native assistant tool
+round-trip, including refusal of an unrelated tool, then verifies preview,
+save and undo in the inspected tab.
+
+On macOS, build `zitter_prototype` and run the case once with
+`--zitter-rust-raster=compositor` and once with `--zitter-rust-raster=metal`.
+Run from the Chromium source directory so the browser fixture finds its
+resources:
+
+```sh
+out/ZitterOptimized/zitter_prototype \
+  --gtest_filter=NightShiftBrowserTest.NativeActionReviewsScopedRepair \
+  --test-launcher-jobs=1 --enable-pixel-output-in-tests \
+  --zitter-rust-raster=metal
+```
+
 Run `node --test tests/night_shift_policy.test.mjs` for site scoping and typed
 repair validation. Run `python tests/night_shift_browser.py <chromium-executable>`
 with `websocket-client` installed to exercise the unpacked extension in an

@@ -76,6 +76,7 @@
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
 #include "chromium/prototype/night_shift.h"
+#include "chrome/common/chrome_paths.h"
 #include "components/download/public/common/download_item_impl.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -12959,6 +12960,198 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
 
 // Extension pages (options, chrome://extensions, links from popups) open as
 // tabs of a space that uses the extension's profile.
+class NightShiftBrowserTest : public ZitterProfilesBrowserTest {
+ public:
+  void SetUpOnMainThread() override {
+#if BUILDFLAG(IS_MAC)
+    // The unbundled browser test stages these files next to the executable.
+    // Resolve the component's absolute path before restoring the normal path.
+    base::FilePath executable_dir;
+    ASSERT_TRUE(base::PathService::Get(base::DIR_EXE, &executable_dir));
+    base::ScopedPathOverride resources(
+        chrome::DIR_RESOURCES, executable_dir.AppendASCII("resources"));
+#endif
+    ZitterProfilesBrowserTest::SetUpOnMainThread();
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
+  ASSERT_TRUE(window_->Select("work"));
+  if (MetalPresents()) {
+    window_->shell()->SetPinned(true);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return window_->shell()->metal_sidebar_frame_count() > 0;
+    }));
+  }
+  const auto* extension = extensions::ExtensionRegistry::Get(work_)
+                              ->enabled_extensions().GetByID(kNightShiftId);
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(window_->OpenExtensionPage(work_,
+                                        extension->GetResourceURL("settings.html")));
+  auto* settings = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(settings));
+  ASSERT_EQ(true, content::EvalJs(settings, R"(
+      chrome.runtime.sendMessage({type:'set-global', enabled:true})
+          .then(response => response.ok)
+  )"));
+  ASSERT_TRUE(window_->NavigateFromBar(
+      embedded_test_server()->GetURL("/storage_probe.html"), true));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, "!!document.querySelector('.darkreader--override')") == true;
+  }));
+  ASSERT_TRUE(content::ExecJs(page, R"(
+      const caption = document.createElement('figcaption');
+      caption.id = 'night-shift-caption';
+      caption.textContent = 'Private fixture text';
+      document.body.prepend(caption);
+      const fixture = document.createElement('style');
+      fixture.className = 'darkreader';
+      fixture.textContent = '#night-shift-caption {background:#181a1b;color:#343434!important}';
+      document.querySelector('.darkreader--override').before(fixture);
+  )"));
+  constexpr char kCaptionColor[] =
+      "getComputedStyle(document.getElementById('night-shift-caption')).color";
+  ASSERT_EQ("rgb(52, 52, 52)", content::EvalJs(page, kCaptionColor));
+
+  auto* bar = window_->extensions_bar();
+  for (const auto theme : {ThemeMode::kLight, ThemeMode::kDark}) {
+    window_->shell()->SetThemeMode(theme);
+    bar->RunAction(kNightShiftId);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible();
+    }));
+    auto* popup = bar->popup_contents_for_testing();
+    ASSERT_TRUE(content::WaitForLoadStop(popup));
+    EXPECT_EQ(theme == ThemeMode::kDark ? "dark" : "light",
+              content::EvalJs(popup, "getComputedStyle(document.documentElement).colorScheme"));
+    if (theme == ThemeMode::kLight) {
+      ASSERT_TRUE(content::ExecJs(popup, "window.close()"));
+      ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
+    }
+  }
+  auto* popup = bar->popup_contents_for_testing();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(popup, "!document.getElementById('repair').hidden") == true;
+  }));
+  // A simulated native input event supplies the user gesture required by the
+  // popup host before it will launch an assistant request.
+  const auto point = content::EvalJs(popup, R"(
+      (() => {
+        const rect = document.getElementById('repair').getBoundingClientRect();
+        return [Math.round(rect.x + rect.width / 2), Math.round(rect.y + rect.height / 2)];
+      })()
+  )").TakeValue();
+  ASSERT_TRUE(point.is_list());
+  ASSERT_EQ(2u, point.GetList().size());
+  content::SimulateMouseClickAt(popup, 0, blink::WebMouseEvent::Button::kLeft,
+      gfx::Point(point.GetList()[0].GetInt(), point.GetList()[1].GetInt()));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->assistant() && !window_->assistant()->draft_for_testing().empty() &&
+           !bar->popup_for_testing();
+  }));
+  auto* assistant = window_->assistant();
+  const auto prompt = base::UTF16ToUTF8(assistant->draft_for_testing());
+  ASSERT_GE(prompt.size(), 36u);
+  const auto request_id = prompt.substr(prompt.size() - 36);
+  ASSERT_TRUE(base::Uuid::ParseLowercase(request_id).is_valid());
+
+  net::EmbeddedTestServer model;
+  model.RegisterRequestHandler(base::BindRepeating(
+      [](const std::string& request_id, const net::test_server::HttpRequest& request)
+          -> std::unique_ptr<net::test_server::HttpResponse> {
+        if (request.relative_url != "/api/chat") return nullptr;
+        base::ListValue actions;
+        std::string answer;
+        auto envelope = base::JSONReader::ReadDict(request.content, base::JSON_PARSE_RFC);
+        const auto* messages = envelope ? envelope->FindList("messages") : nullptr;
+        const auto* last = messages && !messages->empty() ? messages->back().GetIfDict() : nullptr;
+        const auto* content = last ? last->FindString("content") : nullptr;
+        auto turn = content ? base::JSONReader::ReadDict(*content, base::JSON_PARSE_RFC) : std::nullopt;
+        const auto* results = turn ? turn->FindList("untrusted_tool_results") : nullptr;
+        auto add = [&](const char* tool, base::DictValue args) {
+          actions.Append(base::DictValue().Set("tool", tool)
+                             .Set("args", base::WriteJson(args).value_or("{}")));
+        };
+        if (!results) {
+          add("list_tabs", base::DictValue());
+          add("night_shift_inspect", base::DictValue().Set("request", request_id));
+        } else {
+          int target = -1;
+          bool unrelated_tool_refused = false;
+          for (const auto& result : *results) {
+            const auto* entry = result.GetIfDict();
+            const auto* tool = entry ? entry->FindString("tool") : nullptr;
+            const auto* value = entry ? entry->FindDict("result") : nullptr;
+            if (!tool || !value) continue;
+            if (*tool == "list_tabs") unrelated_tool_refused = value->contains("error");
+            const auto* low = value->FindList("lowContrastTargets");
+            const auto* candidates = value->FindList("candidates");
+            if (*tool == "night_shift_inspect" && low && candidates) {
+              for (const auto& item : *low) {
+                if (!item.is_int() || item.GetInt() < 0 ||
+                    static_cast<size_t>(item.GetInt()) >= candidates->size()) {
+                  continue;
+                }
+                const auto& candidate = (*candidates)[item.GetInt()].GetDict();
+                const auto* path = candidate.FindList("path");
+                if (path && !path->empty()) {
+                  const auto* id = (*path)[0].GetDict().FindString("id");
+                  if (id && *id == "night-shift-caption") target = item.GetInt();
+                }
+              }
+            }
+            if (*tool == "night_shift_propose" && !value->contains("error")) {
+              answer = "Night Shift native repair ready";
+            }
+          }
+          if (unrelated_tool_refused && target >= 0 &&
+              content->find("Private fixture text") == std::string::npos) {
+            add("night_shift_propose",
+                base::DictValue().Set("request", request_id).Set("label", "Caption contrast")
+                    .Set("rules", base::ListValue().Append(base::DictValue()
+                        .Set("target", target).Set("property", "color").Set("color", "#e0e0e0"))));
+          }
+        }
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_content_type("application/json");
+        auto message = base::WriteJson(base::DictValue().Set("answer", answer)
+                                          .Set("actions", std::move(actions)));
+        response->set_content(base::WriteJson(base::DictValue().Set(
+            "message", base::DictValue().Set("content", message.value_or("{}")))).value_or("{}"));
+        return response;
+      }, request_id));
+  ASSERT_TRUE(model.Start());
+  base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL", model.base_url().spec());
+  assistant->ConfigureForTesting("ollama", "test-local", {false, true, false, false, false});
+  assistant->SendForTesting(prompt);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !assistant->busy(); }));
+  ASSERT_TRUE(assistant->ContainsForTesting("Night Shift native repair ready"));
+  EXPECT_EQ("rgb(52, 52, 52)", content::EvalJs(page, kCaptionColor));
+
+  bar->RunAction(kNightShiftId);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing() != nullptr; }));
+  popup = bar->popup_contents_for_testing();
+  ASSERT_TRUE(content::WaitForLoadStop(popup));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, kCaptionColor) == "rgb(224, 224, 224)";
+  }));
+  ASSERT_TRUE(content::ExecJs(popup, "document.getElementById('before').click()"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, kCaptionColor) == "rgb(52, 52, 52)";
+  }));
+  ASSERT_TRUE(content::ExecJs(popup, "document.getElementById('apply').click()"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(popup, "!document.getElementById('undo').hidden") == true;
+  }));
+  EXPECT_EQ("rgb(224, 224, 224)", content::EvalJs(page, kCaptionColor));
+  ASSERT_TRUE(content::ExecJs(popup, "document.getElementById('undo').click()"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, kCaptionColor) == "rgb(52, 52, 52)";
+  }));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPopupVisibleBeforeSlowResourcesFinish) {
   base::ScopedTempDir dir;
   net::EmbeddedTestServer server;
