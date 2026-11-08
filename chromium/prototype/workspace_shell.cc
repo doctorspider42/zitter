@@ -11123,7 +11123,6 @@ void WorkspaceShell::BuildShortcutRows() {
       views::AsViewClass<SceneTextButton>(AddAction(actions, cancel(id), T(u"Anuluj")))->SetQuiet();
       return;
     }
-    const auto current_chord = current(ids.front());
     const bool modified = ShortcutModified(id);
     auto* row = list->AddChildView(std::make_unique<ShortcutRowView>(ShortcutRowView::Style::kRow));
     auto* layout = row_layout(row, gfx::Insets::TLBR(0, 8, 0, 4), 10, false);
