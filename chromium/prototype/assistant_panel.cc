@@ -1241,15 +1241,21 @@ void AssistantPanel::Ask(std::u16string text) {
   Send(false);
 }
 std::u16string AssistantPanel::draft_for_testing() const { return std::u16string(prompt_->GetText()); }
-void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions, bool needs_web) {
+void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions,
+                                      bool needs_web, bool night_shift) {
   // Keep the previous conversation and composer intact, including running work.
   const auto previous = selected().key;
   selected().composer_draft = prompt_->GetText();
   selected().composer_chips = chips_;
   CreateSession(true);
   if (selected().key == previous) return;
+  selected().night_shift = night_shift;
+  if (night_shift) {
+    const bool pages = selected().permissions.pages;
+    selected().permissions = {.pages = pages, .web = false};
+  }
   prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size()));
-  InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
+  if (!night_shift) InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
   PromptChanged();
   const auto& access = selected().permissions;
   if (access.pages && (!needs_web || access.web) && (!needs_actions || access.actions) && !selected().provider.empty()) {
@@ -1356,8 +1362,9 @@ void AssistantPanel::Send(bool background) {
   if (session.profile != window_->AssistantProfileId()) { Append(session, "This session belongs to another profile. Start a new session."); return; }
   if (session.provider.empty()) { Append(session, base::UTF16ToUTF8(T(u"Dodaj model w Ustawieniach → Asystent AI."))); return; }
   const auto& settings = window_->assistant_settings();
-  const bool research = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });
-  bool in_background = background || std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; });
+  const bool research = !session.night_shift && std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });
+  bool in_background = !session.night_shift && (background ||
+      std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; }));
   if (in_background && !(settings.background && session.permissions.actions)) {
     Append(session, base::UTF16ToUTF8(T(u"Praca w tle wymaga klikania i włączonej pracy w tle w Ustawieniach.")));
     return;
@@ -1365,7 +1372,7 @@ void AssistantPanel::Send(bool background) {
   // References travel as text the model already knows: @current, @tab:, @pin:.
   std::string prompt = base::UTF16ToUTF8(text);
   std::string references;
-  for (const auto& chip : chips_) if (IsPage(chip)) references += (references.empty() ? "" : ", ") + chip.ref + " (" + base::UTF16ToUTF8(chip.title) + ")";
+  if (!session.night_shift) for (const auto& chip : chips_) if (IsPage(chip)) references += (references.empty() ? "" : ", ") + chip.ref + " (" + base::UTF16ToUTF8(chip.title) + ")";
   if (!references.empty()) prompt += (prompt.empty() ? "" : "\n\n") + std::string("Referenced pages: ") + references;
   if (prompt.empty()) prompt = research ? "Research this." : "Continue.";
   if (in_background && !window_->AssistantHasBackground(session.key) && !window_->AssistantStartBackground(session.key, {}, GURL())) {
@@ -1379,12 +1386,16 @@ void AssistantPanel::Send(bool background) {
   if (session.title.empty()) session.title = text.empty() ? chips.front().title : text.substr(0, 48);
   Append(session, "You: " + base::UTF16ToUTF8(text), chips);
   session.background = in_background;
+  const auto access = session.night_shift
+      ? AssistantPermissions{.pages = session.permissions.pages, .web = false}
+      : session.permissions;
   session.request = base::DictValue().Set("id", session.id).Set("prompt", prompt).Set("research", research).Set("background", in_background)
       .Set("concurrency", settings.concurrency)
       .Set("date", base::DictValue().Set("unix_ms", static_cast<double>(base::Time::Now().InMillisecondsSinceUnixEpoch()))
            .Set("utc_offset_minutes", TimelineUtcOffsetMinutes(base::Time::Now())))
       .Set("config", base::DictValue().Set("provider", session.provider).Set("model", session.model))
-      .Set("permissions", session.permissions.ToValue()).Set("context", window_->AssistantContext(session.permissions));
+      .Set("permissions", access.ToValue())
+      .Set("context", session.night_shift ? base::DictValue() : window_->AssistantContext(access));
   base::ListValue history;
   for (size_t i = 0; i + 1 < session.messages.size(); ++i) {
     const auto& m = session.messages[i];
@@ -1577,6 +1588,13 @@ void AssistantPanel::RunNext(Session& session) {
     StopSession(session); Append(session, "Invalid browser tool request."); return;
   }
   const auto tool = *action.GetDict().FindString("tool");
+  if (session.night_shift && tool != "night_shift_inspect" && tool != "night_shift_propose") {
+    session.results.Append(base::DictValue().Set("tool", tool).Set("result",
+        base::DictValue().Set("error", "This Night Shift action can only inspect colors and propose a fix")));
+    ++session.index;
+    RunNext(session);
+    return;
+  }
   if (tool == "list_tasks") {
     base::ListValue list;
     for (const auto& task : tasks_) if (task.profile == session.profile)

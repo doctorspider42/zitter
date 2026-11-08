@@ -209,6 +209,9 @@ def package(out, destination, binary="zitter", register=True, identity=None, thi
     # resolving a symlink to an unbundled framework breaks NSBundle discovery.
     shutil.copytree(out / "Chromium Framework.framework", framework,
                     symlinks=True, dirs_exist_ok=True, copy_function=link_file)
+    night_shift = out / "resources/night_shift"
+    if night_shift.is_dir():
+        shutil.copytree(night_shift, framework / "Resources/night_shift", dirs_exist_ok=True)
     libraries = list(out.glob("*.dylib"))
     names = {library.name for library in libraries}
     # Switching an owned bundle from a component build must not retain old

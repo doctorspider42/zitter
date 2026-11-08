@@ -18,10 +18,13 @@ class WindowsPackageTest(unittest.TestCase):
             "v8_context_snapshot.bin", "gen/third_party/devtools-frontend/src/front_end/Tests.js",
             "pyproto/google/__init__.py", "angledata/foo.bin", "../../third_party/x.txt", "zitter.lib",
             "VkLayer_khronos_validation.dll", "msdia140.dll", "dbghelp.dll", "locales/en-XA.pak",
+            "resources/test_extension/background.js", "resources/night_shift/manifest.json",
+            "resources/night_shift/vendor/LICENSE",
         ])
         self.assertEqual(files, sorted(["zitter.exe", "zitter_assistant.exe", "base.dll", "chrome_elf.dll", "resources.pak",
                                         "locales/pl.pak", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
-                                        "v8_context_snapshot.bin"]))
+                                        "v8_context_snapshot.bin", "resources/night_shift/manifest.json",
+                                        "resources/night_shift/vendor/LICENSE"]))
 
     def test_refuses_a_build_without_zitter(self):
         with self.assertRaises(ValueError):

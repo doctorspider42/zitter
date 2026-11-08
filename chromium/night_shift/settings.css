@@ -1,0 +1,45 @@
+/* Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0 */
+
+:root {
+    color-scheme: light dark;
+    --surface: light-dark(#faf9f6, #1a1c24);
+    --background: light-dark(#f0efed, #111217);
+    --text: light-dark(#22222a, #f3f1f7);
+    --muted: light-dark(#625e6c, #ada8ba);
+    --accent: light-dark(#694bc9, #c0b0ff);
+    --line: light-dark(#dedbe4, #333541);
+    background: var(--background);
+    color: var(--text);
+    font: 14px/1.4 system-ui, sans-serif;
+}
+
+:root[data-appearance="dark"] { color-scheme: dark; }
+:root[data-appearance="light"] { color-scheme: light; }
+
+main {
+    max-width: 360px;
+    margin: 48px auto;
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+}
+
+h1, p { margin: 0; }
+h1 { font-size: 20px; font-weight: 650; }
+p, small { color: var(--muted); }
+small { display: block; }
+
+label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 48px;
+    border-top: 1px solid var(--line);
+    margin-top: 16px;
+    cursor: pointer;
+}
+
+input { accent-color: var(--accent); }
+.status:empty { display: none; }

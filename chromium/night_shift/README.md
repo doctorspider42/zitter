@@ -1,0 +1,54 @@
+# Night Shift engine
+
+Night Shift uses Dark Reader's Dynamic theme engine under the MIT license.
+The pinned npm release is `darkreader@4.9.135` and the matching source revision
+is `dbf2a1029131280d9dab21ed29f1dfdeb51a6cc7`. The assets in `vendor/` are
+checked in so Zitter builds do not fetch or execute npm packages.
+
+The generated bridge uses the upstream site-fix parser, URL matching and
+native-dark site list. The API bundle dispatches a local event in place of
+creating an inline script. The extension's main-world script listens for
+that event and installs the upstream CSSOM proxy, including on pages that
+block inline scripts with Content Security Policy.
+The API's local resource-fetch shim handles only Dark Reader's fetch messages.
+Other runtime messages keep Chromium's normal promise-based behavior.
+Linked stylesheets also subscribe to CSSOM change events. Animation-frame
+polling remains limited to inline styles when the proxy is unavailable.
+
+Zitter registers Night Shift as a built-in component extension for regular
+profiles. Its extension options toggle the engine for the profile. When
+disabled, Night Shift removes its existing page styles and unregisters both
+content scripts. Its action popup controls the current site's mode, brightness
+and contrast. When CORS prevents access to an already-loaded linked stylesheet,
+the extension can read an anonymous CSS response with limits on origin,
+response type, redirects, size and lifetime. Other resources use the page's
+ordinary CORS rules. Private profiles do not run the component.
+
+The popup's repair action opens a scoped Assistant session that can sample
+computed colors and propose typed color rules. The model receives neither page
+text nor screenshots through this action. A proposal is tied to the document
+that was inspected. Opening the popup starts a temporary comparison. Closing
+it restores the saved state. Saving affects the site in that profile, and Undo
+restores the previous saved fix.
+
+Run `python tools/refresh_darkreader.py` to reproduce the assets. The refresh
+checks both upstream archives and uses a pinned esbuild version.
+
+## Browser verification
+
+Run `node --test tests/night_shift_policy.test.mjs` for site scoping and typed
+repair validation. Run `python tests/night_shift_browser.py <chromium-executable>`
+with `websocket-client` installed to exercise the unpacked extension in an
+isolated profile. Pass `--original <unpacked-extension-directory>` to run the
+same linked stylesheet fixture with the
+[Dark Reader 4.9.135 MV3 release](https://github.com/darkreader/darkreader/releases/tag/v4.9.135).
+
+In the Windows Chromium-based Edge check, adding a rule through
+`CSSStyleSheet.insertRule()` changed the fixture's themed background from
+`rgb(34, 36, 38)` to `rgb(103, 70, 15)` with Night Shift. The original
+extension kept the old color after the same mutation. The fixture serves
+its scripts under `script-src 'self'`.
+
+A linked stylesheet served from a separate loopback origin without an
+Access-Control-Allow-Origin header produced `rgb(34, 36, 38)` in Night Shift.
+Dark Reader 4.9.135 left the same background at `rgb(238, 238, 238)`.

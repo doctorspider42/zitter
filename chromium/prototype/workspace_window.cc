@@ -92,6 +92,7 @@
 #include "base/command_line.h"
 #include "chromium/app/windows_channel.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "chromium/prototype/night_shift.h"
 #include "chromium/prototype/extension_tab_events.h"
 #include "chrome/browser/ui/extensions/extension_install_ui.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
@@ -1045,6 +1046,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.assistant_available = base::BindRepeating([](WorkspaceWindow* window) {
     return window->assistant_settings_.enabled;
   }, base::Unretained(this));
+  extension_callbacks.fix_night_shift =
+      base::BindRepeating(&WorkspaceWindow::PrepareNightShiftRepair, weak_factory_.GetWeakPtr());
   extension_callbacks.block_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
     // Rules that stopped working come first: the assistant replaces them.
     auto* bar = window->extensions_bar_.get();
@@ -1271,6 +1274,7 @@ void WorkspaceWindow::SaveWindowPlacement() {
 
 views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* parent,
     std::unique_ptr<content::WebContents> owned, bool create_contents) {
+  EnsureNightShift(profile);
   auto* view = (parent ? parent : shell_->content_host())->AddChildView(std::make_unique<WorkspaceWebView>(
       profile, base::BindRepeating(&WorkspaceWindow::PreHandlePageKeyEvent, base::Unretained(this)),
       base::BindRepeating(&WorkspaceWindow::OpenPageLink, base::Unretained(this)),

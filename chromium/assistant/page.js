@@ -8,6 +8,50 @@
     /password|passwd|secret|token|credit|card.?number|cvv|cvc|otp|one.?time|cc-/i.test(
       [e.name, e.id, e.autocomplete, e.getAttribute('aria-label')].join(' '));
   const style = e => e.ownerDocument.defaultView.getComputedStyle(e);
+  if (args.tool === 'night_shift_inspect') {
+    const candidates = [];
+    const seen = new Set();
+    const identifier = /^[a-z_][\w-]{0,63}$/i;
+    const validTag = /^[a-z][a-z0-9-]{0,31}$/;
+    const containers = 'article,section,main,aside,nav,header,footer';
+    const consider = element => {
+      if (!element || seen.has(element) || candidates.length >= 48 ||
+          element.closest('[data-private], [data-sensitive], form, [contenteditable]') ||
+          !validTag.test(element.localName)) return;
+      seen.add(element);
+      const tag = element.localName;
+      const id = identifier.test(element.id) ? element.id : null;
+      const classes = id ? [] : [...element.classList].filter(name => identifier.test(name)).slice(0, 3);
+      if (!id && classes.length === 0 && !element.matches(containers + ',html,body,figcaption,p,span')) return;
+      const css = style(element);
+      let surface = element;
+      let background = css.backgroundColor;
+      while (surface.parentElement && background === 'rgba(0, 0, 0, 0)') {
+        surface = surface.parentElement;
+        background = style(surface).backgroundColor;
+      }
+      candidates.push({
+        target: candidates.length, path: [{tag, id, classes}],
+        color: css.color, background, ownBackground: css.backgroundColor,
+      });
+    };
+    consider(document.body);
+    for (let row = 1; row <= 5; row++) {
+      for (let column = 1; column <= 7; column++) {
+        for (const hit of document.elementsFromPoint(innerWidth * column / 8, innerHeight * row / 6).slice(0, 4)) {
+          consider(hit);
+        }
+      }
+    }
+    // Short captions can lie between sampled points.
+    for (const element of [...document.querySelectorAll('figcaption, [role="note"], caption')].slice(0, 20)) {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width > 0 && bounds.height > 0 && bounds.bottom > 0 && bounds.top < innerHeight) {
+        consider(element);
+      }
+    }
+    return {candidates};
+  }
   const visible = e => {
     const r = e.getBoundingClientRect(), s = style(e);
     if (r.width <= 0 || r.height <= 0 || s.visibility === 'hidden' || s.display === 'none') return false;

@@ -155,6 +155,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ToggleAssistantFromBar();
   // Opens the assistant and sends `prompt` (the shield's "block more").
   void AskAssistant(std::u16string prompt);
+  void PrepareNightShiftRepair(content::WebContents* page);
   // Settings → Blokowanie reklam, for the active profile.
   base::DictValue ReadAdBlocking();
   std::string WriteAdBlocking(base::DictValue command);
@@ -459,6 +460,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   base::CallbackListSubscription ad_blocking_changed_;
   std::map<std::string, std::unique_ptr<views::ViewTracker>> assistant_targets_;
   AssistantSettings assistant_settings_;
+  base::WeakPtr<content::WebContents> night_shift_target_;
+  GURL night_shift_url_;
+  std::string night_shift_document_;
+  std::string night_shift_request_;
+  base::ListValue night_shift_candidates_;
   struct AssistantBackgroundPage {
     AssistantBackgroundPage();
     AssistantBackgroundPage(AssistantBackgroundPage&&);

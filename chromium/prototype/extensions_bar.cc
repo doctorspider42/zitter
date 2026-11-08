@@ -26,6 +26,7 @@
 #include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/i18n.h"
+#include "chromium/prototype/night_shift.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "components/prefs/pref_service.h"
@@ -39,6 +40,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_icon_factory.h"
 #include "extensions/browser/extension_action_manager.h"
@@ -49,6 +51,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/options_page_info.h"
 #include "extensions/common/mojom/view_type.mojom.h"
+#include "net/base/url_util.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/color/color_provider_key.h"
@@ -324,9 +327,11 @@ class ExtensionsContextMenu final : public ui::SimpleMenuModel::Delegate {
       : bar_(bar), id_(std::move(id)), model_(this) {
     model_.AddItem(kPin, pinned ? T(u"Odepnij") : T(u"Przypnij"));
     if (options) model_.AddItem(kOptions, T(u"Opcje"));
-    model_.AddItem(kManage, T(u"Zarządzaj rozszerzeniami"));
-    model_.AddSeparator(ui::NORMAL_SEPARATOR);
-    model_.AddItem(kUninstall, T(u"Usuń z Zittera…"));
+    if (id_ != kNightShiftId) {
+      model_.AddItem(kManage, T(u"Zarządzaj rozszerzeniami"));
+      model_.AddSeparator(ui::NORMAL_SEPARATOR);
+      model_.AddItem(kUninstall, T(u"Usuń z Zittera…"));
+    }
     pinned_ = pinned;
   }
   void Run(views::Widget* parent, const gfx::Rect& anchor, ui::mojom::MenuSourceType source_type) {
@@ -877,11 +882,12 @@ END_METADATA
 // browser window of its own.
 class PopupHostDelegate final : public extensions::ExtensionViewHost::Delegate {
  public:
-  explicit PopupHostDelegate(base::RepeatingCallback<void(const GURL&)> open) : open_(std::move(open)) {}
+  explicit PopupHostDelegate(base::RepeatingCallback<void(const GURL&, bool)> open) : open_(std::move(open)) {}
   content::WebContents* OpenURL(const content::OpenURLParams& params,
                                 base::OnceCallback<void(content::NavigationHandle&)>) override {
     // Never reenter the shell from inside the renderer's navigation request.
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(open_, params.url));
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(open_, params.url, params.user_gesture));
     return nullptr;
   }
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(content::WebContents*,
@@ -899,8 +905,36 @@ class PopupHostDelegate final : public extensions::ExtensionViewHost::Delegate {
   }
   void set_profile(Profile* profile) { profile_ = profile; }
  private:
-  base::RepeatingCallback<void(const GURL&)> open_;
+  base::RepeatingCallback<void(const GURL&, bool)> open_;
   raw_ptr<Profile> profile_ = nullptr;
+};
+
+class NightShiftPopupHost final : public extensions::ExtensionViewHost {
+ public:
+  NightShiftPopupHost(
+      const Extension* extension, Profile* profile, const GURL& url,
+      std::unique_ptr<Delegate> delegate,
+      base::RepeatingCallback<void(const GURL&, bool)> open)
+      : ExtensionViewHost(extension, profile, url,
+                          extensions::mojom::ViewType::kExtensionPopup,
+                          std::move(delegate)),
+        open_(std::move(open)) {}
+
+  content::WebContents* AddNewContents(
+      content::WebContents* source,
+      std::unique_ptr<content::WebContents> new_contents, const GURL& url,
+      WindowOpenDisposition disposition,
+      const blink::mojom::WindowFeatures& features, bool user_gesture,
+      bool* blocked) override {
+    if (source == host_contents() && user_gesture) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(open_, url, true));
+    }
+    return nullptr;
+  }
+
+ private:
+  base::RepeatingCallback<void(const GURL&, bool)> open_;
 };
 
 // Calls back when a widget becomes active (the popup closes when the window
@@ -1463,18 +1497,46 @@ void ExtensionsBar::RunAction(const std::string& id) {
 void ExtensionsBar::ShowPopup(const Extension& extension, views::View* anchor) {
   auto* action = extensions::ExtensionActionManager::Get(profile_)->GetExtensionAction(extension);
   if (!action || !anchor || !anchor->GetWidget()) return;
-  const GURL url = action->GetPopupUrl(tab_id());
+  GURL url = action->GetPopupUrl(tab_id());
   if (!url.is_valid()) return;
+  if (extension.id() == kNightShiftId) {
+    url = net::AppendOrReplaceQueryParameter(url, "tab", base::NumberToString(tab_id()));
+    url = net::AppendOrReplaceQueryParameter(url, "appearance", IsDark(this) ? "dark" : "light");
+    url = net::AppendOrReplaceQueryParameter(url, "language", UiLanguageIsEnglish() ? "en" : "pl");
+    url = net::AppendOrReplaceQueryParameter(
+        url, "assistant", !callbacks_.assistant_available.is_null() &&
+            callbacks_.assistant_available.Run() ? "1" : "0");
+  }
   DestroyPopup();
-  auto delegate = std::make_unique<PopupHostDelegate>(base::BindRepeating(
-      [](base::WeakPtr<ExtensionsBar> bar, const GURL& url) {
+  const auto open = base::BindRepeating(
+      [](base::WeakPtr<ExtensionsBar> bar, bool night_shift,
+         content::WeakDocumentPtr target, const GURL& url, bool user_gesture) {
         if (!bar) return;
+        if (night_shift && url == GURL(std::string("chrome-extension://") +
+                                      kNightShiftId + "/repair-request")) {
+          auto* frame = target.AsRenderFrameHostIfValid();
+          if (user_gesture && frame && bar->page() &&
+              frame == bar->page()->GetPrimaryMainFrame() &&
+              !bar->callbacks_.fix_night_shift.is_null()) {
+            bar->ClosePopup();
+            bar->callbacks_.fix_night_shift.Run(bar->page());
+          }
+          return;
+        }
         bar->ClosePopup();
         bar->OpenPage(url);
-      }, weak_factory_.GetWeakPtr()));
+      }, weak_factory_.GetWeakPtr(), extension.id() == kNightShiftId,
+      page_->GetPrimaryMainFrame()->GetWeakDocumentPtr());
+  auto delegate = std::make_unique<PopupHostDelegate>(open);
   delegate->set_profile(profile_);
-  auto host = std::make_unique<extensions::ExtensionViewHost>(&extension, profile_, url,
-      extensions::mojom::ViewType::kExtensionPopup, std::move(delegate));
+  std::unique_ptr<extensions::ExtensionViewHost> host;
+  if (extension.id() == kNightShiftId) {
+    host = std::make_unique<NightShiftPopupHost>(&extension, profile_, url,
+                                               std::move(delegate), open);
+  } else {
+    host = std::make_unique<extensions::ExtensionViewHost>(&extension, profile_, url,
+        extensions::mojom::ViewType::kExtensionPopup, std::move(delegate));
+  }
   popup_ = std::make_unique<Popup>(this, anchor, std::move(host));
   popup_widget_ = views::BubbleDialogDelegate::CreateBubble(popup_.get(), base::BindOnce(
       [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
@@ -1524,8 +1586,14 @@ void ExtensionsBar::AllowSite(const std::string& id) {
 }
 
 void ExtensionsBar::OpenOptions(const std::string& id) {
-  if (const auto* extension = ExtensionFor(id); extension && extensions::OptionsPageInfo::HasOptionsPage(extension))
-    OpenPage(extensions::OptionsPageInfo::GetOptionsPage(extension));
+  const auto* extension = ExtensionFor(id);
+  if (!extension || !extensions::OptionsPageInfo::HasOptionsPage(extension)) return;
+  GURL url = extensions::OptionsPageInfo::GetOptionsPage(extension);
+  if (id == kNightShiftId) {
+    url = net::AppendOrReplaceQueryParameter(url, "appearance", IsDark(this) ? "dark" : "light");
+    url = net::AppendOrReplaceQueryParameter(url, "language", UiLanguageIsEnglish() ? "en" : "pl");
+  }
+  OpenPage(url);
 }
 
 void ExtensionsBar::Uninstall(const std::string& id) {

@@ -75,6 +75,7 @@
 #include "chromium/prototype/image_link_preview.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "chromium/prototype/night_shift.h"
 #include "components/download/public/common/download_item_impl.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -12833,7 +12834,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTh
   ASSERT_TRUE(bar->menu_for_testing());
   auto menu = bar->menu_ids_for_testing();
   std::ranges::sort(menu);
-  std::vector<std::string> expected{work_extension->id(), unpinned->id()};
+  std::vector<std::string> expected{work_extension->id(), unpinned->id(), kNightShiftId};
   std::ranges::sort(expected);
   EXPECT_EQ(expected, menu);
   bar->CloseMenus();
@@ -12846,7 +12847,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTh
   ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == personal_.get(); }));
   ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar) == std::vector<std::string>{personal_extension->id()}; }));
   bar->ToggleMenu();
-  EXPECT_EQ(std::vector<std::string>{personal_extension->id()}, bar->menu_ids_for_testing());
+  EXPECT_TRUE(std::ranges::is_permutation(
+      std::vector<std::string>{personal_extension->id(), kNightShiftId},
+      bar->menu_ids_for_testing()));
   bar->CloseMenus();
   ASSERT_TRUE(base::test::RunUntil([&] { return !bar->menu_for_testing(); }));
   EXPECT_EQ("here", content::EvalJs(window_->contents("personal"), "document.documentElement.dataset.HomeTool || ''"));
@@ -13011,7 +13014,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPagesOpenInTheirProfi
   // ⌘⇧E opens the extensions menu of the shown profile.
   ASSERT_TRUE(window_->RunShortcut("extensions"));
   ASSERT_TRUE(window_->extensions_bar()->menu_for_testing());
-  EXPECT_EQ(std::vector<std::string>{extension->id()}, window_->extensions_bar()->menu_ids_for_testing());
+  EXPECT_TRUE(std::ranges::is_permutation(
+      std::vector<std::string>{extension->id(), kNightShiftId},
+      window_->extensions_bar()->menu_ids_for_testing()));
   window_->extensions_bar()->CloseMenus();
 }
 

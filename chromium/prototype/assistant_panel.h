@@ -137,7 +137,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // is busy or waiting for an answer keeps its work and only shows.
   void Ask(std::u16string text);
   // Prepares a fresh page-scoped draft without changing permission grants.
-  void PreparePageAction(std::u16string text, bool needs_actions, bool needs_web);
+  void PreparePageAction(std::u16string text, bool needs_actions, bool needs_web,
+                         bool night_shift = false);
   void SendForTesting(std::string text, bool background = false);
   void ConfigureForTesting(std::string provider, std::string model, AssistantPermissions permissions);
   bool ContainsForTesting(std::string_view text) const;
@@ -205,6 +206,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     std::vector<AssistantChip> composer_chips;
     // In-memory consent for this conversation; never persisted.
     bool auto_confirm = false;
+    bool night_shift = false;
     // Runtime of the current turn.
     bool busy = false, background = false, finished = false, page_control = false;
     uint64_t epoch = 0;

@@ -45,9 +45,21 @@ def patch_build(text):
     return text[:position] + DEPENDENCY + text[position:]
 
 
+def patch_night_shift_allowlist(text):
+    anchor = "      extension_misc::kPdfExtensionId,\n"
+    entry = '      "kdpnmnbnedpcomicojommdikkdepclio",  // Zitter Night Shift.\n'
+    if text.count(anchor + entry) == 1:
+        return text
+    if text.count(anchor) != 1 or entry in text:
+        raise ValueError("Unexpected Chromium component extension allowlist")
+    return text.replace(anchor, anchor + entry, 1)
+
+
 def overlay_files():
     files = {"BUILD.gn": ROOT / "chromium/BUILD.gn"}
-    for directory in ("zitter", "chromium/prototype", "chromium/app", "chromium/assistant", "chromium/installer", "testdata", "tests/fixtures", "assets/fonts", "third_party/brave_clean_urls"):
+    for directory in ("zitter", "chromium/prototype", "chromium/app", "chromium/assistant",
+                      "chromium/night_shift", "chromium/installer", "testdata", "tests/fixtures",
+                      "assets/fonts", "third_party/brave_clean_urls"):
         for path in sorted((ROOT / directory).rglob("*")):
             if path.is_file():
                 if "node_modules" in path.parts or path.name.endswith(".test.mjs"):
@@ -958,6 +970,9 @@ def install(checkout, dry_run=False):
     build = checkout / "chrome/test/BUILD.gn"
     original = read(build)
     patched = patch_build(original)
+    allowlist = checkout / "chrome/browser/extensions/component_extensions_allowlist/allowlist.cc"
+    allowlist_original = read(allowlist)
+    allowlist_patched = patch_night_shift_allowlist(allowlist_original)
     keychain = checkout / "components/os_crypt/common/keychain_password_mac.mm"
     keychain_original = read(keychain)
     keychain_patched = patch_keychain(keychain_original)
@@ -1025,6 +1040,8 @@ def install(checkout, dry_run=False):
             # Preserve other edits in this file; add only our single dependency.
             if patched != original:
                 write(build, patched)
+            if allowlist_patched != allowlist_original:
+                write(allowlist, allowlist_patched)
             if keychain_patched != keychain_original:
                 write(keychain, keychain_patched)
             if autofill_patched != autofill_original:
@@ -1064,6 +1081,8 @@ def install(checkout, dry_run=False):
             for path, (original_text, _) in docking_patch.items():
                 write(path, original_text)
             write(build, original)
+            if allowlist_patched != allowlist_original:
+                write(allowlist, allowlist_original)
             write(keychain, keychain_original)
             write(autofill, autofill_original)
             write(media_header, media_header_original)

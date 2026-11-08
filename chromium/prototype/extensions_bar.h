@@ -51,6 +51,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     base::RepeatingClosure block_with_assistant;
     base::RepeatingClosure diagnose_blocking_with_assistant;
     base::RepeatingCallback<bool()> assistant_available;
+    base::RepeatingCallback<void(content::WebContents*)> fix_night_shift;
     // Opens the conversation from the quick-action menu.
     base::RepeatingClosure toggle_assistant;
     base::RepeatingCallback<void(int)> assistant_action;

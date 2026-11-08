@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Night Shift</title>
+    <link rel="stylesheet" href="panel.css">
+    <script type="module" src="panel.js"></script>
+</head>
+<body>
+    <header>
+        <span class="mark"><img src="moon.png" width="20" height="20" alt=""></span>
+        <span><h1>Night Shift</h1><small data-text="subtitle">Dynamic dark pages</small></span>
+        <a class="gear" href="settings.html" target="_blank" aria-label="Extension settings" data-label="settings" title="Extension settings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m9 3-1 3-3 1-2 4 2 2v4l4 2 3-1 3 1 4-2v-4l2-2-2-4-3-1-1-3z"/></svg>
+        </a>
+    </header>
+    <main>
+        <label class="site">
+            <span><strong id="site-name"></strong><small id="site-state"></small></span>
+            <input id="site-toggle" type="checkbox" role="switch" data-label="siteToggle" aria-label="Dark mode for this website" disabled>
+        </label>
+        <section id="site-tools" hidden>
+            <details>
+                <summary>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h5m4 0h7M4 12h10m4 0h2M4 17h2m4 0h10M9 4v6m5-1v6m-8-1v6"/></svg>
+                    <span data-text="customize">Customize this site</span>
+                    <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                </summary>
+                <div class="tuning">
+                    <label class="slider" for="brightness"><span data-text="brightness">Brightness</span><output for="brightness"></output><input id="brightness" type="range" min="75" max="125" value="100"></label>
+                    <label class="slider" for="contrast"><span data-text="contrast">Contrast</span><output for="contrast"></output><input id="contrast" type="range" min="75" max="125" value="100"></label>
+                    <label class="force"><input id="force" type="checkbox"><span data-text="force">Also apply over the site's own dark mode</span></label>
+                    <button id="reset" type="button" class="text" data-text="reset">Reset tuning</button>
+                </div>
+            </details>
+            <a id="repair" class="repair" href="repair-request" target="_blank" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z"/></svg>
+                <span data-text="repair">Fix this site</span><small>AI</small>
+            </a>
+            <section class="review" id="review" hidden>
+                <strong id="review-title"></strong>
+                <small data-text="draft">Assistant suggestion · applies only to this site</small>
+                <div class="compare">
+                    <button id="before" type="button" aria-pressed="false" data-text="before">Before</button>
+                    <button id="after" type="button" aria-pressed="false" data-text="after">With fix</button>
+                </div>
+                <div class="review-actions">
+                    <button id="discard" class="text" type="button" data-text="discard">Discard</button>
+                    <button id="apply" type="button" data-text="apply">Save for this site</button>
+                </div>
+            </section>
+            <button id="undo" class="text" type="button" data-text="undo" hidden>Undo site fix</button>
+        </section>
+        <p id="message" role="status"></p>
+    </main>
+</body>
+</html>

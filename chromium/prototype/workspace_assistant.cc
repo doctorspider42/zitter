@@ -31,6 +31,7 @@
 #include "chromium/prototype/ad_blocking_rules_panel.h"
 #include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "chromium/prototype/night_shift.h"
 #include "content_blocking_probe_script.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "components/download/public/common/download_item.h"
@@ -45,6 +46,12 @@
 #include "base/task/thread_pool.h"
 #include "chromium/prototype/i18n.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "components/sessions/content/session_tab_helper.h"
+#include "extensions/browser/api/storage/storage_area_namespace.h"
+#include "extensions/browser/api/storage/storage_frontend.h"
+#include "extensions/browser/extension_api_frame_id_map.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/common/extension.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "ui/events/base_event_utils.h"
@@ -1363,6 +1370,27 @@ void WorkspaceWindow::AskAssistant(std::u16string prompt) {
   ShowAssistant();
   if (assistant_) assistant_->Ask(std::move(prompt));
 }
+void WorkspaceWindow::PrepareNightShiftRepair(content::WebContents* page) {
+  auto* profile = AssistantProfile();
+  if (!page || !profile || profile->IsOffTheRecord() ||
+      page->GetBrowserContext() != profile || !assistant_settings_.enabled ||
+      !page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) {
+    return;
+  }
+  night_shift_target_ = page->GetWeakPtr();
+  night_shift_url_ = page->GetLastCommittedURL();
+  night_shift_document_ = extensions::ExtensionApiFrameIdMap::GetDocumentId(
+      page->GetPrimaryMainFrame()).ToString();
+  night_shift_request_ = base::Uuid::GenerateRandomV4().AsLowercaseString();
+  night_shift_candidates_.clear();
+  ShowAssistant();
+  if (assistant_) {
+    const char16_t* prompt = UiLanguageIsEnglish()
+        ? u"Fix Night Shift colors for this site. Use night_shift_inspect then night_shift_propose if needed. Request ID: "
+        : u"Popraw kolory Night Shift dla tej witryny. Użyj night_shift_inspect, a w razie potrzeby night_shift_propose. Identyfikator zlecenia: ";
+    assistant_->PreparePageAction(prompt + base::UTF8ToUTF16(night_shift_request_), false, false, true);
+  }
+}
 void WorkspaceWindow::OpenAdBlockingRules() {
   auto* profile = AssistantProfile();
   if (!profile || profile->IsOffTheRecord() || !shell_ || !shell_->general_widget()) return;
@@ -1522,6 +1550,100 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
   auto* profile = AssistantProfile();
   if (!profile || profile->IsOffTheRecord()) { fail("Assistant is unavailable in private profiles"); return; }
   if (!assistant_settings_.enabled) { fail("Assistant is turned off in Settings"); return; }
+  if (tool == "night_shift_inspect" || tool == "night_shift_propose") {
+    auto* page = night_shift_target_.get();
+    const auto* request = args.FindString("request");
+    if (!permissions.pages || !background.empty() || !request ||
+        request->empty() || *request != night_shift_request_ || !page ||
+        page->GetBrowserContext() != profile || page->GetLastCommittedURL() != night_shift_url_ ||
+        extensions::ExtensionApiFrameIdMap::GetDocumentId(
+            page->GetPrimaryMainFrame()).ToString() != night_shift_document_) {
+      fail("The Night Shift document or request expired");
+      return;
+    }
+    if (tool == "night_shift_inspect") {
+      PageOp(page, base::DictValue().Set("tool", tool), base::BindOnce(
+          [](base::WeakPtr<WorkspaceWindow> window, std::string request,
+             content::WeakDocumentPtr document, GURL url,
+             base::OnceCallback<void(base::Value)> done, base::Value result) {
+            auto* frame = document.AsRenderFrameHostIfValid();
+            if (!window || request != window->night_shift_request_ || !frame ||
+                frame->GetLastCommittedURL() != url) {
+              std::move(done).Run(Error("The Night Shift request expired"));
+              return;
+            }
+            if (auto* data = result.GetIfDict()) {
+              if (auto* candidates = data->FindList("candidates")) {
+                window->night_shift_candidates_ = candidates->Clone();
+              }
+            }
+            std::move(done).Run(std::move(result));
+          }, weak_factory_.GetWeakPtr(), *request,
+          page->GetPrimaryMainFrame()->GetWeakDocumentPtr(), night_shift_url_,
+          std::move(done)));
+      return;
+    }
+    const auto* label = args.FindString("label");
+    const auto* proposed = args.FindList("rules");
+    if (!label || label->empty() || label->size() > 100 || !proposed ||
+        proposed->empty() || proposed->size() > 12) {
+      fail("Invalid Night Shift proposal");
+      return;
+    }
+    base::ListValue rules;
+    for (const auto& value : *proposed) {
+      const auto* rule = value.GetIfDict();
+      const int target = rule ? rule->FindInt("target").value_or(-1) : -1;
+      if (target < 0 || static_cast<size_t>(target) >= night_shift_candidates_.size()) {
+        fail("Use only target IDs returned by night_shift_inspect");
+        return;
+      }
+      const auto* property = rule->FindString("property");
+      const auto* color = rule->FindString("color");
+      const auto* path = night_shift_candidates_[target].GetDict().FindList("path");
+      constexpr std::array<std::string_view, 7> allowed = {
+          "background-color", "border-color", "color", "fill", "outline-color",
+          "stroke", "text-decoration-color"};
+      if (!path || !property || !std::ranges::contains(allowed, *property) || !color ||
+          (*color != "transparent" &&
+           ((color->size() != 7 && color->size() != 9) || color->front() != '#' ||
+            !std::ranges::all_of(std::string_view(*color).substr(1), base::IsHexDigit<char>)))) {
+        fail("Use a color property and a hex color");
+        return;
+      }
+      rules.Append(base::DictValue().Set("path", path->Clone())
+                       .Set("property", *property).Set("color", *color));
+    }
+    auto* registry = extensions::ExtensionRegistry::Get(profile);
+    auto* storage = extensions::StorageFrontend::Get(profile);
+    const auto* extension = registry ? registry->enabled_extensions().GetByID(kNightShiftId) : nullptr;
+    if (!extension || !storage) {
+      fail("Night Shift is unavailable in this profile");
+      return;
+    }
+    const int tab = sessions::SessionTabHelper::IdForTab(page).id();
+    auto draft = base::DictValue().Set("documentId", night_shift_document_)
+                     .Set("url", night_shift_url_.spec())
+                     .Set("proposal", base::DictValue().Set("label", *label)
+                                          .Set("rules", std::move(rules)));
+    storage->Set(base::WrapRefCounted(extension), extensions::StorageAreaNamespace::kSession,
+                 base::DictValue().Set("night-shift-draft:" + base::NumberToString(tab), std::move(draft)),
+                 base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string request,
+                                   base::OnceCallback<void(base::Value)> done,
+                                   extensions::StorageFrontend::ResultStatus status) {
+                   if (!status.success) {
+                     std::move(done).Run(Error("Could not stage a Night Shift preview"));
+                     return;
+                   }
+                   if (window && request == window->night_shift_request_) {
+                     window->night_shift_request_.clear();
+                     window->night_shift_candidates_.clear();
+                   }
+                   std::move(done).Run(base::Value(base::DictValue().Set(
+                       "detail", "Draft ready. Reopen Night Shift to compare and save it.")));
+                 }, weak_factory_.GetWeakPtr(), *request, std::move(done)));
+    return;
+  }
   const AssistantBackgroundPage* hidden = nullptr;
   if (!background.empty()) {
     const auto found = assistant_background_.find(background);

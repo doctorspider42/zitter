@@ -10,3 +10,6 @@ Chromium: Copyright The Chromium Authors, BSD-style license.
 See docs/licenses and the generated THIRD_PARTY_LICENSES.txt for the component
 inventory and applicable notices. LGPL/MPL source and relinking obligations
 continue to apply to distributions containing those components.
+
+Night Shift includes Dark Reader under the MIT License. Its copyright and
+license are distributed in the extension's vendor/LICENSE file.

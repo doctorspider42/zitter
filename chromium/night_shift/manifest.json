@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Night Shift",
+  "version": "1.0.0",
+  "description": "Dynamic dark themes with per-site controls.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5uXf9A4MxHk4ptsCanZ8ccTUhKSihMmjwhE5KrIdazeI7mfXTJTIpDlyhKNjUL0NLFyJx9daPOV2Z0pLMtDrj+XX4ouvZogJuDZxHDXDfM7QigmGSoNL9681pFnTvN7T3gOfEylWXJH7xdzDolwZVUqRbuRKKGBnIX2mQ7PY4u/DXHFVCSYVoHosS4zMJ8xsWyRhT6gWKcghfAyBsG9PqZcgjqxoBcG+Zt1uDPk9EKeFrmnhOR+WbMjvNIIrbZdoCmUg9g4DAx+Us2JBSx+jmc/sXIXFF5cYPqX7ydzteCFn7e+9KPP+EpHcfmVsRElHzgWJaQxw38Dea9bh0EGqVQIDAQAB",
+  "permissions": ["scripting", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "incognito": "not_allowed",
+  "action": {
+    "default_title": "Night Shift",
+    "default_icon": {"16": "moon.png", "32": "moon.png"},
+    "default_popup": "panel.html"
+  },
+  "options_ui": {"page": "settings.html", "open_in_tab": true},
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  }
+}
