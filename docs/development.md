@@ -904,9 +904,8 @@ ignored `.chromium` directory):
 mkdir -p .chromium
 cd .chromium
 fetch --nohooks chromium
-cd src
-git checkout --detach 1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35
-gclient sync -D
+revision=$(python3 -c 'import json; print(json.load(open("../chromium/revision.json"))["revision"])')
+gclient sync -D --revision "src@$revision"
 ```
 
 `gclient sync -D` is intended for this dedicated checkout; it can remove obsolete
