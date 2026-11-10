@@ -50,8 +50,8 @@ std::string Text(const base::DictValue& dict, std::string_view key, std::string 
   return value && !value->empty() ? *value : std::move(fallback);
 }
 void VisitItem(const std::string& id, const std::string& parent, const Dictionary& items,
-               ImportedSpace& space, ArcImport& result, std::set<std::string>& visited,
-               size_t depth) {
+               std::vector<PinnedItem>& pins, ArcImport& result,
+               std::set<std::string>& visited, size_t depth, bool favorite = false) {
   if (depth > 64 || visited.size() > 20000 || !visited.insert(id).second) {
     ++result.skipped_count;
     return;
@@ -63,13 +63,19 @@ void VisitItem(const std::string& id, const std::string& parent, const Dictionar
   if (!data) { ++result.skipped_count; return; }
   std::string child_parent = parent;
   if (data->contains("list") || data->contains("splitView")) {
-    space.pins.push_back({id, parent, Text(item, "title", data->contains("splitView") ? "Split View" : "Folder"), GURL(), true});
-    child_parent = id;
-    ++result.folder_count;
+    if (!favorite) {
+      pins.push_back({id, parent, Text(item, "title", data->contains("splitView") ? "Split View" : "Folder"), GURL(), true});
+      if (data->FindDictByDottedPath("list.automaticLiveFolderData.dataSource.github"))
+        pins.back().github.emplace();
+      child_parent = id;
+      ++result.folder_count;
+    }
   } else if (const auto* tab = data->FindDict("tab")) {
     GURL url(Text(*tab, "savedURL", ""));
     if (url.is_valid() && url.SchemeIsHTTPOrHTTPS()) {
-      space.pins.push_back({id, parent, Text(item, "title", Text(*tab, "savedTitle", std::string(url.host()))), url, false});
+      pins.push_back({favorite ? "arc-favorite-" + id : id, parent,
+                      Text(item, "title", Text(*tab, "savedTitle", std::string(url.host()))),
+                      url, false, favorite});
       ++result.tab_count;
     } else { ++result.skipped_count; }
     return;
@@ -79,7 +85,7 @@ void VisitItem(const std::string& id, const std::string& parent, const Dictionar
   }
   if (const auto* children = item.FindList("childrenIds")) {
     for (const auto& child : *children) {
-      if (child.is_string()) VisitItem(child.GetString(), child_parent, items, space, result, visited, depth + 1);
+      if (child.is_string()) VisitItem(child.GetString(), child_parent, items, pins, result, visited, depth + 1, favorite);
       else ++result.skipped_count;
     }
   }
@@ -142,6 +148,14 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
         if (!directory.empty() && (*list)[i + 1].is_string()) favorites[directory] = (*list)[i + 1].GetString();
       }
     }
+    for (const auto& [directory, root] : favorites) {
+      if (!items.contains(root)) continue;
+      const auto profile_id = add_profile(directory);
+      auto [entry, inserted] = result.profile_favorites.try_emplace(profile_id);
+      if (!inserted) continue;
+      std::set<std::string> visited;
+      VisitItem(root, "", items, entry->second, result, visited, 0, true);
+    }
     for (const auto& id : order) {
       if (!seen_spaces.insert(id).second || !spaces.contains(id)) continue;
       const auto& space = *spaces.at(id);
@@ -161,17 +175,6 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
         }
       }
       std::set<std::string> visited;
-      if (auto it = favorites.find(directory); it != favorites.end()) {
-        if (auto root = items.find(it->second); root != items.end()) {
-          const auto* children = root->second->FindList("childrenIds");
-          if (children && !children->empty()) {
-            const auto folder_id = "arc-favorites-" + id;
-            imported.pins.push_back({folder_id, "", base::UTF16ToUTF8(T(u"Ulubione Arc")), GURL(), true});
-            ++result.folder_count;
-            VisitItem(it->second, folder_id, items, imported, result, visited, 0);
-          }
-        }
-      }
       bool pinned_found = false;
       if (const auto* list = space.FindList("newContainerIDs")) {
         for (size_t i = 0; i + 1 < list->size(); i += 2) {
@@ -181,7 +184,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
               result.error = base::UTF16ToUTF8(T(u"Dane Arc są niekompletne. Zamknij Arc i ponów import."));
               return result;
             }
-            VisitItem((*list)[i + 1].GetString(), "", items, imported, result, visited, 0);
+            VisitItem((*list)[i + 1].GetString(), "", items, imported.pins, result, visited, 0);
             pinned_found = true;
           }
         }
@@ -195,7 +198,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
               result.error = base::UTF16ToUTF8(T(u"Dane Arc są niekompletne. Zamknij Arc i ponów import."));
               return result;
             }
-            VisitItem((*list)[i + 1].GetString(), "", items, imported, result, visited, 0);
+            VisitItem((*list)[i + 1].GetString(), "", items, imported.pins, result, visited, 0);
               pinned_found = true;
             }
           }
@@ -284,6 +287,7 @@ ArcImport ApplyImportOptions(ArcImport result, BrowserImportOptions options) {
   if (!result.error.empty()) return result;
   if (!options.bookmarks) {
     for (auto& space : result.spaces) space.pins.clear();
+    result.profile_favorites.clear();
     result.tab_count = result.folder_count = 0;
   }
   if (!options.separate_profiles && !result.profiles.empty()) {
@@ -294,6 +298,20 @@ ArcImport ApplyImportOptions(ArcImport result, BrowserImportOptions options) {
         options.browser == ImportBrowser::kEdge ? "edge-profile-merged" : "brave-profile-merged";
     profile.name = base::UTF16ToUTF8(TF(u"Import z {}", {ImportBrowserName(options.browser)}));
     profile.source_id = "import:" + profile.id;
+    if (!result.profile_favorites.empty()) {
+      std::vector<PinnedItem> favorites;
+      std::set<std::string> seen;
+      for (const auto& source : result.profiles) {
+        const auto entry = result.profile_favorites.find(source.id);
+        if (entry == result.profile_favorites.end()) continue;
+        for (auto& favorite : entry->second) {
+          if (seen.insert(favorite.id).second) favorites.push_back(std::move(favorite));
+          else --result.tab_count;
+        }
+      }
+      result.profile_favorites.clear();
+      result.profile_favorites.emplace(profile.id, std::move(favorites));
+    }
     result.profiles = {profile};
     for (auto& space : result.spaces) space.profile_id = profile.id;
     for (auto& source : result.sources) source.destination_id = profile.id;

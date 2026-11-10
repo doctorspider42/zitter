@@ -169,6 +169,9 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingClosure passwords;
     base::RepeatingClosure downloads;
     base::RepeatingCallback<bool(std::string, std::string, std::string)> create_folder, rename_folder;
+    base::RepeatingCallback<bool(std::string, std::string, std::string,
+                                 GitHubLiveFolder, std::string, bool)> configure_github_folder;
+    base::RepeatingCallback<void(std::string, std::string)> refresh_github_folder;
     base::RepeatingCallback<bool(std::string, std::string, bool)> delete_folder;
     base::RepeatingCallback<bool(std::string, std::vector<PinnedItem>)> restore_pins;
     base::RepeatingCallback<bool(std::string)> restore_workspace;
@@ -768,6 +771,7 @@ class WorkspaceShell final : public ui::EventHandler,
   ui::SimpleMenuModel* page_context_menu_for_testing() const { return link_menu_.get(); }
   ui::SimpleMenuModel* tab_context_menu_for_testing() const {return workspace_menu_.get();}
   void RequestNewFolder(std::string workspace, std::string parent = {});
+  void RequestGitHubFolder(std::string workspace, std::string folder);
   void RequestRenameFolder(std::string workspace, std::string folder);
   void RequestEditPinnedUrl(std::string workspace, std::string pin);
   views::Widget* pin_url_dialog() const { return pin_url_dialog_.get(); }

@@ -7,6 +7,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "build/build_config.h"
@@ -28,6 +29,7 @@
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "sql/database.h"
 #include "sql/statement.h"
+#include "ui/gfx/codec/png_codec.h"
 
 namespace zitter::prototype {
 namespace {
@@ -243,6 +245,46 @@ struct Writer : public std::enable_shared_from_this<Writer> {
 #if !BUILDFLAG(IS_MAC)
 std::optional<ImportedCookieKey> ReadImportedCookieKey(ImportBrowser) { return std::nullopt; }
 #endif
+std::vector<ImportedFavicon> ReadImportedFavicons(
+    const std::vector<ImportSourceProfile>& sources,
+    const ImportedFaviconTargets& targets) {
+  std::vector<ImportedFavicon> result;
+  std::set<std::pair<std::string, GURL>> seen;
+  for (const auto& source : sources) {
+    const auto pages = targets.find(source.destination_id);
+    if (pages == targets.end()) continue;
+    base::ScopedTempDir temp;
+    sql::Database db("Thumbnail");
+    if (!Snapshot(source.directory.AppendASCII("Favicons"), temp, db)) continue;
+    sql::Statement query(db.GetUniqueStatement(
+        "SELECT f.url, b.image_data FROM icon_mapping m "
+        "JOIN favicons f ON f.id=m.icon_id JOIN favicon_bitmaps b ON b.icon_id=f.id "
+        "WHERE m.page_url=? AND f.icon_type=1 AND length(b.image_data)<=524288 "
+        "ORDER BY b.width=0, abs(b.width-32), b.last_updated DESC LIMIT 4"));
+    if (!query.is_valid()) continue;
+    for (const auto& page : pages->second) {
+      if (seen.contains({source.destination_id, page})) continue;
+      query.Reset(/*clear_bound_vars=*/true);
+      query.BindString(0, page.spec());
+      while (query.Step()) {
+        GURL icon(query.ColumnString(0));
+        const auto bytes = query.ColumnBlob(1);
+        // Arc can record zero dimensions for valid PNGs. Bound the actual
+        // IHDR dimensions before decoding rather than trusting the SQLite row.
+        if (!icon.SchemeIsHTTPOrHTTPS() || icon.has_username() || icon.has_password() ||
+            bytes.size() < 24 || base::U32FromBigEndian(bytes.subspan<16, 4>()) > 256 ||
+            base::U32FromBigEndian(bytes.subspan<20, 4>()) > 256) continue;
+        auto bitmap = gfx::PNGCodec::Decode(bytes);
+        if (bitmap.drawsNothing()) continue;
+        seen.emplace(source.destination_id, page);
+        result.push_back({source.destination_id, page, std::move(icon), std::move(bitmap)});
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 std::shared_ptr<BrowsingImportData> ReadBrowsingImportData(const ArcImport& source, ImportCookieKeyReader key_reader) {
   auto result = std::make_shared<BrowsingImportData>();
   std::optional<ImportedCookieKey> key;

@@ -91,6 +91,7 @@
 #include "third_party/blink/public/common/page/page_zoom.h"
 
 #include "base/auto_reset.h"
+#include "base/base64.h"
 #include "base/command_line.h"
 #include "chromium/app/windows_channel.h"
 #include "chromium/prototype/extensions_bar.h"
@@ -111,6 +112,8 @@
 #include "base/json/json_writer.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/browser_process.h"
+#include "components/os_crypt/async/browser/os_crypt_async.h"
+#include "components/os_crypt/async/common/encryptor.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/delete_profile_helper.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -990,6 +993,10 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.restore_pins = base::BindRepeating(&WorkspaceWindow::RestorePins, base::Unretained(this));
   callbacks.restore_workspace = base::BindRepeating(&WorkspaceWindow::RestoreRemovedWorkspace, base::Unretained(this));
   callbacks.create_folder = base::BindRepeating(&WorkspaceWindow::CreatePinnedFolder, base::Unretained(this));
+  if (!is_private()) {
+    callbacks.configure_github_folder = base::BindRepeating(&WorkspaceWindow::ConfigureGitHubFolder, base::Unretained(this));
+    callbacks.refresh_github_folder = base::BindRepeating(&WorkspaceWindow::RefreshGitHubFolder, base::Unretained(this));
+  }
   callbacks.clear_browsing_data = base::BindRepeating(&WorkspaceWindow::RequestClearBrowsingData, base::Unretained(this));
   callbacks.clear_browsing_data_now = base::BindRepeating([](WorkspaceWindow* window, BrowsingDataSelection selection) {
     if (window->model_.active()) window->ClearBrowsingData(window->model_.active()->profile_id, selection);
@@ -1484,7 +1491,11 @@ bool WorkspaceWindow::Select(std::string_view id) {
   const bool selected = controller_.Activate(id);
   if (selected) {
     if (assistant_ && previous_assistant_profile != AssistantProfileId()) assistant_->StopAll();
-    if (changed) ClosePeek();
+    if (changed) {
+      ClosePeek();
+      github_timer_.Stop();
+      github_manual_refresh_.reset();
+    }
     shell_->CloseOverlays(true);
     UpdateShell();
     widget_->Activate();
@@ -1678,6 +1689,7 @@ void WorkspaceWindow::UpdateShell() {
     for (const auto& view : host.tabs)
       static_cast<WorkspaceWebView*>(view.get())->SetWorkspaceBackground(shell_->active_workspace_color());
   }
+  ScheduleGitHubRefresh();
 }
 
 namespace {
@@ -2769,28 +2781,130 @@ bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
     for (const auto& pin : pinned_items(workspace)) if (!pin.folder && pin.url.SchemeIsHTTPOrHTTPS()) pages.try_emplace(pin.url);
     auto* service = ImplicitFaviconService(host.profile);
     if (service) service->ClearUnableToDownloadFavicons();
-    for (const auto& [url, known_icon] : pages) {
-      const FaviconKey key{host.profile_id,url.spec()};
-      const uint64_t generation = ++favicon_generations_[key];
-      favicon_refreshing_.insert(key);
-      favicon_cache_.erase(key);
-      favicon_requests_.insert(key);
-      auto download = base::BindOnce(
-          [](base::WeakPtr<WorkspaceWindow> window,base::WeakPtr<content::WebContents> source,FaviconKey key,uint64_t generation,GURL known_icon,const favicon_base::FaviconImageResult& result) {
-            if (!window || window->closing_ || window->favicon_generations_[key] != generation) return;
-            auto* profile = window->ProfileFor(key.first);
-            if (!known_icon.is_valid()) known_icon = result.icon_url;
-            window->FetchWorkspaceFavicon(profile, source, std::move(key), generation, std::move(known_icon));
-          },weak_factory_.GetWeakPtr(),source->GetWeakPtr(),key,generation,known_icon);
-      if (service) {
-        service->SetFaviconOutOfDateForPage(url);
-        service->GetFaviconImageForPageURL(url,std::move(download),&favicon_tasks_);
-      } else std::move(download).Run(favicon_base::FaviconImageResult());
-    }
+    for (const auto& [url, known_icon] : pages)
+      StartWorkspaceFavicon(host.profile, host.profile_id, source, url, known_icon, true);
     UpdateShell();
     return true;
   }
   return false;
+}
+
+void WorkspaceWindow::QueueImportedFavicons(const ArcImport& source) {
+  if (!source.options.bookmarks) return;
+  ImportedFaviconTargets targets;
+  auto queue = [&](const std::string& storage, const std::string& profile_id) {
+    const auto items = pins_.find(storage);
+    if (items == pins_.end()) return;
+    for (const auto& item : items->second) {
+      if (!item.folder && item.url.SchemeIsHTTPOrHTTPS() &&
+          !item.url.has_username() && !item.url.has_password()) {
+        targets[profile_id].insert(item.url);
+      }
+    }
+  };
+  for (const auto& space : source.spaces) {
+    if (const auto* workspace = model_.Find(space.id);
+        workspace && workspace->profile_id == space.profile_id)
+      queue(space.id, workspace->profile_id);
+  }
+  for (const auto& profile : source.profiles) queue("@profile:" + profile.id, profile.id);
+  if (targets.empty()) return;
+  auto request = std::make_shared<ImportedFaviconTargets>(std::move(targets));
+  ++import_favicon_reads_;
+  config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(
+      [](std::vector<ImportSourceProfile> sources, std::shared_ptr<const ImportedFaviconTargets> targets) {
+        return ReadImportedFavicons(sources, *targets);
+      }, source.sources, request), base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window, std::shared_ptr<ImportedFaviconTargets> targets,
+         std::vector<ImportedFavicon> icons) {
+        if (!window) return;
+        --window->import_favicon_reads_;
+        if (window->closing_) return;
+        for (const auto& icon : icons) {
+          const FaviconKey key{icon.profile_id, icon.page_url.spec()};
+          auto* profile = window->ProfileFor(icon.profile_id);
+          if (!profile || window->favicon_refreshing_.contains(key) || window->favicon_cache_.contains(key)) continue;
+          auto image = gfx::Image::CreateFrom1xBitmap(icon.bitmap);
+          auto pixels = FaviconPixels(image);
+          if (pixels.empty()) continue;
+          window->favicon_cache_.emplace(key, std::move(pixels));
+          if (auto* service = ImplicitFaviconService(profile))
+            service->SetFavicons({icon.page_url}, icon.icon_url, favicon_base::IconType::kFavicon, image);
+        }
+        for (const auto& [profile, pages] : *targets)
+          for (const auto& page : pages)
+            window->import_favicon_queue_.emplace(profile, page.spec());
+        window->UpdateShell();
+        window->PumpImportedFavicons();
+      }, weak_factory_.GetWeakPtr(), request));
+}
+
+void WorkspaceWindow::PumpImportedFavicons() {
+  if (closing_) return;
+  // Bound network and decoder work when a large import commits all at once.
+  constexpr size_t kConcurrentFavicons = 4;
+  while (!import_favicon_queue_.empty() && favicon_refreshing_.size() < kConcurrentFavicons) {
+    auto key = import_favicon_queue_.extract(import_favicon_queue_.begin()).value();
+    if (favicon_refreshing_.contains(key) || favicon_cache_.contains(key)) continue;
+    auto* profile = ProfileFor(key.first);
+    if (!profile) continue;
+    auto& source = import_favicon_sources_[key.first];
+    if (!source.page) {
+      source.lease = ScopedProfileKeepAlive::TryAcquire(profile, ProfileKeepAliveOrigin::kBrowserWindow);
+      if (!source.lease) continue;
+      content::WebContents::CreateParams params(profile);
+      params.initially_hidden = true;
+      source.page = content::WebContents::Create(params);
+      source.page->GetController().LoadURL(GURL("about:blank"), content::Referrer(),
+                                           ui::PAGE_TRANSITION_AUTO_TOPLEVEL, {});
+    }
+    StartWorkspaceFavicon(profile, key.first, source.page.get(), GURL(key.second), {}, false);
+  }
+  std::erase_if(import_favicon_sources_, [&](const auto& entry) {
+    const FaviconKey first{entry.first, {}};
+    const auto waiting = import_favicon_queue_.lower_bound(first);
+    const auto loading = favicon_refreshing_.lower_bound(first);
+    return (waiting == import_favicon_queue_.end() || waiting->first != entry.first) &&
+           (loading == favicon_refreshing_.end() || loading->first.first != entry.first);
+  });
+}
+
+void WorkspaceWindow::StartWorkspaceFavicon(Profile* profile, std::string profile_id,
+    content::WebContents* source, GURL url, GURL known_icon, bool force) {
+  const FaviconKey key{std::move(profile_id), url.spec()};
+  const uint64_t generation = ++favicon_generations_[key];
+  favicon_refreshing_.insert_or_assign(key, force);
+  favicon_cache_.erase(key);
+  favicon_requests_.insert(key);
+  auto download = base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window, base::WeakPtr<content::WebContents> source,
+         FaviconKey key, uint64_t generation, GURL known_icon, bool force,
+         const favicon_base::FaviconImageResult& result) {
+        if (!window || window->closing_ || window->favicon_generations_[key] != generation) return;
+        if (!force && !result.image.IsEmpty()) {
+          window->FinishWorkspaceFavicon(std::move(key), generation, result.icon_url, result.image);
+          return;
+        }
+        auto* profile = window->ProfileFor(key.first);
+        if (!known_icon.is_valid()) known_icon = result.icon_url;
+        if (!force) {
+          // Automatic imports fetch only icon resources. Manual reload can
+          // also discover linked icons by requesting the page's markup.
+          std::vector<GURL> icons;
+          if (IsWorkspaceFaviconUrl(known_icon)) icons.push_back(known_icon);
+          const GURL fallback = GURL(key.second).Resolve("/favicon.ico");
+          if (IsWorkspaceFaviconUrl(fallback) && fallback != known_icon) icons.push_back(fallback);
+          window->DownloadWorkspaceFavicon(source, std::move(key), generation, std::move(icons));
+          return;
+        }
+        window->FetchWorkspaceFavicon(profile, source, std::move(key), generation, std::move(known_icon));
+      }, weak_factory_.GetWeakPtr(), source->GetWeakPtr(), key, generation, std::move(known_icon), force);
+  if (auto* service = ImplicitFaviconService(profile)) {
+    if (force) service->SetFaviconOutOfDateForPage(url);
+    service->GetFaviconImageForPageURL(url, std::move(download), &favicon_tasks_);
+  } else {
+    std::move(download).Run(favicon_base::FaviconImageResult());
+  }
 }
 
 void WorkspaceWindow::FetchWorkspaceFavicon(
@@ -2809,13 +2923,13 @@ void WorkspaceWindow::FetchWorkspaceFavicon(
     semantics {
       sender: "Zitter workspace icon refresh"
       description: "Fetches markup to discover favicon URLs for tabs and pinned pages."
-      trigger: "The user runs Refresh all favicons in the Command Center."
+      trigger: "The user explicitly refreshes favicons."
       data: "The page URL, without cookies or authentication."
       destination: WEBSITE
     }
     policy {
       cookies_allowed: NO
-      setting: "This request only occurs when the user runs the command."
+      setting: "This request only follows a user-initiated refresh."
       policy_exception_justification: "User initiated icon refresh."
     })");
   auto loader = network::SimpleURLLoader::Create(std::move(request), annotation);
@@ -2882,23 +2996,34 @@ void WorkspaceWindow::DownloadWorkspaceFavicon(
 }
 
 void WorkspaceWindow::FinishWorkspaceFavicon(FaviconKey key,uint64_t generation,GURL icon,gfx::Image image) {
-  if (closing_ || favicon_generations_[key] != generation || !favicon_refreshing_.erase(key)) return;
-  auto pixels = FaviconPixels(image);
-  if (!pixels.empty()) favicon_cache_[key] = std::move(pixels);
-  else favicon_cache_.erase(key);
-  for (const auto& host : hosts_) if (host.profile_id == key.first) for (const auto& view : host.tabs) {
-    auto* page = view->web_contents();
-    auto* entry = page ? page->GetController().GetVisibleEntry() : nullptr;
-    if (!entry || page->GetVisibleURL().spec() != key.second) continue;
-    auto& favicon = entry->GetFavicon();
-    favicon.valid = !image.IsEmpty(); favicon.url = icon; favicon.image = image;
+  if (closing_ || favicon_generations_[key] != generation) return;
+  const auto refresh = favicon_refreshing_.extract(key);
+  if (refresh.empty()) return;
+  if (!image.IsEmpty() || refresh.mapped()) {
+    auto pixels = FaviconPixels(image);
+    if (!pixels.empty()) favicon_cache_[key] = std::move(pixels);
+    else favicon_cache_.erase(key);
+    for (const auto& host : hosts_) if (host.profile_id == key.first) for (const auto& view : host.tabs) {
+      auto* page = view->web_contents();
+      auto* entry = page ? page->GetController().GetVisibleEntry() : nullptr;
+      if (!entry || page->GetVisibleURL().spec() != key.second) continue;
+      auto& favicon = entry->GetFavicon();
+      favicon.valid = !image.IsEmpty(); favicon.url = icon; favicon.image = image;
+    }
+    if (auto* profile = ProfileFor(key.first)) if (auto* service = ImplicitFaviconService(profile)) {
+      const base::flat_set<GURL> pages{GURL(key.second)};
+      if (!image.IsEmpty()) service->SetFavicons(pages,icon,favicon_base::IconType::kFavicon,image);
+      else service->DeleteFaviconMappings(pages,favicon_base::IconType::kFavicon);
+    }
+  } else {
+    // A background miss must not erase an icon discovered by an open tab.
+    favicon_requests_.erase(key);
   }
-  if (auto* profile = ProfileFor(key.first)) if (auto* service = ImplicitFaviconService(profile)) {
-    const base::flat_set<GURL> pages{GURL(key.second)};
-    if (!image.IsEmpty()) service->SetFavicons(pages,icon,favicon_base::IconType::kFavicon,image);
-    else service->DeleteFaviconMappings(pages,favicon_base::IconType::kFavicon);
+  if (model_.active() && model_.active()->profile_id == key.first) UpdateShell();
+  if (!import_favicon_queue_.empty() || !import_favicon_sources_.empty()) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&WorkspaceWindow::PumpImportedFavicons, weak_factory_.GetWeakPtr()));
   }
-  UpdateShell();
 }
 
 bool WorkspaceWindow::DuplicatePin(std::string id) {
@@ -3794,6 +3919,10 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
       value.Set("title", pin.title);
       value.Set("url", pin.url.spec());
       value.Set("folder", pin.folder);
+      if (pin.github) {
+        value.Set("github", base::DictValue().Set("login", pin.github->login)
+            .Set("repository", pin.github->repository).Set("encrypted_token", pin.github->encrypted_token));
+      }
       pinned.Append(std::move(value));
     }
     item.Set("pins", std::move(pinned));
@@ -4068,6 +4197,13 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
                 (!parent->empty() && !folders.contains(*parent)) || !title || !url ||
                 (!folder && !IsWorkspaceTabUrl(GURL(*url)))) { valid = false; break; }
             restored_pins[*id].push_back({*pin_id, *parent, *title, GURL(*url), folder});
+            if (const auto* github = pin->FindDict("github"); folder && github) {
+              GitHubLiveFolder config;
+              if (const auto* login = github->FindString("login")) config.login = *login;
+              if (const auto* repo = github->FindString("repository")) config.repository = *repo;
+              if (const auto* token = github->FindString("encrypted_token")) config.encrypted_token = *token;
+              restored_pins[*id].back().github = std::move(config);
+            }
             if (folder) folders.insert(*pin_id);
           }
         }
@@ -4430,6 +4566,31 @@ std::vector<PinNode> PinNodes(const std::vector<PinnedItem>& items) {
   for (const auto& item : items) nodes.push_back({item.id, item.parent_id, item.folder});
   return nodes;
 }
+
+bool IsGitHubChild(const std::vector<PinnedItem>& items, std::string_view parent) {
+  return !parent.empty() && std::ranges::any_of(items, [&](const auto& item) {
+    return item.id == parent && item.github.has_value();
+  });
+}
+
+bool ValidGitHubScope(const GitHubLiveFolder& config) {
+  return (!config.login.empty() || !config.repository.empty()) &&
+      (config.login.empty() || RE2::FullMatch(config.login, "[a-zA-Z0-9-]{1,39}")) &&
+      (config.repository.empty() ||
+       RE2::FullMatch(config.repository, "[a-zA-Z0-9-]{1,39}/[a-zA-Z0-9_.-]{1,100}"));
+}
+
+bool ValidGitHubToken(std::string_view token) {
+  return RE2::FullMatch(token, "[a-zA-Z0-9_]{1,512}");
+}
+
+std::string GitHubPullKey(const GURL& url) {
+  if (!url.SchemeIs("https") || url.host() != "github.com" ||
+      url.has_username() || url.has_password() || url.has_port() ||
+      !RE2::FullMatch(url.path(), "/[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+/pull/[1-9][0-9]*"))
+    return {};
+  return base::ToLowerASCII(url.path());
+}
 }  // namespace
 
 bool WorkspaceWindow::InsertPin(std::string workspace, PinnedItem item, std::string before) {
@@ -4437,6 +4598,7 @@ bool WorkspaceWindow::InsertPin(std::string workspace, PinnedItem item, std::str
   if (item.parent_id == "@profile") { item.parent_id.clear(); item.profile_pin = true; }
   if (item.profile_pin) workspace = "@profile:" + model_.Find(workspace)->profile_id;
   auto& items = pins_[workspace];
+  if (IsGitHubChild(items, item.parent_id)) return false;
   const auto nodes = PinNodes(items);
   if (!PinTree(nodes).CanPlace(item.id, item.parent_id)) return false;
   auto previous = items;
@@ -4471,7 +4633,7 @@ bool WorkspaceWindow::UpdatePinnedUrl(std::string workspace, std::string id, GUR
   workspace = PinStorageKey(workspace, id);
   auto& items = pins_[workspace];
   auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
-  if (pin == items.end()) return false;
+  if (pin == items.end() || IsGitHubChild(items, pin->parent_id)) return false;
   if (pin->url == url) return true;
   auto previous = items;
   pin->url = std::move(url);
@@ -4509,7 +4671,7 @@ bool WorkspaceWindow::UnpinItem(std::string id, size_t before) {
     const auto storage = PinStorageKey(host.workspace_id, id);
     auto& items = pins_[storage];
     const auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id && !item.folder; });
-    if (pin == items.end()) return false;
+    if (pin == items.end() || IsGitHubChild(items, pin->parent_id)) return false;
     size_t index;
     if (auto found = host.pin_tabs.find(id); found != host.pin_tabs.end()) {
       // An opened pin keeps its page and simply becomes an ordinary tab.
@@ -4534,7 +4696,7 @@ bool WorkspaceWindow::UnpinItem(std::string id, size_t before) {
 bool WorkspaceWindow::MovePin(std::string id, std::string parent, std::string before) {
   const auto& items = pinned_items(active_id());
   const auto pin = std::find_if(items.begin(), items.end(), [&](const auto& item) { return item.id == id; });
-  if (pin == items.end() || id == before) return false;
+  if (pin == items.end() || id == before || IsGitHubChild(items, pin->parent_id)) return false;
   PinnedItem moved = *pin;
   if (parent == "@profile" && !moved.profile_pin) {
     const auto* space = model_.Find(active_id());
@@ -4564,6 +4726,7 @@ bool WorkspaceWindow::CreatePinnedFolder(std::string workspace, std::string pare
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || !model_.Find(workspace) ||
       name.empty() || name.size() > 256 || !base::IsStringUTF8(name)) return false;
   auto& items = pins_[workspace];
+  if (IsGitHubChild(items, parent)) return false;
   const auto id = "folder-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
   const auto nodes = PinNodes(items);
   if (!PinTree(nodes).CanPlace(id, parent)) return false;
@@ -4578,6 +4741,260 @@ bool WorkspaceWindow::CreatePinnedFolder(std::string workspace, std::string pare
     if (!ok) window->shell_->ShowFolderSaveError();
   }, weak_factory_.GetWeakPtr(), workspace, id));
   return true;
+}
+
+bool WorkspaceWindow::ConfigureGitHubFolder(std::string workspace, std::string folder,
+                                            std::string name, GitHubLiveFolder config,
+                                            std::string token, bool remove_token) {
+  if (is_private() || !configuration_ready_ || configuration_invalid_ || profiles_busy() ||
+      workspace != active_id() || name.empty() || name.size() > 256 || !base::IsStringUTF8(name) ||
+      !ValidGitHubScope(config) || (!token.empty() && !ValidGitHubToken(token)))
+    return false;
+
+  if (!folder.empty()) {
+    const auto& items = pinned_items(workspace);
+    const auto item = std::ranges::find(items, folder, &PinnedItem::id);
+    if (item == items.end() || !item->github) return false;
+    if (!remove_token) config.encrypted_token = item->github->encrypted_token;
+  }
+  if (token.empty()) {
+    SaveGitHubFolder(std::move(workspace), std::move(folder), std::move(name), std::move(config));
+    return true;
+  }
+
+  profiles_busy_ = true;
+  UpdateShell();
+  g_browser_process->os_crypt_async()->GetInstance(base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window, std::string workspace, std::string folder,
+         std::string name, GitHubLiveFolder config, std::string token,
+         scoped_refptr<os_crypt_async::Encryptor> encryptor) {
+        if (!window) return;
+        window->profiles_busy_ = false;
+        std::string ciphertext;
+        if (!encryptor->IsEncryptionAvailable() || !encryptor->EncryptString(token, &ciphertext)) {
+          window->UpdateShell();
+          window->shell_->ShowToast(T(u"Nie udało się bezpiecznie zapisać tokena GitHub"), {}, {});
+          return;
+        }
+        config.encrypted_token = base::Base64Encode(ciphertext);
+        window->SaveGitHubFolder(std::move(workspace), std::move(folder), std::move(name), std::move(config));
+      }, weak_factory_.GetWeakPtr(), std::move(workspace), std::move(folder),
+      std::move(name), std::move(config), std::move(token)));
+  return true;
+}
+
+void WorkspaceWindow::SaveGitHubFolder(std::string workspace, std::string folder,
+                                       std::string name, GitHubLiveFolder config) {
+  auto& items = pins_[workspace];
+  auto previous = items;
+  if (folder.empty()) {
+    folder = "github-folder-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+    items.push_back({folder, "", std::move(name), GURL(), true, false, std::move(config)});
+  } else {
+    auto item = std::ranges::find(items, folder, &PinnedItem::id);
+    CHECK(item != items.end() && item->github);
+    item->title = std::move(name);
+    item->github = std::move(config);
+  }
+  RefreshGitHubFolder(workspace, folder);
+  SaveFolderEdit(std::move(workspace), std::move(previous));
+}
+
+void WorkspaceWindow::RefreshGitHubFolder(std::string workspace, std::string folder) {
+  const auto& items = pinned_items(workspace);
+  const auto item = std::ranges::find(items, folder, &PinnedItem::id);
+  if (is_private() || workspace != active_id() || item == items.end() ||
+      !item->github || !ValidGitHubScope(*item->github))
+    return;
+  github_manual_refresh_.emplace(std::move(workspace), std::move(folder));
+  github_timer_.Stop();
+  ScheduleGitHubRefresh();
+}
+
+void WorkspaceWindow::ScheduleGitHubRefresh() {
+  if (closing_ || is_private() || !configuration_ready_ || configuration_invalid_ ||
+      profiles_busy() || github_refresh_ || github_timer_.IsRunning()) return;
+  const auto workspace = pins_.find(active_id());
+  if (workspace == pins_.end()) return;
+  const auto now = base::TimeTicks::Now();
+  auto next = base::TimeTicks::Max();
+  for (const auto& pin : workspace->second) {
+    if (!pin.github || !ValidGitHubScope(*pin.github)) continue;
+    const GitHubFolderKey key{workspace->first, pin.id};
+    const auto previous = github_next_refresh_.find(key);
+    const auto due = github_manual_refresh_ == key || previous == github_next_refresh_.end()
+        ? now : previous->second;
+    next = std::min(next, due);
+  }
+  if (!next.is_max()) {
+    github_timer_.Start(FROM_HERE, std::max(base::Seconds(1), next - now),
+                        this, &WorkspaceWindow::StartGitHubRefresh);
+  }
+}
+
+void WorkspaceWindow::StartGitHubRefresh() {
+  if (closing_ || profiles_busy() || github_refresh_) return;
+  const auto workspace = pins_.find(active_id());
+  const auto* space = model_.Find(active_id());
+  if (workspace == pins_.end() || !space || !ProfileFor(space->profile_id)) return;
+
+  const auto now = base::TimeTicks::Now();
+  const PinnedItem* target = nullptr;
+  bool manual = false;
+  for (const auto& pin : workspace->second) {
+    if (!pin.github || !ValidGitHubScope(*pin.github)) continue;
+    const GitHubFolderKey key{workspace->first, pin.id};
+    if (github_manual_refresh_ == key) {
+      target = &pin;
+      manual = true;
+      break;
+    }
+    const auto due = github_next_refresh_.find(key);
+    if (!target && (due == github_next_refresh_.end() || due->second <= now)) target = &pin;
+  }
+  github_manual_refresh_.reset();
+  if (!target) {
+    ScheduleGitHubRefresh();
+    return;
+  }
+
+  auto& job = github_refresh_.emplace();
+  job.key = {workspace->first, target->id};
+  job.profile_id = space->profile_id;
+  job.config = *target->github;
+  job.manual = manual;
+  github_next_refresh_[job.key] = now + base::Minutes(5);
+  const auto& [login, repository, encrypted_token] = job.config;
+  const std::string scope = repository.empty() ? "" : " repo:" + repository;
+  if (login.empty()) {
+    job.queries.push_back(scope);
+  } else {
+    job.queries.push_back(scope + " review-requested:" + login);
+    job.queries.push_back(scope + " author:" + login);
+  }
+  if (encrypted_token.empty()) {
+    FetchGitHubResults("");
+    return;
+  }
+  g_browser_process->os_crypt_async()->GetInstance(base::BindOnce(
+      [](base::WeakPtr<WorkspaceWindow> window, std::string encrypted,
+         scoped_refptr<os_crypt_async::Encryptor> encryptor) {
+        if (!window) return;
+        std::string ciphertext, token;
+        if (!base::Base64Decode(encrypted, &ciphertext) ||
+            !encryptor->DecryptString(ciphertext, &token) || !ValidGitHubToken(token)) {
+          window->FinishGitHubRefresh(false);
+          return;
+        }
+        window->FetchGitHubResults(std::move(token));
+      }, weak_factory_.GetWeakPtr(), encrypted_token));
+}
+
+void WorkspaceWindow::FetchGitHubResults(std::string token) {
+  auto& job = *github_refresh_;
+  auto* profile = ProfileFor(job.profile_id);
+  const auto* space = model_.Find(job.key.first);
+  if (!profile || !space || space->profile_id != job.profile_id) {
+    FinishGitHubRefresh(false);
+    return;
+  }
+  const auto& pins = pinned_items(job.key.first);
+  const auto folder = std::ranges::find(pins, job.key.second, &PinnedItem::id);
+  if (folder == pins.end() || folder->github != job.config) {
+    FinishGitHubRefresh(false);
+    return;
+  }
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://api.github.com/search/issues?sort=updated&per_page=100&q=" +
+      base::EscapeQueryParamValue("is:open is:pr" + job.queries.back(), true));
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  request->redirect_mode = network::mojom::RedirectMode::kError;
+  request->load_flags = net::LOAD_DISABLE_CACHE;
+  request->headers.SetHeader("Accept", "application/vnd.github+json");
+  if (!token.empty()) request->headers.SetHeader("Authorization", "Bearer " + token);
+  job.queries.pop_back();
+
+  constexpr auto annotation = net::DefineNetworkTrafficAnnotation("zitter_github_live_folder", R"(
+    semantics {
+      sender: "Zitter GitHub Live Folders"
+      description: "Fetches open pull requests for a GitHub folder configured by the user."
+      trigger: "A configured GitHub folder is in the active workspace or the user requests a refresh."
+      data: "GitHub login or repository filters and an optional user-provided GitHub API token."
+      destination: OTHER
+      destination_other: "api.github.com"
+    }
+    policy {
+      cookies_allowed: NO
+      setting: "The user can remove the Live Folder to stop requests."
+      policy_exception_justification: "This feature is enabled only by an explicit user configuration."
+    })");
+  github_loader_ = network::SimpleURLLoader::Create(std::move(request), annotation);
+  github_loader_->SetTimeoutDuration(base::Seconds(20));
+  github_loader_->DownloadToString(
+      profile->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string token,
+                       std::optional<std::string> body) {
+        if (!window) return;
+        window->github_loader_.reset();
+        auto result = body ? base::JSONReader::ReadDict(*body, base::JSON_PARSE_RFC) : std::nullopt;
+        const auto* items = result ? result->FindList("items") : nullptr;
+        if (!items || result->FindBool("incomplete_results").value_or(true)) {
+          window->FinishGitHubRefresh(false);
+          return;
+        }
+        auto& job = *window->github_refresh_;
+        for (const auto& item : *items) {
+          const auto* dict = item.GetIfDict();
+          const auto* link = dict ? dict->FindString("html_url") : nullptr;
+          const auto* title = dict ? dict->FindString("title") : nullptr;
+          if (!link || !title) continue;
+          const GURL url(*link);
+          const auto key = GitHubPullKey(url);
+          if (key.empty() || std::ranges::any_of(job.results, [&](const auto& pin) {
+                return GitHubPullKey(pin.url) == key;
+              })) continue;
+          job.results.push_back({"github-pr-" + job.key.second + key, job.key.second, *title, url});
+        }
+        if (job.queries.empty()) window->FinishGitHubRefresh(true);
+        else window->FetchGitHubResults(std::move(token));
+      }, weak_factory_.GetWeakPtr(), std::move(token)), 4 * 1024 * 1024);
+}
+
+void WorkspaceWindow::FinishGitHubRefresh(bool ok) {
+  auto job = std::move(*github_refresh_);
+  github_refresh_.reset();
+  const auto& [workspace, folder] = job.key;
+  const auto* space = model_.Find(workspace);
+  const auto storage = pins_.find(workspace);
+  if (space && space->profile_id == job.profile_id && storage != pins_.end() && !profiles_busy()) {
+    auto& items = storage->second;
+    const auto target = std::ranges::find(items, folder, &PinnedItem::id);
+    if (target != items.end() && target->github == job.config) {
+      if (ok) {
+        auto previous = items;
+        std::map<std::string, std::string> existing_ids;
+        const auto is_result = [&](const PinnedItem& pin) {
+          return pin.parent_id == folder && !pin.folder && !GitHubPullKey(pin.url).empty();
+        };
+        for (const auto& pin : items) {
+          if (is_result(pin))
+            existing_ids.emplace(GitHubPullKey(pin.url), pin.id);
+        }
+        for (auto& pin : job.results) {
+          const auto existing = existing_ids.find(GitHubPullKey(pin.url));
+          if (existing != existing_ids.end()) pin.id = existing->second;
+        }
+        std::erase_if(items, is_result);
+        const auto insertion = std::ranges::find(items, folder, &PinnedItem::id) + 1;
+        items.insert(insertion, std::make_move_iterator(job.results.begin()),
+                     std::make_move_iterator(job.results.end()));
+        if (items != previous) SaveFolderEdit(workspace, std::move(previous));
+      } else if (job.manual) {
+        shell_->ShowToast(T(u"Nie udało się odświeżyć folderu GitHub"), {}, {});
+      }
+    }
+  }
+  ScheduleGitHubRefresh();
 }
 
 bool WorkspaceWindow::RenamePinnedFolder(std::string workspace, std::string id, std::string name) {
@@ -4599,7 +5016,7 @@ bool WorkspaceWindow::RemovePinnedFolder(std::string workspace, std::string id, 
   if (folder == items.end()) return false;
   auto previous = items;
   std::set<std::string> removed{id};
-  if (contents) {
+  if (contents || folder->github) {
     const auto nodes = PinNodes(items);
     const auto subtree = PinTree(nodes).Subtree(id);
     if (subtree.empty()) return false;  // Ambiguous IDs must not cause a partial deletion.
@@ -4686,6 +5103,7 @@ bool WorkspaceWindow::ApplyArcImport() {
   profiles_busy_ = true;
   import_new_profile_ids_.clear();
   import_new_workspace_ids_.clear();
+  import_upgraded_github_folders_.clear();
   UpdateShell();
   WorkspaceShell::ImportStatusReport importing;importing.stage=WorkspaceShell::ImportStatusReport::Stage::kImporting;
   shell_->SetImportStatus(importing, false, /*busy=*/true, /*applying=*/true);
@@ -4743,8 +5161,29 @@ void WorkspaceWindow::CommitArcImport() {
         !IsWorkspaceTabUrl(TabUrl(*host, host->view));
   }
   closing_ = true;
+  // Seed favorites only when creating a profile, just as with imported Spaces.
+  for (const auto& id : import_new_profile_ids_) {
+    const auto key = "@profile:" + id;
+    const auto favorites = pending_import_->profile_favorites.find(id);
+    if (favorites != pending_import_->profile_favorites.end())
+      pins_[key] = favorites->second;
+    else
+      pins_.erase(key);
+  }
   for (const auto& space : pending_import_->spaces) {
-    if (model_.Find(space.id)) continue;
+    if (model_.Find(space.id)) {
+      // Earlier versions imported these as ordinary folders. Upgrade only
+      // matching folders, preserving their current location, title and links.
+      auto& existing = pins_[space.id];
+      for (const auto& pin : space.pins) {
+        if (!pin.github) continue;
+        auto folder = std::ranges::find(existing, pin.id, &PinnedItem::id);
+        if (folder == existing.end() || !folder->folder || folder->github) continue;
+        folder->github = pin.github;
+        import_upgraded_github_folders_.emplace_back(space.id, folder->id);
+      }
+      continue;
+    }
     CHECK(model_.Add({space.id, space.profile_id, space.name}));
     import_new_workspace_ids_.push_back(space.id);
     pins_[space.id] = space.pins;
@@ -4766,6 +5205,11 @@ void WorkspaceWindow::CompleteArcImport(bool ok) {
   const auto added_spaces = import_new_workspace_ids_.size();
   if (!ok) {
     closing_ = true;
+    for (const auto& [workspace, folder] : import_upgraded_github_folders_) {
+      auto& items = pins_[workspace];
+      auto item = std::ranges::find(items, folder, &PinnedItem::id);
+      if (item != items.end()) item->github.reset();
+    }
     for (const auto& id : import_new_workspace_ids_) {
       for (auto it = hosts_.begin(); it != hosts_.end(); ++it) {
         if (it->workspace_id != id) continue;
@@ -4779,6 +5223,7 @@ void WorkspaceWindow::CompleteArcImport(bool ok) {
       pins_.erase(id);
     }
     for (const auto& id : import_new_profile_ids_) {
+      pins_.erase("@profile:" + id);
       auto it = std::find_if(profiles_.begin(), profiles_.end(), [&](const auto& entry) { return entry.info.id == id; });
       if (it != profiles_.end()) { ScheduleProfileDeletion(it->info.directory); profiles_.erase(it); }
     }
@@ -4810,6 +5255,7 @@ void WorkspaceWindow::CompleteArcImport(bool ok) {
     onboarding_complete_ = true;
   }
   import_replaces_starter_ = false;
+  import_upgraded_github_folders_.clear();
   if (ok) SaveConfiguration();
   WorkspaceShell::ImportStatusReport status;status.stage=WorkspaceShell::ImportStatusReport::Stage::kFinished;status.ok=ok;status.added_profiles=added_profiles;status.added_spaces=added_spaces;
   if (ok && import_browsing_data_) {
@@ -4831,6 +5277,7 @@ void WorkspaceWindow::CompleteArcImport(bool ok) {
 
 void WorkspaceWindow::FinishArcImport(const WorkspaceShell::ImportStatusReport& status) {
   import_browsing_data_.reset();
+  if (status.ok) QueueImportedFavicons(*pending_import_);
   pending_import_.reset();
   import_new_profile_ids_.clear();
   import_new_workspace_ids_.clear();

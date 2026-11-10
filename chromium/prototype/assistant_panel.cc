@@ -230,7 +230,9 @@ std::u16string AssistantProviderLabel(std::string_view provider) {
   return base::UTF8ToUTF16(provider);
 }
 AssistantSettings::AssistantSettings()
-    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"openai", "gpt-6.1-sol"}, {"openai", "gpt-6.1-terra"}, {"openai", "gpt-6-astra"}, {"codex", "gpt-6.1-sol"}, {"codex", "gpt-6.1-terra"}, {"codex", "gpt-6-astra"}, {"codex", "gpt-6-luna"}}),
+    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"claude", "fable"}, {"claude", "haiku"},
+              {"openai", "gpt-6.1-sol"}, {"openai", "gpt-6.1-terra"}, {"openai", "gpt-6-astra"},
+              {"codex", "gpt-6.1-sol"}, {"codex", "gpt-6.1-terra"}, {"codex", "gpt-6-astra"}, {"codex", "gpt-6-luna"}}),
       default_model("claude/sonnet") {}
 AssistantSettings::AssistantSettings(const AssistantSettings&) = default;
 AssistantSettings& AssistantSettings::operator=(const AssistantSettings&) = default;
@@ -261,7 +263,7 @@ base::DictValue AssistantSettings::ToValue() const {
   for (const auto& model : models) list.Append(base::DictValue().Set("provider", model.provider).Set("id", model.id).Set("visible", model.visible));
   for (bool backend : backends) enabled_backends.Append(backend);
   return base::DictValue().Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
-      .Set("catalog_version", 3).Set("codex_path", codex_path).Set("claude_path", claude_path)
+      .Set("catalog_version", 4).Set("codex_path", codex_path).Set("claude_path", claude_path)
       .Set("ollama_configured", ollama_configured)
       .Set("encrypted_api_key", encrypted_api_key).Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
       .Set("confirm_background", confirm_background).Set("concurrency", concurrency);
@@ -289,14 +291,15 @@ AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
     if (!models.empty()) result.models = std::move(models);
   }
   if (const auto* model = value->FindString("default_model")) result.default_model = *model;
-  if(value->FindInt("catalog_version").value_or(0)<2){
+  const int catalog_version = value->FindInt("catalog_version").value_or(0);
+  if(catalog_version<2){
     bool migrated=false;
     for(auto& model:result.models)if(model.provider=="codex"&&model.id=="gpt-5.4"){model.id="gpt-6.1-sol";migrated=true;}
     if(migrated)for(const char* id:{"gpt-6.1-terra","gpt-6-astra","gpt-6-luna"})
       if(result.models.size()<32&&std::ranges::none_of(result.models,[&](const auto& m){return m.provider=="codex"&&m.id==id;}))result.models.push_back({"codex",id});
     if(result.default_model=="codex/gpt-5.4")result.default_model="codex/gpt-6.1-sol";
   }
-  if (value->FindInt("catalog_version").value_or(0) < 3) {
+  if (catalog_version < 3) {
     for (auto& model : result.models) {
       if (model.provider == "openai" && model.id == "gpt-5.4") model.id = "gpt-6.1-sol";
       if (model.provider == "openai" && model.id == "gpt-5.4-mini") model.id = "gpt-6.1-terra";
@@ -308,6 +311,12 @@ AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
       if (result.models.size() < 32 && std::ranges::none_of(result.models, [&](const auto& model) {
             return model.provider == "openai" && model.id == id;
           })) result.models.push_back({"openai", id});
+  }
+  if (catalog_version < 4) {
+    for (const char* id : {"fable", "haiku"})
+      if (result.models.size() < 32 && std::ranges::none_of(result.models, [&](const auto& model) {
+            return model.provider == "claude" && model.id == id;
+          })) result.models.push_back({"claude", id});
   }
   if (const auto* permissions = value->FindDict("permissions")) {
     auto flag = [&](const char* key, bool fallback) { return permissions->FindBool(key).value_or(fallback); };
@@ -390,7 +399,7 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   },base::Unretained(this)),AssistantGlyph::kAt,T(u"Wstaw kartę lub narzędzie")));
   // The tools are toggles: they insert or remove the same chips as @.
   research_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("research")),AssistantGlyph::kSpark,T(u"Deep research")));
-  background_chip_=tools_->AddChildView(CreateAssistantChip(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("background")),AssistantGlyph::kLayers,T(u"W tle")));
+  background_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("background")),AssistantGlyph::kLayers,T(u"W tle")));
   model_chip_=tools_->AddChildView(CreateAssistantChip(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kModel)),AssistantGlyph::kSpark,u""));
   send_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->Send(false);},base::Unretained(this)),AssistantGlyph::kArrow,T(u"Wyślij"),true));
   stop_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::Stop,base::Unretained(this)),AssistantGlyph::kStop,T(u"Stop"),true));
@@ -2514,10 +2523,14 @@ void AssistantPanel::UpdateControls() {
   background_chip_->SetVisible(true);
   background_chip_->SetEnabled(settings.background && (idle || movable));
   background_chip_->SetTooltipText(!settings.background ? T(u"Włącz pracę w tle w Ustawieniach → Asystent AI") :
-      !session.permissions.actions ? T(u"Nadaj tej sesji dostęp do działań, aby uruchomić zadanie w tle") : T(u"W tle · Alt+Enter"));
+      !session.permissions.actions ? T(u"Nadaj tej sesji dostęp do działań, aby uruchomić zadanie w tle") :
+      movable ? T(u"Dokończ w tle") : T(u"W tle · Alt+Enter"));
   UpdateAssistantButton(model_chip_, session.model.empty() ? T(u"Wybierz model") : base::UTF8ToUTF16(session.model), menu_ == Menu::kModel);
-  model_chip_->SetTooltipText(T(u"Zmień model"));
-  model_chip_->GetViewAccessibility().SetName(TF(u"Model: {}. Zmień model", {base::UTF8ToUTF16(session.model)}));
+  if (!session.model.empty()) {
+    const auto label = TF(u"Model: {}. Zmień model", {base::UTF8ToUTF16(session.model)});
+    model_chip_->SetTooltipText(label);
+    model_chip_->GetViewAccessibility().SetName(label);
+  }
   const int shared = static_cast<int>(session.permissions.tabs) + session.permissions.pages + session.permissions.actions + session.permissions.history + session.permissions.web;
   UpdateAssistantButton(access_action_, TF(u"Dostęp · {}", {base::NumberToString16(shared)}),
                         menu_ == Menu::kAccess);

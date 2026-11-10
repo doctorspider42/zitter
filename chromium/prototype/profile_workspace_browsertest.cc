@@ -65,6 +65,7 @@
 #include "ui/views/paint_info.h"
 #include "crypto/aes_cbc.h"
 #include "crypto/hash.h"
+#include "net/base/url_util.h"
 #include "net/cookies/cookie_options.h"
 #include "sql/database.h"
 #include "sql/statement.h"
@@ -1023,6 +1024,30 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantCodexDefaultsMigrateW
   EXPECT_EQ(again.models.size(),settings.models.size());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantClaudeDefaultsPreserveSavedModelChoices) {
+  const AssistantSettings defaults;
+  for (const char* id : {"fable", "haiku"}) {
+    EXPECT_TRUE(std::ranges::any_of(defaults.models, [&](const auto& model) {
+      return model.provider == "claude" && model.id == id && model.visible;
+    }));
+  }
+  auto previous = base::DictValue().Set("catalog_version", 3)
+      .Set("models", base::ListValue()
+          .Append(base::DictValue().Set("provider", "claude").Set("id", "fable").Set("visible", false))
+          .Append(base::DictValue().Set("provider", "claude").Set("id", "custom")))
+      .Set("default_model", "claude/custom");
+  const auto settings = AssistantSettings::FromValue(&previous);
+  ASSERT_EQ(settings.models.size(), 3u);
+  EXPECT_EQ(settings.default_model, "claude/custom");
+  EXPECT_EQ(settings.models[0].id, "fable");
+  EXPECT_FALSE(settings.models[0].visible);
+  EXPECT_EQ(settings.models[1].id, "custom");
+  EXPECT_EQ(settings.models[2].id, "haiku");
+  EXPECT_TRUE(settings.models[2].visible);
+  const auto saved = settings.ToValue();
+  EXPECT_EQ(AssistantSettings::FromValue(&saved).models.size(), 3u);
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRoundTrip) {
   base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL", embedded_test_server()->base_url().spec());
   window_->ShowAssistant();
@@ -1526,6 +1551,17 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantHideAndResize) {
   panel->ConfigureForTesting("ollama","test-local",{true,true,true,false,false});
   // A running task keeps working while the unpinned panel hides.
   panel->SendForTesting("Read page");ASSERT_TRUE(panel->busy());
+  panel->OnResize(1000, true);
+  for (auto theme : {ThemeMode::kLight, ThemeMode::kDark}) {
+    window_->shell()->SetThemeMode(theme);
+    window_->widget()->LayoutRootViewIfNecessary();
+    auto* model = FindButton(panel, TF(u"Model: {}. Zmień model", {u"test-local"}));
+    auto* background = FindButton(panel, T(u"Dokończ w tle"));
+    ASSERT_TRUE(model);
+    ASSERT_TRUE(background);
+    EXPECT_EQ(background->width(), 28);
+    EXPECT_GE(model->width(), model->GetPreferredSize().width());
+  }
   panel->Collapse();EXPECT_FALSE(panel->GetVisible());EXPECT_TRUE(panel->busy());
   panel->Show();panel->RevokeAccess();EXPECT_FALSE(panel->busy());
 }
@@ -9042,6 +9078,83 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SiteFaviconsReachTabsAndProfil
   EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowserImportsCopyCachedFaviconsWithoutFetchingPages) {
+  base::ScopedAllowBlockingForTesting files;
+  base::ScopedTempDir source;
+  ASSERT_TRUE(source.CreateUniqueTempDir());
+  const auto url = embedded_test_server()->GetURL("favicon.test", "/favicon-placeholder");
+  const auto sidebar = base::StringPrintf(R"({"sidebar":{"containers":[
+    {"global":{}},{"spaces":{
+      "s1":{"profile":{"default":true},"containerIDs":["pinned","pins"]}
+    },"items":{
+      "pins":{"data":{"itemContainer":{}},"childrenIds":["pin"]},
+      "top":{"data":{"itemContainer":{}},"childrenIds":["favorite"]},
+      "pin":{"data":{"tab":{"savedURL":"%s"}}},
+      "favorite":{"data":{"tab":{"savedURL":"%s"}}}
+    },"topAppsContainerIDs":[{"default":true},"top"]}
+  ]}})", url.spec().c_str(), url.spec().c_str());
+  ASSERT_TRUE(base::WriteFile(source.GetPath().AppendASCII("StorableSidebar.json"), sidebar));
+  const auto profile = source.GetPath().AppendASCII("User Data").AppendASCII("Default");
+  ASSERT_TRUE(base::CreateDirectory(profile));
+  ASSERT_TRUE(base::WriteFile(profile.AppendASCII("Bookmarks"), base::StringPrintf(
+      R"({"roots":{"bookmark_bar":{"type":"folder","name":"Bookmarks","children":[
+        {"type":"url","name":"Imported page","url":"%s"}]}}})", url.spec().c_str())));
+  {
+    sql::Database db("Thumbnail");
+    ASSERT_TRUE(db.Open(profile.AppendASCII("Favicons")));
+    ASSERT_TRUE(db.Execute("CREATE TABLE icon_mapping(page_url TEXT, icon_id INTEGER)"));
+    ASSERT_TRUE(db.Execute("CREATE TABLE favicons(id INTEGER, url TEXT, icon_type INTEGER)"));
+    ASSERT_TRUE(db.Execute("CREATE TABLE favicon_bitmaps(icon_id INTEGER, width INTEGER, "
+                           "height INTEGER, image_data BLOB, last_updated INTEGER)"));
+    sql::Statement mapping(db.GetUniqueStatement("INSERT INTO icon_mapping VALUES (?,1)"));
+    mapping.BindString(0, url.spec());
+    ASSERT_TRUE(mapping.Run());
+    ASSERT_TRUE(db.Execute("INSERT INTO favicons VALUES (1,'https://favicon.test/test.png',1)"));
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(32, 32);
+    bitmap.eraseColor(SK_ColorGREEN);
+    auto png = gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false);
+    ASSERT_TRUE(png);
+    sql::Statement image(db.GetUniqueStatement("INSERT INTO favicon_bitmaps VALUES (1,0,0,?,1)"));
+    image.BindBlob(0, std::move(*png));
+    ASSERT_TRUE(image.Run());
+  }
+  const std::string active = window_->active_id();
+  auto* page = window_->contents(active);
+  for (auto browser : {ImportBrowser::kArc, ImportBrowser::kChrome,
+                       ImportBrowser::kEdge, ImportBrowser::kBrave}) {
+    SCOPED_TRACE(base::UTF16ToUTF8(ImportBrowserName(browser)));
+    ASSERT_TRUE(window_->Select(active));
+    BrowserImportOptions options;
+    options.browser = browser;
+    window_->PreviewBrowserImport(options, browser == ImportBrowser::kArc
+        ? source.GetPath() : profile.DirName());
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
+    const auto preview = *window_->import_preview();
+    ASSERT_EQ(1u, preview.spaces.size());
+    ASSERT_TRUE(window_->ApplyArcImport());
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return !window_->profiles_busy() && !window_->workspace_favicons_pending_for_testing();
+    }));
+    EXPECT_EQ(0, favicon_placeholder_requests_.load());
+    EXPECT_EQ(0, favicon_reload_requests_.load());
+    EXPECT_EQ(active, window_->active_id());
+    EXPECT_EQ(page, window_->contents(active));
+    ASSERT_TRUE(window_->Select(preview.spaces[0].id));
+    EXPECT_EQ(1u, window_->tab_count(preview.spaces[0].id));
+    auto* shell = window_->shell();
+    size_t icons = 0;
+    for (const auto& pin : window_->pinned_items(preview.spaces[0].id)) {
+      if (pin.folder) continue;
+      auto* row = shell->pin_button(pin.id);
+      ASSERT_TRUE(row);
+      EXPECT_TRUE(shell->row_has_favicon_for_testing(row));
+      ++icons;
+    }
+    EXPECT_EQ(browser == ImportBrowser::kArc ? 2u : 1u, icons);
+  }
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCopiesPageAndLink) {
   const auto first = embedded_test_server()->GetURL("/storage_probe.html?menu-first");
   const auto second = embedded_test_server()->GetURL("/storage_probe.html?menu-second&utm_medium=copy");
@@ -9718,6 +9831,51 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   for (const auto& workspace : window_->workspaces()) EXPECT_EQ("work-profile", workspace.profile_id);
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GitHubLiveFolderRefreshesAndPersists) {
+  std::atomic<int> requests = 0;
+  std::atomic<bool> close_pr = false;
+  content::URLLoaderInterceptor github(base::BindRepeating(
+      [](std::atomic<int>* requests, std::atomic<bool>* close_pr,
+         content::URLLoaderInterceptor::RequestParams* params) {
+        const auto& request = params->url_request;
+        if (request.url.host() != "api.github.com") return false;
+        EXPECT_EQ(request.url.path(), "/search/issues");
+        EXPECT_NE(request.url.query().find("repo%3Aowner%2Frepo"), std::string::npos);
+        EXPECT_EQ(request.credentials_mode, network::mojom::CredentialsMode::kOmit);
+        EXPECT_FALSE(request.headers.HasHeader("Authorization"));
+        ++*requests;
+        content::URLLoaderInterceptor::WriteResponse(
+            "HTTP/1.1 200 OK\nContent-Type: application/json\n\n",
+            close_pr->load() ? R"({"incomplete_results":false,"items":[]})" :
+                R"({"incomplete_results":false,"items":[{"html_url":"https://github.com/owner/repo/pull/17","title":"Fix layout"}]})",
+            params->client.get());
+        return true;
+      }, &requests, &close_pr));
+
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->ConfigureGitHubFolder("work", "", "Pull Requests", {"octocat", "owner/repo", ""}, "", false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->pinned_items("work").size() == 2; }));
+  const auto saved = window_->pinned_items("work");
+  ASSERT_TRUE(saved[0].github);
+  auto* shell = window_->shell();
+  auto* folder = shell->pin_button(saved[0].id);
+  ASSERT_TRUE(folder);
+  EXPECT_TRUE(shell->row_has_favicon_for_testing(folder));  // Starred folder scene icon.
+  EXPECT_EQ(saved[1].url, GURL("https://github.com/owner/repo/pull/17"));
+  EXPECT_EQ(saved[1].parent_id, saved[0].id);
+  EXPECT_EQ(requests.load(), 2);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy() && window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ(window_->pinned_items("work"), saved);
+  close_pr = true;
+  ASSERT_TRUE(window_->Select("work"));
+  window_->RefreshGitHubFolder("work", saved[0].id);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->pinned_items("work").size() == 1; }));
+  EXPECT_EQ(window_->pinned_items("work").front(), saved[0]);
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersistence) {
   base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
@@ -9730,8 +9888,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   ASSERT_TRUE(preview.error.empty()) << preview.error;
   EXPECT_EQ(3u, preview.profiles.size());
   ASSERT_EQ(3u, preview.spaces.size());
-  EXPECT_EQ(7u, preview.tab_count);
-  EXPECT_EQ(5u, preview.folder_count);
+  EXPECT_EQ(6u, preview.tab_count);
+  EXPECT_EQ(3u, preview.folder_count);
   EXPECT_EQ(1u, preview.skipped_count);
   EXPECT_EQ("arc-space-space-b", preview.spaces[0].id);
   EXPECT_EQ(u"🚀", preview.spaces[0].emoji);
@@ -9749,6 +9907,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   EXPECT_EQ(u"🚀", shell->workspace_emoji("arc-space-space-b"));
   const auto& pins = window_->pinned_items("arc-space-space-a");
   ASSERT_FALSE(pins.empty());
+  const auto favorite = pins.front();
+  EXPECT_TRUE(favorite.profile_pin);
+  EXPECT_EQ(GURL("https://example.test/favorite"), favorite.url);
+  EXPECT_EQ("Ulubiona", favorite.title);
+  ASSERT_FALSE(window_->pinned_items("arc-space-space-b").empty());
+  EXPECT_EQ(favorite, window_->pinned_items("arc-space-space-b").front());
+  EXPECT_TRUE(window_->pinned_items("arc-space-space-c").empty());
   bool nested = false;
   for (const auto& pin : pins) {
     if (pin.id == "tab-b") nested = pin.parent_id == "nested";
@@ -9761,6 +9926,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   ASSERT_TRUE(window_->Select("arc-space-space-a"));
   shell->ShowSidebar();
   base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(shell->pin_button(favorite.id));
   EXPECT_TRUE(window_->widget()->GetWindowBoundsInScreen().Contains(
       shell->workspace_button(window_->active_id())->GetBoundsInScreen()));
   // Opening a pin lazily uses its imported profile, and reuses the same tab.
@@ -9794,7 +9960,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   window_->shell()->SetWorkspaceEmoji("arc-space-space-b", u"🎮");
   EXPECT_EQ(5u, window_->profiles().size());
   EXPECT_EQ(5u, window_->workspaces().size());
-  EXPECT_EQ(preview.spaces[1].pins.size(), window_->pinned_items("arc-space-space-a").size());
+  const auto& restored = window_->pinned_items("arc-space-space-a");
+  ASSERT_EQ(preview.spaces[1].pins.size() + 1, restored.size());
+  EXPECT_EQ(favorite, restored.front());
   EXPECT_EQ(2u, window_->tab_count("arc-space-space-a"));
   window_->PreviewArcImport(source);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
@@ -10440,6 +10608,15 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LiveArcImport) {
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-test-arc-import")) {
     GTEST_SKIP() << "Explicit local Arc import test only";
   }
+  // Exercise the real sidebar snapshot without sending its URLs over the network.
+  content::URLLoaderInterceptor no_external_requests(base::BindRepeating(
+      [](content::URLLoaderInterceptor::RequestParams* params) {
+        if (!params->url_request.url.SchemeIsHTTPOrHTTPS() ||
+            net::IsLocalhost(params->url_request.url)) return false;
+        content::URLLoaderInterceptor::WriteResponse("HTTP/1.1 404 Not Found\n\n", "",
+                                                     params->client.get());
+        return true;
+      }));
   window_->PreviewArcImport(DefaultArcDirectory());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_preview() != nullptr; }));
   const auto preview = *window_->import_preview();
@@ -10477,11 +10654,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LiveArcImport) {
   EXPECT_EQ(2u + preview.profiles.size(), window_->profiles().size());
   for (const auto& space : preview.spaces) {
     const auto& restored = window_->pinned_items(space.id);
-    ASSERT_EQ(space.pins.size(), restored.size());
-    for (size_t i = 0; i < restored.size(); ++i) {
-      EXPECT_TRUE(restored[i].id == space.pins[i].id && restored[i].parent_id == space.pins[i].parent_id &&
-          restored[i].title == space.pins[i].title && restored[i].url == space.pins[i].url);
-    }
+    std::vector<PinnedItem> expected;
+    if (const auto favorites = preview.profile_favorites.find(space.profile_id);
+        favorites != preview.profile_favorites.end()) expected = favorites->second;
+    expected.insert(expected.end(), space.pins.begin(), space.pins.end());
+    EXPECT_EQ(expected, restored);
   }
   LOG(INFO) << "Arc import verified: " << preview.profiles.size() << " profiles, " << preview.spaces.size()
             << " spaces, " << preview.folder_count << " folders, " << preview.tab_count

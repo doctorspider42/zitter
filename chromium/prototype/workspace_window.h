@@ -106,6 +106,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   const std::vector<PinnedItem>& pinned_items(std::string_view workspace_id) const;
   void OpenPinnedItem(std::string id);
   bool CreatePinnedFolder(std::string workspace, std::string parent, std::string name);
+  bool ConfigureGitHubFolder(std::string workspace, std::string folder, std::string name,
+                             GitHubLiveFolder config, std::string token, bool remove_token);
+  void RefreshGitHubFolder(std::string workspace, std::string folder);
   bool RenamePinnedFolder(std::string workspace, std::string id, std::string name);
   bool RemovePinnedFolder(std::string workspace, std::string id, bool contents);
   // Undo of a folder removal: puts the workspace's earlier pins back.
@@ -240,7 +243,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool DuplicateTab(size_t index);
   bool DuplicatePin(std::string id);
   bool ReloadWorkspaceFavicons(std::string workspace);
-  bool workspace_favicons_pending_for_testing() const { return !favicon_refreshing_.empty(); }
+  bool workspace_favicons_pending_for_testing() const {
+    return import_favicon_reads_ || !favicon_refreshing_.empty() || !import_favicon_queue_.empty();
+  }
   ExtensionsBar* extensions_bar() const { return extensions_bar_; }
   bool OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split = false);
   WorkspaceShell* shell() const { return shell_.get(); }
@@ -425,6 +430,12 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   static views::WebView* LeaveSplit(Host& host, views::WebView* view);
   void ApplyPanes(const Host& host);
   bool InsertPin(std::string workspace, PinnedItem item, std::string before);
+  void SaveGitHubFolder(std::string workspace, std::string folder, std::string name,
+                        GitHubLiveFolder config);
+  void ScheduleGitHubRefresh();
+  void StartGitHubRefresh();
+  void FetchGitHubResults(std::string token);
+  void FinishGitHubRefresh(bool ok);
   base::DictValue CaptureHost(const Host& host) const;
   bool RestoreHost(Host& host, const base::DictValue& entry);
   void ReleaseHost(Host& host);
@@ -549,11 +560,37 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool import_replaces_starter_ = false;
   size_t import_preview_generation_ = 0;
   std::map<std::string, std::vector<PinnedItem>> pins_;
+  using GitHubFolderKey = std::pair<std::string, std::string>;
+  struct GitHubRefresh {
+    GitHubFolderKey key;
+    std::string profile_id;
+    GitHubLiveFolder config;
+    std::vector<std::string> queries;
+    std::vector<PinnedItem> results;
+    bool manual = false;
+  };
+  base::OneShotTimer github_timer_;
+  std::map<GitHubFolderKey, base::TimeTicks> github_next_refresh_;
+  std::optional<GitHubFolderKey> github_manual_refresh_;
+  std::optional<GitHubRefresh> github_refresh_;
+  std::unique_ptr<network::SimpleURLLoader> github_loader_;
   mutable std::map<std::string, std::vector<PinnedItem>> combined_pins_;
   std::map<std::pair<std::string, std::string>, std::vector<uint32_t>> favicon_cache_;
   using FaviconKey = std::pair<std::string,std::string>;
   std::map<FaviconKey,uint64_t> favicon_generations_;
-  std::set<FaviconKey> favicon_refreshing_;
+  std::map<FaviconKey, bool> favicon_refreshing_;  // Whether to discard an icon on failure.
+  struct ImportedFaviconSource {
+    std::unique_ptr<ScopedProfileKeepAlive> lease;
+    std::unique_ptr<content::WebContents> page;
+  };
+  std::set<FaviconKey> import_favicon_queue_;
+  size_t import_favicon_reads_ = 0;
+  std::map<std::string, ImportedFaviconSource> import_favicon_sources_;
+  void QueueImportedFavicons(const ArcImport& source);
+  void PumpImportedFavicons();
+  void StartWorkspaceFavicon(Profile* profile, std::string profile_id,
+                             content::WebContents* source, GURL url,
+                             GURL known_icon, bool force);
   void FetchWorkspaceFavicon(Profile* profile,
                              base::WeakPtr<content::WebContents> source,
                              FaviconKey key, uint64_t generation, GURL known_icon);
@@ -573,6 +610,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool import_loading_ = false;
   std::vector<std::string> import_new_profile_ids_;
   std::vector<std::string> import_new_workspace_ids_;
+  std::vector<GitHubFolderKey> import_upgraded_github_folders_;
   base::FilePath configuration_path_;
   scoped_refptr<base::SequencedTaskRunner> config_runner_;
   gfx::Rect windowed_bounds_;

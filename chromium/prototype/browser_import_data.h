@@ -2,17 +2,31 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_BROWSER_IMPORT_DATA_H_
 
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 #include "base/functional/callback.h"
 #include "chromium/prototype/browser_data.h"
 #include "components/history/core/browser/history_types.h"
 #include "net/cookies/canonical_cookie.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 class Profile;
 namespace zitter::prototype {
+struct ImportedFavicon {
+  std::string profile_id;
+  GURL page_url;
+  GURL icon_url;
+  SkBitmap bitmap;
+};
+using ImportedFaviconTargets = std::map<std::string, std::set<GURL>>;
+std::vector<ImportedFavicon> ReadImportedFavicons(
+    const std::vector<ImportSourceProfile>& sources,
+    const ImportedFaviconTargets& targets);
+
 struct ImportedProfileData {
   std::string profile_id;
   history::URLRows history;

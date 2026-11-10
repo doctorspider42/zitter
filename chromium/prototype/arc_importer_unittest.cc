@@ -57,6 +57,57 @@ TEST(ArcImporterTest, ImportsPinnedTabsAndSkipsLittleArcWindows) {
   EXPECT_EQ(result.profiles[0].name, "Osobisty");
 }
 
+TEST(ArcImporterTest, ImportsFavoritesByProfileAndHonorsImportOptions) {
+  const auto parsed = ParseArcImport(R"json({"sidebar":{"containers":[
+    {"global":{}}, {"spaces":{
+      "s1":{"profile":{"default":true},"containerIDs":["pinned","p1"]},
+      "s2":{"profile":{"default":true},"containerIDs":["pinned","p1"]}
+    },"items":{
+      "p1":{"data":{"itemContainer":{}}},
+      "r1":{"data":{"itemContainer":{}},"childrenIds":["b","a","bad"]},
+      "r2":{"data":{"itemContainer":{}},"childrenIds":["c"]},
+      "a":{"data":{"tab":{"savedURL":"https://example.test/a"}}},
+      "b":{"title":"Favorite B","data":{"tab":{"savedURL":"https://example.test/b"}}},
+      "c":{"data":{"tab":{"savedURL":"https://example.test/c"}}},
+      "bad":{"data":{"tab":{"savedURL":"javascript:alert(1)"}}}
+    },"topAppsContainerIDs":[
+      {"default":true},"r1",{"custom":{"_0":{"directoryBasename":"Profile 1"}}},"r2"
+    ]}
+  ]}})json", "{}");
+  ASSERT_TRUE(parsed.error.empty()) << parsed.error;
+  ASSERT_EQ(parsed.spaces.size(), 2u);
+  EXPECT_TRUE(parsed.spaces[0].pins.empty());
+  EXPECT_TRUE(parsed.spaces[1].pins.empty());
+  EXPECT_EQ(parsed.tab_count, 3u);
+  EXPECT_EQ(parsed.folder_count, 0u);
+  EXPECT_EQ(parsed.skipped_count, 1u);
+  ASSERT_EQ(parsed.profile_favorites.size(), 2u);
+  const auto& defaults = parsed.profile_favorites.at("arc-profile-Default");
+  ASSERT_EQ(defaults.size(), 2u);
+  EXPECT_EQ(defaults[0].title, "Favorite B");
+  EXPECT_EQ(defaults[1].url, GURL("https://example.test/a"));
+  EXPECT_TRUE(defaults[0].profile_pin);
+  EXPECT_TRUE(defaults[0].parent_id.empty());
+  EXPECT_FALSE(defaults[0].folder);
+
+  BrowserImportOptions options;
+  options.separate_profiles = false;
+  const auto merged = ApplyImportOptions(parsed, options);
+  ASSERT_EQ(merged.profiles.size(), 1u);
+  ASSERT_EQ(merged.profile_favorites.size(), 1u);
+  const auto& favorites = merged.profile_favorites.at(merged.profiles[0].id);
+  ASSERT_EQ(favorites.size(), 3u);
+  EXPECT_EQ(favorites[0], defaults[0]);
+  EXPECT_EQ(favorites[1], defaults[1]);
+  EXPECT_EQ(favorites[2].url, GURL("https://example.test/c"));
+  EXPECT_EQ(merged.tab_count, 3u);
+
+  options.bookmarks = false;
+  const auto without_bookmarks = ApplyImportOptions(parsed, options);
+  EXPECT_TRUE(without_bookmarks.profile_favorites.empty());
+  EXPECT_EQ(without_bookmarks.tab_count, 0u);
+}
+
 TEST(ArcImporterTest, ReadsArcsFolderAndReportsAMissingOne) {
   base::ScopedTempDir directory;
   ASSERT_TRUE(directory.CreateUniqueTempDir());
@@ -64,6 +115,30 @@ TEST(ArcImporterTest, ReadsArcsFolderAndReportsAMissingOne) {
   ASSERT_TRUE(base::WriteFile(directory.GetPath().AppendASCII("StorableSidebar.json"), kSidebar));
   EXPECT_EQ(ReadArcImport(directory.GetPath()).spaces.size(), 1u);
   EXPECT_FALSE(ReadArcImport(base::FilePath()).error.empty());
+}
+
+TEST(ArcImporterTest, ImportsGitHubLiveFolderAndItsCachedPullRequests) {
+  const auto result = ParseArcImport(R"json({"sidebar":{"containers":[
+    {"global":{}}, {"spaces":{"s1":{"profile":{"default":true},"containerIDs":["pinned","root"]}},
+      "items":{
+        "root":{"data":{"itemContainer":{}},"childrenIds":["prs","plain"]},
+        "prs":{"title":"Review","data":{"list":{"automaticLiveFolderData":{
+          "dataSource":{"github":{}},"hiddenItems":[],"lastFetch":0
+        }}},"childrenIds":["pr"]},
+        "pr":{"data":{"tab":{"savedURL":"https://github.com/owner/repo/pull/17","savedTitle":"Fix layout"}}},
+        "plain":{"data":{"list":{}}}
+      }}
+  ]}})json", "{}");
+  ASSERT_TRUE(result.error.empty()) << result.error;
+  ASSERT_EQ(result.spaces.size(), 1u);
+  const auto& pins = result.spaces[0].pins;
+  ASSERT_EQ(pins.size(), 3u);
+  EXPECT_EQ(pins[0].title, "Review");
+  ASSERT_TRUE(pins[0].github);
+  EXPECT_TRUE(pins[0].github->login.empty());
+  EXPECT_EQ(pins[1].parent_id, pins[0].id);
+  EXPECT_EQ(pins[1].url, GURL("https://github.com/owner/repo/pull/17"));
+  EXPECT_FALSE(pins[2].github);
 }
 
 // Reads this computer's Arc, if any, and prints only counts: run by hand with

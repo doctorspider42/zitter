@@ -412,7 +412,20 @@ becomes available when that read completes; stale scan replies are ignored.
 
 Arc reads local `~/Library/Application Support/Arc/StorableSidebar.json` and
 profile names from `User Data/Local State`. It retains Space names, nested pins,
-Favorites and emoji, including composite emoji and legacy code points.
+and emoji, including composite emoji and legacy code points. Arc Favorites
+become profile favorites shared by the imported Spaces on that profile.
+GitHub Live Folders keep their names, positions and cached pull requests.
+Configure the imported folder's GitHub username or repository from its context
+menu to begin refreshing it. Reimporting Arc upgrades existing folders with
+matching Arc IDs.
+
+The sidebar's add menu creates a GitHub Live Folder. A username shows open
+pull requests authored by that user and open requests for their review. An
+optional repository narrows both searches, and a repository alone shows all
+its open pull requests. Each search shows up to 100 results. The active
+workspace refreshes every five minutes, and the context menu can request an
+immediate refresh. The optional API token is stored using the operating
+system's credential encryption. A failed refresh keeps the previous results.
 Chrome, Edge and Brave read their local Chromium `Local State` and each regular
 profile's `Bookmarks` file. Profile display names become workspace names; folder
 hierarchies become workspace pins. Sources are read only. Invalid/non-HTTP(S)
