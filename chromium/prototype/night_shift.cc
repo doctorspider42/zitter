@@ -178,7 +178,7 @@ NightShiftConfig NightShiftConfig::FromValue(const base::DictValue* value) {
   return config;
 }
 
-void PushNightShift(Profile* profile, bool enabled, const NightShiftConfig& config) {
+void PushNightShift(Profile* profile, bool enabled, const NightShiftConfig& config, base::OnceClosure done) {
   if (!profile || !profile->IsRegularProfile() || !config.managed) return;
   auto* registry = extensions::ExtensionRegistry::Get(profile);
   auto* storage = extensions::StorageFrontend::Get(profile);
@@ -192,7 +192,9 @@ void PushNightShift(Profile* profile, bool enabled, const NightShiftConfig& conf
       .Set("force", config.force);
   storage->Set(base::WrapRefCounted(extension), extensions::StorageAreaNamespace::kLocal,
                base::DictValue().Set("enabled", enabled).Set("defaults", std::move(defaults)),
-               base::DoNothing());
+               base::BindOnce([](base::OnceClosure done, extensions::StorageFrontend::ResultStatus) {
+                 std::move(done).Run();
+               }, std::move(done)));
 }
 
 std::string NightShiftSiteKey(const GURL& url) {

@@ -1872,7 +1872,7 @@ fn workspace_context_menu(s:&ffi::WorkspaceMenuState)->Vec<ffi::WorkspaceMenuEnt
     add(0,"",1,3);add(WS_CUSTOM_EMOJI,t("Własna ikonka…"),0,3);add(WS_CLEAR_EMOJI,t("Bez ikonki (kropka)"),4,3);
     add(WS_SET_PROFILE,t("Profil przeglądania"),2,0);add(WS_COLOR_MENU,t("Kolor przestrzeni"),2,0);add(WS_EMOJI_MENU,t("Ikonka przestrzeni"),2,0);add(0,"",1,0);
     // The destructive action comes last, after its own separator (ContextMenu).
-    add(WS_SETTINGS,t("Nazwa i ustawienia…"),0,0);add(0,"",1,0);add(WS_REMOVE,t("Usuń przestrzeń"),0,0);entries
+    add(WS_SETTINGS,t("Ustawienia przestrzeni"),0,0);add(0,"",1,0);add(WS_REMOVE,t("Usuń przestrzeń"),0,0);entries
 }
 fn workspace_menu_enabled(command:i32,s:&ffi::WorkspaceMenuState)->bool{
     if !s.ready||s.workspace.is_empty()||!workspace_menu_command(command,s.profiles.len()){return false;}

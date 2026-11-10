@@ -39,7 +39,7 @@ struct NightShiftConfig {
 
 // Writes the profile's switch and the default look into the extension's own
 // storage; the extension reacts to the change like to its own settings.
-void PushNightShift(Profile* profile, bool enabled, const NightShiftConfig& config);
+void PushNightShift(Profile* profile, bool enabled, const NightShiftConfig& config, base::OnceClosure done);
 
 // The settings page reports a change by replacing its URL fragment with
 // "#apply=<json>". Only the extension's own settings page is listened to.

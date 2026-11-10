@@ -151,7 +151,8 @@ base::DictValue AssistantTask::ToValue() const {
   auto time = [](base::Time t) { return t.is_null() ? 0.0 : t.InMillisecondsFSinceUnixEpoch(); };
   return base::DictValue().Set("id", id).Set("name", name).Set("instruction", instruction).Set("provider", provider).Set("model", model)
       .Set("profile", profile).Set("permissions", permissions.ToValue()).Set("kind", kind).Set("days", days).Set("minute", minute)
-      .Set("active", active).Set("last_run", time(last_run)).Set("next_run", time(next_run)).Set("last_state", last_state);
+      .Set("active", active).Set("catch_up", catch_up)
+      .Set("last_run", time(last_run)).Set("next_run", time(next_run)).Set("last_state", last_state);
 }
 std::optional<AssistantTask> AssistantTask::FromValue(const base::DictValue& value) {
   AssistantTask task;
@@ -168,6 +169,7 @@ std::optional<AssistantTask> AssistantTask::FromValue(const base::DictValue& val
   task.days = value.FindInt("days").value_or(0) & 0x7f;
   task.minute = std::clamp(value.FindInt("minute").value_or(8 * 60), 0, 24 * 60 - 1);
   task.active = value.FindBool("active").value_or(true);
+  task.catch_up = value.FindBool("catch_up").value_or(true);
   auto time = [&](const char* key) { const double ms = value.FindDouble(key).value_or(0); return ms > 0 ? base::Time::FromMillisecondsSinceUnixEpoch(ms) : base::Time(); };
   task.last_run = time("last_run"); task.next_run = time("next_run");
   task.last_state = std::clamp(value.FindInt("last_state").value_or(0), 0, 3);
@@ -345,19 +347,24 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   auto weak=weak_factory_.GetWeakPtr();
 
   header_=AddChildView(std::make_unique<views::View>());
-  auto* identity=header_->AddChildView(std::make_unique<views::View>());
-  identity->AddChildView(CreateAssistantIdentity());
-  subtitle_=identity->AddChildView(scene_->MakeText(T(u"Nowa sesja"),false,false,0));
-  scene_->SetTextStyle(subtitle_,6,PanelScene::Tone::kMuted);
-  SetSidebarPanelLayout(identity,true,gfx::Insets::TLBR(0,0,0,0),0);
-  sessions_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSessions)),AssistantGlyph::kHistory,T(u"Sesje")));
-  tasks_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kTasks)),AssistantGlyph::kCalendar,T(u"Zadania zaplanowane")));
-  access_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kAccess)),AssistantGlyph::kShield,T(u"Dostęp tej sesji")));
-  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::NewSession,weak)),AssistantGlyph::kPlus,T(u"Nowa sesja")));
-  pin_action_=header_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->SetPinned(!self->pinned());},base::Unretained(this)),AssistantGlyph::kPin,T(u"Przypnij")));
-  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSettings)),AssistantGlyph::kGear,T(u"Ustawienia asystenta")));
-  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::Hide,weak)),AssistantGlyph::kClose,T(u"Zamknij")));
-  SetSidebarPanelLayout(header_,false,gfx::Insets(),4,identity,true);
+  auto* title_row=header_->AddChildView(std::make_unique<views::View>());
+  auto* identity=title_row->AddChildView(CreateAssistantIdentity());
+  title_row->AddChildView(CreateAssistantIcon(
+      Later(base::BindRepeating(&AssistantPanel::NewSession, weak)),
+      AssistantGlyph::kPlus, T(u"Nowa sesja")));
+  access_action_ = title_row->AddChildView(CreateAssistantIcon(
+      Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kAccess)),
+      AssistantGlyph::kShield, T(u"Dostęp tej sesji")));
+  title_row->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSettings)),AssistantGlyph::kGear,T(u"Ustawienia asystenta")));
+  title_row->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::Hide,weak)),AssistantGlyph::kClose,T(u"Zamknij")));
+  SetSidebarPanelLayout(title_row,false,gfx::Insets(),4,identity,true);
+  auto* navigation=header_->AddChildView(std::make_unique<views::View>());
+  sessions_action_ = navigation->AddChildView(CreateAssistantIcon(
+      Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kSessions)),
+      AssistantGlyph::kHistory, T(u"Historia")));
+  tasks_action_=navigation->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kTasks)),AssistantGlyph::kCalendar,T(u"Zadania zaplanowane")));
+  SetSidebarPanelLayout(navigation,false,gfx::Insets(),4);
+  SetSidebarPanelLayout(header_,true,gfx::Insets(),6);
 
   background_=AddChildView(std::make_unique<views::View>());
   SetSidebarPanelLayout(background_,true,gfx::Insets(),6);
@@ -479,7 +486,6 @@ void AssistantPanel::SetPinned(bool pinned) {
   last_pointer_position_ = display::Screen::Get()->GetCursorScreenPoint();
   pointer_exit_armed_ = true;
   WatchPointer();
-  UpdateAssistantButton(pin_action_, pinned ? T(u"Odepnij") : T(u"Przypnij"),pinned);
   window_->shell()->LayoutAssistant(pinned_);
 }
 AssistantPanel::Session* AssistantPanel::Find(const std::string& key, uint64_t epoch) {
@@ -511,8 +517,13 @@ void AssistantPanel::CreateSession(bool preserve_previous) {
   CloseMenu();
   // An untouched conversation is reused instead of piling up empty ones.
   const auto profile = window_->AssistantProfileId();
+  const auto& settings = window_->assistant_settings();
   for (size_t i = sessions_.size(); !preserve_previous && i-- > 0;) {
-    if (Started(*sessions_[i]) || !sessions_[i]->composer_draft.empty() || sessions_[i]->profile != profile || window_->AssistantHasBackground(sessions_[i]->key)) continue;
+    const auto& session = *sessions_[i];
+    if (session.busy || !session.messages.empty() || !session.composer_draft.empty() ||
+        session.profile != profile || session.permissions != settings.defaults ||
+        session.confirm_background != settings.confirm_background ||
+        window_->AssistantHasBackground(session.key)) continue;
     if (i != selected_) { if (busy()) Stop(); selected_ = i; }
     chips_.clear(); RenderChips(); RenderConversation(); UpdateControls(); UpdatePageControl();
     if (prompt_) prompt_->RequestFocus();
@@ -530,7 +541,6 @@ void AssistantPanel::CreateSession(bool preserve_previous) {
     sessions_.erase(idle);
     if (selected_ >= removed && selected_ > 0) --selected_;
   }
-  const auto& settings = window_->assistant_settings();
   auto session = std::make_unique<Session>();
   session->key = base::Uuid::GenerateRandomV4().AsLowercaseString();
   session->id = base::Uuid::GenerateRandomV4().AsLowercaseString();
@@ -674,11 +684,19 @@ void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
     selected_ += count;
   }
   if (std::ranges::any_of(sessions_, [](const auto& s) { return Started(*s); })) ScheduleSave();
-  if (const auto* tasks = saved ? saved->FindList("tasks") : nullptr)
-    for (const auto& item : *tasks)
-      if (const auto* dict = item.GetIfDict())
-        if (auto task = AssistantTask::FromValue(*dict); task && !FindTask(task->id)) tasks_.push_back(std::move(*task));
-  // A run missed while Zitter was closed happens once, shortly after start.
+  if (const auto* tasks = saved ? saved->FindList("tasks") : nullptr) {
+    for (const auto& item : *tasks) {
+      const auto* dict = item.GetIfDict();
+      auto task = dict ? AssistantTask::FromValue(*dict) : std::nullopt;
+      if (!task || FindTask(task->id)) continue;
+      if (task->active && !task->catch_up && !task->next_run.is_null() &&
+          task->next_run < scheduler_started_) {
+        task->next_run = task->kind == 3 ? base::Time() : AssistantTaskNextRun(*task, scheduler_started_);
+        ScheduleSave();
+      }
+      tasks_.push_back(std::move(*task));
+    }
+  }
   task_timer_.Start(FROM_HERE, base::Seconds(30), base::BindRepeating([](AssistantPanel* self) { self->CheckTasks(base::Time::Now()); }, base::Unretained(this)));
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce([](base::WeakPtr<AssistantPanel> self) {
     if (self) self->CheckTasks(base::Time::Now()); }, weak_factory_.GetWeakPtr()), base::Seconds(5));
@@ -719,12 +737,14 @@ void AssistantPanel::ResetRuntime() {
   for(auto& session:sessions_){session->id=base::Uuid::GenerateRandomV4().AsLowercaseString();session->auto_confirm=false;}
 }
 void AssistantPanel::RevokeAccess() {
-  CloseMenu();
   StopAll();
   selected().permissions={false,false,false,false,false,true};
   selected().auto_confirm=false;
+  std::erase_if(chips_, [](const auto& chip) { return chip.kind == "background"; });
+  RenderChips();
   ResetRuntime();UpdateControls();
   Append(selected(),base::UTF16ToUTF8(T(u"Dostęp odebrany. Zadania zatrzymane.")));
+  if (menu_ == Menu::kAccess) BuildMenu();
 }
 void AssistantPanel::SettingsChanged() {
   const auto& settings = window_->assistant_settings();
@@ -771,7 +791,11 @@ void AssistantPanel::SyncSelectedModel() {
 
 // Menus ------------------------------------------------------------------
 void AssistantPanel::ToggleMenu(Menu menu) {
-  if (menu_ == menu || (menu == Menu::kTasks && menu_ == Menu::kTaskEditor)) { CloseMenu(); return; }
+  if (menu_ == menu || (menu == Menu::kTasks && menu_ == Menu::kTaskEditor)) {
+    CloseMenu();
+    if (menu == Menu::kSessions) prompt_->RequestFocus();
+    return;
+  }
   draft_instruction_ = nullptr; draft_time_ = nullptr;
   menu_ = menu; model_query_.clear(); confirm_clear_ = false;
   if (menu == Menu::kTasks) { unread_ = 0; NotifyBar(); }
@@ -783,7 +807,7 @@ void AssistantPanel::CloseMenu() {
   menu_ = Menu::kNone; mention_rows_.clear(); menu_footer_ = nullptr; model_search_ = nullptr; menu_scroll_ = nullptr;
   menu_monitor_.reset();
   if (menu_view_) RemoveChildViewT(std::exchange(menu_view_, nullptr).get());
-  UpdateAssistantButton(sessions_action_, T(u"Sesje"), false);
+  UpdateAssistantButton(sessions_action_, T(u"Historia"), false);
   UpdateAssistantButton(tasks_action_, T(u"Zadania zaplanowane"), false);
   draft_instruction_ = nullptr; draft_time_ = nullptr;
   UpdateControls();
@@ -797,7 +821,7 @@ void AssistantPanel::BuildMenu() {
   SetSidebarPanelLayout(surface.get(), true, gfx::Insets(6), 2);
   surface->GetViewAccessibility().SetRole(menu_ == Menu::kMention ? ax::mojom::Role::kListBox : ax::mojom::Role::kDialog);
   switch (menu_) {
-    case Menu::kSessions: surface->GetViewAccessibility().SetName(T(u"Sesje")); BuildSessionsMenu(surface.get()); break;
+    case Menu::kSessions: surface->GetViewAccessibility().SetName(T(u"Historia")); BuildSessionsMenu(surface.get()); break;
     case Menu::kTasks: surface->GetViewAccessibility().SetName(T(u"Zadania zaplanowane")); BuildTasksMenu(surface.get()); break;
     case Menu::kTaskEditor: surface->GetViewAccessibility().SetName(T(u"Zadanie zaplanowane")); BuildTaskEditor(surface.get()); break;
     case Menu::kAccess: surface->GetViewAccessibility().SetName(T(u"Dostęp tej sesji")); BuildAccessMenu(surface.get()); break;
@@ -816,7 +840,7 @@ void AssistantPanel::BuildMenu() {
     menu_monitor_ = views::EventMonitor::CreateWindowMonitor(menu_observer_.get(), GetWidget()->GetNativeWindow(), {ui::EventType::kMousePressed});
   }
   ReorderChildView(resize_handle_, children().size() - 1);
-  UpdateAssistantButton(sessions_action_, T(u"Sesje"), menu_ == Menu::kSessions);
+  UpdateAssistantButton(sessions_action_, T(u"Historia"), menu_ == Menu::kSessions);
   UpdateAssistantButton(tasks_action_, T(u"Zadania zaplanowane"), menu_ == Menu::kTasks || menu_ == Menu::kTaskEditor);
   UpdateControls();
   InvalidateLayout(); scene_->Schedule();
@@ -946,6 +970,13 @@ void AssistantPanel::BuildAccessMenu(views::View* body) {
   const int granted = static_cast<int>(std::ranges::count_if(grants, [](const auto& g) { return g.first; }));
   const bool started = !selected().messages.empty() || selected().busy;
   body->AddChildView(CreateAssistantEyebrow(T(u"Dostęp tej sesji"), TF(u"{} z 5", {base::NumberToString16(granted)})));
+  if (started && !granted) {
+    AssistantRow fresh;
+    fresh.title = T(u"Nowa sesja");
+    fresh.detail = T(u"Zacznij z domyślnym dostępem");
+    fresh.mark = {AssistantGlyph::kPlus, {}, SK_ColorTRANSPARENT};
+    body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::StartNewConversation, weak)), std::move(fresh)));
+  }
   for (size_t i = 0; i < grants.size(); ++i) {
     const auto& [on, label] = grants[i];
     AssistantRow row; row.title = label; row.toggle = on;
@@ -981,6 +1012,15 @@ void AssistantPanel::BuildSettingsMenu(views::View* body) {
   head->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::CloseMenu, weak)), AssistantGlyph::kBack, T(u"Wróć")));
   auto* title = head->AddChildView(CreateAssistantEyebrow(T(u"Ustawienia asystenta"), {}));
   SetSidebarPanelLayout(head, false, gfx::Insets(), 4, title, true);
+  AssistantRow pin;
+  pin.title = T(u"Przypnij panel");
+  pin.toggle = pinned_;
+  pin.mark = {AssistantGlyph::kPin, {}, SK_ColorTRANSPARENT};
+  body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
+    if (!self) return;
+    self->SetPinned(!self->pinned());
+    self->BuildMenu();
+  }, weak)), std::move(pin)));
   // The default model of every new conversation.
   AssistantRow model; model.title = T(u"Model");
   model.detail = settings.default_model.empty() ? T(u"Nie wybrano") : base::UTF8ToUTF16(settings.default_model);
@@ -1162,13 +1202,12 @@ void AssistantPanel::BuildMentionMenu(views::View* body) {
 
 // Composer: @ suggestions and chips --------------------------------------
 void AssistantPanel::MenuPressed() {
-  if (!menu_view_) return;
-  const auto point = display::Screen::Get()->GetCursorScreenPoint();
+  if (!menu_view_ || !menu_monitor_) return;
+  const auto point = menu_monitor_->GetLastMouseLocation();
   auto inside = [&](const views::View* view) { return view && view->GetVisible() && view->GetBoundsInScreen().Contains(point); };
   // The menu itself, its own toggle (which closes it) and, for @, the field it belongs to.
   if (inside(menu_view_)) return;
-  if (menu_ == Menu::kSessions && inside(sessions_action_)) return;
-  if (menu_ == Menu::kAccess && inside(access_action_)) return;
+  if (inside(header_)) return;
   if (menu_ == Menu::kModel && inside(model_chip_)) return;
   if (menu_ == Menu::kMention && inside(composer_)) return;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<AssistantPanel> self) {
@@ -1997,7 +2036,7 @@ void AssistantPanel::BuildTasksMenu(views::View* body) {
   }
   if (!shown) list->AddChildView(CreateAssistantNote(T(u"Nie ma zadań. Napisz w rozmowie na przykład „co piątek wpisz mi do OneNote nowe kody z loterii”.")))
       ->SetProperty(views::kMarginsKey, gfx::Insets::VH(8, 8));
-  body->AddChildView(CreateAssistantNote(T(u"Zadania działają w tle, gdy Zitter jest otwarty, z modelem i uprawnieniami wybranymi przy zadaniu. Uruchomienie przegapione przy zamkniętym Zitterze odpala się raz po starcie.")))
+  body->AddChildView(CreateAssistantNote(T(u"Zadania działają w tle, gdy Zitter jest otwarty, z modelem i uprawnieniami wybranymi przy zadaniu.")))
       ->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(4, 8, 4, 8));
   SetSidebarPanelLayout(body, true, gfx::Insets(6), 2, menu_scroll_);
 }
@@ -2036,8 +2075,12 @@ bool AssistantPanel::SaveDraft() {
     if (task.name.empty()) task.name = task.instruction.substr(0, 60);
   }
   if (task.id.empty()) task.id = base::Uuid::GenerateRandomV4().AsLowercaseString();
-  task.next_run = task.active ? AssistantTaskNextRun(task, base::Time::Now()) : base::Time();
-  if (auto* existing = FindTask(task.id)) *existing = std::move(task); else tasks_.push_back(std::move(task));
+  auto* existing = FindTask(task.id);
+  if (!existing || task.kind != existing->kind || task.days != existing->days || task.minute != existing->minute)
+    task.next_run = task.active ? AssistantTaskNextRun(task, base::Time::Now()) : base::Time();
+  else
+    task.next_run = existing->next_run;
+  if (existing) *existing = std::move(task); else tasks_.push_back(std::move(task));
   ScheduleSave(); NotifyBar();
   menu_ = Menu::kTasks; BuildMenu();
   return true;
@@ -2091,6 +2134,13 @@ void AssistantPanel::BuildTaskEditor(views::View* body) {
   }
   const auto next = AssistantTaskNextRun(d, base::Time::Now());
   list->AddChildView(CreateAssistantNote(AssistantTaskSchedule(d) + u" · " + (next.is_null() ? T(u"wybierz co najmniej jeden dzień") : TF(u"następne {}", {WhenText(next)}))));
+  AssistantRow catch_up;
+  catch_up.title = T(u"Nadrabiaj po uruchomieniu");
+  catch_up.detail = T(u"Uruchom raz, jeśli termin minął przy zamkniętym Zitterze.");
+  catch_up.toggle = d.catch_up;
+  list->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(rebuild, weak, base::BindRepeating([](AssistantTask& task) {
+    task.catch_up = !task.catch_up;
+  }))), std::move(catch_up)));
   list->AddChildView(CreateAssistantEyebrow(T(u"Model")));
   auto* model_row = list->AddChildView(CreateAssistantFlow(4));
   model_row->AddChildView(CreateAssistantChip(Later(base::BindRepeating(rebuild, weak, base::BindRepeating([](std::vector<AssistantModel> models, AssistantTask& t) {
@@ -2442,7 +2492,6 @@ void AssistantPanel::RenderConversation() {
       conversation_->AddChildView(CreateAssistantActivity(session.status,0));
     }
   }
-  if(subtitle_)scene_->SetText(subtitle_,session.title.empty()?T(u"Nowa sesja"):session.title);
   InvalidateLayout();scene_->Schedule();
 }
 void AssistantPanel::UpdateControls() {
@@ -2469,8 +2518,10 @@ void AssistantPanel::UpdateControls() {
   UpdateAssistantButton(model_chip_, session.model.empty() ? T(u"Wybierz model") : base::UTF8ToUTF16(session.model), menu_ == Menu::kModel);
   model_chip_->SetTooltipText(T(u"Zmień model"));
   model_chip_->GetViewAccessibility().SetName(TF(u"Model: {}. Zmień model", {base::UTF8ToUTF16(session.model)}));
-  const int shared = static_cast<int>(session.permissions.tabs) + session.permissions.pages + session.permissions.actions + session.permissions.history;
-  UpdateAssistantButton(access_action_, shared ? TF(u"Dostęp tej sesji · {}", {base::NumberToString16(shared)}) : T(u"Dostęp tej sesji"), menu_ == Menu::kAccess || shared > 0);
+  const int shared = static_cast<int>(session.permissions.tabs) + session.permissions.pages + session.permissions.actions + session.permissions.history + session.permissions.web;
+  UpdateAssistantButton(access_action_, TF(u"Dostęp · {}", {base::NumberToString16(shared)}),
+                        menu_ == Menu::kAccess);
+  access_action_->GetViewAccessibility().SetName(T(u"Dostęp tej sesji"));
   InvalidateLayout();
 }
 

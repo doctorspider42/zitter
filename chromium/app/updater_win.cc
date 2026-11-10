@@ -247,6 +247,8 @@ void WindowsUpdater::InstallOnExit() {
   command.AppendSwitchASCII("zitter-update-version", pending_->version);
   command.AppendSwitchASCII("zitter-update-size", base::NumberToString(pending_->size));
   command.AppendSwitchASCII("zitter-update-parent", base::NumberToString(base::GetCurrentProcId()));
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("user-data-dir"))
+    command.AppendSwitchPath("zitter-update-user-data", cache_.DirName());
   base::LaunchOptions options;
   options.start_hidden = true;
   if (!base::LaunchProcess(command, options).IsValid()) LOG(WARNING) << "Could not start Zitter update";
@@ -292,6 +294,12 @@ std::optional<int> RunWindowsUpdateHelper() {
   command.AppendArg("--quiet");
   command.AppendArg("--preserve-shortcuts");
   command.AppendArg("--update-only");
+  command.AppendArg("--relaunch-browser");
+  const auto user_data = args->GetSwitchValuePath("zitter-update-user-data");
+  if (!user_data.empty()) {
+    command.AppendArg("--relaunch-user-data-dir");
+    command.AppendArgPath(user_data);
+  }
   command.AppendArg("--dir");
   command.AppendArgPath(installation->first);
   command.AppendArg("--wait-for-process");

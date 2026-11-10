@@ -142,7 +142,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Nazwa aktywnej przestrzeni", "Active space name"),
     ("Nazwa folderu", "Folder name"),
     ("Nazwa folderu jest za długa.", "The folder name is too long."),
-    ("Nazwa i ustawienia…", "Name and settings…"),
+    ("Ustawienia przestrzeni", "Space Settings"),
     ("Nazwa nowego profilu", "New profile name"),
     ("Nazwa profilu zapisana.", "Profile name saved."),
     ("Nazwa rodziny czcionki używanej, gdy witryna nie wybierze własnej.", "Name of the font family used when a site doesn’t choose its own."),

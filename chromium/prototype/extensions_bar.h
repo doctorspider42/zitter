@@ -92,6 +92,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   // Night Shift under its moon (design: Night Shift): the site's dark mode,
   // its tuning, a staged assistant repair and the app-wide settings.
   void ToggleNightShiftPanel();
+  void RefreshNightShift();
   void ToggleAssistantPanel();
   void RunAssistantCommandForTesting(int command) { RunAssistantCommand(command); }
 
@@ -206,7 +207,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   bool NightShiftShown() const;
   void DestroyNightShiftPanel();
   // Reads the page's site for the moon: crossed out where it stays light.
-  void RefreshNightShift();
   void SetNightShiftOn(bool on);
   void FixNightShift();
   void OpenNightShiftSettings();
@@ -233,7 +233,9 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   std::unique_ptr<ShieldPanel> shield_panel_;
   std::unique_ptr<views::Widget> shield_widget_;
   raw_ptr<views::View> night_shift_button_ = nullptr;
-  bool night_shift_on_ = true;
+  bool night_shift_on_ = false;
+  std::string night_shift_site_key_;
+  uint64_t night_shift_read_ = 0;
   std::unique_ptr<NightShiftPanel> night_shift_panel_;
   std::unique_ptr<views::Widget> night_shift_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.

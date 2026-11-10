@@ -325,8 +325,11 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
     if (page != web_contents()) {
       if (devtools_view_) devtools_view_->SetWebContents(nullptr);
       if (web_contents()) web_contents()->RemoveUserData(DevToolsWindow::kEmbedderDockingHostKey);
+      blank_background_.reset();
+      awaiting_first_paint_ = page && (page->GetController().IsInitialNavigation() || page->IsLoading());
     }
     views::WebView::SetWebContents(page);
+    UpdateBlankBackground();
     if (page && !DevToolsWindow::GetEmbedderDockingHost(page)) {
       page->SetUserData(DevToolsWindow::kEmbedderDockingHostKey,
           std::make_unique<DevToolsWindow::EmbedderDockingHost>(base::BindRepeating(
@@ -452,27 +455,38 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
     else if (rss_) { UnmountReader(); holder()->SetVisible(true); }
     changed_.Run();
   }
+  void RenderViewReady() override {
+    views::WebView::RenderViewReady();
+    UpdateBlankBackground();
+  }
+  void DidFirstVisuallyNonEmptyPaint() override {
+    awaiting_first_paint_ = false;
+    UpdateBlankBackground();
+  }
   SkColor workspace_color_ = SK_ColorTRANSPARENT;
   std::optional<SkColor> blank_background_;
+  bool awaiting_first_paint_ = false;
   void UpdateBlankBackground() {
     auto* page = web_contents();
     if (!page || !GetWidget()) return;
-    const auto& url = page->GetVisibleURL();
+    const auto& url = page->GetLastCommittedURL();
     const bool blank = url.is_empty() || url.IsAboutBlank();
     const auto color = sidebar::design_palette(
         GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
         workspace_color_).bg_base;
-    const std::optional<SkColor> background = blank ? std::optional<SkColor>(color) : std::nullopt;
+    // Tint the initial blank document and the first load until the renderer
+    // paints real content. Loaded pages keep their own document background.
+    const std::optional<SkColor> background =
+        blank || awaiting_first_paint_ ? std::optional<SkColor>(color) : std::nullopt;
     if (background != blank_background_) {
       page->SetPageBaseBackgroundColor(background);
-      SetBackground(background ? views::CreateSolidBackground(*background) : nullptr);
-      if (auto* native = page->GetRenderWidgetHostView())
-        native->SetBackgroundColor(background.value_or(SK_ColorWHITE));
       blank_background_ = background;
-    } else if (blank) {
-      // A newly attached renderer must use the same color as its empty host.
-      if (auto* native = page->GetRenderWidgetHostView()) native->SetBackgroundColor(color);
     }
+    // This is the native fallback before a compositor frame. Content colors
+    // supplied by the renderer take precedence over it.
+    if (auto* native = page->GetRenderWidgetHostView()) native->SetBackgroundColor(color);
+    if (!this->background() || this->background()->color() != color)
+      SetBackground(views::CreateSolidBackground(color));
   }
   void OnBlur() override {
     mouse_gesture_.Cancel();
@@ -2325,7 +2339,10 @@ void WorkspaceWindow::PushNightShiftConfig(Profile* profile) {
     auto& pushed = night_shift_pushed_[entry.info.id];
     if (pushed == night_shift_generation_) return;
     pushed = night_shift_generation_;
-    PushNightShift(profile, night_shift_config_.EnabledFor(entry.info.id), night_shift_config_);
+    PushNightShift(profile, night_shift_config_.EnabledFor(entry.info.id), night_shift_config_,
+                   base::BindOnce([](base::WeakPtr<WorkspaceWindow> window) {
+                     if (window && window->extensions_bar_) window->extensions_bar_->RefreshNightShift();
+                   }, weak_factory_.GetWeakPtr()));
     return;
   }
 }
@@ -4289,7 +4306,7 @@ void WorkspaceWindow::FinishConfiguration() {
   for (const auto& directory : deleted_directories_) ScheduleProfileDeletion(directory);
   if (configuration_invalid_) shell_->SetConfigurationError(true);
   if (ready_callback_) std::move(ready_callback_).Run();
-  if (offer_import_ && !onboarding_complete_) {
+  if (offer_import_ && !onboarding_complete_ && !configuration_invalid_) {
 #if BUILDFLAG(IS_WIN)
     ShowWelcome();
 #else
@@ -4312,7 +4329,7 @@ void WorkspaceWindow::ShowWelcome() {
         const auto* starter = window->model_.Find(window->starter_workspace_id_);
         WorkspaceShell::WelcomeSetup setup;
         setup.sources = std::move(found);
-        setup.space_name = starter ? base::UTF8ToUTF16(starter->name) : std::u16string();
+        setup.space_name = starter && !starter->name.empty() ? base::UTF8ToUTF16(starter->name) : T(u"Moja przestrzeń");
         setup.space_color = window->shell_->workspace_color(window->starter_workspace_id_);
         setup.assistant_enabled = window->assistant_settings_.enabled;
         setup.set_assistant_enabled = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, bool enabled) {

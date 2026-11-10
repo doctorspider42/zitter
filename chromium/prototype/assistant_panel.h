@@ -94,6 +94,7 @@ struct AssistantTask {
   int minute = 8 * 60;  // local time of day (kind 2: minutes past the hour)
   bool active = true;
   base::Time last_run, next_run;
+  bool catch_up = true;
   int last_state = 0;   // 0 never ran, 1 done, 2 needed the user, 3 failed
   base::DictValue ToValue() const;
   static std::optional<AssistantTask> FromValue(const base::DictValue& value);
@@ -314,7 +315,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<PanelViewport> viewport_ = nullptr;
   raw_ptr<views::View> header_ = nullptr, conversation_ = nullptr, background_ = nullptr;
-  raw_ptr<views::View> subtitle_ = nullptr, sessions_action_ = nullptr, tasks_action_ = nullptr, access_action_ = nullptr, pin_action_ = nullptr;
+  raw_ptr<views::View> sessions_action_ = nullptr, tasks_action_ = nullptr, access_action_ = nullptr;
   raw_ptr<views::View> composer_ = nullptr, chips_view_ = nullptr, tools_ = nullptr;
   raw_ptr<views::View> research_chip_ = nullptr, background_chip_ = nullptr, model_chip_ = nullptr, send_ = nullptr, stop_ = nullptr;
   raw_ptr<views::Textarea> prompt_ = nullptr;
@@ -356,6 +357,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   raw_ptr<views::Textarea> draft_instruction_ = nullptr;
   raw_ptr<views::Textfield> draft_time_ = nullptr;
   base::RepeatingTimer task_timer_;
+  const base::Time scheduler_started_ = base::Time::Now();
   int unread_ = 0;
   std::unique_ptr<network::SimpleURLLoader> progress_loader_;
   raw_ptr<views::View> live_answer_ = nullptr;

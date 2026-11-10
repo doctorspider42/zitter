@@ -5,6 +5,7 @@
 #include "third_party/skia/include/utils/SkParsePath.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/i18n.h"
+#include "chromium/prototype/settings_icon.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/scoped_observation.h"
@@ -16,6 +17,7 @@
 #include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
+#include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -92,9 +94,7 @@ void Glyph(gfx::Canvas* canvas, AssistantGlyph glyph, float x, float y, SkColor 
     case AssistantGlyph::kSpark: PaintAssistantSpark(canvas,gfx::RectF(0,0,16,16),color);break;
     case AssistantGlyph::kLayers: Round(canvas,gfx::RectF(5.5f,2.5f,8,7),1.5f,color,1.5f);line(3,6,3,12);line(3,12.5f,10.5f,12.5f);break;
     case AssistantGlyph::kCheck: line(3.5f,8.5f,6.5f,11.5f);line(6.5f,11.5f,12.5f,4.5f);break;
-    case AssistantGlyph::kGear: canvas->DrawCircle(gfx::PointF(8,8),2.2f,f);
-      line(8,1.8f,8,3.6f);line(8,12.4f,8,14.2f);line(1.8f,8,3.6f,8);line(12.4f,8,14.2f,8);
-      line(3.6f,3.6f,4.8f,4.8f);line(11.2f,11.2f,12.4f,12.4f);line(3.6f,12.4f,4.8f,11.2f);line(11.2f,4.8f,12.4f,3.6f);break;
+    case AssistantGlyph::kGear: gfx::PaintVectorIcon(canvas, kSettingsGearIcon, 16, color); break;
     case AssistantGlyph::kCopy: Round(canvas,gfx::RectF(5.5f,5.5f,8,8),1.5f,color,1.5f);line(3,10.5f,3,4);line(3,3,9.5f,3);break;
     case AssistantGlyph::kTrash: line(3,4.5f,13,4.5f);line(6.5f,4.5f,6.5f,3);line(6.5f,3,9.5f,3);line(9.5f,3,9.5f,4.5f);
       line(4.5f,4.5f,5.1f,13);line(5.1f,13,10.9f,13);line(10.9f,13,11.5f,4.5f);break;
@@ -147,11 +147,16 @@ class Action final : public views::Button {
   }
   void PaintButtonContents(gfx::Canvas* canvas) override {
     const auto c=Theme(this);const bool hover=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+    const bool monochrome = !chip_ && (glyph_ == AssistantGlyph::kHistory ||
+                                      glyph_ == AssistantGlyph::kCalendar ||
+                                      glyph_ == AssistantGlyph::kShield);
+    const auto selected_fill = monochrome ? c.raised : SkColorSetA(c.accent, c.dark ? 35 : 22);
+    const auto selected_ink = monochrome ? c.ink : c.accent;
     auto rect=gfx::RectF(GetLocalBounds());rect.Inset(.5f);
-    const auto fill=primary_?c.accent:selected_?SkColorSetA(c.accent,c.dark?35:22):hover?c.card:SK_ColorTRANSPARENT;
+    const auto fill=primary_?c.accent:selected_?selected_fill:hover?c.card:SK_ColorTRANSPARENT;
     Round(canvas,rect,chip_?10:primary_?18:9,fill);
     if(chip_&&selected_)Round(canvas,rect,10,SkColorSetA(c.accent,60),1);
-    const auto ink=!GetEnabled()?SkColorSetA(c.muted,100):glyph_==AssistantGlyph::kRevoke?(c.dark?0xfff29bab:0xffb63c58):primary_?(c.dark?0xff171322:SK_ColorWHITE):selected_?c.accent:c.muted;
+    const auto ink=!GetEnabled()?SkColorSetA(c.muted,100):glyph_==AssistantGlyph::kRevoke?(c.dark?0xfff29bab:0xffb63c58):primary_?(c.dark?0xff171322:SK_ColorWHITE):selected_?selected_ink:c.muted;
     if(option_){
       if(!selected_)Round(canvas,rect,10,c.line,1);
       canvas->DrawStringRectWithFlags(text_,Type(12,500),ink,gfx::Rect(12,0,std::max(0,width()-36),height()),gfx::Canvas::TEXT_ALIGN_LEFT);

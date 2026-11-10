@@ -407,9 +407,10 @@ updates and is intended for local testing.
   Selecting import hides the first-space name/color step because the imported
   data supplies the spaces. Skipping import keeps that step.
 - The installer offers “Launch Zitter after installation”, enabled by default
-  for interactive installs and updates. `--no-launch` disables it; `--quiet`
-  always suppresses launch. After an elevated install, the desktop shell launches
-  the browser as the signed-in user.
+  for interactive installs and updates. `--no-launch` disables it. Quiet setup
+  launches Zitter after a successful browser-initiated update. For an all-users
+  update, the original user session waits for elevated setup to finish, then
+  starts the browser.
 - Web notifications: a page's request goes through Zitter's site permission
   prompt, and once allowed `new Notification(…)` shows as a native Windows
   toast (Chromium's Windows notification platform, attributed to the site).
