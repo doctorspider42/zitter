@@ -52,7 +52,14 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     base::RepeatingClosure diagnose_blocking_with_assistant;
     base::RepeatingCallback<bool()> assistant_available;
     base::RepeatingCallback<void(content::WebContents*)> fix_night_shift;
-    // Opens the conversation from the quick-action menu.
+    // JSON for the Night Shift settings page: the profiles and the app-wide
+    // configuration (absent until it was saved once).
+    base::RepeatingCallback<std::string()> night_shift_state;
+    // Built-in actions pinned once per profile; the person may unpin them.
+    base::RepeatingCallback<void(Profile*)> pin_built_in_actions;
+    // The assistant button shows or hides the panel.
+    base::RepeatingClosure toggle_assistant_panel;
+    // Starts a new conversation.
     base::RepeatingClosure toggle_assistant;
     base::RepeatingCallback<void(int)> assistant_action;
   };
@@ -82,7 +89,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void ToggleShieldPanel();
   void ToggleAssistantPanel();
   void RunAssistantCommandForTesting(int command) { RunAssistantCommand(command); }
-  views::Widget* assistant_menu_for_testing() const { return assistant_widget_.get(); }
 
   Profile* profile() const { return profile_; }
   content::WebContents* page() const { return page_.get(); }
@@ -135,7 +141,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   class Popup;
   class FingerprintPanel;
   class ShieldPanel;
-  class AssistantActions;
 
  private:
   friend class ActionButton;
@@ -143,7 +148,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   friend class Popup;
   friend class FingerprintPanel;
   friend class ShieldPanel;
-  friend class AssistantActions;
   friend class ExtensionsContextMenu;
   sidebar::DesignPalette palette() const;
   void DestroyMenu();
@@ -171,7 +175,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void ObservePageCount();
   void RefreshShield();
   void DestroyShieldPanel();
-  void DestroyAssistantPanel();
   void RunAssistantCommand(int command);
   void ToggleSiteBlocking();
   void BlockWithAssistant();
@@ -199,8 +202,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   base::CallbackListSubscription page_count_;
   // Compared only, never used: the page the count subscription is for.
   uintptr_t counted_page_ = 0;
-  std::unique_ptr<AssistantActions> assistant_panel_;
-  std::unique_ptr<views::Widget> assistant_widget_;
   std::unique_ptr<ShieldPanel> shield_panel_;
   std::unique_ptr<views::Widget> shield_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.

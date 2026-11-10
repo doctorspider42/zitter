@@ -48,6 +48,7 @@
 #include "extensions/browser/permissions/site_permissions_helper.h"
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/browser/uninstall_reason.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/options_page_info.h"
 #include "extensions/common/mojom/view_type.mojom.h"
@@ -100,7 +101,6 @@ constexpr char kPuzzleIcon[] = "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.
 constexpr char kPinIcon[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
 constexpr char kWarnIcon[] = "M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1";
 constexpr char kGearIcon[] = "M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.8 3.8l1 1M11.2 11.2l1 1M3.8 12.2l1-1M11.2 4.8l1-1";
-constexpr char kPlusIcon[] = "M8 3v10M3 8h10";
 constexpr char kStoreIcon[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
 // Fingerprint protection: ridges, a turn arrow, a crossed-out shield.
 constexpr char kFingerprintIcon[] = "M4.2 4.2a5.5 5.5 0 0 1 7.6 0M3 11.5V9.5a5 5 0 0 1 10 0v1M5.5 13.5V9.5a2.5 2.5 0 0 1 5 0V12M8 9v5";
@@ -1266,41 +1266,6 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
   raw_ptr<MenuRow> diagnose_row_ = nullptr;
 };
 
-// A local action launcher: merely opening it never starts a model request.
-class ExtensionsBar::AssistantActions final : public views::BubbleDialogDelegate {
- public:
-  AssistantActions(ExtensionsBar* bar, views::View* anchor)
-      : views::BubbleDialogDelegate(anchor, views::BubbleBorder::TOP_RIGHT) {
-    const auto palette = bar->palette();
-    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
-    set_margins(gfx::Insets(4)); set_corner_radius(12); set_fixed_width(320);
-    SetBackgroundColor(palette.bg_raised); SetShowCloseButton(false);
-    SetAccessibleWindowRole(ax::mojom::Role::kDialog);
-    SetTitle(T(u"Asystent · działania na stronie")); SetShowTitle(false);
-    auto body = std::make_unique<views::View>();
-    body->SetBackground(views::CreateSolidBackground(palette.bg_raised));
-    body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
-    body->AddChildView(std::make_unique<MenuHeader>(palette, T(u"Działaj na tej stronie")));
-    const std::array<std::u16string, 7> labels = {
-      T(u"Podsumuj najważniejsze informacje"), T(u"Dodaj wyszukiwarkę tej strony"),
-      T(u"Zablokuj reklamy z asystentem"), T(u"Sprawdź fakty i źródła"),
-      T(u"Wyciągnij dane i porównaj"), T(u"Nowa rozmowa"), T(u"Ustawienia AI")};
-    constexpr std::array<int, 7> order = {0, 1, 3, 4, 2, 5, 6};
-    for (const int command : order) {
-      if (command == 5) body->AddChildView(std::make_unique<MenuSeparator>(palette.line));
-      auto* row = body->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
-        [](base::WeakPtr<ExtensionsBar> bar, int command) { if (bar) bar->RunAssistantCommand(command); },
-        bar->weak_factory_.GetWeakPtr(), command), palette, kFooterHeight));
-      row->SetGlyph(command == 2 ? kShieldIcon : command == 5 ? kPlusIcon : command == 6 ? kGearIcon : kAssistantSparkIcon);
-      row->SetRing(command == 6); row->Init();
-      row->SetText(labels[command], {}, false, 16);
-      row->SetEnabled(command >= 5 || (bar->page() && bar->page()->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()));
-    }
-    SetContentsView(std::move(body));
-  }
-};
-
 ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbacks)) {
   auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
@@ -1314,8 +1279,6 @@ ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbac
 ExtensionsBar::~ExtensionsBar() {
   // Bubbles report closing through weak pointers; this bar is going away.
   weak_factory_.InvalidateWeakPtrs();
-  assistant_widget_.reset();
-  assistant_panel_.reset();
   shield_widget_.reset();
   shield_panel_.reset();
   fingerprint_widget_.reset();
@@ -1371,7 +1334,6 @@ void ExtensionsBar::SetAssistantState(AssistantState state) {
 }
 void ExtensionsBar::Rebuild() {
   if (callbacks_.private_mode && fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
-  DestroyAssistantPanel();
   RemoveAllChildViews();
   buttons_.clear();
   divider_ = nullptr;
@@ -1418,6 +1380,7 @@ void ExtensionsBar::Rebuild() {
         base::BindRepeating(&ExtensionsBar::ToggleFingerprintPanel, base::Unretained(this)), palette));
     if (fingerprint_widget_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(true);
   }
+  if (callbacks_.pin_built_in_actions && model->actions_initialized()) callbacks_.pin_built_in_actions.Run(profile_);
   size_t shown = 0;
   for (const auto& id : model->pinned_action_ids()) {
     if (shown == kMaxVisible) break;
@@ -1475,7 +1438,6 @@ void ExtensionsBar::DestroyMenu() {
 }
 
 void ExtensionsBar::CloseMenus() {
-  if (assistant_widget_ && !assistant_widget_->IsClosed()) assistant_widget_->Close();
   if (menu_widget_ && !menu_widget_->IsClosed()) menu_widget_->Close();
 }
 
@@ -1524,6 +1486,12 @@ void ExtensionsBar::ShowPopup(const Extension& extension, views::View* anchor) {
           return;
         }
         bar->ClosePopup();
+        // The popup's gear: the settings page needs the app-wide state.
+        if (night_shift && url.SchemeIs(extensions::kExtensionScheme) && url.host() == kNightShiftId &&
+            url.path() == "/settings.html") {
+          bar->OpenOptions(kNightShiftId);
+          return;
+        }
         bar->OpenPage(url);
       }, weak_factory_.GetWeakPtr(), extension.id() == kNightShiftId,
       page_->GetPrimaryMainFrame()->GetWeakDocumentPtr());
@@ -1592,6 +1560,7 @@ void ExtensionsBar::OpenOptions(const std::string& id) {
   if (id == kNightShiftId) {
     url = net::AppendOrReplaceQueryParameter(url, "appearance", IsDark(this) ? "dark" : "light");
     url = net::AppendOrReplaceQueryParameter(url, "language", UiLanguageIsEnglish() ? "en" : "pl");
+    if (callbacks_.night_shift_state) url = net::AppendOrReplaceQueryParameter(url, "state", callbacks_.night_shift_state.Run());
   }
   OpenPage(url);
 }
@@ -1814,24 +1783,15 @@ END_METADATA
 
 namespace zitter::prototype {
 void ExtensionsBar::ToggleAssistantPanel() {
-  if (assistant_widget_) { if (!assistant_widget_->IsClosed()) assistant_widget_->Close(); return; }
-  if (!assistant_state_.enabled || !assistant_button_ || !GetWidget()) return;
+  if (!assistant_state_.enabled || callbacks_.toggle_assistant_panel.is_null()) return;
   CloseMenus(); ClosePopup();
   if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
   if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
-  assistant_panel_ = std::make_unique<AssistantActions>(this, assistant_button_);
-  assistant_widget_ = views::BubbleDialogDelegate::CreateBubble(assistant_panel_.get(), base::BindOnce(
-    [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-        base::BindOnce(&ExtensionsBar::DestroyAssistantPanel, bar));
-    }, weak_factory_.GetWeakPtr()));
-  assistant_widget_->Show();
+  callbacks_.toggle_assistant_panel.Run();
 }
-void ExtensionsBar::DestroyAssistantPanel() { assistant_widget_.reset(); assistant_panel_.reset(); }
 void ExtensionsBar::RunAssistantCommand(int command) {
   if (!assistant_state_.enabled || command < 0 || command > 6) return;
   if (command < 5 && (!page_ || !page_->GetLastCommittedURL().SchemeIsHTTPOrHTTPS())) return;
-  if (assistant_widget_ && !assistant_widget_->IsClosed()) assistant_widget_->Close();
   if (command == 5) { if (callbacks_.toggle_assistant) callbacks_.toggle_assistant.Run(); }
   else if (callbacks_.assistant_action) callbacks_.assistant_action.Run(command);
 }

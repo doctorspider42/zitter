@@ -92,6 +92,8 @@ struct ShellTab {
   std::string pin_id;
   std::array<uint64_t,2> identity{};  // Opaque 128-bit row token, independent of lazy WebContents.
   bool audible = false;  // Playing sound: the row shows a speaker.
+  // Capturing (design: Kamera i mikrofon): 0 none, 1 microphone, 2 camera, 3 screen.
+  int capture = 0;
   bool operator==(const ShellTab&) const = default;
 };
 
@@ -678,6 +680,10 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* password_key_for_testing() const { return password_key_; }
   // Design: Prośba o dostęp — the pill's icon for a pending (or folded) request.
   void SetPermissionOffer(bool pending, bool folded, int kind, std::u16string site, base::RepeatingClosure reopen);
+  // The active page's live camera, microphone or screen capture: a red icon in
+  // the address row whose click toggles the page's stop card.
+  void SetCaptureIndicator(bool active, bool camera, bool microphone, bool screen,
+                           std::u16string site, base::RepeatingClosure open);
   // Design W1/W2: the page's permissions and data under its address pill.
   struct SiteHandlers {
     SiteHandlers();
@@ -703,6 +709,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // `choice` as the row's menu gives it: 1 allow, 2 block, 3 ask, 10 forget the site.
   void SetSitePermissionForTesting(size_t row, int choice);
   views::View* permission_chip_for_testing() const { return permission_chip_; }
+  views::View* capture_chip_for_testing() const { return capture_chip_; }
   views::Widget* download_cue_widget_for_testing() const { return download_cue_widget_.get(); }
   bool download_cue_is_pill_for_testing() const;
   void UndoToast();
@@ -1307,6 +1314,8 @@ class WorkspaceShell final : public ui::EventHandler,
   int site_page_ = 0;
   uint64_t site_generation_ = 0;  // Facts from an older panel are dropped.
   base::RepeatingClosure permission_reopen_;
+  raw_ptr<views::View> capture_chip_ = nullptr;  // The active page is capturing.
+  base::RepeatingClosure capture_open_;
   base::RepeatingClosure password_reopen_;
   raw_ptr<views::View> sidebar_footer_=nullptr;
   raw_ptr<PanelViewport> workspace_scroll_=nullptr;
@@ -1497,6 +1506,11 @@ class WorkspaceShell final : public ui::EventHandler,
   void PollSidebar();
   void AnimateSidebar(bool show);
   void StepSidebarAnimation();
+  // Off macOS the sidebar is a composited layer: its slide runs on the
+  // compositor, starting once the panel's first frame is on screen.
+  void AnimateSidebarOnCompositor(bool show);
+  void SlideSidebarLayer(size_t generation, bool show);
+  void FinishSidebarSlide(size_t generation);
   base::RepeatingTimer sidebar_hover_timer_;
   base::RepeatingTimer sidebar_slide_timer_;
   base::TimeTicks sidebar_left_at_;
@@ -1504,6 +1518,7 @@ class WorkspaceShell final : public ui::EventHandler,
   double sidebar_slide_from_ = 0;
   double sidebar_slide_value_ = 0;
   bool sidebar_slide_show_ = false;
+  size_t sidebar_slide_generation_ = 0;
   bool sidebar_hover_armed_ = false;
   bool content_fullscreen_ = false;
   base::RepeatingTimer reload_timer_;

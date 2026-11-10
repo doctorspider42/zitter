@@ -3,8 +3,9 @@
 import "./site_policy.js";
 import {compatibility} from "./vendor/compatibility.js";
 
-const {repair, siteKey, siteSettings} = globalThis.NightShiftPolicy;
+const {repair, siteKey, siteSettings, storedSite} = globalThis.NightShiftPolicy;
 const ENABLED = "enabled";
+const DEFAULTS = "defaults";
 const MAX_STYLESHEET_BYTES = 1024 * 1024;
 const SCRIPTS = [
     {id: "night-shift-proxy", world: "MAIN", js: ["vendor/proxy.js"]},
@@ -95,6 +96,19 @@ async function restoreRegistration() {
 }
 
 chrome.runtime.onStartup.addListener(() => enqueue(restoreRegistration).catch(console.error));
+// Zitter switches Night Shift for every profile at once by writing ENABLED.
+chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[ENABLED]) {
+        return;
+    }
+    const enabled = changes[ENABLED].newValue === true;
+    enqueue(async () => {
+        await configureScripts(enabled);
+        if (enabled) {
+            await applyToOpenTabs();
+        }
+    }).catch(console.error);
+});
 chrome.runtime.onInstalled.addListener(() => enqueue(restoreRegistration).catch(console.error));
 
 function getCompatibility() {
@@ -120,8 +134,8 @@ async function getDocumentState(sender) {
     if (!key) {
         return {enabled: false, globallyDisabled: true};
     }
-    const values = await chrome.storage.local.get([ENABLED, key]);
-    const settings = siteSettings(values[key]);
+    const values = await chrome.storage.local.get([ENABLED, DEFAULTS, key]);
+    const settings = siteSettings(values[key], values[DEFAULTS]);
     if (values[ENABLED] !== true) {
         return {enabled: false, globallyDisabled: true};
     }
@@ -191,8 +205,12 @@ async function tabSettings(tabId) {
     }
     const tab = await chrome.tabs.get(tabId);
     const key = siteKey(tab.url);
-    const values = await chrome.storage.local.get(key ? [ENABLED, key] : [ENABLED]);
-    return {enabled: values[ENABLED] === true, key, url: tab.url, settings: siteSettings(values[key])};
+    const values = await chrome.storage.local.get(key ? [ENABLED, DEFAULTS, key] : [ENABLED, DEFAULTS]);
+    return {
+        enabled: values[ENABLED] === true, key, url: tab.url,
+        settings: siteSettings(values[key], values[DEFAULTS]), stored: values[key] ?? {},
+        defaults: values[DEFAULTS],
+    };
 }
 
 async function writeSite(message) {
@@ -200,9 +218,16 @@ async function writeSite(message) {
     if (!current.enabled || !current.key || message.key !== current.key) {
         throw new Error("The tab's site or extension state changed");
     }
-    const next = siteSettings({...current.settings, ...message.settings});
+    // null drops a value, so the site follows the app-wide default again.
+    const merged = {...current.stored, ...message.settings};
+    for (const [name, value] of Object.entries(merged)) {
+        if (value === null) {
+            delete merged[name];
+        }
+    }
+    const next = storedSite(merged);
     await chrome.storage.local.set({[current.key]: next});
-    return next;
+    return siteSettings(next, current.defaults);
 }
 
 async function tuneSite(message) {

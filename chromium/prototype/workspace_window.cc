@@ -95,6 +95,7 @@
 #include "chromium/prototype/night_shift.h"
 #include "chromium/prototype/extension_tab_events.h"
 #include "chrome/browser/ui/extensions/extension_install_ui.h"
+#include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/extensions/window_controller_list.h"
@@ -1031,21 +1032,15 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.open_ad_blocking_settings = base::BindRepeating([](WorkspaceWindow* window) {
     window->shell_->OpenAdBlockingSettings();
   }, base::Unretained(this));
-  extension_callbacks.assistant_action = base::BindRepeating([](WorkspaceWindow* window, int command) {
-    if(command==6){window->shell_->OpenAssistantSettings();return;}
-    const std::array<std::u16string, 5> prompts = {
-      T(u"Podsumuj tę stronę: główne tezy, liczby, wnioski i to, co warto zrobić dalej. Oddziel treść strony od własnej interpretacji."),
-      T(u"Dodaj wyszukiwarkę tej strony. Odczytaj formularz wyszukiwania, ustal poprawny URL z parametrem zapytania i zaproponuj krótki keyword. Użyj add_search_engine."),
-      T(u"Zablokuj reklamy na tej stronie, których nie blokują listy. Sprawdź istniejące reguły, przetestuj nowe i pokaż ich podgląd przed zapisaniem. Nie ukrywaj właściwej treści."),
-      T(u"Najpierw odczytaj bieżącą stronę, potem sprawdź jej najważniejsze twierdzenia w niezależnych i pierwotnych źródłach. Pokaż co potwierdzono, co jest sporne, daty i linki. Nie traktuj samej strony jako dowodu."),
-      T(u"Wyciągnij użyteczne dane z tej strony do czytelnej tabeli. Wskaż ceny, warunki, różnice i braki danych, jeśli występują. Nie dopowiadaj wartości, których nie znaleziono.")};
-    if (command < 0 || command >= static_cast<int>(prompts.size()) || !window->assistant_settings_.enabled) return;
-    window->ShowAssistant();
-    if (window->assistant_) window->assistant_->PreparePageAction(prompts[command], command == 1 || command == 2, command == 3);
-  }, base::Unretained(this));
+  extension_callbacks.toggle_assistant_panel = base::BindRepeating(&WorkspaceWindow::ToggleAssistantFromBar, base::Unretained(this));
+  extension_callbacks.assistant_action = base::BindRepeating(&WorkspaceWindow::RunAssistantPageAction, base::Unretained(this));
   extension_callbacks.assistant_available = base::BindRepeating([](WorkspaceWindow* window) {
     return window->assistant_settings_.enabled;
   }, base::Unretained(this));
+  extension_callbacks.pin_built_in_actions =
+      base::BindRepeating(&WorkspaceWindow::PinNightShiftOnce, base::Unretained(this));
+  extension_callbacks.night_shift_state =
+      base::BindRepeating(&WorkspaceWindow::NightShiftSettingsState, base::Unretained(this));
   extension_callbacks.fix_night_shift =
       base::BindRepeating(&WorkspaceWindow::PrepareNightShiftRepair, weak_factory_.GetWeakPtr());
   extension_callbacks.block_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
@@ -1275,6 +1270,7 @@ void WorkspaceWindow::SaveWindowPlacement() {
 views::WebView* WorkspaceWindow::CreatePage(Profile* profile, views::View* parent,
     std::unique_ptr<content::WebContents> owned, bool create_contents) {
   EnsureNightShift(profile);
+  PushNightShiftConfig(profile);
   auto* view = (parent ? parent : shell_->content_host())->AddChildView(std::make_unique<WorkspaceWebView>(
       profile, base::BindRepeating(&WorkspaceWindow::PreHandlePageKeyEvent, base::Unretained(this)),
       base::BindRepeating(&WorkspaceWindow::OpenPageLink, base::Unretained(this)),
@@ -1389,6 +1385,9 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
       if (window && PageMediaAccess::FromWebContents(page)) PageMediaAccess::FromWebContents(page)->ReopenPrompt();
     }, window, page));
   }, weak_factory_.GetWeakPtr(), page));
+  ObserveNightShiftSettings(page, base::BindRepeating(&WorkspaceWindow::ApplyNightShiftSettings, weak_factory_.GetWeakPtr()));
+  PageMediaAccess::FromWebContents(page)->SetCaptureCallback(
+      base::BindRepeating(&WorkspaceWindow::ScheduleShellUpdate, weak_factory_.GetWeakPtr()));
   LinkNavigation::Attach(page, base::BindRepeating(
       [](base::WeakPtr<WorkspaceWindow> window, std::string source_hint, content::NavigationHandle& navigation) {
         return window && window->RouteNavigation(navigation, source_hint);
@@ -1504,6 +1503,16 @@ std::vector<uint32_t> FaviconPixels(const gfx::Image& image) {
 void WorkspaceWindow::UpdateShell() {
   shell_update_pending_ = false;
   if (closing_ || !widget_) return;
+  NoteRecentTab();
+  {
+    auto* page = peek_contents() ? peek_contents() : contents(active_id());
+    auto* access = page ? PageMediaAccess::FromWebContents(page) : nullptr;
+    const auto capture = access ? access->capture_state() : CaptureState();
+    shell_->SetCaptureIndicator(capture.active, capture.camera, capture.microphone, capture.screen, capture.site,
+        base::BindRepeating([](base::WeakPtr<content::WebContents> page) {
+          if (auto* access = page ? PageMediaAccess::FromWebContents(page.get()) : nullptr) access->ToggleCaptureControls();
+        }, page ? page->GetWeakPtr() : base::WeakPtr<content::WebContents>()));
+  }
   if (fullscreen_page_ && fullscreen_page_.get() != contents(active_id()) && fullscreen_page_.get() != peek_contents())
     fullscreen_page_->ExitFullscreen(true);
   // The find bar belongs to one page: another tab or space ends it.
@@ -1539,8 +1548,15 @@ void WorkspaceWindow::UpdateShell() {
       }
       const size_t index = &view - host.tabs.data();
       if (pin_id.empty() || InSplit(host, view))
+      {
+        int capture = 0;
+        if (auto* access = view->web_contents() ? PageMediaAccess::FromWebContents(view->web_contents()) : nullptr) {
+          const auto live = access->capture_state();
+          capture = !live.active ? 0 : live.camera ? 2 : live.microphone ? 1 : 3;
+        }
         state.tabs.push_back({title.empty() ? T(u"Nowa karta") : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity(),
-                              view->web_contents() && view->web_contents()->IsCurrentlyAudible()});
+                              view->web_contents() && view->web_contents()->IsCurrentlyAudible(), capture});
+      }
     }
     auto& controller = host.view->GetWebContents()->GetController();
     state.workspace_id = host.workspace_id;
@@ -2260,6 +2276,73 @@ bool WorkspaceWindow::RouteNavigation(content::NavigationHandle& navigation, con
       }, weak_factory_.GetWeakPtr(), navigation.GetURL(), source, navigation.GetWebContents()->GetWeakPtr()));
   return true;
 }
+void WorkspaceWindow::PushNightShiftConfig(Profile* profile) {
+  if (!profile || is_private() || !night_shift_config_.managed) return;
+  for (const auto& entry : profiles_) {
+    if (!entry.lease || entry.lease->profile() != profile) continue;
+    auto& pushed = night_shift_pushed_[entry.info.id];
+    if (pushed == night_shift_generation_) return;
+    pushed = night_shift_generation_;
+    PushNightShift(profile, night_shift_config_.EnabledFor(entry.info.id), night_shift_config_);
+    return;
+  }
+}
+
+void WorkspaceWindow::PinNightShiftOnce(Profile* profile) {
+  if (!profile || is_private() || !configuration_ready_) return;
+  for (const auto& entry : profiles_) {
+    if (!entry.lease || entry.lease->profile() != profile) continue;
+    if (night_shift_pinned_.contains(entry.info.id)) return;
+    auto* model = ToolbarActionsModel::Get(profile);
+    if (!model || !model->actions_initialized() || !model->HasAction(kNightShiftId)) return;
+    night_shift_pinned_.insert(entry.info.id);
+    // Posted: the bar calls this while rebuilding from the model.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::WeakPtr<WorkspaceWindow> window, std::string id) {
+          if (!window) return;
+          if (auto* profile = window->ProfileFor(id))
+            if (auto* model = ToolbarActionsModel::Get(profile); model && !model->IsActionPinned(kNightShiftId))
+              model->SetActionVisibility(kNightShiftId, true);
+          window->SaveConfiguration();
+        }, weak_factory_.GetWeakPtr(), entry.info.id));
+    return;
+  }
+}
+
+void WorkspaceWindow::ApplyNightShiftSettings(base::DictValue value) {
+  if (is_private() || !configuration_ready_) return;
+  auto config = NightShiftConfig::FromValue(&value);
+  // Only profiles that exist; a removed one must not come back as a name.
+  std::erase_if(config.profiles, [this](const std::string& id) {
+    return std::ranges::none_of(profiles_, [&id](const auto& entry) { return entry.info.id == id; });
+  });
+  night_shift_config_ = std::move(config);
+  ++night_shift_generation_;
+  SaveConfiguration();
+  for (const auto& entry : profiles_)
+    if (entry.lease) PushNightShiftConfig(entry.lease->profile());
+}
+
+std::string WorkspaceWindow::NightShiftSettingsState() {
+  base::ListValue profiles;
+  const auto current = model_.active() ? model_.active()->profile_id : std::string();
+  for (const auto& entry : profiles_) {
+    const auto spaces = std::ranges::count_if(model_.workspaces(), [&entry](const auto& space) {
+      return space.profile_id == entry.info.id;
+    });
+    profiles.Append(base::DictValue()
+        .Set("id", entry.info.id)
+        .Set("name", entry.info.name)
+        .Set("spaces", static_cast<int>(spaces))
+        .Set("current", entry.info.id == current));
+  }
+  auto state = base::DictValue().Set("profiles", std::move(profiles));
+  if (night_shift_config_.managed) state.Set("config", night_shift_config_.ToValue());
+  std::string json;
+  base::JSONWriter::Write(state, &json);
+  return json;
+}
+
 content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source,
     const content::OpenURLParams& params) {
   if (!params.url.SchemeIsHTTPOrHTTPS() || params.post_data) return nullptr;
@@ -2439,6 +2522,74 @@ void WorkspaceWindow::SelectTab(size_t index) {
     host.view->RequestFocus();
     return;
   }
+}
+
+void WorkspaceWindow::NoteRecentTab() {
+  if (tab_cycle_) return;  // Tabs passed on the way are not "used".
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || !host.view) continue;
+    if (!host.recent.empty() && host.recent.front() == host.view) return;
+    std::erase(host.recent, host.view.get());
+    host.recent.insert(host.recent.begin(), host.view.get());
+    // Closed tabs leave stale entries behind; keep the list bounded.
+    if (host.recent.size() > host.tabs.size() + 32) host.recent = RecentTabs(host);
+    return;
+  }
+}
+
+std::vector<views::WebView*> WorkspaceWindow::RecentTabs(const Host& host) const {
+  std::vector<views::WebView*> order;
+  const auto open = [&host](views::WebView* view) {
+    return std::ranges::any_of(host.tabs, [view](const auto& tab) { return tab.get() == view; });
+  };
+  // The shown tab always leads, even before it was ever noted.
+  if (host.view) order.push_back(host.view.get());
+  for (auto* view : host.recent)
+    if (open(view) && std::ranges::find(order, view) == order.end()) order.push_back(view);
+  // Tabs never shown in this run follow in sidebar order.
+  for (const auto& tab : host.tabs)
+    if (std::ranges::find(order, tab.get()) == order.end()) order.push_back(tab.get());
+  return order;
+}
+
+void WorkspaceWindow::CycleRecentTab(bool backwards) {
+  Host* host = nullptr;
+  for (auto& candidate : hosts_) if (candidate.workspace_id == active_id()) host = &candidate;
+  if (!host || host->tabs.size() < 2) return;
+  if (!tab_cycle_ || tab_cycle_->workspace_id != active_id()) {
+    NoteRecentTab();
+    tab_cycle_ = TabCycle{std::string(active_id()), RecentTabs(*host), 0, {}};
+  }
+  auto& cycle = *tab_cycle_;
+  const size_t count = cycle.order.size();
+  cycle.position = backwards ? (cycle.position + count - 1) % count : (cycle.position + 1) % count;
+  cycle.last_step = base::TimeTicks::Now();
+  const auto found = std::ranges::find_if(host->tabs, [&cycle](const auto& tab) {
+    return tab.get() == cycle.order[cycle.position];
+  });
+  if (found == host->tabs.end()) { FinishTabCycle(); return; }
+  SelectTab(found - host->tabs.begin());
+  if (!tab_cycle_timer_.IsRunning())
+    tab_cycle_timer_.Start(FROM_HERE, base::Milliseconds(50), this, &WorkspaceWindow::CheckTabCycle);
+}
+
+void WorkspaceWindow::CheckTabCycle() {
+  if (!tab_cycle_) { tab_cycle_timer_.Stop(); return; }
+#if BUILDFLAG(IS_WIN)
+  // Ctrl usually goes up over the page, but it can land anywhere: ask Windows.
+  const bool held = ::GetKeyState(VK_CONTROL) & 0x8000;
+#else
+  // The page reports Ctrl's release; this only ends a cycle whose keyup was lost.
+  const bool held = base::TimeTicks::Now() - tab_cycle_->last_step < base::Milliseconds(1500);
+#endif
+  if (!held || tab_cycle_->workspace_id != active_id()) FinishTabCycle();
+}
+
+void WorkspaceWindow::FinishTabCycle() {
+  tab_cycle_timer_.Stop();
+  if (!tab_cycle_) return;
+  tab_cycle_.reset();
+  NoteRecentTab();
 }
 
 void WorkspaceWindow::CloseTab(size_t index) { CloseWorkspaceTab(active_id(), index); }
@@ -3218,7 +3369,6 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "duplicate_tab") { for (const auto& host : hosts_) if (host.workspace_id == active_id()) return DuplicateTab(host.active_tab); return false; }
   if (id == "private_window") { if (new_private_window_) new_private_window_.Run(); return true; }
   if (id == "assistant") { ShowAssistant(); return true; }
-  if (id == "assistant_hover") { ShowAssistant(true); return true; }
   if (id.empty()) return false;
   if (id == "exit_fullscreen") {
     if (fullscreen_page_) fullscreen_page_->ExitFullscreen(true);
@@ -3346,7 +3496,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "sleep") return SleepWorkspace(active_id());
   if (id == "next_tab" || id == "previous_tab") {
     for (const auto& host : hosts_) if (host.workspace_id == active_id() && !host.tabs.empty()) {
-      SelectTab(shell_->CycleSidebarTab(host.active_tab, host.tabs.size(), id == "previous_tab")); return true;
+      CycleRecentTab(id == "previous_tab"); return true;
     }
   }
   if (id.starts_with("tab") && id.size() == 4 && id.back() >= '1' && id.back() <= '9') {
@@ -3373,6 +3523,7 @@ content::KeyboardEventProcessingResult WorkspaceWindow::PreHandlePageKeyEvent(
   using Type = blink::WebInputEvent::Type;
   const auto accelerator = ui::GetAcceleratorFromNativeWebKeyboardEvent(event);
   const int key = accelerator.key_code();
+  if (event.GetType() == Type::kKeyUp && key == ui::VKEY_CONTROL && tab_cycle_) FinishTabCycle();
   if (event.GetType() == Type::kKeyUp && consumed_keys_.erase(key)) {
     suppress_shortcut_char_ = false; return Result::HANDLED;
   }
@@ -3540,6 +3691,12 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   dict.Set("shift_click_peek", shift_click_peek_);
   dict.Set("clean_address_copies", clean_address_copies_);
   dict.Set("assistant", assistant_settings_.ToValue());
+  if (night_shift_config_.managed) dict.Set("night_shift", night_shift_config_.ToValue());
+  {
+    base::ListValue pinned;
+    for (const auto& id : night_shift_pinned_) pinned.Append(id);
+    dict.Set("night_shift_pinned", std::move(pinned));
+  }
   const auto* replaced_starter = import_replaces_starter_ ? model_.Find(starter_workspace_id_) : nullptr;
   base::ListValue profile_list;
   for (const auto& entry : profiles_) {
@@ -3877,6 +4034,11 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
     image_link_previews_ = dict->FindBool("image_link_previews").value_or(false);
     shift_click_peek_ = dict->FindBool("shift_click_peek").value_or(true);
     clean_address_copies_ = dict->FindBool("clean_address_copies").value_or(true);
+    night_shift_config_ = NightShiftConfig::FromValue(dict->FindDict("night_shift"));
+    night_shift_pinned_.clear();
+    if (const auto* pinned = dict->FindList("night_shift_pinned"))
+      for (const auto& id : *pinned) if (id.is_string()) night_shift_pinned_.insert(id.GetString());
+    ++night_shift_generation_;
     assistant_settings_ = AssistantSettings::FromValue(dict->FindDict("assistant"));
     shell_->SetAssistantAllowed(assistant_settings_.enabled);
     onboarding_complete_ = dict->FindBool("onboarding_complete").value_or(true);

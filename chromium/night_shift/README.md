@@ -16,9 +16,18 @@ Linked stylesheets also subscribe to CSSOM change events. Animation-frame
 polling remains limited to inline styles when the proxy is unavailable.
 
 Zitter registers Night Shift as a built-in component extension for regular
-profiles. Its extension options toggle the engine for the profile. When
+profiles. Its settings page, opened from the popup's gear or the extension's
+Options, controls Night Shift for the whole app: on or off, all profiles or
+selected ones, and the default look (brightness, contrast, sepia, grayscale and
+whether to override a site's own dark theme). Zitter passes the profiles to the
+page in its `state` query parameter. The page reports each change by replacing
+its URL fragment with `#apply=<json>`; Zitter reads it only from this
+extension's `settings.html`, saves it in `ZitterWorkspaces.json` and writes
+`enabled` and `defaults` into every profile's extension storage. Until the
+settings are saved once, each profile keeps the switch it had before. When
 disabled, Night Shift removes its existing page styles and unregisters both
-content scripts. Its action popup controls the current site's mode, brightness
+content scripts. A site's own tuning overrides only the values it sets; the
+rest follow the defaults. Its action popup controls the current site's mode, brightness
 and contrast. When CORS prevents access to an already-loaded linked stylesheet,
 the extension can read an anonymous CSS response with limits on origin,
 response type, redirects, size and lifetime. Other resources use the page's

@@ -2134,6 +2134,7 @@ struct RowRecipe {
     bool site_controls = false;  // AddressPill on a web page: its icon opens the site panel.
     bool site_open = false;      // …while that panel is open.
     bool audible = false;   // A tab playing sound: a speaker in `accent-ink`.
+    int capture = 0;        // A capturing tab: microphone, camera or screen in `danger`.
     int height = 34;
     views::Button::PressedCallback close;
     base::RepeatingCallback<void(gfx::Point)> drop;
@@ -2331,6 +2332,7 @@ class RustRowView final : public views::View {
   // `zt-tremor`: 1 px shakes in four steps over 180 ms (off under reduced motion).
   void Tremor(){if(gfx::Animation::PrefersReducedMotion())return;tremor_step_=0;tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating(&RustRowView::TremorStep,base::Unretained(this)));}
   void SetAudible(bool audible){if(spec_.audible==audible)return;spec_.audible=audible;SchedulePaint();if(changed_)changed_.Run();}
+  void SetCapture(int capture){if(spec_.capture==capture)return;spec_.capture=capture;SchedulePaint();if(changed_)changed_.Run();}
   void SetEditing(bool editing){if(spec_.editing==editing)return;spec_.editing=editing;SchedulePaint();if(changed_)changed_.Run();}
   void SetSiteControls(bool site,bool open){if(spec_.site_controls==site&&spec_.site_open==open)return;spec_.site_controls=site;spec_.site_open=open;SchedulePaint();if(changed_)changed_.Run();}
   bool site_controls() const{return spec_.site_controls;}
@@ -2379,7 +2381,9 @@ class RustRowView final : public views::View {
         const bool folder=state_->sidebar_presentation().folder;if(folder)scene.item.monogram=rust::String();
         if(!scene.item.tile||spec_.favorite){PaintSceneRecipe(canvas,scene.item,Font(0),true);if(folder)PaintIcon(canvas,vector_icons::kFolderFilledIcon,gfx::Rect(12,(height()-16)/2,16,16),16,scene.item.ink);
           // The close button takes this place on hover.
-          if(spec_.audible&&!(close_&&close_->GetVisible()))PaintIcon(canvas,vector_icons::kVolumeUpIcon,gfx::Rect(width()-30,(height()-14)/2,14,14),14,Palette(this).accent_ink);}else{const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
+          // Capture wins over sound: it is what a person must be able to find.
+          if(spec_.capture&&!(close_&&close_->GetVisible()))PaintIcon(canvas,spec_.capture==2?vector_icons::kVideocamIcon:spec_.capture==1?vector_icons::kMicIcon:vector_icons::kScreenShareIcon,gfx::Rect(width()-30,(height()-14)/2,14,14),14,Palette(this).danger);
+          else if(spec_.audible&&!(close_&&close_->GetVisible()))PaintIcon(canvas,vector_icons::kVolumeUpIcon,gfx::Rect(width()-30,(height()-14)/2,14,14),14,Palette(this).accent_ink);}else{const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
       return;}
     if(spec_.chip&&!spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();
       if(!spec_.header.empty())PaintSceneRecipe(canvas,PaletteHeaderItem(this,spec_,bounds,bounds),Font(0),true);
@@ -2455,6 +2459,7 @@ const RowRecipe::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* 
 void SetRowActive(views::View* view,bool value){VisitRow(view,[value](auto* row){row->SetActive(value);});}
 void TremorRow(views::View* view){if(auto* row=views::AsViewClass<RustRowView>(view))row->Tremor();}
 void SetRowAudible(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetAudible(value);}
+void SetRowCapture(views::View* view,int value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetCapture(value);}
 void SetCreateAction(views::View* view,bool creating){if(auto* button=views::AsViewClass<SceneTextButton>(view))button->SetZing(creating);}
 void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetEditing(value);}
 void SetRowSiteControls(views::View* view,bool site,bool open){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetSiteControls(site,open);}
@@ -4110,7 +4115,8 @@ class ShellRoot final : public views::View {
     }
     if (assistant_edge) {
       assistant_edge->SetBounds(width() - kGap, top, kGap, std::max(0, height() - top));
-      assistant_edge->SetVisible(assistant_allowed && (!assistant || !assistant->GetVisible()));
+      assistant_edge->SetVisible(assistant_allowed && static_cast<EdgeView*>(assistant_edge.get())->attention &&
+                                 (!assistant || !assistant->GetVisible()));
     }
     edge->SetBounds(g.edge.x,g.edge.y,g.edge.width,g.edge.height);
     LayoutSuperclass<views::View>(this);
@@ -4364,8 +4370,10 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
 #endif
   root->content = content_host_;
   root->edge = edge_;
-  root->assistant_edge = root->AddChildView(std::make_unique<EdgeView>(base::BindRepeating(
-      [](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->callbacks_.run_shortcut.Run("assistant_hover"); }, weak_factory_.GetWeakPtr()), true));
+  // Only a glow while background work waits for an answer: the assistant opens
+  // from its toolbar button, never by touching the window's edge.
+  root->assistant_edge = root->AddChildView(std::make_unique<EdgeView>(base::DoNothing()));
+  root->assistant_edge->SetCanProcessEventsWithinSubtree(false);
   return root;
 }
 
@@ -4399,7 +4407,7 @@ void WorkspaceShell::SetAssistantAllowed(bool allowed) {
 void WorkspaceShell::SetAssistantAttention(bool attention) {
   if (!root_) return;
   if (auto* edge = static_cast<EdgeView*>(static_cast<ShellRoot*>(root_.get())->assistant_edge.get()); edge && edge->attention != attention) {
-    edge->attention = attention; edge->SchedulePaint();
+    edge->attention = attention; edge->SchedulePaint(); edge->parent()->InvalidateLayout();
   }
 }
 void WorkspaceShell::SetAssistantCapsule(std::unique_ptr<views::View> capsule) {
@@ -4561,6 +4569,15 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   permission_chip_->SetPreferredSize(gfx::Size(28, 28));
   permission_chip_->SetVisible(false);
   address_row->ReorderChildView(permission_chip_, address_row->GetIndexOf(password_key_).value());
+  // Design: Kamera i mikrofon — live capture shows here instead of a window.
+  capture_chip_ = address_row->AddChildView(CreateSceneAction(
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { if (shell && shell->capture_open_) shell->capture_open_.Run(); }, weak),
+      T(u"Kamera i mikrofon"), GlyphButton::Glyph::kVector, &vector_icons::kVideocamIcon,
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) { return shell && shell->metal_sidebar_visible(); }, weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
+  capture_chip_->SetPreferredSize(gfx::Size(28, 28));
+  capture_chip_->SetVisible(false);
+  address_row->ReorderChildView(capture_chip_, address_row->GetIndexOf(permission_chip_).value());
   pill->set_context_menu_controller(this);
   Spacer(sidebar.get(), 12);
   workspace_name_ = sidebar->AddChildView(std::make_unique<WorkspaceHeading>(
@@ -5268,7 +5285,7 @@ void WorkspaceShell::Detach() {
   settings_root_ = nullptr;
   chrome_node_graph_.reset();palette_node_graph_.reset();site_rule_node_graph_.reset();
   nav_buttons_.fill(nullptr);
-  copy_url_button_ = nullptr; password_key_ = nullptr; permission_chip_ = nullptr;
+  copy_url_button_ = nullptr; password_key_ = nullptr; permission_chip_ = nullptr; capture_chip_ = nullptr;
   workspace_buttons_.clear();
   workspace_dots_ = nullptr; add_button_ = nullptr; downloads_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
@@ -5744,6 +5761,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       RowRecipe::Spec spec;
       spec.title = tab.title;
       spec.audible = tab.audible;
+      spec.capture = tab.capture;
       spec.sidebar_row = true;
       if(cache.node_graph)spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr());
       spec.tile = tile;
@@ -5815,6 +5833,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       auto* row = found->second.get();
       if (tab.title != previous.title) SetRowTitle(row,tab.title);
       if (tab.audible != previous.audible) SetRowAudible(row,tab.audible);
+      if (tab.capture != previous.capture) SetRowCapture(row,tab.capture);
       if (tab.url != previous.url || tab.title != previous.title) {
         const auto host = HostLabel(tab.url);
         SetRowMonogram(row,TabMonogram(tab.url,tab.title),
@@ -6170,6 +6189,10 @@ void WorkspaceShell::UpdateMetalSidebar() {
       item.kind=14; item.x+=12; item.width=std::max(0.f,item.width-24); item.y+=8; item.height=2; item.fill=Palette(view).line_strong;
       items.push_back(std::move(item));
     }
+  }
+  if (capture_chip_ && capture_chip_->IsDrawn()) {
+    auto rect = gfx::RectF(capture_chip_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
+    items.push_back(static_cast<RustActionView*>(capture_chip_.get())->SceneItem(rect, rect));
   }
   if (permission_chip_ && permission_chip_->IsDrawn()) {
     auto rect = gfx::RectF(permission_chip_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
@@ -9674,6 +9697,26 @@ void WorkspaceShell::SetPasswordOffer(bool pending,bool folded,std::u16string si
   if(password_key_->GetVisible()!=shown){password_key_->SetVisible(shown);password_key_->parent()->InvalidateLayout();if(shown)TremorRow(url_pill_);}
   ScheduleMetalSidebar();
 }
+void WorkspaceShell::SetCaptureIndicator(bool active, bool camera, bool microphone, bool screen,
+                                         std::u16string site, base::RepeatingClosure open) {
+  capture_open_ = std::move(open);
+  if (!capture_chip_) return;
+  if (active) {
+    if (auto* action = views::AsViewClass<RustActionView>(capture_chip_.get()))
+      action->SetIcon(camera ? &vector_icons::kVideocamIcon : microphone ? &vector_icons::kMicIcon : &vector_icons::kScreenShareIcon);
+    const auto what = camera && microphone ? T(u"Kamera i mikrofon w użyciu") : camera ? T(u"Kamera w użyciu")
+        : microphone ? T(u"Mikrofon w użyciu") : T(u"Udostępniasz ekran");
+    const auto tip = what + u" · " + site;
+    capture_chip_->SetTooltipText(tip);
+    capture_chip_->GetViewAccessibility().SetName(tip);
+    SetActionColor(capture_chip_, Palette(capture_chip_).danger);
+  }
+  if (capture_chip_->GetVisible() != active) {
+    capture_chip_->SetVisible(active);
+    capture_chip_->parent()->InvalidateLayout();
+  }
+  ScheduleMetalSidebar();
+}
 void WorkspaceShell::SetPermissionOffer(bool pending,bool folded,int kind,std::u16string site,base::RepeatingClosure reopen){
   permission_reopen_=std::move(reopen);if(!permission_chip_)return;
   static constexpr std::array<const char16_t*,10> kWishes={u"Ta strona prosiła o dostęp.",u"Ta strona chciała wysyłać powiadomienia.",u"Ta strona chciała znać Twoją lokalizację.",
@@ -11452,6 +11495,8 @@ void WorkspaceShell::PollSidebar() {
   if (sidebar_left_at_.is_null()) sidebar_left_at_ = now;
   if (now - sidebar_left_at_ >= base::Milliseconds(250)) HideSidebar();
 }
+// The sidebar's slide in and out.
+constexpr base::TimeDelta kSidebarSlide = base::Milliseconds(130);
 void WorkspaceShell::AnimateSidebar(bool show) {
   sidebar_slide_show_ = show;
   sidebar_slide_from_ = sidebar_visible() ? sidebar_slide_value_ : 0.0;
@@ -11459,15 +11504,76 @@ void WorkspaceShell::AnimateSidebar(bool show) {
   if (pinned_ || !workspace_animations_ || gfx::Animation::PrefersReducedMotion()) {
     sidebar_slide_value_ = show ? 1 : 0;
     sidebar_slide_timer_.Stop();
+    ++sidebar_slide_generation_;
+    sidebar_root_->layer()->GetAnimator()->StopAnimating();
     sidebar_root_->SetTransform(gfx::Transform());
     if (!show) sidebar_widget_->Hide();
     return;
   }
+#if !BUILDFLAG(IS_MAC)
+  AnimateSidebarOnCompositor(show);
+#else
   StepSidebarAnimation();
   sidebar_slide_timer_.Start(FROM_HERE, base::Milliseconds(16), this, &WorkspaceShell::StepSidebarAnimation);
+#endif
+}
+void WorkspaceShell::AnimateSidebarOnCompositor(bool show) {
+  // A 16 ms timer stepping a transform loses most of a short slide to the
+  // panel's first raster and to unaligned ticks; on Windows it reads as ~12 fps.
+  sidebar_slide_timer_.Stop();
+  const size_t generation = ++sidebar_slide_generation_;
+  auto* layer = sidebar_root_->layer();
+  auto* compositor = sidebar_widget_->GetCompositor();
+  const bool opening = show && !sidebar_widget_->IsVisible();
+  if (!opening || !compositor) { SlideSidebarLayer(generation, show); return; }
+  // Start fully outside, lay out and paint once, and run the clock only after
+  // that frame was presented.
+  layer->GetAnimator()->StopAnimating();
+  gfx::Transform outside;
+  outside.Translate(-sidebar_root_->width(), 0);
+  layer->SetTransform(outside);
+  sidebar_widget_->LayoutRootViewIfNecessary();
+  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
+      [](base::WeakPtr<WorkspaceShell> shell, size_t generation, const viz::FrameTimingDetails&) {
+        if (shell) shell->SlideSidebarLayer(generation, true);
+      }, weak_factory_.GetWeakPtr(), generation));
+  // Presentation feedback can be dropped (occluded or minimized window).
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce(
+      [](base::WeakPtr<WorkspaceShell> shell, size_t generation) {
+        if (shell && shell->sidebar_root_->layer()->GetTargetTransform() != gfx::Transform())
+          shell->SlideSidebarLayer(generation, true);
+      }, weak_factory_.GetWeakPtr(), generation), base::Milliseconds(120));
+}
+void WorkspaceShell::SlideSidebarLayer(size_t generation, bool show) {
+  if (generation != sidebar_slide_generation_ || !sidebar_widget_) return;
+  auto* layer = sidebar_root_->layer();
+  gfx::Transform target;
+  if (!show) target.Translate(-sidebar_root_->width(), 0);
+  if (layer->GetTargetTransform() == target && !layer->GetAnimator()->is_animating()) {
+    FinishSidebarSlide(generation);
+    return;
+  }
+  ui::ScopedLayerAnimationSettings settings(layer->GetAnimator());
+  settings.SetPreemptionStrategy(ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
+  settings.SetTransitionDuration(kSidebarSlide);
+  settings.SetTweenType(gfx::Tween::EASE_OUT);
+  settings.AddObserver(new ui::ClosureAnimationObserver(base::BindOnce(
+      &WorkspaceShell::FinishSidebarSlide, weak_factory_.GetWeakPtr(), generation)));
+  layer->SetTransform(target);
+  ScheduleMetalSidebar();
+}
+void WorkspaceShell::FinishSidebarSlide(size_t generation) {
+  if (generation != sidebar_slide_generation_) return;
+  sidebar_slide_value_ = sidebar_slide_show_ ? 1 : 0;
+  ScheduleMetalSidebar();
+  if (sidebar_slide_show_) return;
+  sidebar_widget_->Hide();
+  sidebar_root_->SetTransform(gfx::Transform());
+  if (widget_->IsActive()) RestorePageFocus();
 }
 void WorkspaceShell::StepSidebarAnimation() {
-  const double t = std::clamp((base::TimeTicks::Now() - sidebar_slide_started_).InMillisecondsF() / 180.0, 0.0, 1.0);
+  const double t = std::clamp((base::TimeTicks::Now() - sidebar_slide_started_).InMillisecondsF() /
+                              kSidebarSlide.InMillisecondsF(), 0.0, 1.0);
   const double eased = 1 - std::pow(1 - t, 3);
   sidebar_slide_value_ = sidebar_slide_from_ + ((sidebar_slide_show_ ? 1.0 : 0.0) - sidebar_slide_from_) * eased;
   gfx::Transform slide;

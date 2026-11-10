@@ -24,8 +24,25 @@
         return null;
     }
 
-    function percentage(value) {
-        return Number.isInteger(value) && value >= 75 && value <= 125 ? value : 100;
+    function bounded(value, low, high, fallback) {
+        return Number.isInteger(value) && value >= low && value <= high ? value : fallback;
+    }
+
+    function percentage(value, fallback = 100) {
+        return bounded(value, 75, 125, fallback);
+    }
+
+    // The look every site without its own tuning gets. Zitter writes it for
+    // the whole app from its Night Shift settings.
+    function defaults(value) {
+        const data = value ?? {};
+        return {
+            brightness: percentage(data.brightness),
+            contrast: percentage(data.contrast),
+            sepia: bounded(data.sepia, 0, 50, 0),
+            grayscale: bounded(data.grayscale, 0, 100, 0),
+            force: data.force === true,
+        };
     }
 
     function selectorPart(value) {
@@ -92,17 +109,34 @@
         return {label, rules};
     }
 
-    function siteSettings(value) {
+    function siteSettings(value, base) {
         const data = value ?? {};
+        const look = defaults(base);
         const mode = data.mode === "off" || data.mode === "on" ? data.mode : "auto";
         return {
             mode,
-            force: mode === "on" || (mode === "off" && data.force === true),
-            brightness: percentage(data.brightness),
-            contrast: percentage(data.contrast),
+            force: mode === "on" || (mode === "off" && data.force === true) || (mode === "auto" && look.force),
+            brightness: percentage(data.brightness, look.brightness),
+            contrast: percentage(data.contrast, look.contrast),
+            sepia: look.sepia,
+            grayscale: look.grayscale,
             repair: repair(data.repair),
             previousRepair: repair(data.previousRepair),
         };
+    }
+
+    // What a site record keeps: tuning only where the person set it, so the
+    // app-wide defaults still reach every other value.
+    function storedSite(value) {
+        const data = value ?? {};
+        const settings = siteSettings(data);
+        const stored = {
+            mode: settings.mode, force: settings.force,
+            repair: settings.repair, previousRepair: settings.previousRepair,
+        };
+        if (percentage(data.brightness, null) !== null) stored.brightness = data.brightness;
+        if (percentage(data.contrast, null) !== null) stored.contrast = data.contrast;
+        return stored;
     }
 
     function repairCss(value) {
@@ -111,5 +145,7 @@
         ).join("\n") ?? "";
     }
 
-    globalThis.NightShiftPolicy = Object.freeze({siteKey, siteSettings, selector, repair, repairCss});
+    globalThis.NightShiftPolicy = Object.freeze({
+        siteKey, siteSettings, storedSite, defaults, selector, repair, repairCss,
+    });
 })();

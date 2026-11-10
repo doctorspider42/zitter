@@ -560,7 +560,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Tytuły i adresy bez parametrów, potrzebne do podpowiedzi po @.", "Titles and addresses without parameters, needed for @ suggestions."),
     ("Widoczne modele trafiają do menu modelu w panelu. Domyślny startuje każdą nową sesję.", "Visible models appear in the panel's model menu. The default one starts every new session."),
     ("Więcej to szybszy raport i większe zużycie zasobów u dostawcy.", "More means a faster report and more usage at the provider."),
-    ("Wyłączony asystent nie otwiera panelu przy krawędzi okna, znika z Command Center i nie uruchamia procesu. Dotyczy całej aplikacji.", "When off, the assistant does not open at the window edge, leaves Command Center and starts no process. Applies to the whole app."),
+    ("Wyłączony asystent znika z paska i z Command Center i nie uruchamia procesu. Dotyczy całej aplikacji.", "When off, the assistant leaves the toolbar and Command Center and starts no process. Applies to the whole app."),
     ("Włącz asystenta", "Turn on the assistant"),
     ("Mała prośba przy klikanym elemencie: Enter zezwala, Escape pomija.", "A small request beside the clicked element: Enter allows, Escape skips."),
     ("Niewidoczna karta tego profilu z tymi samymi ciasteczkami i logowaniami. Postęp widać w panelu asystenta.", "An invisible tab of this profile with the same cookies and logins. Progress shows in the assistant panel."),

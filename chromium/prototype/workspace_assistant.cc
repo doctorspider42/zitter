@@ -1459,9 +1459,9 @@ void WorkspaceWindow::NewAssistantConversation() {
   ShowAssistant();
   if (existed && assistant_settings_.enabled) assistant_->StartNewConversation();
 }
-void WorkspaceWindow::ShowAssistant(bool hover) {
+void WorkspaceWindow::ShowAssistant() {
   EnsureAssistant();
-  if (assistant_ && assistant_settings_.enabled) assistant_->Show(hover);
+  if (assistant_ && assistant_settings_.enabled) assistant_->Show();
 }
 
 base::DictValue WorkspaceWindow::AssistantContext(const AssistantPermissions& permissions) {
@@ -1532,9 +1532,28 @@ void WorkspaceWindow::AssistantStateChanged() {
   extensions_bar_->SetAssistantState(state);
 }
 void WorkspaceWindow::ToggleAssistantFromBar() {
-  if (assistant_ && assistant_->GetVisible()) { assistant_->Collapse(); if (assistant_->GetVisible() && !assistant_->pinned()) { assistant_->SetVisible(false); shell_->LayoutAssistant(false); } }
+  // The button is the way in and out; pinning only decides whether the page
+  // makes room for the panel.
+  if (assistant_ && assistant_->GetVisible()) assistant_->Hide();
   else ShowAssistant();
   AssistantStateChanged();
+}
+bool WorkspaceWindow::AssistantPageActionsAvailable() {
+  auto* page = contents(active_id());
+  return page && page->GetLastCommittedURL().SchemeIsHTTPOrHTTPS();
+}
+void WorkspaceWindow::RunAssistantPageAction(int command) {
+  if (command == 6) { shell_->OpenAssistantSettings(); return; }
+  const std::array<std::u16string, 5> prompts = {
+    T(u"Podsumuj tę stronę: główne tezy, liczby, wnioski i to, co warto zrobić dalej. Oddziel treść strony od własnej interpretacji."),
+    T(u"Dodaj wyszukiwarkę tej strony. Odczytaj formularz wyszukiwania, ustal poprawny URL z parametrem zapytania i zaproponuj krótki keyword. Użyj add_search_engine."),
+    T(u"Zablokuj reklamy na tej stronie, których nie blokują listy. Sprawdź istniejące reguły, przetestuj nowe i pokaż ich podgląd przed zapisaniem. Nie ukrywaj właściwej treści."),
+    T(u"Najpierw odczytaj bieżącą stronę, potem sprawdź jej najważniejsze twierdzenia w niezależnych i pierwotnych źródłach. Pokaż co potwierdzono, co jest sporne, daty i linki. Nie traktuj samej strony jako dowodu."),
+    T(u"Wyciągnij użyteczne dane z tej strony do czytelnej tabeli. Wskaż ceny, warunki, różnice i braki danych, jeśli występują. Nie dopowiadaj wartości, których nie znaleziono.")};
+  if (command < 0 || command >= static_cast<int>(prompts.size()) || !assistant_settings_.enabled ||
+      !AssistantPageActionsAvailable()) return;
+  ShowAssistant();
+  if (assistant_) assistant_->PreparePageAction(prompts[command], command == 1 || command == 2, command == 3);
 }
 std::string WorkspaceWindow::AssistantTargetFor(views::View* view) {
   for (const auto& [key, target] : assistant_targets_) if (target->view() == view) return key;

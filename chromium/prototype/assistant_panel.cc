@@ -355,6 +355,8 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   access_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kAccess)),AssistantGlyph::kShield,T(u"Dostęp tej sesji")));
   header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::NewSession,weak)),AssistantGlyph::kPlus,T(u"Nowa sesja")));
   pin_action_=header_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->SetPinned(!self->pinned());},base::Unretained(this)),AssistantGlyph::kPin,T(u"Przypnij")));
+  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSettings)),AssistantGlyph::kGear,T(u"Ustawienia asystenta")));
+  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::Hide,weak)),AssistantGlyph::kClose,T(u"Zamknij")));
   SetSidebarPanelLayout(header_,false,gfx::Insets(),4,identity,true);
 
   background_=AddChildView(std::make_unique<views::View>());
@@ -402,13 +404,15 @@ AssistantPanel::~AssistantPanel() {
   // Scene nodes must be released before the scene registry.
   RemoveAllChildViews();
 }
-void AssistantPanel::Show(bool from_edge) {
+void AssistantPanel::Show() {
   if (!window_->assistant_settings().enabled) return;
-  hide_timer_.Stop();SetVisible(true); window_->shell()->LayoutAssistant(pinned_); prompt_->RequestFocus();
+  hide_timer_.Stop(); SetVisible(true); window_->shell()->LayoutAssistant(pinned_); prompt_->RequestFocus();
   unread_ = 0; NotifyBar();
+  // Opened from its button or a shortcut, the pointer is still elsewhere: an
+  // unpinned panel hides once the pointer moves and stays outside it.
   hover_check_.Stop();
   last_pointer_position_ = display::Screen::Get()->GetCursorScreenPoint();
-  pointer_exit_armed_ = from_edge || HoverBounds().Contains(last_pointer_position_);
+  pointer_exit_armed_ = HoverBounds().Contains(last_pointer_position_);
   WatchPointer();
 }
 void AssistantPanel::WatchPointer() {
@@ -439,8 +443,17 @@ void AssistantPanel::WatchPointer() {
 }
 gfx::Rect AssistantPanel::HoverBounds() const {
   auto bounds = GetBoundsInScreen();
-  bounds.Inset(gfx::Insets::TLBR(0, 0, 0, -24));
+  // The window's edge beside the panel and the gap up to its toolbar button.
+  bounds.Inset(gfx::Insets::TLBR(-48, 0, 0, -24));
   return bounds;
+}
+void AssistantPanel::Hide() {
+  // Hiding is presentation only. Drafts, open editors and pending questions
+  // remain intact, and a running task keeps working in the background.
+  hide_timer_.Stop(); hover_check_.Stop();
+  if (!GetVisible()) return;
+  CloseMenu();
+  SetVisible(false); window_->shell()->LayoutAssistant(false); NotifyBar();
 }
 bool AssistantPanel::busy() const { return selected().busy && !selected().background; }
 gfx::Size AssistantPanel::CalculatePreferredSize(const views::SizeBounds&) const {return {preferred_width_,560};}
@@ -449,10 +462,8 @@ void AssistantPanel::OnMouseEntered(const ui::MouseEvent&) {
 }
 void AssistantPanel::OnMouseExited(const ui::MouseEvent&) { pointer_exit_armed_ = true; WatchPointer(); }
 void AssistantPanel::Collapse() {
-  // Hiding is presentation only. Drafts, open editors and pending questions
-  // remain intact, and a running task keeps working in the background.
   if(pinned_||resize_start_width_)return;
-  hide_timer_.Stop();hover_check_.Stop();SetVisible(false);window_->shell()->LayoutAssistant(false);
+  Hide();
 }
 void AssistantPanel::OnResize(int amount,bool done) {
   pointer_exit_armed_ = true; WatchPointer();
@@ -790,6 +801,7 @@ void AssistantPanel::BuildMenu() {
     case Menu::kTasks: surface->GetViewAccessibility().SetName(T(u"Zadania zaplanowane")); BuildTasksMenu(surface.get()); break;
     case Menu::kTaskEditor: surface->GetViewAccessibility().SetName(T(u"Zadanie zaplanowane")); BuildTaskEditor(surface.get()); break;
     case Menu::kAccess: surface->GetViewAccessibility().SetName(T(u"Dostęp tej sesji")); BuildAccessMenu(surface.get()); break;
+    case Menu::kSettings: surface->GetViewAccessibility().SetName(T(u"Ustawienia asystenta")); BuildSettingsMenu(surface.get()); break;
     case Menu::kModel: surface->GetViewAccessibility().SetName(T(u"Wybierz model")); BuildModelMenu(surface.get()); break;
     case Menu::kMention: surface->GetViewAccessibility().SetName(T(u"Wstaw kartę lub narzędzie")); BuildMentionMenu(surface.get()); break;
     case Menu::kNone: break;
@@ -960,6 +972,49 @@ void AssistantPanel::BuildAccessMenu(views::View* body) {
   auto* spacer = actions->AddChildView(std::make_unique<views::View>());
   actions->AddChildView(CreateAssistantLink(Later(base::BindRepeating(&AssistantPanel::OpenSettings, weak)), T(u"Ustawienia")));
   SetSidebarPanelLayout(actions, false, gfx::Insets::TLBR(2, 4, 2, 0), 8, spacer, true);
+}
+void AssistantPanel::BuildSettingsMenu(views::View* body) {
+  auto weak = weak_factory_.GetWeakPtr();
+  const auto& settings = window_->assistant_settings();
+  const auto& d = settings.defaults;
+  auto* head = body->AddChildView(std::make_unique<views::View>());
+  head->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::CloseMenu, weak)), AssistantGlyph::kBack, T(u"Wróć")));
+  auto* title = head->AddChildView(CreateAssistantEyebrow(T(u"Ustawienia asystenta"), {}));
+  SetSidebarPanelLayout(head, false, gfx::Insets(), 4, title, true);
+  // The default model of every new conversation.
+  AssistantRow model; model.title = T(u"Model");
+  model.detail = settings.default_model.empty() ? T(u"Nie wybrano") : base::UTF8ToUTF16(settings.default_model);
+  body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kModel)), std::move(model)));
+  const std::array<std::tuple<bool, std::u16string, std::u16string>, 8> rows = {{
+      {d.tabs, T(u"Otwarte i przypięte karty"), T(u"Podpowiedzi po @")},
+      {d.pages, T(u"Czytanie bieżącej karty"), T(u"Treść strony trafia do rozmowy")},
+      {d.web, T(u"Szukanie w internecie"), T(u"Bez ciasteczek i logowania")},
+      {d.actions, T(u"Działania na stronach"), T(u"Klikanie i wypełnianie formularzy")},
+      {d.history, T(u"Historia przeglądania"), T(u"Tego profilu")},
+      {d.confirm_clicks, T(u"Pytaj przed kliknięciem"), T(u"Na widocznej karcie")},
+      {settings.background, T(u"Zadania w tle"), T(u"Niewidoczna karta tego profilu")},
+      {settings.confirm_background, T(u"Pytaj przed kliknięciem w tle"), T(u"Zadanie czeka w panelu")}}};
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto& [on, label, detail] = rows[i];
+    AssistantRow row; row.title = label; row.detail = detail; row.toggle = on;
+    body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::ToggleDefault, weak, static_cast<int>(i))), std::move(row)));
+  }
+  body->AddChildView(CreateAssistantNote(T(u"Dotyczy nowych rozmów. Węższy dostęp działa od razu.")))
+      ->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(6, 8, 6, 8));
+  auto* actions = body->AddChildView(std::make_unique<views::View>());
+  auto* spacer = actions->AddChildView(std::make_unique<views::View>());
+  actions->AddChildView(CreateAssistantLink(Later(base::BindRepeating(&AssistantPanel::OpenSettings, weak)), T(u"Połączenia AI i modele")));
+  SetSidebarPanelLayout(actions, false, gfx::Insets::TLBR(2, 4, 2, 0), 8, spacer, true);
+}
+void AssistantPanel::ToggleDefault(int index) {
+  auto settings = window_->assistant_settings();
+  auto& d = settings.defaults;
+  const std::array<bool*, 8> values = {&d.tabs, &d.pages, &d.web, &d.actions, &d.history, &d.confirm_clicks,
+                                       &settings.background, &settings.confirm_background};
+  if (index < 0 || index >= static_cast<int>(values.size())) return;
+  *values[index] = !*values[index];
+  window_->SetAssistantSettings(std::move(settings));
+  if (menu_ == Menu::kSettings) BuildMenu();
 }
 void AssistantPanel::TogglePermission(int index) {
   auto& session = selected();
@@ -1871,6 +1926,7 @@ bool AssistantPanel::HandleEscape() {
   if (session.confirmation && !session.background) { Consent(session, false); return true; }
   if (busy()) { Stop(); return true; }
   if (menu_ != Menu::kNone) { CloseMenu(); return true; }
+  if (GetVisible() && !pinned_) { Hide(); return true; }
   return false;
 }
 
@@ -2256,8 +2312,20 @@ void AssistantPanel::RenderConversation() {
         self->UpdateControls();self->prompt_->RequestFocus();
       },base::Unretained(this),std::move(prompt),std::move(tool)),glyph,std::move(title),std::move(detail)));
     };
-    suggestion(AssistantGlyph::kPage,T(u"Zrozum tę stronę"),T(u"Wstawia bieżącą kartę"),T(u"Podsumuj najważniejsze informacje z tej strony."),"current");
-    suggestion(AssistantGlyph::kSearch,T(u"Znajdź coś w internecie"),T(u"Odpowiedzi z konkretnych źródeł"),T(u"Pomóż mi znaleźć informacje o "),"");
+    // The page quick actions live here, where the conversation starts.
+    if(window_->AssistantPageActionsAvailable()){
+      auto action=[&](AssistantGlyph glyph,std::u16string title,std::u16string detail,int command){
+        conversation_->AddChildView(CreateAssistantSuggestion(Later(base::BindRepeating(
+            [](base::WeakPtr<AssistantPanel> self,int command){if(self)self->window_->RunAssistantPageAction(command);},
+            weak_factory_.GetWeakPtr(),command)),glyph,std::move(title),std::move(detail)));
+      };
+      action(AssistantGlyph::kPage,T(u"Podsumuj stronę"),T(u"Najważniejsze informacje"),0);
+      action(AssistantGlyph::kCheck,T(u"Sprawdź fakty"),T(u"Z odnośnikami do źródeł"),3);
+      action(AssistantGlyph::kLayers,T(u"Wyciągnij dane"),T(u"Tabela i porównanie"),4);
+      action(AssistantGlyph::kSearch,T(u"Dodaj wyszukiwarkę"),T(u"Szukaj na tej stronie z paska"),1);
+      action(AssistantGlyph::kShield,T(u"Zablokuj reklamy"),T(u"Reguła dla tej witryny"),2);
+    }
+    suggestion(AssistantGlyph::kGlobe,T(u"Znajdź coś w internecie"),T(u"Odpowiedzi z konkretnych źródeł"),T(u"Pomóż mi znaleźć informacje o "),"");
     suggestion(AssistantGlyph::kSpark,T(u"Zbadaj temat głębiej"),T(u"Wstawia narzędzie Deep research"),T(u"Zbadaj dokładnie i porównaj "),"research");
   } else for(size_t i=0;i<messages.size();++i) {
     const auto& message=messages[i];
@@ -2412,7 +2480,7 @@ void AssistantPanel::Layout(PassKey) {
   if (!menu_view_) return;
   const int inner = std::max(0, width() - 32);
   int w = inner, x = 16, top = 0, bottom = 0;
-  if (menu_ == Menu::kSessions || menu_ == Menu::kTasks || menu_ == Menu::kTaskEditor) {
+  if (menu_ == Menu::kSessions || menu_ == Menu::kTasks || menu_ == Menu::kTaskEditor || menu_ == Menu::kSettings) {
     menu_view_->SetBounds(16, header_->bounds().bottom() + 6, inner, std::max(0, height() - header_->bounds().bottom() - 22));
     return;
   }

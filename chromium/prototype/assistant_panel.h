@@ -104,12 +104,14 @@ base::Time AssistantTaskNextRun(const AssistantTask& task, base::Time after);
 std::u16string AssistantTaskSchedule(const AssistantTask& task);
 class AssistantPanel final : public views::View, public views::ResizeAreaDelegate, public views::TextfieldController {
  public:
-  enum class Menu { kNone, kSessions, kAccess, kModel, kMention, kTasks, kTaskEditor };
+  enum class Menu { kNone, kSessions, kAccess, kModel, kMention, kTasks, kTaskEditor, kSettings };
   explicit AssistantPanel(WorkspaceWindow* window);
   ~AssistantPanel() override;
-  // An unpinned panel follows pointer departure regardless of how it opens.
-  // Keyboard opening stays visible until the mouse moves; edge opening arms immediately.
-  void Show(bool from_edge = false);
+  // An unpinned panel hides when the pointer leaves it. Opened from its
+  // button or a shortcut, it stays until the mouse moves.
+  void Show();
+  // Hides the panel; the conversation and running work stay.
+  void Hide();
   void StartNewConversation();
   // Stops the selected conversation; background tasks keep running.
   void Stop();
@@ -250,6 +252,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   views::View* ScrollList(views::View* body, int max_height);
   void BuildSessionsMenu(views::View* body);
   void BuildAccessMenu(views::View* body);
+  // The gear: app-wide defaults in the panel (design: Asystent · ustawienia).
+  void BuildSettingsMenu(views::View* body);
+  void ToggleDefault(int index);
   // Access of the selected session: narrowing applies at once; widening only
   // before its first message.
   void TogglePermission(int index);
@@ -336,7 +341,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   base::RepeatingTimer hover_check_;
   gfx::Point last_pointer_position_;
   bool pointer_exit_armed_ = false;
-  // The panel plus the edge strip beside it: leaving it hides an unpinned panel.
+  // The panel plus the window edge beside it: leaving it hides an unpinned panel.
   gfx::Rect HoverBounds() const;
   void WatchPointer();
   std::vector<std::unique_ptr<Session>> sessions_;

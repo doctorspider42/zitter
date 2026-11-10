@@ -1,5 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
+import "./site_policy.js";
+
 const strings = {
     en: {
         subtitle: "Dynamic dark pages", settings: "Extension settings",
@@ -183,7 +185,13 @@ for (const slider of sliders) {
     slider.addEventListener("input", () => save({[slider.id]: Number(slider.value)}, true));
     slider.addEventListener("change", flush);
 }
-get("reset").addEventListener("click", () => save({brightness: 100, contrast: 100, mode: "auto"}));
+// Back to the app-wide look from the Night Shift settings.
+get("reset").addEventListener("click", () => {
+    const look = globalThis.NightShiftPolicy.defaults(state.defaults);
+    save({brightness: null, contrast: null, mode: "auto"});
+    Object.assign(state.settings, {brightness: look.brightness, contrast: look.contrast, force: look.force});
+    render();
+});
 get("before").addEventListener("click", () => compare(false));
 get("after").addEventListener("click", () => compare(true));
 get("apply").addEventListener("click", () => finishReview("save-review"));

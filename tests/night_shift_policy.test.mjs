@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import "../chromium/night_shift/site_policy.js";
 
-const {siteKey, siteSettings, repair, repairCss} = globalThis.NightShiftPolicy;
+const {siteKey, siteSettings, storedSite, defaults, repair, repairCss} = globalThis.NightShiftPolicy;
 const caption = {
     path: [{tag: "article", id: "story"}, {tag: "figcaption", classes: ["muted"]}],
     property: "color",
@@ -21,12 +21,29 @@ test("site keys share a hostname across schemes and retain distinct ports", () =
 
 test("invalid or older site data falls back to automatic mode and default tuning", () => {
     assert.deepEqual(siteSettings({mode: "filter", brightness: 900, contrast: "115"}), {
-        mode: "auto", force: false, brightness: 100, contrast: 100, repair: null,
-        previousRepair: null,
+        mode: "auto", force: false, brightness: 100, contrast: 100, sepia: 0, grayscale: 0,
+        repair: null, previousRepair: null,
     });
     assert.equal(siteSettings({mode: "off", brightness: 75, contrast: 125}).brightness, 75);
     assert.equal(siteSettings({mode: "on", brightness: 75, contrast: 125}).contrast, 125);
     assert.equal(siteSettings({mode: "off", force: true}).force, true);
+});
+
+test("app-wide defaults fill only the values a site did not tune", () => {
+    const look = {brightness: 90, contrast: 110, sepia: 20, grayscale: 300, force: true};
+    assert.deepEqual(defaults(look), {brightness: 90, contrast: 110, sepia: 20, grayscale: 0, force: true});
+    const untuned = siteSettings({mode: "auto"}, look);
+    assert.equal(untuned.brightness, 90);
+    assert.equal(untuned.contrast, 110);
+    assert.equal(untuned.sepia, 20);
+    assert.equal(untuned.force, true);
+    const tuned = siteSettings({mode: "auto", brightness: 120}, look);
+    assert.equal(tuned.brightness, 120);
+    assert.equal(tuned.contrast, 110);
+    assert.equal(siteSettings({mode: "off"}, look).force, false);
+    assert.deepEqual(storedSite({mode: "auto", contrast: 80, brightness: 1}), {
+        mode: "auto", force: false, repair: null, previousRepair: null, contrast: 80,
+    });
 });
 
 test("typed repairs compile to a scoped color override", () => {

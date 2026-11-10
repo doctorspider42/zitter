@@ -17,6 +17,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "base/timer/timer.h"
+#include "chromium/prototype/night_shift.h"
 #include "base/time/clock.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/memory/raw_ptr.h"
@@ -145,7 +146,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowRss();
   RssPanel* rss_panel() const;
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
-  void ShowAssistant(bool hover = false);
+  void ShowAssistant();
   void NewAssistantConversation();
   // Creates the panel hidden, so its scheduled tasks run.
   void EnsureAssistant();
@@ -153,6 +154,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void AssistantStateChanged();
   // The toolbar button: shows or hides the panel.
   void ToggleAssistantFromBar();
+  // The page quick actions (0-4), shown as suggestions on a new conversation;
+  // 6 opens the assistant settings.
+  void RunAssistantPageAction(int command);
+  bool AssistantPageActionsAvailable();
   // Opens the assistant and sends `prompt` (the shield's "block more").
   void AskAssistant(std::u16string prompt);
   void PrepareNightShiftRepair(content::WebContents* page);
@@ -454,6 +459,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
     std::set<views::WebView*> popup_tabs;
     std::map<std::string, raw_ptr<views::WebView>> pin_tabs;
     std::optional<base::DictValue> sleeping;
+    // Tabs most recently shown first, for Ctrl+Tab. Entries may outlive their
+    // tab and are only compared, never dereferenced; RecentTabs() prunes them.
+    std::vector<views::WebView*> recent;
   };
   WorkspaceModel model_;
   raw_ptr<AssistantPanel> assistant_ = nullptr;
@@ -465,6 +473,17 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::string night_shift_document_;
   std::string night_shift_request_;
   base::ListValue night_shift_candidates_;
+  // Night Shift for the whole app (design: Night Shift · ustawienia).
+  NightShiftConfig night_shift_config_;
+  // Profile id -> config generation already written into its extension.
+  std::map<std::string, int> night_shift_pushed_;
+  int night_shift_generation_ = 0;
+  void PushNightShiftConfig(Profile* profile);
+  // Profiles whose toolbar got Night Shift pinned once (unpinning is kept).
+  std::set<std::string> night_shift_pinned_;
+  void PinNightShiftOnce(Profile* profile);
+  void ApplyNightShiftSettings(base::DictValue value);
+  std::string NightShiftSettingsState();
   struct AssistantBackgroundPage {
     AssistantBackgroundPage();
     AssistantBackgroundPage(AssistantBackgroundPage&&);
@@ -579,6 +598,21 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   struct ClosedTab { std::string workspace_id, profile_id; GURL url; std::u16string title; base::Time closed_at; };
   std::vector<ClosedTab> closed_tabs_;
   std::set<int> consumed_keys_;
+  // Ctrl+Tab walks tabs in most-recently-used order while Ctrl is held; the
+  // tab shown when Ctrl goes up becomes the most recent one.
+  struct TabCycle {
+    std::string workspace_id;
+    std::vector<views::WebView*> order;
+    size_t position = 0;
+    base::TimeTicks last_step;
+  };
+  std::optional<TabCycle> tab_cycle_;
+  base::RepeatingTimer tab_cycle_timer_;
+  void NoteRecentTab();
+  std::vector<views::WebView*> RecentTabs(const Host& host) const;
+  void CycleRecentTab(bool backwards);
+  void CheckTabCycle();
+  void FinishTabCycle();
   base::OneShotTimer session_timer_;
   base::OneShotTimer preconnect_timer_;
   std::string last_preconnect_profile_;

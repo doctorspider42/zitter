@@ -47,6 +47,7 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/media/prefs/capture_device_ranking.h"
 #include "components/media_effects/media_device_info.h"
+#include "base/i18n/time_formatting.h"
 #include "components/url_formatter/elide_url.h"
 #include "components/vector_icons/vector_icons.h"
 #include "chromium/prototype/sidebar_metal.h"
@@ -574,71 +575,135 @@ void PageMediaAccess::OnIsCapturingTabChanged(content::WebContents* page, bool) 
 void PageMediaAccess::OnIsCapturingWindowChanged(content::WebContents* page, bool) { QueueCaptureUpdate(page); }
 void PageMediaAccess::OnIsCapturingDisplayChanged(content::WebContents* page, bool) { QueueCaptureUpdate(page); }
 
+CaptureState PageMediaAccess::capture_state() const {
+  CaptureState state;
+  auto* page = web_contents();
+  if (!page || !IsCapturing(page)) return state;
+  auto indicator = Indicator();
+  state.active = true;
+  state.camera = indicator->IsCapturingVideo(page);
+  state.microphone = indicator->IsCapturingAudio(page);
+  state.screen = indicator->IsCapturingTab(page) || indicator->IsCapturingWindow(page) ||
+                 indicator->IsCapturingDisplay(page);
+  // One entry per site, not per stream: a call opens several streams.
+  std::set<std::u16string> sites;
+  for (const auto& [id, origin] : capture_origins_)
+    sites.insert(url_formatter::FormatOriginForSecurityDisplay(url::Origin::Create(GURL(origin)),
+        url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS));
+  if (sites.empty())
+    sites.insert(url_formatter::FormatOriginForSecurityDisplay(
+        url::Origin::Create(page->GetLastCommittedURL()), url_formatter::SchemeDisplay::OMIT_HTTP_AND_HTTPS));
+  for (const auto& site : sites) state.site += (state.site.empty() ? u"" : u", ") + site;
+  return state;
+}
+
 void PageMediaAccess::UpdateCaptureIndicator() {
   update_pending_ = false;
-  if (!web_contents() || !IsCapturing(web_contents())) {
-    CloseCaptureIndicator();
-    return;
+  const bool open = capture_prompt_ && capture_prompt_->IsVisible();
+  const bool capturing = web_contents() && IsCapturing(web_contents());
+  if (!capturing) capture_since_ = base::Time();
+  else if (capture_since_.is_null()) capture_since_ = base::Time::Now();
+  // Design: Kamera i mikrofon. Nothing pops up while a page captures; the
+  // address pill shows it. An open card is rebuilt with the current devices.
+  if (open && web_contents() && IsCapturing(web_contents())) ShowCaptureControls();
+  else CloseCaptureIndicator();
+  if (capture_changed_) capture_changed_.Run();
+}
+
+bool PageMediaAccess::capture_controls_visible_for_testing() const {
+  return capture_prompt_ && capture_prompt_->IsVisible();
+}
+
+void PageMediaAccess::ToggleCaptureControls() {
+  if (capture_prompt_ && capture_prompt_->IsVisible()) { CloseCaptureIndicator(); return; }
+  if (web_contents() && IsCapturing(web_contents())) ShowCaptureControls();
+}
+
+void PageMediaAccess::StopCapture() {
+  CloseCaptureIndicator();
+  if (web_contents()) Stop(web_contents());
+}
+
+void PageMediaAccess::ShowCaptureControls() {
+  CloseCaptureIndicator();
+  auto* page = web_contents();
+  const auto state = capture_state();
+  if (!page || !state.active) return;
+  auto body = std::make_unique<views::View>();
+  auto scene = CreatePanelScene(body.get());
+  if (!scene) return;
+  capture_scene_ = std::make_unique<MediaSceneDialog>();
+  capture_scene_->scene = std::move(scene);
+  auto* panel = capture_scene_->scene.get();
+  auto* profile = Profile::FromBrowserContext(page->GetBrowserContext());
+  SetSidebarPanelLayout(body.get(), true, gfx::Insets(), 10);
+  auto* head = body->AddChildView(std::make_unique<views::View>());
+  head->AddChildView(panel->MakeIconTile(state.camera ? &vector_icons::kVideocamIcon
+      : state.microphone ? &vector_icons::kMicIcon : &vector_icons::kScreenShareIcon));
+  auto* lines = head->AddChildView(std::make_unique<views::View>());
+  auto* site = lines->AddChildView(panel->MakeText(state.site, true, false, 0));
+  panel->SetTextStyle(site, 4, PanelScene::Tone::kInk);
+  auto* who = lines->AddChildView(panel->MakeText(capture_since_.is_null()
+      ? TF(u"Profil: {}", {BrowsingProfileName(profile)})
+      : TF(u"Profil: {} · od {}", {BrowsingProfileName(profile), base::TimeFormatTimeOfDay(capture_since_)}), true, false, 0));
+  panel->SetTextStyle(who, 6, PanelScene::Tone::kMuted);
+  SetSidebarPanelLayout(lines, true, gfx::Insets(), 2);
+  SetSidebarPanelLayout(head, false, gfx::Insets(), 10, lines, true);
+  auto device = [&](bool on, std::u16string text) {
+    if (!on) return;
+    auto* line = body->AddChildView(panel->MakeText(std::move(text), true, false, 0));
+    panel->SetTextStyle(line, 5, PanelScene::Tone::kInk);
+  };
+  device(state.camera, T(u"Kamera jest włączona"));
+  device(state.microphone, T(u"Mikrofon jest włączony"));
+  device(state.screen, T(u"Udostępniasz ekran"));
+  auto* note = body->AddChildView(panel->MakeText(
+      T(u"Zamknięcie tej karty nie przerywa połączenia."), true, false, 0));
+  panel->SetTextStyle(note, 6, PanelScene::Tone::kMuted);
+  auto* row = body->AddChildView(std::make_unique<views::View>());
+  auto* filler = row->AddChildView(std::make_unique<views::View>());
+  auto* group = row->AddChildView(panel->MakeActions(6));
+  auto* stop = panel->AddAction(group, base::BindRepeating(&PageMediaAccess::StopCapture,
+      weak_factory_.GetWeakPtr()), T(u"Zatrzymaj wszystko"));
+  panel->SetActionKind(stop, 2);
+  SetSidebarPanelLayout(row, false, gfx::Insets(), 0, filler, true);
+  auto dialog = CreateSceneModalDialog(std::move(body), false, false);
+  dialog->SetTitle(T(u"Kamera i mikrofon"));
+  dialog->SetShowTitle(false);
+  dialog->SetShowCloseButton(false);
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  if (auto* bubble = dialog->AsBubbleDialogDelegate()) {
+    bubble->set_fixed_width(300);
+    bubble->set_margins(gfx::Insets::VH(12, 0));
+    // A popover: clicking the page or another window puts it away.
+    bubble->set_close_on_deactivate(true);
   }
-  if (capture_prompt_) return;
-  auto weak = weak_factory_.GetWeakPtr();
-  capture_dialog_active_ = std::make_shared<bool>(true);
-  auto stop = base::BindRepeating([](base::WeakPtr<PageMediaAccess> access,
-                                   std::shared_ptr<bool> active) {
-    if (std::exchange(*active, false) && access && access->web_contents())
-      Stop(access->web_contents());
-  }, weak, capture_dialog_active_);
-  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  std::u16string origins;
-  for (const auto& [id, origin] : capture_origins_) {
-    if (!origins.empty()) origins += u"\n";
-    origins += base::UTF8ToUTF16(origin);
-  }
-  if (origins.empty()) origins = base::UTF8ToUTF16(
-      url::Origin::Create(web_contents()->GetLastCommittedURL()).Serialize());
-  auto body=std::make_unique<views::View>();auto scene=CreatePanelScene(body.get());
-  if(scene){
-    capture_scene_=std::make_unique<MediaSceneDialog>();capture_scene_->scene=std::move(scene);
-    SetSidebarPanelLayout(body.get(),true,gfx::Insets(),views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_UNRELATED_CONTROL_VERTICAL));
-    for(auto text:{origins,T(u"Ta strona korzysta z mikrofonu, kamery lub udostępniania obrazu."),TF(u"Profil: {}",{BrowsingProfileName(profile)}),T(u"Zamknięcie tego okna zatrzyma przechwytywanie.")})
-      body->AddChildView(capture_scene_->scene->MakeText(std::move(text),true,false,0));
-    auto dialog=CreateSceneModalDialog(std::move(body),false,false);dialog->SetTitle(T(u"Trwa przechwytywanie"));dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,T(u"Zatrzymaj"));
-    dialog->SetCancelCallback(stop);dialog->SetCloseCallback(stop);
-    capture_scene_->delegate=std::move(dialog);
-    auto* parent=views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
-    auto* widget=views::DialogDelegate::CreateDialogWidget(capture_scene_->delegate.get(),web_contents()->GetTopLevelNativeWindow(),parent?parent->GetNativeView():gfx::NativeView());capture_scene_->widget.reset(widget);
-    widget->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<PageMediaAccess> access,std::shared_ptr<bool> active,base::RepeatingClosure stop,views::Widget::ClosedReason){stop.Run();if(access&&access->capture_dialog_active_==active)access->CloseCaptureIndicator();},weak,capture_dialog_active_,stop));
-    if(parent)widget->SetColorModeOverride(parent->color_mode_override());
+  SetSidebarPanelLayout(dialog->GetContentsView(), true, gfx::Insets::VH(0, 12), 0);
+  capture_scene_->delegate = std::move(dialog);
+  auto* parent = views::Widget::GetWidgetForNativeWindow(page->GetTopLevelNativeWindow());
+  auto* widget = views::DialogDelegate::CreateDialogWidget(capture_scene_->delegate.get(),
+      page->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
+  capture_scene_->widget.reset(widget);
+  widget->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<PageMediaAccess> access, views::Widget::ClosedReason) {
+    if (access) access->CloseCaptureIndicator();
+  }, weak_factory_.GetWeakPtr()));
+  if (parent) widget->SetColorModeOverride(parent->color_mode_override());
 #if BUILDFLAG(IS_MAC)
-    InstallWorkspaceKeyboardRouting(widget,true);
+  InstallWorkspaceKeyboardRouting(widget, true);
 #endif
-    capture_prompt_=widget->GetWeakPtr();widget->ShowInactive();capture_scene_->scene->Schedule();return;
+  // Under the address pill, like the permission card.
+  const auto anchor = PromptAnchor();
+  auto bounds = widget->GetWindowBoundsInScreen();
+  if (!anchor.IsEmpty()) bounds.set_origin(gfx::Point(anchor.x(), anchor.bottom() + 6));
+  else if (parent) {
+    const auto client = parent->GetClientAreaBoundsInScreen();
+    bounds.set_origin(gfx::Point(client.right() - bounds.width() - 16, client.y() + 16));
   }
-  auto model = ui::DialogModel::Builder()
-      .SetTitle(T(u"Trwa przechwytywanie"))
-      .AddParagraph(ui::DialogModelLabel(origins))
-      .AddParagraph(ui::DialogModelLabel(T(u"Ta strona korzysta z mikrofonu, kamery lub udostępniania obrazu.")))
-      .AddParagraph(ui::DialogModelLabel(TF(u"Profil: {}",
-          {BrowsingProfileName(profile)})))
-      .AddParagraph(ui::DialogModelLabel(T(u"Zamknięcie tego okna zatrzyma przechwytywanie.")))
-      .AddCancelButton(stop, ui::DialogModel::Button::Params().SetLabel(T(u"Zatrzymaj")))
-      .SetDialogDestroyingCallback(stop)
-      .Build();
-  auto dialog = std::make_unique<views::BubbleDialogModelHost>(
-      std::move(model), views::BubbleAnchor(), views::BubbleBorder::Arrow::NONE);
-  // Clicking the meeting or switching spaces must not close the stop controls.
-  dialog->set_close_on_deactivate(false);
-  auto* parent = views::Widget::GetWidgetForNativeWindow(web_contents()->GetTopLevelNativeWindow());
-  auto* widget = views::DialogDelegate::CreateDialogWidget(std::move(dialog),
-      web_contents()->GetTopLevelNativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
-  if (parent)
-    widget->SetColorModeOverride(parent->color_mode_override());
-  PrepareDialogText(widget->GetRootView());
-#if BUILDFLAG(IS_MAC)
-  InstallWorkspaceKeyboardRouting(widget,true);
-#endif
+  if (auto* bubble = widget->widget_delegate()->AsBubbleDialogDelegate())
+    bubble->SetAnchorRect(gfx::Rect(bounds.x() + bounds.width() / 2, bounds.y(), 0, 0));
   capture_prompt_ = widget->GetWeakPtr();
-  widget->ShowInactive();
+  widget->Show();
+  capture_scene_->scene->Schedule();
 }
 
 void PageMediaAccess::TrackCapture(size_t id, std::string origin, bool started) {
@@ -657,7 +722,6 @@ void PageMediaAccess::TrackCapture(size_t id, std::string origin, bool started) 
           content::MEDIA_REQUEST_STATE_CLOSING);
     }
   }
-  CloseCaptureIndicator();
   QueueCaptureUpdate(web_contents());
 }
 
@@ -689,8 +753,6 @@ void PageMediaAccess::DidFinishNavigation(content::NavigationHandle* navigation)
 }
 
 void PageMediaAccess::CloseCaptureIndicator() {
-  if (capture_dialog_active_) *capture_dialog_active_ = false;
-  capture_dialog_active_.reset();
   auto widget = capture_prompt_;
   capture_prompt_.reset();
   if(capture_scene_)MediaSceneDialog::Dispose(std::move(capture_scene_));

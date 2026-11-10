@@ -43,3 +43,124 @@ label {
 
 input { accent-color: var(--accent); }
 .status:empty { display: none; }
+
+/* The settings page (design: Night Shift · ustawienia). Scoped, because the
+   popup imports this file for its tokens. */
+.ns-settings { margin: 0; min-height: 100vh; }
+.ns-settings * { box-sizing: border-box; }
+.ns-settings [hidden] { display: none !important; }
+.ns-settings button, .ns-settings input { font: inherit; color: inherit; }
+.ns-settings :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ns-settings main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    max-width: 820px;
+    margin: 40px auto;
+    padding: 0;
+    overflow: hidden;
+}
+.ns-settings .column { display: flex; flex-direction: column; gap: 22px; padding: 24px; min-width: 0; }
+.ns-settings .look { background: var(--background); border-left: 1px solid var(--line); gap: 16px; }
+.ns-settings .title { display: flex; align-items: center; gap: 14px; }
+.ns-settings .mark {
+    display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px;
+    background: light-dark(#eee8fc, #302847);
+}
+.ns-settings .heading { flex: 1; }
+.ns-settings h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.01em; }
+.ns-settings h2 { margin: 0; font-size: 13px; font-weight: 650; }
+.ns-settings .group { display: flex; flex-direction: column; gap: 4px; }
+.ns-settings .hint { font-size: 12px; margin-bottom: 4px; }
+.ns-settings .hint:empty { display: none; }
+.ns-settings label { border: 0; margin: 0; min-height: 0; }
+
+.ns-settings .switch {
+    appearance: none; flex: none; width: 34px; height: 20px; margin: 0; border-radius: 999px;
+    box-shadow: inset 0 0 0 1.5px var(--muted); position: relative; cursor: pointer;
+    transition: background 120ms;
+}
+.ns-settings .switch::after {
+    content: ""; position: absolute; top: 4px; left: 4px; width: 12px; height: 12px; border-radius: 999px;
+    background: var(--muted); transition: transform 220ms, background 220ms;
+}
+.ns-settings .switch:checked { background: var(--accent); box-shadow: none; }
+.ns-settings .switch:checked::after { transform: translateX(14px); background: var(--surface); }
+.ns-settings .switch:disabled { opacity: 0.5; cursor: default; }
+
+.ns-settings .segmented {
+    display: inline-flex; align-self: flex-start; gap: 2px; padding: 3px; border-radius: 999px;
+    background: var(--background); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ns-settings .segmented button {
+    appearance: none; border: 0; height: 28px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+    background: transparent; color: var(--muted); font-size: 12px; font-weight: 600;
+}
+.ns-settings .segmented button[aria-checked="true"] { background: var(--accent); color: var(--surface); }
+.ns-settings .segmented button:disabled { cursor: default; opacity: 0.6; }
+
+.ns-settings .profiles { display: flex; flex-direction: column; margin-top: 8px; }
+.ns-settings .profiles.locked { opacity: 0.55; }
+.ns-settings .profile {
+    display: flex; align-items: center; gap: 12px; height: 44px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+}
+.ns-settings .profile:hover { background: var(--background); }
+.ns-settings .profile .dot {
+    flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px;
+    font-size: 11px; font-weight: 700; color: #0c0b11;
+}
+.ns-settings .profile .name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ns-settings .profile .name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-settings .profile .name small { font-size: 11px; }
+.ns-settings .profile input { width: 18px; height: 18px; margin: 0; cursor: pointer; }
+
+.ns-settings .sites { display: flex; flex-direction: column; }
+.ns-settings .site { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 4px 0 10px; border-radius: 8px; }
+.ns-settings .site:hover { background: var(--background); }
+.ns-settings .site .host { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.ns-settings .tag { flex: none; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 18px; background: var(--background); color: var(--muted); }
+.ns-settings .tag.off { background: light-dark(#ffe4dc, #3a1f18); color: light-dark(#a33a17, #ff8a66); }
+.ns-settings .remove {
+    appearance: none; border: 0; width: 28px; height: 28px; border-radius: 8px; background: transparent;
+    color: var(--muted); display: grid; place-items: center; cursor: pointer;
+}
+.ns-settings .remove:hover { background: var(--line); color: var(--text); }
+.ns-settings .remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+
+.ns-settings .preview { display: grid; grid-template-columns: 1fr 1fr; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+.ns-settings .preview div { display: flex; flex-direction: column; gap: 6px; padding: 14px; }
+.ns-settings .preview i, .ns-settings .preview b { display: block; height: 6px; border-radius: 3px; }
+.ns-settings .preview i:nth-child(1) { width: 60%; }
+.ns-settings .preview i:nth-child(2) { width: 90%; }
+.ns-settings .preview i:nth-child(3) { width: 75%; }
+.ns-settings .preview b { width: 40%; height: 18px; border-radius: 6px; }
+.ns-settings .before { background: #f7f6f2; }
+.ns-settings .before i:first-child { background: #1d1b22; }
+.ns-settings .before i { background: #b9b6c2; }
+.ns-settings .before b { background: #3b6cf6; }
+.ns-settings .after { background: #16151b; }
+.ns-settings .after i:first-child { background: #e9e6f0; }
+.ns-settings .after i { background: #5d5968; }
+.ns-settings .after b { background: #7e9cff; }
+
+.ns-settings .sliders { display: flex; flex-direction: column; }
+.ns-settings .slider { display: grid; grid-template-columns: 96px 1fr 44px; align-items: center; gap: 12px; height: 36px; cursor: default; }
+.ns-settings .slider span { font-size: 12px; font-weight: 500; }
+.ns-settings .slider input { width: 100%; margin: 0; accent-color: var(--accent); }
+.ns-settings .slider output { text-align: right; color: var(--muted); font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.ns-settings .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0; cursor: pointer; }
+.ns-settings .row strong { display: block; font-size: 13px; font-weight: 500; }
+.ns-settings .row small { font-size: 12px; }
+.ns-settings footer { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ns-settings .quiet {
+    appearance: none; border: 0; height: 32px; padding: 0 12px; border-radius: 8px; background: transparent;
+    font-weight: 600; cursor: pointer;
+}
+.ns-settings .quiet:hover { background: var(--line); }
+.ns-settings > .status { max-width: 820px; margin: -24px auto 24px; padding: 0 4px; }
+.ns-settings.single #scope-group, .ns-settings.single .look { display: none; }
+.ns-settings.single main { grid-template-columns: 1fr; max-width: 420px; }
+
+@media (max-width: 720px) {
+    .ns-settings main { grid-template-columns: 1fr; margin: 16px; }
+    .ns-settings .look { border-left: 0; border-top: 1px solid var(--line); }
+}

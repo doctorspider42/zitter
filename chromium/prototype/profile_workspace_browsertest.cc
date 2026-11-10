@@ -76,6 +76,8 @@
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
 #include "chromium/prototype/night_shift.h"
+#include "extensions/browser/api/storage/storage_area_namespace.h"
+#include "extensions/browser/api/storage/storage_frontend.h"
 #include "chrome/common/chrome_paths.h"
 #include "components/download/public/common/download_item_impl.h"
 #include "components/sessions/content/session_tab_helper.h"
@@ -1035,21 +1037,6 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraft
   panel->TypeForTesting(u"Keep my draft");
   const auto before=panel->sessions_for_testing();
   auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
-  bar->ToggleAssistantPanel();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
-  const auto output=base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-assistant-render-dir");
-  if(!output.empty()) {
-    base::ScopedAllowBlockingForTesting allow;ASSERT_TRUE(base::CreateDirectory(output));
-    auto* widget=bar->assistant_menu_for_testing();
-    widget->LayoutRootViewIfNecessary();
-    auto* menu=widget->widget_delegate()->GetContentsView();ASSERT_EQ(menu->children().size(),9u);
-    const bool had_layer=menu->layer()!=nullptr;
-    if(!had_layer){menu->SetPaintToLayer();menu->layer()->SetFillsBoundsOpaquely(false);}
-    const auto saved=menu->bounds();menu->SetBoundsRect(gfx::Rect(menu->size()));
-    const auto png=gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(menu),false);
-    menu->SetBoundsRect(saved);if(!had_layer)menu->DestroyLayer();ASSERT_TRUE(png);
-    ASSERT_TRUE(base::WriteFile(output.AppendASCII("assistant-toolbar-actions.png"),*png));
-  }
   bar->RunAssistantCommandForTesting(0);
   EXPECT_EQ(panel->sessions_for_testing(),before+1);
   EXPECT_FALSE(panel->busy());
@@ -1060,15 +1047,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraft
   EXPECT_EQ(panel->chips_for_testing().front().ref,"@current");
   panel->SelectSessionForTesting(before-1);
   EXPECT_EQ(panel->draft_for_testing(),u"Keep my draft");
-  bar->ToggleAssistantPanel();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
   bar->RunAssistantCommandForTesting(6);
   ASSERT_TRUE(window_->shell()->general_widget());
   EXPECT_TRUE(window_->shell()->general_widget()->IsVisible());
   EXPECT_EQ(window_->shell()->preference_category_for_testing(),10u);
   auto settings=window_->assistant_settings();settings.enabled=false;window_->SetAssistantSettings(settings);
   EXPECT_FALSE(bar->assistant_button_for_testing());
-  EXPECT_FALSE(bar->assistant_menu_for_testing());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPanelIsOptionalAndPinnable) {
@@ -1309,12 +1293,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSchedulesTasksAddsSea
   EXPECT_EQ(next.hour,9);EXPECT_EQ(next.minute,15);
   AssistantTask none; none.kind=1; none.days=0;
   EXPECT_TRUE(AssistantTaskNextRun(none,thursday_nine).is_null());
-  // The toolbar opens local quick actions without creating an assistant session.
   auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
   window_->AssistantStateChanged();
   ASSERT_TRUE(base::test::RunUntil([&]{return bar->assistant_button_for_testing()!=nullptr;}));
-  static_cast<views::Button*>(bar->assistant_button_for_testing())->button_controller()->NotifyClick();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
   EXPECT_FALSE(window_->assistant());
   bar->RunAssistantCommandForTesting(5);
   ASSERT_TRUE(window_->assistant());EXPECT_TRUE(window_->assistant()->GetVisible());
@@ -1434,7 +1415,36 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantBackgroundPageSharesP
   EXPECT_FALSE(window_->assistant_background_for_testing("moved"));
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
+// Ctrl+Tab walks tabs in the order they were used, not their sidebar order;
+// the tab shown when Ctrl goes up becomes the most recent one.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NextTabFollowsRecentUse) {
+  ASSERT_TRUE(window_->Select("work"));
+  std::vector<content::WebContents*> pages{window_->contents("work")};
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+    pages.push_back(window_->contents("work"));
+  }
+  ASSERT_EQ(4u, window_->tab_count("work"));
+  // Use order: 0, then 3, then 1 (sidebar order stays 0 1 2 3).
+  for (size_t index : {0u, 3u, 1u}) { window_->SelectTab(index); EXPECT_EQ(pages[index], window_->contents("work")); }
+  auto settle = [] {
+    base::RunLoop loop;  // Ctrl is up in tests: the cycle ends on its next check.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, loop.QuitClosure(), base::Milliseconds(200));
+    loop.Run();
+  };
+  ASSERT_TRUE(window_->RunShortcut("next_tab"));
+  EXPECT_EQ(pages[3], window_->contents("work"));
+  settle();
+  // 3 is now the most recent, so the next press goes back to 1.
+  ASSERT_TRUE(window_->RunShortcut("next_tab"));
+  EXPECT_EQ(pages[1], window_->contents("work"));
+  settle();
+  ASSERT_TRUE(window_->RunShortcut("previous_tab"));
+  // Backwards from 1: the least recently used tab, never shown in this run.
+  EXPECT_EQ(pages[2], window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantHideAndResize) {
   window_->ShowAssistant();auto* panel=window_->assistant();
   panel->Collapse();EXPECT_FALSE(panel->GetVisible());
   panel->Show();panel->SetPinned(true);panel->Collapse();EXPECT_TRUE(panel->GetVisible());
@@ -1457,41 +1467,37 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
   panel->Show();panel->RevokeAccess();EXPECT_FALSE(panel->busy());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantEdgeOpensBeforeFirstConversation) {
-  base::test::ScopedRunLoopTimeout timeout(FROM_HERE,base::Seconds(8));
-  EnableNativeUIControls();
-  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantOpensOnlyFromItsButton) {
   ASSERT_FALSE(window_->assistant());
   window_->widget()->LayoutRootViewIfNecessary();
-  auto* shell=window_->shell();EXPECT_TRUE(shell->assistant_edge_visible_for_testing());
+  auto* shell=window_->shell();
+  // The right edge is the page's scrollbar, not a trigger: no strip sits there.
+  EXPECT_FALSE(shell->assistant_edge_visible_for_testing());
   const auto bounds=shell->content_host()->parent()->GetBoundsInScreen();
-  const auto middle=bounds.CenterPoint();
-  auto edge=[&]{const auto current=shell->content_host()->parent()->GetBoundsInScreen();return gfx::Point(current.right()-4,current.CenterPoint().y());};
-  const auto native=window_->widget()->GetNativeWindow();
-  auto move=[&](gfx::Point point){base::test::TestFuture<void> moved;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),native)&&moved.Wait();};
-  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));
-  ASSERT_TRUE(base::test::RunUntil([&]{return window_->assistant()&&window_->assistant()->GetVisible();}));
-  auto* panel=window_->assistant();panel->TypeForTesting(u"Keep the edge draft");
-  ASSERT_TRUE(move(middle));panel->Collapse();window_->widget()->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(shell->assistant_edge_visible_for_testing());
-  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));
-  EXPECT_EQ(display::Screen::Get()->GetCursorScreenPoint(),edge());
-  EXPECT_TRUE(window_->widget()->IsActive());
-  ASSERT_TRUE(base::test::RunUntil([&]{return panel->GetVisible();}));
-  EXPECT_EQ(panel->draft_for_testing(),u"Keep the edge draft");
-  auto settings=window_->assistant_settings();settings.enabled=false;window_->SetAssistantSettings(settings);
-  window_->widget()->LayoutRootViewIfNecessary();EXPECT_FALSE(shell->assistant_edge_visible_for_testing());
-  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));EXPECT_FALSE(panel->GetVisible());
-  ASSERT_TRUE(move(middle));
+  auto* root=shell->content_host()->parent();
+  gfx::Point edge(bounds.width()-4,bounds.height()/2);
+  auto* hit=root->GetEventHandlerForPoint(edge);
+  EXPECT_FALSE(hit&&std::string_view(hit->GetClassName())=="EdgeView");
+  auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
+  window_->AssistantStateChanged();
+  ASSERT_TRUE(base::test::RunUntil([&]{return bar->assistant_button_for_testing()!=nullptr;}));
+  auto click=[&]{static_cast<views::Button*>(bar->assistant_button_for_testing())->button_controller()->NotifyClick();};
+  click();
+  ASSERT_TRUE(window_->assistant());auto* panel=window_->assistant();EXPECT_TRUE(panel->GetVisible());
+  panel->TypeForTesting(u"Keep the draft");
+  // The button closes and reopens it; Esc closes it.
+  click();EXPECT_FALSE(panel->GetVisible());
+  click();EXPECT_TRUE(panel->GetVisible());EXPECT_EQ(panel->draft_for_testing(),u"Keep the draft");
+  EXPECT_TRUE(panel->HandleEscape());EXPECT_FALSE(panel->GetVisible());
+  // A pinned panel also goes away from the button.
+  click();panel->SetPinned(true);click();EXPECT_FALSE(panel->GetVisible());
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantToolbarStartsFreshConversationAndPreservesDraft) {
   window_->ShowAssistant();auto* panel=window_->assistant();
   ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
   panel->SeedExchangeForTesting("Earlier conversation","Earlier answer");
   panel->TypeForTesting(u"Unsent message");const auto initial=panel->sessions_for_testing();
-  auto* bar=window_->extensions_bar();bar->ToggleAssistantPanel();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
-  EXPECT_TRUE(FindButton(bar->assistant_menu_for_testing()->widget_delegate()->GetContentsView(),u"Nowa rozmowa"));
+  auto* bar=window_->extensions_bar();
   bar->RunAssistantCommandForTesting(5);
   EXPECT_TRUE(panel->GetVisible());EXPECT_EQ(panel->sessions_for_testing(),initial+1);
   EXPECT_TRUE(panel->draft_for_testing().empty());EXPECT_TRUE(panel->chips_for_testing().empty());EXPECT_FALSE(panel->busy());
@@ -1527,7 +1533,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideTracksPointer
   panel->OnResize(20,true);
   ASSERT_TRUE(base::test::RunUntil([&]{return !panel->GetVisible();}));
   panel->Show();EXPECT_EQ(panel->draft_for_testing(),u"Keep this draft after pointer departure");
-  // Opening by a command must also watch the pointer, even before entry.
+  // Opening from the button or a command also watches the pointer once it moves.
   const auto farther=gfx::Point(outside.x()-20,outside.y());ASSERT_TRUE(move(farther));
   ASSERT_TRUE(base::test::RunUntil([&]{return !panel->GetVisible();}));
 }
@@ -12974,6 +12980,61 @@ class NightShiftBrowserTest : public ZitterProfilesBrowserTest {
     ZitterProfilesBrowserTest::SetUpOnMainThread();
   }
 };
+
+// Design: Night Shift · ustawienia. One switch for the app reaches every
+// profile, and the default look lands in each profile's extension storage.
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, SettingsReachEveryProfile) {
+  ASSERT_TRUE(window_->Select("work"));
+  const auto* extension = extensions::ExtensionRegistry::Get(work_)
+                              ->enabled_extensions().GetByID(kNightShiftId);
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(window_->OpenExtensionPage(work_, extension->GetResourceURL("settings.html")));
+  auto* settings = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(settings));
+  auto stored = [&](Profile* profile) {
+    base::test::TestFuture<extensions::StorageFrontend::GetResult> result;
+    const auto* own = extensions::ExtensionRegistry::Get(profile)->enabled_extensions().GetByID(kNightShiftId);
+    if (!own) return std::string("missing");
+    extensions::StorageFrontend::Get(profile)->GetValues(base::WrapRefCounted(own),
+        extensions::StorageAreaNamespace::kLocal, std::vector<std::string>{"enabled", "defaults"}, result.GetCallback());
+    if (!result.Get().data) return std::string("unreadable");
+    std::string json;
+    base::JSONWriter::Write(*result.Get().data, &json);
+    return json;
+  };
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(window_->Select("work"));
+  // The page reports a change through its fragment, as its controls do.
+  ASSERT_TRUE(content::ExecJs(settings, R"(
+      history.replaceState(null, '', '#apply=' + encodeURIComponent(JSON.stringify(
+          {enabled: true, all_profiles: true, profiles: [], brightness: 90, contrast: 110, sepia: 20,
+           grayscale: 0, force: false, revision: 1})));
+  )"));
+  for (auto* profile : {work_.get(), personal_.get()}) {
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      const auto json = stored(profile);
+      return json.find("\"enabled\":true") != std::string::npos && json.find("\"sepia\":20") != std::string::npos;
+    })) << stored(profile);
+  }
+  // Selected profiles: the others switch off.
+  ASSERT_TRUE(content::ExecJs(settings, R"(
+      history.replaceState(null, '', '#apply=' + encodeURIComponent(JSON.stringify(
+          {enabled: true, all_profiles: false, profiles: ['work-profile'], revision: 2})));
+  )"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored(personal_).find("\"enabled\":false") != std::string::npos; }));
+  EXPECT_NE(stored(work_).find("\"enabled\":true"), std::string::npos);
+  // An ordinary page cannot reach the setting through its own fragment.
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, R"(
+      history.replaceState(null, '', '#apply=' + encodeURIComponent(JSON.stringify({enabled: false})));
+  )"));
+  base::RunLoop settle;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(300));
+  settle.Run();
+  EXPECT_NE(stored(work_).find("\"enabled\":true"), std::string::npos);
+}
 
 IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
   ASSERT_TRUE(window_->Select("work"));

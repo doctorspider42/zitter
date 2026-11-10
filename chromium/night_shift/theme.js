@@ -67,7 +67,7 @@
     }
 
     function render() {
-        const useTheme = current?.enabled && (current.settings.mode === "on" || !darkDetected);
+        const useTheme = current?.enabled && (current.settings.force || !darkDetected);
         if (!useTheme) {
             if (engine.isEnabled()) {
                 engine.disable();
@@ -75,12 +75,12 @@
             appliedTheme = "";
             return;
         }
-        const {brightness, contrast, repair: savedRepair} = current.settings;
+        const {brightness, contrast, sepia = 0, grayscale = 0, repair: savedRepair} = current.settings;
         const fixes = current.fixes ?? {};
         const css = [fixes.css, isMainFrame ? repairCss(preview ?? savedRepair) : ""].filter(Boolean).join("\n");
-        const signature = JSON.stringify([brightness, contrast, fixes, css]);
+        const signature = JSON.stringify([brightness, contrast, sepia, grayscale, fixes, css]);
         if (signature !== appliedTheme) {
-            engine.enable({brightness, contrast, immediateModify: true}, {...fixes, css});
+            engine.enable({brightness, contrast, sepia, grayscale, immediateModify: true}, {...fixes, css});
             appliedTheme = signature;
         }
     }
@@ -126,7 +126,7 @@
             dispose();
             return;
         }
-        const detect = state.enabled && state.settings.mode === "auto" && !state.dark;
+        const detect = state.enabled && state.settings.mode === "auto" && !state.settings.force && !state.dark;
         const previouslyDetected = Boolean(nativeObservation);
         current = state;
         if (!detect) {
@@ -154,7 +154,7 @@
     }
 
     function onSettingsChanged(changes, area) {
-        if (area !== "local" || (!changes.enabled && (!current?.key || !changes[current.key]))) {
+        if (area !== "local" || (!changes.enabled && !changes.defaults && (!current?.key || !changes[current.key]))) {
             return;
         }
         if (changes.enabled?.newValue === false) {
