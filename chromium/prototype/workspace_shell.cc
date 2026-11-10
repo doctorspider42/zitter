@@ -5935,6 +5935,12 @@ views::View* WorkspaceShell::SetHeaderTrailing(std::unique_ptr<views::View> view
 }
 views::View* WorkspaceShell::header_action_for_testing(size_t index) const{return header_view_&&index<header_view_->children().size()?header_view_->children()[index].get():nullptr;}
 views::View* WorkspaceShell::sidebar_grip_for_testing() const{return sidebar_root_?static_cast<SidebarView*>(sidebar_root_.get())->grip.get():nullptr;}
+bool WorkspaceShell::pinned_divider_last_for_testing() const{
+  const auto found=tab_lists_.find(state_.workspace_id);
+  if(found==tab_lists_.end()||!found->second.pins_root||found->second.pins_root->children().size()!=1)return false;
+  const auto& rows=found->second.pins_root->children().front()->children();
+  return !rows.empty()&&views::AsViewClass<SidebarDivider>(rows.back().get())!=nullptr;
+}
 views::View* WorkspaceShell::split_divider_for_testing() const{return content_host_?static_cast<PaneHost*>(content_host_.get())->divider(0):nullptr;}
 bool WorkspaceShell::metal_sidebar_grip_visible() const{return metal_sidebar_grip_&&metal_sidebar_grip_->visible();}
 void WorkspaceShell::HideMetalSidebarGrip() {
@@ -6358,9 +6364,11 @@ void WorkspaceShell::WarmNextSidebar() {
     cache.tabs_root->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
     auto contents = std::make_unique<views::View>();
     contents->SetLayoutManager(CreateSidebarColumnLayout(kSidebarRowGap));
-    Label(contents.get(), T(u"PRZYPIĘTE"), kMuted, Font(-2));
+    // Same shape as RebuildTabs: switching to this workspace keeps this tree.
+    auto* heading = Label(contents.get(), T(u"PRZYPIĘTE"), kMuted, Font(-2));
+    heading->SetVisible(std::ranges::any_of(pins, [](const auto& pin) { return !pin.profile_pin; }));
     AppendPinnedItems(contents.get(), pins, cache, workspace);
-    Spacer(contents.get(), 8);
+    contents->AddChildView(std::make_unique<SidebarDivider>());
     cache.pins_root->AddChildView(std::move(contents));
     cache.pins = std::move(pins); ++pinned_list_build_count_;
     ConfigureSidebarContextMenus(root.get());

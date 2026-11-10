@@ -286,7 +286,10 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   EXPECT_TRUE(access()->prompt_offer().pending);EXPECT_FALSE(access()->prompt_offer().folded);EXPECT_EQ(3,access()->prompt_offer().kind);
   {
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_scene_contains_for_testing("Użyć kamery?")&&access()->permission_scene_contains_for_testing("Tym razem")&&access()->permission_scene_contains_for_testing("Zawsze tutaj");}));
-    auto check=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};check(check,delegate->GetContentsView());
+    auto check=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)EXPECT_FALSE(views::AsViewClass<views::Label>(view));
+      // Every decision shows its whole label.
+      if(node.role==ax::mojom::Role::kButton&&view->GetVisible())EXPECT_GE(view->width(),view->GetPreferredSize().width())<<base::UTF16ToUTF8(view->GetViewAccessibility().GetCachedName());
+      for(const auto& child:view->children())self(self,child.get());};widget->LayoutRootViewIfNecessary();check(check,delegate->GetContentsView());
   }
   // The camera card waits for an answer; folding hides it and keeps the request.
   stage="fold and reopen";access()->FoldPromptForTesting();EXPECT_FALSE(widget->IsVisible());EXPECT_TRUE(access()->prompt_offer().folded);EXPECT_FALSE(PageMediaAccess::IsCapturing(page()));

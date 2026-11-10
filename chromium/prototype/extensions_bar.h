@@ -120,6 +120,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   views::Widget* menu_for_testing() const;
   views::Widget* popup_for_testing() const;
   content::WebContents* popup_contents_for_testing() const;
+  // The popup card shows a spinner until its page first paints.
+  bool popup_loading_for_testing() const;
   bool tremor_for_testing() const { return tremor_count_ > 0; }
   views::View* fingerprint_button_for_testing() const { return fingerprint_button_; }
   void SetAssistantState(AssistantState state);
@@ -153,6 +155,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void DestroyMenu();
   void ScheduleMenuRebuild();
   void ClosePopup();
+  // The popup's card appeared: its button stops spinning.
+  void PopupRevealed();
   void DestroyPopup();
   void Rebuild();
   void RefreshButtons();

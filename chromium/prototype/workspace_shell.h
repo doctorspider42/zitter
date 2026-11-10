@@ -755,6 +755,8 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* new_profile_import_for_testing() const{return new_profile_import_;}
   views::View* workspace_button(std::string_view id) const;
   size_t pinned_list_build_count() const { return pinned_list_build_count_; }
+  // The active workspace's pinned list ends with the line before its tabs.
+  bool pinned_divider_last_for_testing() const;
   size_t sidebar_context_visit_count() const { return sidebar_context_visit_count_; }
   size_t pin_visibility_update_count() const { return pin_visibility_update_count_; }
   views::View* tab_scroll_view() const { return tab_scroll_?tab_scroll_->view():nullptr; }

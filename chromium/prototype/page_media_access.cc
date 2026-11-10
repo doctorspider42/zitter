@@ -299,7 +299,10 @@ class MediaPermissionPrompt final : public permissions::PermissionPrompt {
       SetSidebarPanelLayout(row,false,gfx::Insets(),0,filler,true);
       dialog=CreateSceneModalDialog(std::move(body),false,false);
       dialog->SetTitle(T(kQuestions[static_cast<size_t>(offer_.kind)]));dialog->SetShowTitle(false);dialog->SetShowCloseButton(false);
-      if(auto* bubble=dialog->AsBubbleDialogDelegate()){bubble->set_fixed_width(300);bubble->set_margins(gfx::Insets::VH(12,0));}
+      // 300 px by design, wider when the decisions' labels need it (English
+      // "Always here" does): a cut-off button label hides what it does.
+      const int fitted=std::max(300,group->GetPreferredSize().width()+24);
+      if(auto* bubble=dialog->AsBubbleDialogDelegate()){bubble->set_fixed_width(fitted);bubble->set_margins(gfx::Insets::VH(12,0));}
       // Design R1: the card's content sits 12 px in from its edge.
       SetSidebarPanelLayout(dialog->GetContentsView(),true,gfx::Insets::VH(0,12),0);
       dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));

@@ -210,12 +210,29 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
 });
 
+// The first state comes straight from storage: asking the worker would also
+// wait for it to start.
+async function localSettings(id) {
+    const {siteKey, siteSettings} = globalThis.NightShiftPolicy;
+    const tab = await chrome.tabs.get(id);
+    const key = siteKey(tab.url);
+    const values = await chrome.storage.local.get(key ? ["enabled", "defaults", key] : ["enabled", "defaults"]);
+    return {
+        enabled: values.enabled === true, key, url: tab.url,
+        settings: siteSettings(values[key], values.defaults), stored: values[key] ?? {},
+        defaults: values.defaults,
+    };
+}
+
 try {
     tabId = params.has("tab") ? Number(params.get("tab")) :
         (await chrome.tabs.query({active: true, currentWindow: true}))[0]?.id;
-    state = await request({type: "tab-settings", tabId});
+    state = await localSettings(tabId);
     render();
-    await refreshDraft();
+    refreshDraft().catch(() => { get("message").textContent = copy.stale; });
 } catch {
     get("message").textContent = copy.failed;
+} finally {
+    // Until now the page has no size, so Zitter keeps its card hidden.
+    document.body.classList.add("ready");
 }

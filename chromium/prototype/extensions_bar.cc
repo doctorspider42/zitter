@@ -396,6 +396,13 @@ class ExtensionsBar::ActionButton final : public views::Button,
   const std::string& badge() const { return badge_; }
   uint32_t icon_hash() const { return PixelHash(enabled_ ? icon_ : Grey(icon_)); }
   void SetPopupOpen(bool open) { if (popup_open_ != open) { popup_open_ = open; SchedulePaint(); } }
+  // Its popup is starting: the icon spins until the card appears.
+  void SetPopupLoading(bool loading) {
+    if (loading == spin_.IsRunning()) return;
+    if (loading) spin_.Start(FROM_HERE, base::Milliseconds(33), base::BindRepeating(&ActionButton::SchedulePaint, base::Unretained(this)));
+    else spin_.Stop();
+    SchedulePaint();
+  }
   bool popup_open() const { return popup_open_; }
 
   // Reads the action's state for the shown tab: icon, title, badge, enabled.
@@ -435,6 +442,14 @@ class ExtensionsBar::ActionButton final : public views::Button,
       canvas->DrawImageInt(image, 0, 0, image.width(), image.height(), target.x(), target.y(),
                            target.width(), target.height(), true);
     if (chrome_ && !badge_.empty()) PaintBadge(canvas);
+    if (chrome_ && spin_.IsRunning()) {
+      const gfx::RectF box(GetLocalBounds());
+      const double t = gfx::Animation::PrefersReducedMotion() ? 0.2 : base::TimeTicks::Now().since_origin().InSecondsF();
+      SkPathBuilder arc; arc.addArc(SkRect::MakeXYWH(box.x() + 3, box.y() + 3, box.width() - 6, box.height() - 6), std::fmod(t * 360.0, 360.0), 100);
+      cc::PaintFlags flags; flags.setAntiAlias(true); flags.setStyle(cc::PaintFlags::kStroke_Style); flags.setStrokeWidth(2);
+      flags.setStrokeCap(cc::PaintFlags::kRound_Cap); flags.setColor(bar_->palette().accent);
+      canvas->DrawPath(arc.detach(), flags);
+    }
   }
 
   // views::ContextMenuController:
@@ -471,6 +486,7 @@ class ExtensionsBar::ActionButton final : public views::Button,
   std::string badge_;
   bool enabled_ = true;
   bool popup_open_ = false;
+  base::RepeatingTimer spin_;
 };
 BEGIN_METADATA(ExtensionsBar, ActionButton)
 END_METADATA
@@ -1056,10 +1072,35 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
   std::vector<Row> rows_;
 };
 
+// Holds the extension view and reports its auto-size: the card follows the
+// page, also after it has loaded.
+class PopupContents final : public views::View {
+  METADATA_HEADER(PopupContents, views::View)
+ public:
+  PopupContents(std::unique_ptr<views::View> view, base::RepeatingClosure resized) : resized_(std::move(resized)) {
+    SetLayoutManager(std::make_unique<views::FillLayout>());
+    view_ = AddChildView(std::move(view));
+  }
+  void ChildPreferredSizeChanged(views::View*) override { PreferredSizeChanged(); resized_.Run(); }
+  // The page has measured itself: more than the 25 px minimum it starts with.
+  bool Sized() const {
+    const auto size = view_->GetPreferredSize();
+    return size.width() > kPopupMin.width() && size.height() > kPopupMin.height();
+  }
+
+ private:
+  base::RepeatingClosure resized_;
+  raw_ptr<views::View> view_;
+};
+BEGIN_METADATA(PopupContents)
+END_METADATA
+
 // An extension's popup under its icon: the extension page in a `bg-raised`
-// card, `radius-md`, `shadow-float`. It shows immediately while loading and
-// closes on window.close(), on Escape, and when the window is used again. The
-// bar owns this delegate and its widget.
+// card, `radius-md`, `shadow-float`. The card appears once the page has its
+// size, so it never shows empty or at 25 px; meanwhile the icon spins. On the
+// first open that takes about a second, while the extension's page starts.
+// It closes on window.close(), on Escape, and when the window is used again.
+// The bar owns this delegate and its widget.
 class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
                                    public ExtensionViewViews::Container,
                                    public content::WebContentsObserver {
@@ -1080,7 +1121,9 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
     view_ = view.get();
     view_->SetContainer(this);
     view_->Init();
-    SetContentsView(std::move(view));
+    auto contents = std::make_unique<PopupContents>(std::move(view), base::BindRepeating(&Popup::Resized, base::Unretained(this)));
+    contents_ = contents.get();
+    SetContentsView(std::move(contents));
     SetInitiallyFocusedView(view_);
     // window.close() from the popup page.
     host_->SetCloseHandler(base::BindOnce(&Popup::HostClosed, base::Unretained(this)));
@@ -1096,28 +1139,40 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
   // Called once the bubble widget exists.
   void Attached() {
     // Attaching a native holder hides Chromium popup WebViews until onload.
-    // Reveal after attachment so the renderer can paint and auto-size while
-    // remote resources are pending.
+    // Keep it visible so the page auto-sizes while remote resources load:
+    // waiting for window.onload makes password-manager actions feel stuck.
     view_->SetVisible(true);
     // Escape belongs to the extension page (ExtensionViewHost closes on it).
     if (auto* client = GetDialogClientView()) client->RemoveAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
     if (auto* frame = GetBubbleFrameView()) view_->holder()->SetNativeViewCornerRadii(frame->GetRoundedCorners());
-    // Render the popup immediately. Waiting for window.onload also waits for
-    // remote resources and makes password-manager actions appear unresponsive.
-    Reveal();
+    if (contents_->Sized()) Reveal();
+    else reveal_fallback_.Start(FROM_HERE, base::Seconds(3), base::BindOnce(&Popup::Reveal, base::Unretained(this)));
   }
   gfx::Size GetMinBounds() override { return kPopupMin; }
   gfx::Size GetMaxBounds() override { return kPopupMax; }
+  // A page that fills itself from script after onload (Night Shift) has no
+  // size until then; the fallback still shows a page that never sizes.
   void DocumentOnLoadCompletedInPrimaryMainFrame() override {
     Observe(nullptr);
-    if (GetWidget() && !GetWidget()->IsClosed()) SizeToContents();
+    Resized();
   }
+  bool loading() const { return !revealed_; }
   void Close() { if (GetWidget() && !GetWidget()->IsClosed()) GetWidget()->Close(); }
 
  private:
+  void Resized() {
+    if (!GetWidget() || GetWidget()->IsClosed()) return;
+    if (!revealed_) { if (contents_->Sized()) Reveal(); return; }
+    SizeToContents();
+  }
   void Reveal() {
+    reveal_fallback_.Stop();
+    if (revealed_ || !GetWidget() || GetWidget()->IsClosed()) return;
+    revealed_ = true;
+    SizeToContents();
     GetWidget()->Show();
     if (host_) host_->host_contents()->Focus();
+    bar_->PopupRevealed();
   }
   // Using the window again closes the popup, as in Chrome.
   void AnchorActivated() { if (GetWidget() && GetWidget()->IsVisible()) Close(); }
@@ -1128,6 +1183,9 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
   raw_ptr<ExtensionsBar> bar_;
   std::unique_ptr<extensions::ExtensionViewHost> host_;
   raw_ptr<ExtensionViewViews> view_ = nullptr;
+  raw_ptr<PopupContents> contents_ = nullptr;
+  bool revealed_ = false;
+  base::OneShotTimer reveal_fallback_;
   std::unique_ptr<ActivationWatcher> anchor_watcher_;
 };
 
@@ -1388,7 +1446,10 @@ void ExtensionsBar::Rebuild() {
     auto* action = extension ? extensions::ExtensionActionManager::Get(profile_)->GetExtensionAction(*extension) : nullptr;
     if (!action) continue;
     buttons_.push_back(AddChildView(std::make_unique<ActionButton>(this, *extension, *action, kIcon, true)));
-    if (id == popup_id_) buttons_.back()->SetPopupOpen(true);
+    if (id == popup_id_) {
+      buttons_.back()->SetPopupOpen(true);
+      buttons_.back()->SetPopupLoading(popup_ && popup_->loading());
+    }
     ++shown;
   }
   if (!buttons_.empty() || fingerprint_button_ || shield_button_ || assistant_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
@@ -1512,7 +1573,10 @@ void ExtensionsBar::ShowPopup(const Extension& extension, views::View* anchor) {
             base::BindOnce(&ExtensionsBar::DestroyPopup, bar));
       }, weak_factory_.GetWeakPtr()));
   popup_id_ = extension.id();
-  for (auto& button : buttons_) button->SetPopupOpen(button->id() == popup_id_);
+  for (auto& button : buttons_) {
+    button->SetPopupOpen(button->id() == popup_id_);
+    button->SetPopupLoading(button->id() == popup_id_);
+  }
   popup_->Attached();
 }
 
@@ -1525,7 +1589,7 @@ void ExtensionsBar::DestroyPopup() {
   popup_widget_.reset();
   popup_.reset();
   popup_id_.clear();
-  for (auto& button : buttons_) button->SetPopupOpen(false);
+  for (auto& button : buttons_) { button->SetPopupOpen(false); button->SetPopupLoading(false); }
 }
 
 void ExtensionsBar::ShowActionMenu(const std::string& id, views::View* source, ui::mojom::MenuSourceType source_type) {
@@ -1772,6 +1836,10 @@ views::View* ExtensionsBar::action_button_for_testing(std::string_view id) const
 }
 views::Widget* ExtensionsBar::menu_for_testing() const { return menu_widget_.get(); }
 views::Widget* ExtensionsBar::popup_for_testing() const { return popup_widget_.get(); }
+bool ExtensionsBar::popup_loading_for_testing() const { return popup_ && popup_->loading(); }
+void ExtensionsBar::PopupRevealed() {
+  for (auto& button : buttons_) button->SetPopupLoading(false);
+}
 content::WebContents* ExtensionsBar::popup_contents_for_testing() const {
   return popup_ ? popup_->contents() : nullptr;
 }

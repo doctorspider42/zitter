@@ -8395,6 +8395,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceSwitchCostWithImporte
   ASSERT_TRUE(window_->Select("personal"));
   const auto cold_time = cold.Elapsed();
   ASSERT_EQ(300u, window_->pinned_items("personal").size());
+  // A warmed list keeps the line between pinned rows and open tabs.
+  EXPECT_TRUE(window_->shell()->pinned_divider_last_for_testing());
   const auto builds = window_->shell()->pinned_list_build_count();
   // Warm switches must not revisit the native pin trees, even for menus or
   // visibility bookkeeping. This also covers metadata-only shell updates.
@@ -8446,6 +8448,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceSwitchCostWithTwoLarg
   ASSERT_TRUE(window_->Select("personal"));
   const auto cold_time = cold.Elapsed();
   ASSERT_EQ(300u, window_->pinned_items("personal").size());
+  // A warmed list keeps the line between pinned rows and open tabs.
+  EXPECT_TRUE(window_->shell()->pinned_divider_last_for_testing());
   const auto builds = window_->shell()->pinned_list_build_count();
   // Warm switches must not revisit the native pin trees, even for menus or
   // visibility bookkeeping. This also covers metadata-only shell updates.
@@ -12791,9 +12795,18 @@ scoped_refptr<const extensions::Extension> LoadTestExtension(Profile* profile, c
   extensions::ChromeTestExtensionLoader loader(profile);
   return loader.LoadExtension(path);
 }
+// Chromium appends a second entry when an already pinned action is pinned
+// again; tests state the wanted pin, whatever the extension started with.
+void PinAction(Profile* profile, const std::string& id, bool pinned) {
+  auto* model = ToolbarActionsModel::Get(profile);
+  if (model->IsActionPinned(id) != pinned) model->SetActionVisibility(id, pinned);
+}
+// Installed extensions on the bar. Night Shift, built in, pins itself once in
+// every profile and is checked on its own.
 std::vector<std::string> ShownActions(ExtensionsBar* bar) {
   std::vector<std::string> ids;
-  for (const auto& action : bar->visible_actions_for_testing()) ids.push_back(action.id);
+  for (const auto& action : bar->visible_actions_for_testing())
+    if (action.id != kNightShiftId) ids.push_back(action.id);
   return ids;
 }
 std::optional<ExtensionsBar::ActionSnapshot> Shown(ExtensionsBar* bar, const std::string& id) {
@@ -12818,10 +12831,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTh
   // Registries are per profile: neither sees the other's extension.
   EXPECT_FALSE(extensions::ExtensionRegistry::Get(work_)->enabled_extensions().Contains(personal_extension->id()));
   EXPECT_FALSE(extensions::ExtensionRegistry::Get(personal_)->enabled_extensions().Contains(work_extension->id()));
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(work_extension->id(), true);
-  ToolbarActionsModel::Get(personal_)->SetActionVisibility(personal_extension->id(), true);
+  PinAction(work_, work_extension->id(), true);
+  PinAction(personal_, personal_extension->id(), true);
   // New extensions start pinned; this one lives only in the menu.
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(unpinned->id(), false);
+  PinAction(work_, unpinned->id(), false);
 
   auto* bar = window_->extensions_bar();
   ASSERT_TRUE(bar);
@@ -12863,7 +12876,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTh
   EXPECT_EQ("", content::EvalJs(window_->contents("personal"), "document.documentElement.dataset.WorkTool || ''"));
 
   // Pinning from the menu changes only this profile.
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(unpinned->id(), true);
+  PinAction(work_, unpinned->id(), true);
   EXPECT_EQ(std::vector<std::string>{personal_extension->id()}, ShownActions(bar));
   ASSERT_TRUE(window_->Select("work"));
   ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar).size() == 2; }));
@@ -12881,7 +12894,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionIconsFollowTheE
   }
   const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Vault", SK_ColorBLUE, false));
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  PinAction(work_, extension->id(), true);
   auto* bar = window_->extensions_bar();
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
@@ -12934,8 +12947,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
   const auto clicker = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Clicker", SK_ColorRED, false,
       "chrome.action.onClicked.addListener(tab => chrome.action.setBadgeText({text: tab && tab.id > 0 ? 'ok' : 'no'}));"));
   ASSERT_TRUE(popup && clicker);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(popup->id(), true);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(clicker->id(), true);
+  PinAction(work_, popup->id(), true);
+  PinAction(work_, clicker->id(), true);
   auto* bar = window_->extensions_bar();
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
@@ -12946,6 +12959,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
   auto* contents = bar->popup_contents_for_testing();
   ASSERT_TRUE(contents);
   ASSERT_TRUE(content::WaitForLoadStop(contents));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_loading_for_testing(); }));
   EXPECT_EQ(popup->GetResourceURL("popup.html"), contents->GetLastCommittedURL());
   EXPECT_TRUE(Shown(bar, popup->id())->popup_open);
   // Anchored under its icon, right edges together.
@@ -13034,6 +13048,34 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, SettingsReachEveryProfile) {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(300));
   settle.Run();
   EXPECT_NE(stored(work_).find("\"enabled\":true"), std::string::npos);
+}
+
+// The first open waits ~1 s for the extension's page: the moon turns a
+// spinner meanwhile, and the card appears at the page's size, never at the
+// 25 px minimum, then follows it.
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, PopupKeepsItsSizeAfterLoading) {
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  auto* bar = window_->extensions_bar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == work_.get(); }));
+  bar->RunAction(kNightShiftId);
+  // Until the page has a size the card stays hidden and the button spins.
+  if (!bar->popup_for_testing()->IsVisible()) EXPECT_TRUE(bar->popup_loading_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible(); }));
+  EXPECT_FALSE(bar->popup_loading_for_testing());
+  // It appears filled in: the site and its state, not the bare page.
+  EXPECT_EQ(true, content::EvalJs(bar->popup_contents_for_testing(), "document.body.classList.contains('ready')"));
+  EXPECT_NE("", content::EvalJs(bar->popup_contents_for_testing(), "document.getElementById('site-state').textContent"));
+  auto size = [&] { return bar->popup_for_testing()->GetClientAreaBoundsInScreen().size(); };
+  EXPECT_GE(size().width(), 200);
+  EXPECT_GE(size().height(), 100);
+  ASSERT_TRUE(content::WaitForLoadStop(bar->popup_contents_for_testing()));
+  base::RunLoop settle;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(500));
+  settle.Run();
+  ASSERT_TRUE(bar->popup_for_testing() && bar->popup_for_testing()->IsVisible());
+  EXPECT_GE(size().width(), 200);
+  EXPECT_GE(size().height(), 100);
 }
 
 IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
@@ -13246,12 +13288,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPopupVisibleBeforeSlo
   }
   const auto extension = LoadTestExtension(work_, source);
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  PinAction(work_, extension->id(), true);
   auto* bar = window_->extensions_bar();
   bar->RunAction(extension->id());
   slow_image.WaitForRequest();
   ASSERT_TRUE(bar->popup_for_testing());
-  EXPECT_TRUE(bar->popup_for_testing()->IsVisible());
+  // The card appears once the page has its size, not after the slow image.
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing()->IsVisible(); }));
   EXPECT_TRUE(bar->popup_contents_for_testing()->IsLoading());
   EXPECT_TRUE(base::test::RunUntil([&] {
     const auto bounds = bar->popup_for_testing()->GetWindowBoundsInScreen();
@@ -13302,6 +13345,18 @@ views::Button* FindNamedButton(views::View* root, std::u16string_view name) {
     if (auto* found = FindNamedButton(child.get(), name)) return found;
   return nullptr;
 }
+// The named button in the menu row that shows `row`: Night Shift has its own.
+views::Button* FindRowButton(views::View* root, std::u16string_view row, std::u16string_view name) {
+  std::function<views::View*(views::View*)> label = [&](views::View* view) -> views::View* {
+    if (auto* text = views::AsViewClass<views::Label>(view); text && text->GetText() == row) return view;
+    if (view->GetViewAccessibility().GetCachedName() == row) return view;
+    for (const auto& child : view->children()) if (auto* found = label(child.get())) return found;
+    return nullptr;
+  };
+  for (auto* view = label(root); view; view = view->parent())
+    if (auto* button = FindNamedButton(view, name)) return button;
+  return nullptr;
+}
 }  // namespace
 
 #if BUILDFLAG(IS_WIN)
@@ -13313,7 +13368,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionContextMenuStaysBelow
   }
   const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Anchor", SK_ColorBLUE, false));
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  PinAction(work_, extension->id(), true);
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
   auto* bar = window_->extensions_bar();
@@ -13381,7 +13436,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
   }
   const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Pinboard", SK_ColorBLUE, false));
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), false);
+  PinAction(work_, extension->id(), false);
   auto* bar = window_->extensions_bar();
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
@@ -13398,7 +13453,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
   // An unpinned pin shows on hover; the row is hovered when the pointer is on it.
   views::Button* pin = nullptr;
   ASSERT_TRUE(base::test::RunUntil([&] {
-    pin = FindNamedButton(menu, u"Przypnij");
+    pin = FindRowButton(menu, u"Pinboard", u"Przypnij");
     if (!pin) {
       // Reveal it as hovering would.
       std::function<void(views::View*)> reveal = [&](views::View* view) {
@@ -13406,7 +13461,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
         for (const auto& child : view->children()) reveal(child.get());
       };
       reveal(menu);
-      pin = FindNamedButton(menu, u"Przypnij");
+      pin = FindRowButton(menu, u"Pinboard", u"Przypnij");
     }
     return pin != nullptr;
   }));
@@ -13416,7 +13471,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
   // The menu rebuilds after the click; its pin is now "Odepnij" and stays shown.
   views::Button* unpin = nullptr;
   ASSERT_TRUE(base::test::RunUntil([&] {
-    unpin = bar->menu_for_testing() ? FindNamedButton(bar->menu_for_testing()->GetRootView(), u"Odepnij") : nullptr;
+    unpin = bar->menu_for_testing() ? FindRowButton(bar->menu_for_testing()->GetRootView(), u"Pinboard", u"Odepnij") : nullptr;
     return unpin != nullptr;
   }));
   click(unpin);

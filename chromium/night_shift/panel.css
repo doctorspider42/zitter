@@ -11,6 +11,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { width: 326px; margin: 0; }
+/* Zitter shows the card once the page has a size: not before its state is in. */
+body:not(.ready) { display: none; }
 button, input { font: inherit; }
 button, summary, .gear { cursor: pointer; }
 button:focus-visible, summary:focus-visible, a:focus-visible, input:focus-visible {
