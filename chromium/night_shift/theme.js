@@ -19,8 +19,6 @@
     let appliedTheme = "";
     let disposed = false;
     let preview = null;
-    let previewPort = null;
-    const extensionOrigin = chrome.runtime.getURL("");
 
     const stylesheetOrigins = new Set();
     engine.Plugins = {fetch: async ({url, responseType, mimeType}) => {
@@ -171,46 +169,23 @@
     }
 
     function onNavigation() {
-        previewPort?.disconnect();
-        previewPort = null;
         preview = null;
         render();
         refresh();
     }
 
-    function isExtensionPage(sender) {
-        return sender?.id === chrome.runtime.id && sender.url?.startsWith(extensionOrigin);
-    }
-
-    function onMessage(message, sender, respond) {
-        if (isMainFrame && message?.type === "night-shift-review-ready" &&
-            sender.id === chrome.runtime.id && !sender.tab) {
-            respond(Boolean(current?.enabled && engine.isEnabled()));
+    // Zitter's Night Shift panel compares a staged repair: it calls this in
+    // the extension's isolated world, which the page itself cannot reach.
+    // `undefined` only asks whether the document can show a preview; null
+    // goes back to the saved state. Returns whether the preview is possible.
+    function review(proposal) {
+        const ready = isMainFrame && !disposed && Boolean(current?.enabled && engine.isEnabled());
+        if (!ready || proposal === undefined) {
+            return ready;
         }
-    }
-
-    function onConnect(port) {
-        if (!isMainFrame || port.name !== "night-shift-review" || !isExtensionPage(port.sender)) {
-            return;
-        }
-        previewPort?.disconnect();
-        previewPort = port;
-        preview = null;
+        preview = proposal === null ? null : repair(proposal);
         render();
-        port.onMessage.addListener(message => {
-            if (previewPort !== port || !current?.enabled) {
-                return;
-            }
-            preview = repair(message?.proposal);
-            render();
-        });
-        port.onDisconnect.addListener(() => {
-            if (previewPort === port) {
-                previewPort = null;
-                preview = null;
-                render();
-            }
-        });
+        return true;
     }
 
     function dispose() {
@@ -219,16 +194,13 @@
         chrome.storage.onChanged.removeListener(onSettingsChanged);
         window.navigation?.removeEventListener("currententrychange", onNavigation);
         window.removeEventListener("pageshow", onPageShow);
-        chrome.runtime.onMessage.removeListener(onMessage);
-        chrome.runtime.onConnect.removeListener(onConnect);
-        previewPort?.disconnect();
+        delete globalThis.zitterNightShiftReview;
         document.dispatchEvent(new Event("zitter-night-shift-uninstall-proxy"));
         delete globalThis.zitterNightShiftActive;
     }
 
     chrome.storage.onChanged.addListener(onSettingsChanged);
-    chrome.runtime.onMessage.addListener(onMessage);
-    chrome.runtime.onConnect.addListener(onConnect);
+    globalThis.zitterNightShiftReview = review;
     window.navigation?.addEventListener("currententrychange", onNavigation);
     window.addEventListener("pageshow", onPageShow);
     refresh();

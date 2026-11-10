@@ -194,27 +194,25 @@ def check_extension(browser, port):
                    "property": "color", "color": "#eddbff"}],
     }}
     manager.eval("chrome.storage.session.set(" + json.dumps({f"night-shift-draft:{tab_id}": draft}) + ")")
-    panel_url = MANAGER.replace("settings.html", f"panel.html?tab={tab_id}&appearance=dark")
-    panel = browser.tab(panel_url)
-    until(lambda: panel.eval("document.getElementById('review')?.hidden === false"), "the repair review")
+    # Zitter's native panel compares a draft through the isolated world.
+    def review(proposal):
+        return manager.eval(f"chrome.scripting.executeScript({{target:{{tabId:{tab_id}}},"
+                            "func:p=>globalThis.zitterNightShiftReview?.(p),"
+                            f"args:[{json.dumps(proposal)}]}}).then(([frame])=>frame.result)")
+
+    assert message(type="get-review", tabId=tab_id)["proposal"]["label"] == "Caption contrast"
+    assert review(draft["proposal"]) is True
     until(lambda: page.eval(caption) == "rgb(237, 219, 255)", "the draft preview")
-    panel.eval("document.getElementById('before').click()")
+    review(None)
     until(lambda: page.eval(caption) != "rgb(237, 219, 255)", "comparison without the fix")
-    panel.eval("document.getElementById('after').click()")
+    review(draft["proposal"])
     until(lambda: page.eval(caption) == "rgb(237, 219, 255)", "comparison with the fix")
-    panel.call("Page.navigate", url="about:blank")
-    until(lambda: page.eval(caption) != "rgb(237, 219, 255)", "closing the preview reverts it")
-    panel.call("Page.navigate", url=panel_url)
-    until(lambda: panel.eval("document.getElementById('review')?.hidden === false"), "the reopened review")
-    panel.eval("document.getElementById('apply').click()")
-    until(lambda: panel.eval("document.getElementById('undo')?.hidden === false"), "saving the reviewed repair")
-    panel.call("Page.navigate", url="about:blank")
-    until(lambda: page.eval(caption) == "rgb(237, 219, 255)", "the saved repair after closing the panel")
-    panel.call("Page.navigate", url=panel_url)
-    until(lambda: panel.eval("document.getElementById('undo')?.hidden === false"), "the saved repair controls")
-    panel.eval("document.getElementById('undo').click()")
+    message(type="save-review", tabId=tab_id, documentId=document_id, proposal=draft["proposal"])
+    review(None)
+    until(lambda: page.eval(caption) == "rgb(237, 219, 255)", "the saved repair after the preview ends")
+    assert message(type="tab-settings", tabId=tab_id)["settings"]["repair"]
+    message(type="undo-review", tabId=tab_id, key=f"site:127.0.0.1:{port}")
     until(lambda: page.eval(caption) != "rgb(237, 219, 255)", "undoing the saved repair")
-    panel.call("Page.navigate", url="about:blank")
     print("Repair comparison, close, save and undo passed")
 
     message(type="set-global", enabled=False)

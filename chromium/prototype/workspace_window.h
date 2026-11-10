@@ -479,9 +479,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::map<std::string, int> night_shift_pushed_;
   int night_shift_generation_ = 0;
   void PushNightShiftConfig(Profile* profile);
-  // Profiles whose toolbar got Night Shift pinned once (unpinning is kept).
-  std::set<std::string> night_shift_pinned_;
-  void PinNightShiftOnce(Profile* profile);
+  // Profiles whose bar hides the Night Shift moon (unpinned in the menu).
+  std::set<std::string> night_shift_hidden_;
+  std::string ProfileIdOf(Profile* profile) const;
   void ApplyNightShiftSettings(base::DictValue value);
   std::string NightShiftSettingsState();
   struct AssistantBackgroundPage {

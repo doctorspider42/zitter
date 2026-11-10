@@ -188,6 +188,7 @@
 #include "ui/views/controls/webview/webview.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "content/public/browser/host_zoom_map.h"
 #include "base/process/process_metrics.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/profiles/profile_manager_observer.h"
@@ -2516,6 +2517,27 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperModeDetectionAndPersi
   std::string json; ASSERT_TRUE(base::ReadFileToString(g_browser_process->profile_manager()->user_data_dir().AppendASCII("ZitterTools.json"), &json));
   auto dict = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC); ASSERT_TRUE(dict);
   EXPECT_EQ("off", BrowserTools::FromValue(*dict).developer_mode);
+}
+
+// Ctrl+scroll reaches the page's delegate as a zoom step; the spelling menu's
+// "Language settings" opens Zitter's own spelling preferences.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageZoomAndSpellingSettings) {
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, embedded_test_server()->GetURL("/storage_probe.html")));
+  const double start = content::HostZoomMap::GetZoomLevel(page);
+  page->GetDelegate()->ContentsZoomChange(true);
+  EXPECT_GT(content::HostZoomMap::GetZoomLevel(page), start);
+  page->GetDelegate()->ContentsZoomChange(false);
+  page->GetDelegate()->ContentsZoomChange(false);
+  EXPECT_LT(content::HostZoomMap::GetZoomLevel(page), start);
+  page->GetDelegate()->OpenURLFromTab(page, content::OpenURLParams(GURL("chrome://settings/languages"), content::Referrer(),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_LINK, false), {});
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->general_widget() && shell->general_widget()->IsVisible(); }));
+  EXPECT_EQ(u"Sprawdzaj pisownię", shell->preferences_search()->GetText());
+  EXPECT_TRUE(shell->preference_toggle("spellcheck")->IsDrawn());
 }
 
 // Build the exact upstream editable menu without its platform popup. The
@@ -13050,32 +13072,77 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, SettingsReachEveryProfile) {
   EXPECT_NE(stored(work_).find("\"enabled\":true"), std::string::npos);
 }
 
-// The first open waits ~1 s for the extension's page: the moon turns a
-// spinner meanwhile, and the card appears at the page's size, never at the
-// 25 px minimum, then follows it.
-IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, PopupKeepsItsSizeAfterLoading) {
+// Design: Night Shift. The moon opens a native panel straight away: the
+// site's switch and tuning write the extension's storage, and the page follows.
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativePanelSwitchesAndTunesTheSite) {
   ASSERT_TRUE(window_->Select("work"));
+  const auto* extension = extensions::ExtensionRegistry::Get(work_)
+                              ->enabled_extensions().GetByID(kNightShiftId);
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(window_->OpenExtensionPage(work_, extension->GetResourceURL("settings.html")));
+  auto* settings = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(settings));
+  ASSERT_EQ(true, content::EvalJs(settings, R"(
+      chrome.runtime.sendMessage({type:'set-global', enabled:true}).then(response => response.ok)
+  )"));
   ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
   auto* bar = window_->extensions_bar();
-  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == work_.get(); }));
-  bar->RunAction(kNightShiftId);
-  // Until the page has a size the card stays hidden and the button spins.
-  if (!bar->popup_for_testing()->IsVisible()) EXPECT_TRUE(bar->popup_loading_for_testing());
-  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible(); }));
-  EXPECT_FALSE(bar->popup_loading_for_testing());
-  // It appears filled in: the site and its state, not the bare page.
-  EXPECT_EQ(true, content::EvalJs(bar->popup_contents_for_testing(), "document.body.classList.contains('ready')"));
-  EXPECT_NE("", content::EvalJs(bar->popup_contents_for_testing(), "document.getElementById('site-state').textContent"));
-  auto size = [&] { return bar->popup_for_testing()->GetClientAreaBoundsInScreen().size(); };
-  EXPECT_GE(size().width(), 200);
-  EXPECT_GE(size().height(), 100);
-  ASSERT_TRUE(content::WaitForLoadStop(bar->popup_contents_for_testing()));
-  base::RunLoop settle;
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(500));
-  settle.Run();
-  ASSERT_TRUE(bar->popup_for_testing() && bar->popup_for_testing()->IsVisible());
-  EXPECT_GE(size().width(), 200);
-  EXPECT_GE(size().height(), 100);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == work_.get() && bar->night_shift_button_for_testing(); }));
+  // Night Shift is no toolbar action any more: the moon stands for it.
+  EXPECT_FALSE(Shown(bar, kNightShiftId).has_value());
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return bar->night_shift_ready_for_testing() && bar->night_shift_panel_for_testing()->IsVisible();
+  }));
+  EXPECT_EQ("auto", bar->night_shift_state_for_testing());
+  const auto size = bar->night_shift_panel_for_testing()->GetClientAreaBoundsInScreen().size();
+  EXPECT_GE(size.width(), 280);
+  EXPECT_GE(size.height(), 200);
+  auto stored = [&] {
+    base::test::TestFuture<extensions::StorageFrontend::GetResult> result;
+    extensions::StorageFrontend::Get(work_)->GetValues(base::WrapRefCounted(extension),
+        extensions::StorageAreaNamespace::kLocal, std::nullopt, result.GetCallback());
+    std::string json;
+    if (result.Get().data) base::JSONWriter::Write(*result.Get().data, &json);
+    return json;
+  };
+  // Off for this site, then on again over the site's own dark theme.
+  bar->RunNightShiftCommandForTesting(0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "off"; })) << stored();
+  EXPECT_NE(std::string::npos, stored().find("\"mode\":\"off\""));
+  bar->RunNightShiftCommandForTesting(0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "auto"; }));
+  bar->RunNightShiftCommandForTesting(1);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "on"; }));
+  bar->SetNightShiftBrightnessForTesting(110);
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored().find("\"brightness\":110") != std::string::npos; })) << stored();
+  // Reset: the app-wide look again.
+  bar->RunNightShiftCommandForTesting(2);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return bar->night_shift_state_for_testing() == "auto" && stored().find("\"brightness\"") == std::string::npos;
+  })) << stored();
+  // Unpinned in the menu, the moon leaves the bar and the panel closes.
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_panel_for_testing(); }));
+  bar->ToggleMenu();
+  ASSERT_TRUE(bar->menu_for_testing());
+  views::View* unpin = nullptr;
+  std::function<void(views::View*)> find = [&](views::View* view) {
+    if (views::AsViewClass<views::Button>(view) && view->GetViewAccessibility().GetCachedName() == u"Odepnij" &&
+        view->parent() && view->parent()->GetViewAccessibility().GetCachedName().starts_with(u"Night Shift"))
+      unpin = view;
+    for (const auto& child : view->children()) find(child.get());
+  };
+  find(bar->menu_for_testing()->GetRootView());
+  ClickControl(unpin);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_button_for_testing(); }));
+  // Still reachable from the menu row.
+  bar->CloseMenus();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->menu_for_testing(); }));
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_ready_for_testing(); }));
 }
 
 IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
@@ -13099,8 +13166,12 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
       chrome.runtime.sendMessage({type:'set-global', enabled:true})
           .then(response => response.ok)
   )"));
-  ASSERT_TRUE(window_->NavigateFromBar(
-      embedded_test_server()->GetURL("/storage_probe.html"), true));
+  // The probe page has its own dark theme, which Night Shift's automatic mode
+  // leaves alone: the site applies it anyway, as "also over a dark theme".
+  const auto probe = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::ExecJs(settings, content::JsReplace(
+      "chrome.storage.local.set({[$1]: {mode: 'on', force: true}})", NightShiftSiteKey(probe))));
+  ASSERT_TRUE(window_->NavigateFromBar(probe, true));
   auto* page = window_->contents("work");
   ASSERT_TRUE(content::WaitForLoadStop(page));
   ASSERT_TRUE(base::test::RunUntil([&] {
@@ -13126,16 +13197,11 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
     const auto sidebar_frames = shell->metal_sidebar_frame_count();
     const auto header_frames = shell->metal_header_frame_count();
     shell->SetThemeMode(theme);
-    bar->RunAction(kNightShiftId);
+    bar->ToggleNightShiftPanel();
     ASSERT_TRUE(base::test::RunUntil([&] {
-      return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible();
+      return bar->night_shift_ready_for_testing() && bar->night_shift_panel_for_testing()->IsVisible();
     }));
-    auto* popup = bar->popup_contents_for_testing();
-    ASSERT_TRUE(content::WaitForLoadStop(popup));
-    EXPECT_EQ(dark ? "dark" : "light", content::EvalJs(
-        popup, "getComputedStyle(document.documentElement).colorScheme"));
-    EXPECT_EQ(dark ? "rgb(26, 28, 36)" : "rgb(250, 249, 246)", content::EvalJs(
-        popup, "getComputedStyle(document.documentElement).backgroundColor"));
+    EXPECT_EQ(dark, bar->night_shift_panel_for_testing()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark);
     if (MetalPresents()) {
       ASSERT_TRUE(base::test::RunUntil([&] {
         return shell->metal_sidebar_visible() && shell->metal_header_visible() &&
@@ -13147,29 +13213,15 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
       EXPECT_FALSE(shell->metal_header_visible());
     }
     if (!dark) {
-      ASSERT_TRUE(content::ExecJs(popup, "window.close()"));
-      ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
+      bar->ToggleNightShiftPanel();
+      ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_panel_for_testing(); }));
     }
   }
-  auto* popup = bar->popup_contents_for_testing();
-  ASSERT_TRUE(base::test::RunUntil([&] {
-    return content::EvalJs(popup, "!document.getElementById('repair').hidden") == true;
-  }));
-  // A simulated native input event supplies the user gesture required by the
-  // popup host before it will launch an assistant request.
-  const auto point = content::EvalJs(popup, R"(
-      (() => {
-        const rect = document.getElementById('repair').getBoundingClientRect();
-        return [Math.round(rect.x + rect.width / 2), Math.round(rect.y + rect.height / 2)];
-      })()
-  )").TakeValue();
-  ASSERT_TRUE(point.is_list());
-  ASSERT_EQ(2u, point.GetList().size());
-  content::SimulateMouseClickAt(popup, 0, blink::WebMouseEvent::Button::kLeft,
-      gfx::Point(point.GetList()[0].GetInt(), point.GetList()[1].GetInt()));
+  // The panel's assistant row starts a scoped repair request.
+  bar->RunNightShiftCommandForTesting(8);
   ASSERT_TRUE(base::test::RunUntil([&] {
     return window_->assistant() && !window_->assistant()->draft_for_testing().empty() &&
-           !bar->popup_for_testing();
+           !bar->night_shift_panel_for_testing();
   }));
   auto* assistant = window_->assistant();
   const auto prompt = base::UTF16ToUTF8(assistant->draft_for_testing());
@@ -13250,23 +13302,32 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
   ASSERT_TRUE(assistant->ContainsForTesting("Night Shift native repair ready"));
   EXPECT_EQ("rgb(52, 52, 52)", content::EvalJs(page, kCaptionColor));
 
-  bar->RunAction(kNightShiftId);
-  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing() != nullptr; }));
-  popup = bar->popup_contents_for_testing();
-  ASSERT_TRUE(content::WaitForLoadStop(popup));
+  // Reopened, the panel shows the staged repair on the page at once. The
+  // assistant panel may still take focus after its answer, which closes a
+  // bar panel as any click elsewhere would: open it again then.
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    if (!bar->night_shift_panel_for_testing()) bar->ToggleNightShiftPanel();
+    return bar->night_shift_state_for_testing() == "draft";
+  })) << bar->night_shift_state_for_testing();
   ASSERT_TRUE(base::test::RunUntil([&] {
     return content::EvalJs(page, kCaptionColor) == "rgb(224, 224, 224)";
   }));
-  ASSERT_TRUE(content::ExecJs(popup, "document.getElementById('before').click()"));
+  bar->RunNightShiftCommandForTesting(3);
   ASSERT_TRUE(base::test::RunUntil([&] {
     return content::EvalJs(page, kCaptionColor) == "rgb(52, 52, 52)";
   }));
-  ASSERT_TRUE(content::ExecJs(popup, "document.getElementById('apply').click()"));
+  bar->RunNightShiftCommandForTesting(5);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "repaired"; }));
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return content::EvalJs(popup, "!document.getElementById('undo').hidden") == true;
+    return content::EvalJs(page, kCaptionColor) == "rgb(224, 224, 224)";
   }));
+  // Closing keeps the saved repair; Undo removes it.
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_panel_for_testing(); }));
   EXPECT_EQ("rgb(224, 224, 224)", content::EvalJs(page, kCaptionColor));
-  ASSERT_TRUE(content::ExecJs(popup, "document.getElementById('undo').click()"));
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "repaired"; }));
+  bar->RunNightShiftCommandForTesting(7);
   ASSERT_TRUE(base::test::RunUntil([&] {
     return content::EvalJs(page, kCaptionColor) == "rgb(52, 52, 52)";
   }));

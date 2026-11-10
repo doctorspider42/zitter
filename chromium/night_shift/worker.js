@@ -253,10 +253,11 @@ async function draftFor(tabId) {
         return null;
     }
     try {
-        const ready = await chrome.tabs.sendMessage(tabId, {type: "night-shift-review-ready"}, {
-            documentId: data.documentId,
+        const [frame] = await chrome.scripting.executeScript({
+            target: {tabId, documentIds: [data.documentId]},
+            func: () => globalThis.zitterNightShiftReview?.() === true,
         });
-        return ready ? {documentId: data.documentId, key: current.key, proposal} : null;
+        return frame?.result ? {documentId: data.documentId, key: current.key, proposal} : null;
     } catch {
         return null;
     }

@@ -52,11 +52,13 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     base::RepeatingClosure diagnose_blocking_with_assistant;
     base::RepeatingCallback<bool()> assistant_available;
     base::RepeatingCallback<void(content::WebContents*)> fix_night_shift;
+    // Whether the moon shows in the bar for `profile`; the person may hide it
+    // from the extensions menu, as an unpinned action.
+    base::RepeatingCallback<bool(Profile*)> night_shift_shown;
+    base::RepeatingCallback<void(Profile*, bool)> set_night_shift_shown;
     // JSON for the Night Shift settings page: the profiles and the app-wide
     // configuration (absent until it was saved once).
     base::RepeatingCallback<std::string()> night_shift_state;
-    // Built-in actions pinned once per profile; the person may unpin them.
-    base::RepeatingCallback<void(Profile*)> pin_built_in_actions;
     // The assistant button shows or hides the panel.
     base::RepeatingClosure toggle_assistant_panel;
     // Starts a new conversation.
@@ -87,6 +89,9 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void ToggleFingerprintPanel();
   // The ad blocking panel under the shield (shown while the profile blocks ads).
   void ToggleShieldPanel();
+  // Night Shift under its moon (design: Night Shift): the site's dark mode,
+  // its tuning, a staged assistant repair and the app-wide settings.
+  void ToggleNightShiftPanel();
   void ToggleAssistantPanel();
   void RunAssistantCommandForTesting(int command) { RunAssistantCommand(command); }
 
@@ -137,12 +142,23 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   int shield_count_for_testing() const;
   // Runs a shield panel row: 0 the site switch, 1 the assistant, 2 settings.
   void RunShieldCommandForTesting(int command);
-
+  views::View* night_shift_button_for_testing() const { return night_shift_button_; }
+  views::Widget* night_shift_panel_for_testing() const { return night_shift_widget_.get(); }
+  // The panel read its site; false until then and without a panel.
+  bool night_shift_ready_for_testing() const;
+  // Runs a Night Shift panel control as a click would: 0 the site switch,
+  // 1 the own-dark-theme switch, 2 reset, 3 before, 4 with the fix, 5 save,
+  // 6 discard, 7 undo, 8 the assistant, 9 settings.
+  void RunNightShiftCommandForTesting(int command);
+  // What the panel shows: the site's mode, or "draft"/"repaired"/"" extras.
+  std::string night_shift_state_for_testing() const;
+  void SetNightShiftBrightnessForTesting(int value);
   class ActionButton;
   class Menu;
   class Popup;
   class FingerprintPanel;
   class ShieldPanel;
+  class NightShiftPanel;
 
  private:
   friend class ActionButton;
@@ -150,6 +166,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   friend class Popup;
   friend class FingerprintPanel;
   friend class ShieldPanel;
+  friend class NightShiftPanel;
   friend class ExtensionsContextMenu;
   sidebar::DesignPalette palette() const;
   void DestroyMenu();
@@ -186,6 +203,13 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void OpenAdBlockingSettings();
   // -1 when blocking is off for the page's site.
   int ShieldCount() const;
+  bool NightShiftShown() const;
+  void DestroyNightShiftPanel();
+  // Reads the page's site for the moon: crossed out where it stays light.
+  void RefreshNightShift();
+  void SetNightShiftOn(bool on);
+  void FixNightShift();
+  void OpenNightShiftSettings();
 
   Callbacks callbacks_;
   raw_ptr<Profile> profile_ = nullptr;
@@ -208,6 +232,10 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   uintptr_t counted_page_ = 0;
   std::unique_ptr<ShieldPanel> shield_panel_;
   std::unique_ptr<views::Widget> shield_widget_;
+  raw_ptr<views::View> night_shift_button_ = nullptr;
+  bool night_shift_on_ = true;
+  std::unique_ptr<NightShiftPanel> night_shift_panel_;
+  std::unique_ptr<views::Widget> night_shift_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.
   std::unique_ptr<Menu> menu_;
   std::unique_ptr<views::Widget> menu_widget_;

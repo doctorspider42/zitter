@@ -108,6 +108,9 @@ constexpr char kTurnIcon[] = "M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3";
 constexpr char kShieldOffIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM2.5 2.5l11 11";
 // Ad blocking: a shield with a bar across, the assistant's spark.
 constexpr char kShieldIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM5.5 7.5h5";
+// Night Shift: a crescent, crossed out where the site stays light.
+constexpr char kMoonIcon[] = "M12.8 9.8A5.3 5.3 0 0 1 6.2 3.2a5.2 5.2 0 1 0 6.6 6.6z";
+constexpr char kMoonOffIcon[] = "M12.8 9.8A5.3 5.3 0 0 1 6.2 3.2a5.2 5.2 0 1 0 6.6 6.6zM2.5 2.5l11 11";
 
 // The subset of SVG path data the design icons use: M L H V A Z, absolute or
 // relative, with implicit repeats.
@@ -279,7 +282,11 @@ class RowAction final : public views::Button {
     SchedulePaint();
   }
   bool on() const { return on_; }
+  // Out of its row's hover the action keeps its place but draws nothing, so
+  // the buttons next to it never move under the pointer.
+  void SetGhost(bool ghost) { if (ghost_ != ghost) { ghost_ = ghost; SchedulePaint(); } }
   void PaintButtonContents(gfx::Canvas* canvas) override {
+    if (ghost_ && !on_ && !HasFocus() && GetState() == STATE_NORMAL) return;
     const gfx::RectF box(GetLocalBounds());
     SkColor ink = palette_.ink_muted;
     if (on_) { FillRound(canvas, box, 8, palette_.accent_soft); ink = palette_.accent_ink; }
@@ -292,6 +299,7 @@ class RowAction final : public views::Button {
   const char* icon_;
   sidebar::DesignPalette palette_;
   bool on_ = false;
+  bool ghost_ = false;
 };
 BEGIN_METADATA(RowAction)
 END_METADATA
@@ -305,13 +313,26 @@ class QuietButton final : public views::Button {
     GetViewAccessibility().SetName(text_);
     SetPreferredSize(gfx::Size(gfx::GetStringWidth(text_, DesignFont(2, 13, 600)) + 16, kRowAction));
   }
+  // kSelected: the chosen half of a segmented pair; kPrimary: the filled action.
+  enum class Tone { kQuiet, kSelected, kPrimary };
+  void SetTone(Tone tone) {
+    tone_ = tone;
+    if (tone == Tone::kSelected) GetViewAccessibility().SetCheckedState(ax::mojom::CheckedState::kTrue);
+    SchedulePaint();
+  }
   void PaintButtonContents(gfx::Canvas* canvas) override {
-    if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) FillRound(canvas, gfx::RectF(GetLocalBounds()), 8, palette_.bg_hover);
-    canvas->DrawStringRectWithFlags(text_, DesignFont(2, 13, 600), palette_.ink, GetLocalBounds(), gfx::Canvas::TEXT_ALIGN_CENTER);
+    const gfx::RectF box(GetLocalBounds());
+    const bool hovered = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
+    SkColor ink = palette_.ink;
+    if (tone_ == Tone::kPrimary) { FillRound(canvas, box, 8, palette_.accent); ink = palette_.on_accent; }
+    else if (tone_ == Tone::kSelected) { FillRound(canvas, box, 8, palette_.accent_soft); ink = palette_.accent_ink; }
+    else if (hovered) FillRound(canvas, box, 8, palette_.bg_hover);
+    canvas->DrawStringRectWithFlags(text_, DesignFont(2, 13, 600), ink, GetLocalBounds(), gfx::Canvas::TEXT_ALIGN_CENTER);
   }
  private:
   std::u16string text_;
   sidebar::DesignPalette palette_;
+  Tone tone_ = Tone::kQuiet;
 };
 BEGIN_METADATA(QuietButton)
 END_METADATA
@@ -800,7 +821,7 @@ class MenuRow final : public views::Button {
   // The gear: spokes from the path and a ring in the middle.
   void SetRing(bool ring) { ring_ = ring; }
   void SetSelected(bool selected) { selected_ = selected; SchedulePaint(); }
-  // Pin and more appear on hover; a pinned pin stays.
+  // More always shows; an unpinned pin appears on hover in its kept place.
   void AddTrailing(views::View* view, bool always) { trailing_.push_back({view, always}); UpdateTrailing(); }
   views::View* text_slot() { return slot_; }
   void Init() {
@@ -846,7 +867,10 @@ class MenuRow final : public views::Button {
  private:
   void UpdateTrailing() {
     const bool hovered = IsMouseHovered();
-    for (auto& [view, always] : trailing_) view->SetVisible(always || hovered);
+    for (auto& [view, always] : trailing_) {
+      if (auto* action = views::AsViewClass<RowAction>(view.get())) action->SetGhost(!always && !hovered);
+      else view->SetVisible(always || hovered);
+    }
     // Keep the text column the same width whether or not the actions show.
     InvalidateLayout();
   }
@@ -894,6 +918,214 @@ class MenuSeparator final : public views::View {
 BEGIN_METADATA(MenuSeparator)
 END_METADATA
 
+// Night Shift in the bar: the shield's IconButton with a crescent, crossed
+// out where the page's site stays light. Right click: the action menu.
+class MoonButton final : public views::Button, public views::ContextMenuController {
+  METADATA_HEADER(MoonButton, views::Button)
+ public:
+  MoonButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette,
+             base::RepeatingCallback<void(views::View*, ui::mojom::MenuSourceType)> menu)
+      : views::Button(std::move(callback)), palette_(std::move(palette)), menu_(std::move(menu)) {
+    SetPreferredSize(gfx::Size(kButton, kButton));
+    GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kDialog);
+    set_context_menu_controller(this);
+    SetOn(true);
+  }
+  void SetOpen(bool open) { if (open_ != open) { open_ = open; SchedulePaint(); } }
+  void SetOn(bool on) {
+    on_ = on;
+    const auto name = on ? u"Night Shift" : T(u"Night Shift: wyłączony dla tej witryny");
+    GetViewAccessibility().SetName(name);
+    SetTooltipText(name);
+    SchedulePaint();
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = palette_.Run();
+    const gfx::RectF box(GetLocalBounds());
+    SkColor ink = p.ink_muted;
+    if (open_) { FillRound(canvas, box, 8, p.accent_soft); ink = p.accent_ink; }
+    else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
+    StrokeIcon(canvas, on_ ? kMoonIcon : kMoonOffIcon, gfx::RectF(box.CenterPoint().x() - 8, box.CenterPoint().y() - 8, 16, 16), ink);
+  }
+  void ShowContextMenuForViewImpl(views::View* source, const gfx::Point&, ui::mojom::MenuSourceType type) override {
+    menu_.Run(source, type);
+  }
+ private:
+  base::RepeatingCallback<sidebar::DesignPalette()> palette_;
+  base::RepeatingCallback<void(views::View*, ui::mojom::MenuSourceType)> menu_;
+  bool open_ = false;
+  bool on_ = true;
+};
+BEGIN_METADATA(MoonButton)
+END_METADATA
+
+// The Night Shift panel's first block, built like the shield card: a tile
+// with the crescent, the site's state in `label`, the site.
+class NightCard final : public views::View {
+  METADATA_HEADER(NightCard, views::View)
+ public:
+  explicit NightCard(const sidebar::DesignPalette& palette) : palette_(palette) {
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, 48));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
+  }
+  void Set(bool on, std::u16string state, std::u16string site) {
+    on_ = on; state_ = std::move(state); site_ = std::move(site);
+    GetViewAccessibility().SetName(site_ + u", " + state_);
+    SchedulePaint();
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const gfx::RectF tile(8, 8, 32, 32);
+    FillRound(canvas, tile, 6, on_ ? palette_.accent_soft : palette_.bg_hover);
+    StrokeIcon(canvas, on_ ? kMoonIcon : kMoonOffIcon, gfx::RectF(16, 16, 16, 16), on_ ? palette_.accent_ink : palette_.ink_muted);
+    const int x = 52, right = width() - 8;
+    canvas->DrawStringRectWithFlags(state_, DesignFont(2, 12, 400), palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
+    canvas->DrawStringRectWithFlags(site_, DesignFont(2, 13, 600), palette_.ink, gfx::Rect(x, 23, right - x, 18),
+                                    gfx::Canvas::NO_SUBPIXEL_RENDERING);
+  }
+ private:
+  sidebar::DesignPalette palette_;
+  bool on_ = false;
+  std::u16string state_, site_;
+};
+BEGIN_METADATA(NightCard)
+END_METADATA
+
+// A row with a switch at its end (design: Toggle, 34 x 19).
+class SwitchRow final : public views::Button {
+  METADATA_HEADER(SwitchRow, views::Button)
+ public:
+  SwitchRow(PressedCallback callback, std::u16string text, bool on, const sidebar::DesignPalette& palette)
+      : views::Button(std::move(callback)), text_(std::move(text)), on_(on), palette_(palette) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);
+    GetViewAccessibility().SetName(text_);
+    GetViewAccessibility().SetCheckedState(on ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
+    int w = kMenuWidth - 8 - 16 - 34 - 12, h = 0;
+    gfx::Canvas::SizeStringInt(text_, DesignFont(2, 13, 400), &w, &h, 0, gfx::Canvas::MULTI_LINE);
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, std::max(36, h + 16)));
+  }
+  bool on() const { return on_; }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const gfx::RectF box(GetLocalBounds());
+    if (GetEnabled() && (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED || HasFocus()))
+      FillRound(canvas, box, 8, palette_.bg_hover);
+    const int track_x = width() - 8 - 34;
+    // The text sits on the switch's middle, one line or two.
+    const auto font = DesignFont(2, 13, 400);
+    int text_width = track_x - 12 - 8, text_height = 0;
+    gfx::Canvas::SizeStringInt(text_, font, &text_width, &text_height, 0, gfx::Canvas::MULTI_LINE);
+    canvas->DrawStringRectWithFlags(text_, font, GetEnabled() ? palette_.ink : palette_.ink_faint,
+                                    gfx::Rect(8, (height() - text_height) / 2, track_x - 12 - 8, text_height),
+                                    gfx::Canvas::MULTI_LINE);
+    const gfx::RectF track(track_x, (height() - 19) / 2.f, 34, 19);
+    FillRound(canvas, track, 9.5f, on_ ? palette_.accent : palette_.line_strong);
+    const float knob_x = on_ ? track.right() - 3 - 13 : track.x() + 3;
+    FillCircle(canvas, {knob_x + 6.5f, track.CenterPoint().y()}, 6.5f, on_ ? palette_.on_accent : palette_.bg_raised);
+  }
+  void OnFocus() override { views::Button::OnFocus(); SchedulePaint(); }
+  void OnBlur() override { views::Button::OnBlur(); SchedulePaint(); }
+ private:
+  std::u16string text_;
+  bool on_;
+  sidebar::DesignPalette palette_;
+};
+BEGIN_METADATA(SwitchRow)
+END_METADATA
+
+// Brightness or contrast for the site: a label, the value, and a track from
+// 75 to 125 % (design: Slider). `changed` runs while dragging; `committed`
+// once the pointer or key lets go.
+class TuneRow final : public views::View {
+  METADATA_HEADER(TuneRow, views::View)
+ public:
+  TuneRow(std::u16string label, int value, const sidebar::DesignPalette& palette,
+          base::RepeatingCallback<void(int, bool)> changed)
+      : label_(std::move(label)), value_(value), palette_(palette), changed_(std::move(changed)) {
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, 44));
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kSlider);
+    GetViewAccessibility().SetName(label_);
+    UpdateValue();
+  }
+  int value() const { return value_; }
+  void SetValueForTesting(int value) { Set(value, true); }
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+    if (!event.IsOnlyLeftMouseButton()) return false;
+    RequestFocus();
+    Set(ValueAt(event.x()), false);
+    return true;
+  }
+  bool OnMouseDragged(const ui::MouseEvent& event) override { Set(ValueAt(event.x()), false); return true; }
+  void OnMouseReleased(const ui::MouseEvent& event) override { Set(ValueAt(event.x()), true); }
+  bool OnKeyPressed(const ui::KeyEvent& event) override {
+    switch (event.key_code()) {
+      case ui::VKEY_LEFT: case ui::VKEY_DOWN: Set(value_ - 1, true); return true;
+      case ui::VKEY_RIGHT: case ui::VKEY_UP: Set(value_ + 1, true); return true;
+      case ui::VKEY_HOME: Set(kLow, true); return true;
+      case ui::VKEY_END: Set(kHigh, true); return true;
+      default: return false;
+    }
+  }
+  void OnFocus() override { views::View::OnFocus(); SchedulePaint(); }
+  void OnBlur() override { views::View::OnBlur(); SchedulePaint(); }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto label = DesignFont(2, 12, 400);
+    canvas->DrawStringRectWithFlags(label_, label, palette_.ink, gfx::Rect(8, 4, width() - 16, 16), 0);
+    canvas->DrawStringRectWithFlags(base::NumberToString16(value_) + u" %", DesignFont(3, 12, 400), palette_.ink_muted,
+                                    gfx::Rect(8, 4, width() - 16, 16), gfx::Canvas::TEXT_ALIGN_RIGHT);
+    const float left = kInset, right = width() - kInset, y = 30;
+    const float x = left + (right - left) * (value_ - kLow) / static_cast<float>(kHigh - kLow);
+    FillRound(canvas, gfx::RectF(left, y - 2, right - left, 4), 2, palette_.line_strong);
+    FillRound(canvas, gfx::RectF(left, y - 2, x - left, 4), 2, palette_.accent);
+    if (HasFocus()) FillCircle(canvas, {x, y}, 10, palette_.accent_soft);
+    FillCircle(canvas, {x, y}, 7, palette_.bg_raised);
+    FillCircle(canvas, {x, y}, 7, palette_.accent, true);
+  }
+ private:
+  static constexpr int kLow = 75, kHigh = 125, kInset = 15;
+  int ValueAt(int x) const {
+    const float span = std::max(1, width() - 2 * kInset);
+    return kLow + static_cast<int>(std::lround((x - kInset) / span * (kHigh - kLow)));
+  }
+  void Set(int value, bool commit) {
+    value = std::clamp(value, kLow, kHigh);
+    const bool changed = value != value_;
+    value_ = value;
+    if (changed) { UpdateValue(); SchedulePaint(); }
+    if (changed || commit) changed_.Run(value_, commit);
+  }
+  void UpdateValue() { GetViewAccessibility().SetValue(base::NumberToString16(value_) + u" %"); }
+  std::u16string label_;
+  int value_;
+  sidebar::DesignPalette palette_;
+  base::RepeatingCallback<void(int, bool)> changed_;
+};
+BEGIN_METADATA(TuneRow)
+END_METADATA
+
+// A short text block in the panel: a muted line, then a stronger one.
+class NoteBlock final : public views::View {
+  METADATA_HEADER(NoteBlock, views::View)
+ public:
+  NoteBlock(std::u16string eyebrow, std::u16string text, const sidebar::DesignPalette& palette)
+      : eyebrow_(std::move(eyebrow)), text_(std::move(text)), palette_(palette) {
+    int w = kMenuWidth - 8 - 16, h = 0;
+    gfx::Canvas::SizeStringInt(text_, DesignFont(2, 13, 600), &w, &h, 0, gfx::Canvas::MULTI_LINE);
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, 26 + h + 4));
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+    GetViewAccessibility().SetName(text_ + u", " + eyebrow_);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    canvas->DrawStringRectWithFlags(eyebrow_, DesignFont(2, 12, 400), palette_.ink_muted, gfx::Rect(8, 6, width() - 16, 16), 0);
+    canvas->DrawStringRectWithFlags(text_, DesignFont(2, 13, 600), palette_.ink, gfx::Rect(8, 26, width() - 16, height() - 30),
+                                    gfx::Canvas::MULTI_LINE);
+  }
+ private:
+  std::u16string eyebrow_, text_;
+  sidebar::DesignPalette palette_;
+};
+BEGIN_METADATA(NoteBlock)
+END_METADATA
+
 // Popup links open in a Zitter tab of the popup's profile: the popup has no
 // browser window of its own.
 class PopupHostDelegate final : public extensions::ExtensionViewHost::Delegate {
@@ -923,34 +1155,6 @@ class PopupHostDelegate final : public extensions::ExtensionViewHost::Delegate {
  private:
   base::RepeatingCallback<void(const GURL&, bool)> open_;
   raw_ptr<Profile> profile_ = nullptr;
-};
-
-class NightShiftPopupHost final : public extensions::ExtensionViewHost {
- public:
-  NightShiftPopupHost(
-      const Extension* extension, Profile* profile, const GURL& url,
-      std::unique_ptr<Delegate> delegate,
-      base::RepeatingCallback<void(const GURL&, bool)> open)
-      : ExtensionViewHost(extension, profile, url,
-                          extensions::mojom::ViewType::kExtensionPopup,
-                          std::move(delegate)),
-        open_(std::move(open)) {}
-
-  content::WebContents* AddNewContents(
-      content::WebContents* source,
-      std::unique_ptr<content::WebContents> new_contents, const GURL& url,
-      WindowOpenDisposition disposition,
-      const blink::mojom::WindowFeatures& features, bool user_gesture,
-      bool* blocked) override {
-    if (source == host_contents() && user_gesture) {
-      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce(open_, url, true));
-    }
-    return nullptr;
-  }
-
- private:
-  base::RepeatingCallback<void(const GURL&, bool)> open_;
 };
 
 // Calls back when a widget becomes active (the popup closes when the window
@@ -1003,15 +1207,45 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
     std::ranges::sort(extensions, [](const Extension* a, const Extension* b) {
       return base::ToLowerASCII(a->name()) < base::ToLowerASCII(b->name());
     });
-    if (extensions.empty()) {
+    if (extensions.empty() && !bar_->ExtensionFor(kNightShiftId)) {
       auto* row = body_->AddChildView(std::make_unique<MenuRow>(views::Button::PressedCallback(), palette_, kRowHeight));
       row->Init();
       row->SetText(T(u"Ten profil nie ma rozszerzeń"), T(u"Dodaj je z Chrome Web Store"), false, 0);
       row->SetEnabled(false);
     }
     auto weak = bar_->weak_factory_.GetWeakPtr();
+    // Night Shift is built in: its row opens its panel and hides or shows the moon.
+    const bool night_shift = bar_->ExtensionFor(kNightShiftId) != nullptr;
+    bool night_shift_added = false;
+    auto add_night_shift = [&] {
+      night_shift_added = true;
+      auto* row = body_->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+          [](base::WeakPtr<ExtensionsBar> bar) {
+            if (!bar) return;
+            bar->CloseMenus();
+            bar->ToggleNightShiftPanel();
+          }, weak), palette_, kRowHeight));
+      row->SetGlyph(kMoonIcon);
+      row->Init();
+      row->SetText(u"Night Shift", T(u"Tryb ciemny stron"), false, 16);
+      const bool shown = bar_->NightShiftShown();
+      auto* pin = row->AddChildView(std::make_unique<RowAction>(base::BindRepeating(
+          [](base::WeakPtr<ExtensionsBar> bar, bool shown) { if (bar) bar->SetPinned(kNightShiftId, !shown); }, weak, shown),
+          shown ? T(u"Odepnij") : T(u"Przypnij"), kPinIcon, palette_));
+      pin->SetOn(shown);
+      row->AddTrailing(pin, shown);
+      auto* more = row->AddChildView(std::make_unique<RowAction>(views::Button::PressedCallback(),
+          TF(u"Więcej: {}", {u"Night Shift"}), nullptr, palette_));
+      more->SetCallback(base::BindRepeating(
+          [](base::WeakPtr<ExtensionsBar> bar, views::View* more) {
+            if (bar) bar->ShowActionMenu(kNightShiftId, more, ui::mojom::MenuSourceType::kMouse);
+          }, weak, more));
+      row->AddTrailing(more, true);
+      rows_.push_back({kNightShiftId, row});
+    };
     for (const auto* extension : extensions) {
       const std::string id = extension->id();
+      if (night_shift && !night_shift_added && base::ToLowerASCII(extension->name()) > "night shift") add_night_shift();
       auto* action = extensions::ExtensionActionManager::Get(bar_->profile())->GetExtensionAction(*extension);
       if (!action) continue;
       auto* row = body_->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
@@ -1041,10 +1275,11 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
             [](base::WeakPtr<ExtensionsBar> bar, std::string id, views::View* more) {
               if (bar) bar->ShowActionMenu(id, more, ui::mojom::MenuSourceType::kMouse);
             }, weak, id, more));
-        row->AddTrailing(more, false);
+        row->AddTrailing(more, true);
       }
       rows_.push_back({id, row});
     }
+    if (night_shift && !night_shift_added) add_night_shift();
     body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
     auto add_footer = [&](std::u16string text, const char* glyph, GURL url) {
       auto* row = body_->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
@@ -1324,6 +1559,228 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
   raw_ptr<MenuRow> diagnose_row_ = nullptr;
 };
 
+// Night Shift under the moon (design: Night Shift): the site and its switch,
+// brightness, contrast and the own-dark-theme switch while it is dark, a
+// repair the assistant staged (compared on the page before it is saved), and
+// the app-wide settings. It reads and writes the extension's storage; the page
+// follows through storage.onChanged. The bar owns this delegate and its widget.
+class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate {
+ public:
+  NightShiftPanel(ExtensionsBar* bar, views::View* anchor)
+      : views::BubbleDialogDelegate(anchor, views::BubbleBorder::TOP_RIGHT), bar_(bar), palette_(bar->palette()) {
+    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+    set_margins(gfx::Insets(4));
+    set_corner_radius(12);
+    set_fixed_width(kMenuWidth);
+    SetBackgroundColor(palette_.bg_raised);
+    SetShowCloseButton(false);
+    SetAccessibleWindowRole(ax::mojom::Role::kDialog);
+    SetTitle(u"Night Shift");
+    SetShowTitle(false);
+    auto body = std::make_unique<views::View>();
+    body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
+    body_ = SetContentsView(std::move(body));
+    page_ = bar_->page() ? bar_->page()->GetWeakPtr() : nullptr;
+  }
+  ~NightShiftPanel() override {
+    // Closing ends a comparison: the page shows what is saved again.
+    if (previewing_ && page_) PreviewNightShiftRepair(page_.get(), base::Value(), base::DoNothing());
+  }
+  // Reads the site; the first read shows the panel, so it never opens empty.
+  void Load() {
+    if (!page_) return;
+    ReadNightShiftSite(page_.get(), base::BindOnce(&NightShiftPanel::Loaded, weak_factory_.GetWeakPtr()));
+  }
+  bool ready() const { return ready_; }
+  std::string state() const {
+    if (!ready_) return {};
+    if (site_.draft) return "draft";
+    if (site_.repaired) return "repaired";
+    return site_.on() ? site_.mode : "off";
+  }
+  void Run(int command) {
+    switch (command) {
+      case 0: ToggleSite(); break;
+      case 1: ToggleForce(); break;
+      case 2: Reset(); break;
+      case 3: Compare(false); break;
+      case 4: Compare(true); break;
+      case 5: Finish(true); break;
+      case 6: Finish(false); break;
+      case 7: Undo(); break;
+      case 8: bar_->FixNightShift(); break;
+      case 9: bar_->OpenNightShiftSettings(); break;
+    }
+  }
+  void SetBrightnessForTesting(int value) { if (brightness_) brightness_->SetValueForTesting(value); }
+
+ private:
+  void Loaded(NightShiftSite site) {
+    site_ = std::move(site);
+    ready_ = true;
+    bar_->SetNightShiftOn(site_.on() || !site_.enabled);
+    // A staged repair shows right away, as on the page it was made for.
+    if (site_.draft && !draft_shown_ && page_) {
+      draft_shown_ = true;
+      PreviewNightShiftRepair(page_.get(), *site_.draft->Find("proposal"), base::BindOnce(
+          [](base::WeakPtr<NightShiftPanel> panel, bool shown) {
+            if (!panel) return;
+            panel->previewing_ = shown;
+            panel->with_fix_ = shown;
+            if (!shown) panel->site_.draft.reset();
+            panel->Build();
+          }, weak_factory_.GetWeakPtr()));
+      return;
+    }
+    if (!site_.draft) previewing_ = false;
+    Build();
+  }
+  std::u16string StateText() const {
+    if (!site_.enabled) return T(u"Wyłączone w tym profilu");
+    if (site_.key.empty()) return T(u"Niedostępne na tej stronie");
+    if (site_.mode == "off") return T(u"Wyłączony dla tej witryny");
+    if (site_.mode == "on") return T(u"Tryb ciemny włączony");
+    return T(u"Tryb automatyczny");
+  }
+  MenuRow* AddRow(const char* glyph, std::u16string text, base::RepeatingClosure run) {
+    auto* row = body_->AddChildView(std::make_unique<MenuRow>(std::move(run), palette_, kFooterHeight));
+    row->SetGlyph(glyph);
+    row->Init();
+    row->SetText(std::move(text), {}, false, 16);
+    return row;
+  }
+  base::RepeatingClosure Command(int command) {
+    // Rows run their command after the click: it may rebuild the panel.
+    return base::BindRepeating([](base::WeakPtr<NightShiftPanel> panel, int command) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+          [](base::WeakPtr<NightShiftPanel> panel, int command) { if (panel) panel->Run(command); }, panel, command));
+    }, weak_factory_.GetWeakPtr(), command);
+  }
+  void Build() {
+    body_->RemoveAllChildViews();
+    brightness_ = nullptr;
+    body_->AddChildView(std::make_unique<MenuHeader>(palette_, u"Night Shift"));
+    const std::string host = site_.key.empty() ? std::string() : site_.key.substr(5);
+    body_->AddChildView(std::make_unique<NightCard>(palette_))->Set(
+        site_.on(), StateText(), host.empty() ? u"Night Shift" : base::UTF8ToUTF16(host));
+    auto* site_switch = body_->AddChildView(std::make_unique<SwitchRow>(
+        Command(0), T(u"Tryb ciemny dla tej witryny"), site_.on(), palette_));
+    site_switch->SetEnabled(site_.enabled && !site_.key.empty());
+    if (site_.on()) {
+      body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+      const auto tune = [](base::WeakPtr<NightShiftPanel> panel, const std::string& name, int value, bool commit) {
+        if (panel) panel->Tune(name, value, commit);
+      };
+      brightness_ = body_->AddChildView(std::make_unique<TuneRow>(T(u"Jasność"), site_.brightness, palette_,
+          base::BindRepeating(tune, weak_factory_.GetWeakPtr(), std::string("brightness"))));
+      body_->AddChildView(std::make_unique<TuneRow>(T(u"Kontrast"), site_.contrast, palette_,
+          base::BindRepeating(tune, weak_factory_.GetWeakPtr(), std::string("contrast"))));
+      body_->AddChildView(std::make_unique<SwitchRow>(
+          Command(1), T(u"Stosuj także na stronach z własnym trybem ciemnym"), site_.mode == "on", palette_));
+      if (site_.tuned || site_.mode == "on") AddRow(kTurnIcon, T(u"Przywróć ustawienia"), Command(2));
+      if (site_.draft) {
+        body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+        body_->AddChildView(std::make_unique<NoteBlock>(T(u"Propozycja asystenta · tylko dla tej witryny"),
+                                                        base::UTF8ToUTF16(site_.draft_label), palette_));
+        auto pair = [&](std::u16string left, int left_command, std::u16string right, int right_command) {
+          auto* line = body_->AddChildView(std::make_unique<views::View>());
+          auto* layout = line->SetLayoutManager(std::make_unique<views::BoxLayout>(
+              views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(4, 8), 4));
+          auto* a = line->AddChildView(std::make_unique<QuietButton>(Command(left_command), std::move(left), palette_));
+          auto* b = line->AddChildView(std::make_unique<QuietButton>(Command(right_command), std::move(right), palette_));
+          layout->SetFlexForView(a, 1);
+          layout->SetFlexForView(b, 1);
+          return std::pair{a, b};
+        };
+        auto [before, after] = pair(T(u"Przed"), 3, T(u"Z poprawką"), 4);
+        (with_fix_ ? after : before)->SetTone(QuietButton::Tone::kSelected);
+        auto [discard, save] = pair(T(u"Odrzuć"), 6, T(u"Zapisz dla tej witryny"), 5);
+        save->SetTone(QuietButton::Tone::kPrimary);
+      } else if (site_.repaired) {
+        AddRow(kTurnIcon, T(u"Cofnij poprawkę"), Command(7));
+      } else if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run() &&
+                 bar_->callbacks_.fix_night_shift) {
+        AddRow(kAssistantSparkIcon, T(u"Popraw dla tej strony"), Command(8));
+      }
+    }
+    body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+    AddRow(kGearIcon, T(u"Ustawienia Night Shift"), Command(9))->SetRing(true);
+    if (!GetWidget() || GetWidget()->IsClosed()) return;
+    SizeToContents();
+    if (!GetWidget()->IsVisible()) GetWidget()->Show();
+  }
+  void Write(base::DictValue change, bool reload) {
+    if (!page_) return;
+    base::OnceClosure done = base::DoNothing();
+    if (reload) done = base::BindOnce(&NightShiftPanel::Load, weak_factory_.GetWeakPtr());
+    WriteNightShiftSite(page_.get(), site_.key, std::move(change), std::move(done));
+  }
+  void ToggleSite() {
+    if (!site_.enabled || site_.key.empty()) return;
+    Write(base::DictValue().Set("mode", site_.on() ? "off" : site_.force ? "on" : "auto"), true);
+  }
+  void ToggleForce() { if (site_.on()) Write(base::DictValue().Set("mode", site_.mode == "on" ? "auto" : "on"), true); }
+  // Back to the app-wide look from the Night Shift settings.
+  void Reset() {
+    Write(base::DictValue().Set("brightness", base::Value()).Set("contrast", base::Value()).Set("mode", "auto"), true);
+  }
+  // While dragging the page follows at most every 65 ms.
+  void Tune(const std::string& name, int value, bool commit) {
+    (name == "brightness" ? site_.brightness : site_.contrast) = value;
+    pending_.Set(name, value);
+    if (commit) { FlushTuning(); return; }
+    if (!tune_timer_.IsRunning())
+      tune_timer_.Start(FROM_HERE, base::Milliseconds(65), base::BindOnce(&NightShiftPanel::FlushTuning, base::Unretained(this)));
+  }
+  void FlushTuning() {
+    tune_timer_.Stop();
+    if (pending_.empty()) return;
+    site_.tuned = true;
+    Write(std::exchange(pending_, base::DictValue()), false);
+  }
+  void Compare(bool with_fix) {
+    if (!site_.draft || !page_) return;
+    const base::Value none;
+    PreviewNightShiftRepair(page_.get(), with_fix ? *site_.draft->Find("proposal") : none, base::BindOnce(
+        [](base::WeakPtr<NightShiftPanel> panel, bool with_fix, bool shown) {
+          if (!panel) return;
+          // The page changed under the draft: it no longer applies.
+          if (!shown) { panel->Load(); return; }
+          panel->with_fix_ = with_fix;
+          panel->Build();
+        }, weak_factory_.GetWeakPtr(), with_fix));
+  }
+  void Finish(bool save) {
+    if (!site_.draft || !page_) return;
+    FinishNightShiftReview(page_.get(), site_, save, base::BindOnce([](base::WeakPtr<NightShiftPanel> panel) {
+      if (!panel || !panel->page_) return;
+      // The saved repair (or none) comes from storage now, not the preview.
+      panel->previewing_ = false;
+      PreviewNightShiftRepair(panel->page_.get(), base::Value(), base::DoNothing());
+      panel->Load();
+    }, weak_factory_.GetWeakPtr()));
+  }
+  void Undo() {
+    if (!site_.repaired || !page_) return;
+    UndoNightShiftRepair(page_.get(), site_, base::BindOnce(&NightShiftPanel::Load, weak_factory_.GetWeakPtr()));
+  }
+
+  raw_ptr<ExtensionsBar> bar_;
+  sidebar::DesignPalette palette_;
+  raw_ptr<views::View> body_ = nullptr;
+  raw_ptr<TuneRow> brightness_ = nullptr;
+  base::WeakPtr<content::WebContents> page_;
+  NightShiftSite site_;
+  bool ready_ = false;
+  bool draft_shown_ = false;
+  bool previewing_ = false;
+  bool with_fix_ = true;
+  base::DictValue pending_;
+  base::OneShotTimer tune_timer_;
+  base::WeakPtrFactory<NightShiftPanel> weak_factory_{this};
+};
+
 ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbacks)) {
   auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
@@ -1337,6 +1794,8 @@ ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbac
 ExtensionsBar::~ExtensionsBar() {
   // Bubbles report closing through weak pointers; this bar is going away.
   weak_factory_.InvalidateWeakPtrs();
+  night_shift_widget_.reset();
+  night_shift_panel_.reset();
   shield_widget_.reset();
   shield_panel_.reset();
   fingerprint_widget_.reset();
@@ -1357,7 +1816,10 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
   if (profile && profile->IsOffTheRecord() && !callbacks_.private_mode) profile = nullptr;
   const bool profile_changed = profile != profile_;
   const bool page_changed = page != page_.get();
-  if (page_changed) { ClosePopup(); CloseMenus(); }
+  if (page_changed) {
+    ClosePopup(); CloseMenus();
+    if (night_shift_widget_ && !night_shift_widget_->IsClosed()) night_shift_widget_->Close();
+  }
   page_ = page ? page->GetWeakPtr() : nullptr;
   if (page_changed) ObservePageCount();
   if (profile_changed) {
@@ -1371,6 +1833,7 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
   }
   RefreshButtons();
   RefreshShield();
+  if (page_changed) RefreshNightShift();
   if (fingerprint_panel_) fingerprint_panel_->Refresh();
 }
 
@@ -1399,6 +1862,7 @@ void ExtensionsBar::Rebuild() {
   fingerprint_button_ = nullptr;
   assistant_button_ = nullptr;
   shield_button_ = nullptr;
+  night_shift_button_ = nullptr;
   auto* model = profile_ && !callbacks_.private_mode ? ToolbarActionsModel::Get(profile_) : nullptr;
   SetVisible(callbacks_.private_mode || model != nullptr);
   if (callbacks_.private_mode) {
@@ -1438,7 +1902,18 @@ void ExtensionsBar::Rebuild() {
         base::BindRepeating(&ExtensionsBar::ToggleFingerprintPanel, base::Unretained(this)), palette));
     if (fingerprint_widget_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(true);
   }
-  if (callbacks_.pin_built_in_actions && model->actions_initialized()) callbacks_.pin_built_in_actions.Run(profile_);
+  if (NightShiftShown()) {
+    auto button = std::make_unique<MoonButton>(
+        base::BindRepeating(&ExtensionsBar::ToggleNightShiftPanel, base::Unretained(this)), palette,
+        base::BindRepeating([](ExtensionsBar* bar, views::View* source, ui::mojom::MenuSourceType type) {
+          bar->ShowActionMenu(kNightShiftId, source, type);
+        }, base::Unretained(this)));
+    button->SetOn(night_shift_on_);
+    button->SetOpen(night_shift_widget_ != nullptr);
+    night_shift_button_ = AddChildView(std::move(button));
+  } else if (night_shift_widget_ && !night_shift_widget_->IsClosed()) {
+    night_shift_widget_->Close();
+  }
   size_t shown = 0;
   for (const auto& id : model->pinned_action_ids()) {
     if (shown == kMaxVisible) break;
@@ -1452,7 +1927,7 @@ void ExtensionsBar::Rebuild() {
     }
     ++shown;
   }
-  if (!buttons_.empty() || fingerprint_button_ || shield_button_ || assistant_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
+  if (!buttons_.empty() || fingerprint_button_ || shield_button_ || assistant_button_ || night_shift_button_) divider_ = AddChildView(std::make_unique<Divider>(palette));
   puzzle_ = AddChildView(std::make_unique<PuzzleButton>(
       base::BindRepeating(&ExtensionsBar::ToggleMenu, base::Unretained(this)), palette));
   if (menu_widget_) static_cast<PuzzleButton*>(puzzle_.get())->SetOpen(true);
@@ -1522,50 +1997,17 @@ void ExtensionsBar::ShowPopup(const Extension& extension, views::View* anchor) {
   if (!action || !anchor || !anchor->GetWidget()) return;
   GURL url = action->GetPopupUrl(tab_id());
   if (!url.is_valid()) return;
-  if (extension.id() == kNightShiftId) {
-    url = net::AppendOrReplaceQueryParameter(url, "tab", base::NumberToString(tab_id()));
-    url = net::AppendOrReplaceQueryParameter(url, "appearance", IsDark(this) ? "dark" : "light");
-    url = net::AppendOrReplaceQueryParameter(url, "language", UiLanguageIsEnglish() ? "en" : "pl");
-    url = net::AppendOrReplaceQueryParameter(
-        url, "assistant", !callbacks_.assistant_available.is_null() &&
-            callbacks_.assistant_available.Run() ? "1" : "0");
-  }
   DestroyPopup();
   const auto open = base::BindRepeating(
-      [](base::WeakPtr<ExtensionsBar> bar, bool night_shift,
-         content::WeakDocumentPtr target, const GURL& url, bool user_gesture) {
+      [](base::WeakPtr<ExtensionsBar> bar, const GURL& url, bool) {
         if (!bar) return;
-        if (night_shift && url == GURL(std::string("chrome-extension://") +
-                                      kNightShiftId + "/repair-request")) {
-          auto* frame = target.AsRenderFrameHostIfValid();
-          if (user_gesture && frame && bar->page() &&
-              frame == bar->page()->GetPrimaryMainFrame() &&
-              !bar->callbacks_.fix_night_shift.is_null()) {
-            bar->ClosePopup();
-            bar->callbacks_.fix_night_shift.Run(bar->page());
-          }
-          return;
-        }
         bar->ClosePopup();
-        // The popup's gear: the settings page needs the app-wide state.
-        if (night_shift && url.SchemeIs(extensions::kExtensionScheme) && url.host() == kNightShiftId &&
-            url.path() == "/settings.html") {
-          bar->OpenOptions(kNightShiftId);
-          return;
-        }
         bar->OpenPage(url);
-      }, weak_factory_.GetWeakPtr(), extension.id() == kNightShiftId,
-      page_->GetPrimaryMainFrame()->GetWeakDocumentPtr());
+      }, weak_factory_.GetWeakPtr());
   auto delegate = std::make_unique<PopupHostDelegate>(open);
   delegate->set_profile(profile_);
-  std::unique_ptr<extensions::ExtensionViewHost> host;
-  if (extension.id() == kNightShiftId) {
-    host = std::make_unique<NightShiftPopupHost>(&extension, profile_, url,
-                                               std::move(delegate), open);
-  } else {
-    host = std::make_unique<extensions::ExtensionViewHost>(&extension, profile_, url,
-        extensions::mojom::ViewType::kExtensionPopup, std::move(delegate));
-  }
+  auto host = std::make_unique<extensions::ExtensionViewHost>(&extension, profile_, url,
+      extensions::mojom::ViewType::kExtensionPopup, std::move(delegate));
   popup_ = std::make_unique<Popup>(this, anchor, std::move(host));
   popup_widget_ = views::BubbleDialogDelegate::CreateBubble(popup_.get(), base::BindOnce(
       [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
@@ -1595,7 +2037,8 @@ void ExtensionsBar::DestroyPopup() {
 void ExtensionsBar::ShowActionMenu(const std::string& id, views::View* source, ui::mojom::MenuSourceType source_type) {
   if (!profile_ || !ExtensionFor(id)) return;
   const auto* extension = ExtensionFor(id);
-  context_menu_ = std::make_unique<ExtensionsContextMenu>(this, id, ToolbarActionsModel::Get(profile_)->IsActionPinned(id),
+  const bool pinned = id == kNightShiftId ? NightShiftShown() : ToolbarActionsModel::Get(profile_)->IsActionPinned(id);
+  context_menu_ = std::make_unique<ExtensionsContextMenu>(this, id, pinned,
                                                           extensions::OptionsPageInfo::HasOptionsPage(extension));
   // Context-menu event points are already in screen coordinates. Anchor to
   // the icon itself so mouse and keyboard invocation both open below it.
@@ -1603,6 +2046,13 @@ void ExtensionsBar::ShowActionMenu(const std::string& id, views::View* source, u
 }
 
 void ExtensionsBar::SetPinned(const std::string& id, bool pinned) {
+  if (id == kNightShiftId) {
+    if (profile_ && callbacks_.set_night_shift_shown) callbacks_.set_night_shift_shown.Run(profile_, pinned);
+    // Posted: the menu row that asked is rebuilt with the bar.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
+        [](base::WeakPtr<ExtensionsBar> bar) { if (bar) bar->Rebuild(); }, weak_factory_.GetWeakPtr()));
+    return;
+  }
   if (auto* model = profile_ && !callbacks_.private_mode ? ToolbarActionsModel::Get(profile_) : nullptr; model && model->HasAction(id))
     model->SetActionVisibility(id, pinned);
 }
@@ -1794,6 +2244,61 @@ void ExtensionsBar::DiagnoseBlockingWithAssistant() {
 void ExtensionsBar::OpenAdBlockingSettings() {
   if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
   if (callbacks_.open_ad_blocking_settings) callbacks_.open_ad_blocking_settings.Run();
+}
+bool ExtensionsBar::NightShiftShown() const {
+  return profile_ && !callbacks_.private_mode && ExtensionFor(kNightShiftId) && callbacks_.night_shift_shown &&
+         callbacks_.night_shift_shown.Run(profile_);
+}
+void ExtensionsBar::RefreshNightShift() {
+  if (!page_ || !NightShiftShown()) { SetNightShiftOn(true); return; }
+  ReadNightShiftSite(page_.get(), base::BindOnce([](base::WeakPtr<ExtensionsBar> bar, base::WeakPtr<content::WebContents> page,
+                                                    NightShiftSite site) {
+    if (bar && page && bar->page() == page.get()) bar->SetNightShiftOn(site.on() || !site.enabled);
+  }, weak_factory_.GetWeakPtr(), page_));
+}
+void ExtensionsBar::SetNightShiftOn(bool on) {
+  night_shift_on_ = on;
+  if (auto* button = views::AsViewClass<MoonButton>(night_shift_button_.get())) button->SetOn(on);
+}
+void ExtensionsBar::ToggleNightShiftPanel() {
+  if (night_shift_widget_) { if (!night_shift_widget_->IsClosed()) night_shift_widget_->Close(); return; }
+  views::View* anchor = night_shift_button_ ? night_shift_button_.get() : puzzle_.get();
+  if (!profile_ || !page_ || !anchor || !GetWidget() || !ExtensionFor(kNightShiftId)) return;
+  CloseMenus();
+  ClosePopup();
+  if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
+  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  night_shift_panel_ = std::make_unique<NightShiftPanel>(this, anchor);
+  // Never delete a widget on its own closing stack.
+  night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(night_shift_panel_.get(), base::BindOnce(
+      [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+            base::BindOnce(&ExtensionsBar::DestroyNightShiftPanel, bar));
+      }, weak_factory_.GetWeakPtr()));
+  if (auto* button = views::AsViewClass<MoonButton>(night_shift_button_.get())) button->SetOpen(true);
+  // The panel shows itself once it has read the site: a few milliseconds.
+  night_shift_panel_->Load();
+}
+void ExtensionsBar::DestroyNightShiftPanel() {
+  night_shift_widget_.reset();
+  night_shift_panel_.reset();
+  if (auto* button = views::AsViewClass<MoonButton>(night_shift_button_.get())) button->SetOpen(false);
+}
+void ExtensionsBar::FixNightShift() {
+  if (night_shift_widget_ && !night_shift_widget_->IsClosed()) night_shift_widget_->Close();
+  if (page_ && callbacks_.fix_night_shift) callbacks_.fix_night_shift.Run(page_.get());
+}
+void ExtensionsBar::OpenNightShiftSettings() {
+  if (night_shift_widget_ && !night_shift_widget_->IsClosed()) night_shift_widget_->Close();
+  OpenOptions(kNightShiftId);
+}
+bool ExtensionsBar::night_shift_ready_for_testing() const { return night_shift_panel_ && night_shift_panel_->ready(); }
+void ExtensionsBar::RunNightShiftCommandForTesting(int command) { if (night_shift_panel_) night_shift_panel_->Run(command); }
+std::string ExtensionsBar::night_shift_state_for_testing() const {
+  return night_shift_panel_ ? night_shift_panel_->state() : std::string();
+}
+void ExtensionsBar::SetNightShiftBrightnessForTesting(int value) {
+  if (night_shift_panel_) night_shift_panel_->SetBrightnessForTesting(value);
 }
 int ExtensionsBar::shield_count_for_testing() const {
   return shield_button_ ? static_cast<const ShieldButton*>(shield_button_.get())->count() : 0;

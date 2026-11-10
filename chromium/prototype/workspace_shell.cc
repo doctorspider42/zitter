@@ -5156,7 +5156,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         // only if the saved state differs, never as a side effect of loading.
         if (shell->pinned_ && !shell->sidebar_visible()) shell->ShowSidebar();
         if (!shell->pinned_ && shell->sidebar_visible()) shell->sidebar_widget_->Hide();
-        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|history|rss|extensions|extension-popup|fingerprint|shield|ad-blocking|menu|app-menu|dialog|toast opens
+        // Development: --zitter-open-panel=space|sidebar|palette|address|settings|profiles|downloads|history|rss|extensions|extension-popup|fingerprint|shield|night-shift|ad-blocking|menu|app-menu|dialog|toast opens
         // that view once the window is up, so UI checks can screenshot it without
         // driving the mouse.
         if (const std::string panel = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-open-panel"); !panel.empty())
@@ -5172,6 +5172,11 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "assistant-settings") shell->OpenAssistantSettings();
                 else if (panel == "fingerprint") shell->callbacks_.run_shortcut.Run("fingerprint");
                 else if (panel == "shield") shell->callbacks_.run_shortcut.Run("shield");
+                // After the restored page has loaded: the panel shows its site.
+                else if (panel == "night-shift" || panel == "extensions") base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
+                    base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::string id) { if (shell) shell->callbacks_.run_shortcut.Run(id); },
+                                   shell->weak_factory_.GetWeakPtr(), std::string(panel == "extensions" ? "extensions" : "night_shift")),
+                    base::Seconds(4));
                 else if (panel == "ad-blocking") shell->OpenAdBlockingSettings();
                 else if (panel == "privacy") {shell->OpenPrivacySettings();shell->general_widget_->LayoutRootViewIfNecessary();for(auto& row:shell->preference_sections_[2].rows)if(row.keywords.find(u"fingerprint")!=std::u16string::npos)row.view->ScrollViewToVisible();}
                 else if (panel == "profiles") shell->OpenProfiles();
@@ -5188,7 +5193,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                     if(!shell)return;shell->ShowSidebar();shell->callbacks_.run_shortcut.Run(id);if(data)shell->ShowSiteData(true);
                   },shell,id,panel=="site-data"),base::Milliseconds(2000));}
                 else if (panel == "time-machine") shell->OpenTimeMachine();
-                else if (panel == "extensions") shell->callbacks_.run_shortcut.Run("extensions");
                 else if (panel == "extension-popup") shell->callbacks_.run_shortcut.Run("extension_popup");
                 else if (panel == "dialog") shell->RequestNewFolder(shell->state_.workspace_id);
                 else if (panel == "space-end") {shell->OpenWorkspaceSettings();shell->settings_widget_->LayoutRootViewIfNecessary();shell->settings_scroll_->ScrollTo(shell->settings_scroll_->maximum());}
@@ -9470,9 +9474,10 @@ void WorkspaceShell::WritePreference(std::string key, int value) {
       key == "dns_mode" ? T(u"Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane.") :
       T(u"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny."));
 }
-void WorkspaceShell::OpenGeneralSettings() {
+void WorkspaceShell::OpenGeneralSettings(std::u16string_view query) {
   if (!widget_ || !widget_->IsVisible()) return;
   CloseOverlays(true);
+  if (!query.empty()) preferences_search_->SetText(query);
   RefreshGeneralControls(); RefreshSitePreferences(); FilterPreferences(); PositionPanels();
   general_widget_->Show(); general_widget_->Activate(); preferences_search_->RequestFocus();
 }

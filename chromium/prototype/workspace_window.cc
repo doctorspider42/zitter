@@ -17,6 +17,8 @@
 #include "chromium/prototype/rss_reader.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/common/isolated_world_ids.h"
+#include "content/public/browser/host_zoom_map.h"
+#include "content/public/common/url_constants.h"
 #include "chromium/prototype/site_data.h"
 #include "chromium/prototype/passwords_panel.h"
 #include "content/public/browser/download_request_utils.h"
@@ -245,6 +247,36 @@ constexpr ContentPreference kContentPreferences[] = {
 constexpr std::array kZoomPercentages = {75, 90, 100, 110, 125, 150, 175, 200};
 constexpr std::array kFontSizes = {12, 14, 16, 18, 20, 24};
 constexpr std::array kMinimumFontSizes = {0, 10, 12, 14, 16, 18};
+// Page zoom steps, as in Chrome.
+constexpr std::array kPageZoomPercentages = {25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500};
+
+// Ctrl+scroll and Ctrl+= / Ctrl+- / Ctrl+0: one step in or out (`step` +1 or
+// -1) or back to the default (0). The level is kept per site, as in Chrome.
+void ZoomPage(content::WebContents* page, int step) {
+  if (!page) return;
+  auto* map = content::HostZoomMap::GetForWebContents(page);
+  if (step == 0) { content::HostZoomMap::SetZoomLevel(page, map->GetDefaultZoomLevel()); page->SetPageScale(1.f); return; }
+  const int current = static_cast<int>(std::lround(blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(page)) * 100));
+  int next = current;
+  if (step > 0) { for (int p : kPageZoomPercentages) if (p > current) { next = p; break; } }
+  else { for (auto it = kPageZoomPercentages.rbegin(); it != kPageZoomPercentages.rend(); ++it) if (*it < current) { next = *it; break; } }
+  if (next != current) content::HostZoomMap::SetZoomLevel(page, blink::ZoomFactorToZoomLevel(next / 100.0));
+}
+// The zoom step of a page key, if it is one: Ctrl (Cmd) with =, - or 0.
+std::optional<int> PageZoomStep(const ui::Accelerator& accelerator) {
+#if BUILDFLAG(IS_MAC)
+  constexpr int kPrimary = ui::EF_COMMAND_DOWN;
+#else
+  constexpr int kPrimary = ui::EF_CONTROL_DOWN;
+#endif
+  if (accelerator.modifiers() != kPrimary) return std::nullopt;
+  switch (accelerator.key_code()) {
+    case ui::VKEY_OEM_PLUS: case ui::VKEY_ADD: return 1;
+    case ui::VKEY_OEM_MINUS: case ui::VKEY_SUBTRACT: return -1;
+    case ui::VKEY_0: case ui::VKEY_NUMPAD0: return 0;
+    default: return std::nullopt;
+  }
+}
 
 // WebView owns the delegate of its WebContents. Extend that delegate rather
 // than replacing it and losing WebView's sizing/focus/lifecycle behavior.
@@ -482,6 +514,8 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
     fullscreen_.Run(page, false);
   }
   bool IsFullscreenForTabOrPending(const content::WebContents*) override { return is_fullscreen_; }
+  // Ctrl+scroll over the page.
+  void ContentsZoomChange(bool zoom_in) override { ZoomPage(GetWebContents(), zoom_in ? 1 : -1); }
   blink::mojom::DisplayMode GetDisplayMode(const content::WebContents*) override {
     return is_fullscreen_ ? blink::mojom::DisplayMode::kFullscreen : blink::mojom::DisplayMode::kBrowser;
   }
@@ -1037,8 +1071,16 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   extension_callbacks.assistant_available = base::BindRepeating([](WorkspaceWindow* window) {
     return window->assistant_settings_.enabled;
   }, base::Unretained(this));
-  extension_callbacks.pin_built_in_actions =
-      base::BindRepeating(&WorkspaceWindow::PinNightShiftOnce, base::Unretained(this));
+  extension_callbacks.night_shift_shown = base::BindRepeating([](WorkspaceWindow* window, Profile* profile) {
+    return !window->night_shift_hidden_.contains(window->ProfileIdOf(profile));
+  }, base::Unretained(this));
+  extension_callbacks.set_night_shift_shown = base::BindRepeating([](WorkspaceWindow* window, Profile* profile, bool shown) {
+    const auto id = window->ProfileIdOf(profile);
+    if (id.empty() || !window->configuration_ready_) return;
+    if (shown) window->night_shift_hidden_.erase(id);
+    else window->night_shift_hidden_.insert(id);
+    window->SaveConfiguration();
+  }, base::Unretained(this));
   extension_callbacks.night_shift_state =
       base::BindRepeating(&WorkspaceWindow::NightShiftSettingsState, base::Unretained(this));
   extension_callbacks.fix_night_shift =
@@ -2288,25 +2330,10 @@ void WorkspaceWindow::PushNightShiftConfig(Profile* profile) {
   }
 }
 
-void WorkspaceWindow::PinNightShiftOnce(Profile* profile) {
-  if (!profile || is_private() || !configuration_ready_) return;
-  for (const auto& entry : profiles_) {
-    if (!entry.lease || entry.lease->profile() != profile) continue;
-    if (night_shift_pinned_.contains(entry.info.id)) return;
-    auto* model = ToolbarActionsModel::Get(profile);
-    if (!model || !model->actions_initialized() || !model->HasAction(kNightShiftId)) return;
-    night_shift_pinned_.insert(entry.info.id);
-    // Posted: the bar calls this while rebuilding from the model.
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
-        [](base::WeakPtr<WorkspaceWindow> window, std::string id) {
-          if (!window) return;
-          if (auto* profile = window->ProfileFor(id))
-            if (auto* model = ToolbarActionsModel::Get(profile); model && !model->IsActionPinned(kNightShiftId))
-              model->SetActionVisibility(kNightShiftId, true);
-          window->SaveConfiguration();
-        }, weak_factory_.GetWeakPtr(), entry.info.id));
-    return;
-  }
+std::string WorkspaceWindow::ProfileIdOf(Profile* profile) const {
+  for (const auto& entry : profiles_)
+    if (entry.lease && entry.lease->profile() == profile) return entry.info.id;
+  return {};
 }
 
 void WorkspaceWindow::ApplyNightShiftSettings(base::DictValue value) {
@@ -2345,6 +2372,15 @@ std::string WorkspaceWindow::NightShiftSettingsState() {
 
 content::WebContents* WorkspaceWindow::OpenPageLink(content::WebContents* source,
     const content::OpenURLParams& params) {
+  // The editable menu's spelling "Language settings" opens Chrome's settings
+  // page, which Zitter does not load: open its own spelling preferences.
+  if (params.url.SchemeIs(content::kChromeUIScheme) && params.url.host() == "settings") {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce([](base::WeakPtr<WorkspaceWindow> window) {
+          if (window && window->shell_) window->shell_->OpenGeneralSettings(T(u"Sprawdzaj pisownię"));
+        }, weak_factory_.GetWeakPtr()));
+    return nullptr;
+  }
   if (!params.url.SchemeIsHTTPOrHTTPS() || params.post_data) return nullptr;
   const auto workspace = WorkspaceForPage(source);
   if (workspace.empty()) return nullptr;
@@ -3469,6 +3505,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "extensions") { shell_->CloseOverlays(true); extensions_bar_->ToggleMenu(); return extensions_bar_->profile() != nullptr; }
   if (id == "fingerprint") { shell_->CloseOverlays(true); extensions_bar_->ToggleFingerprintPanel(); return extensions_bar_->fingerprint_panel_for_testing() != nullptr; }
   if (id == "shield") { shell_->CloseOverlays(true); extensions_bar_->ToggleShieldPanel(); return extensions_bar_->shield_panel_for_testing() != nullptr; }
+  if (id == "night_shift") { shell_->CloseOverlays(true); extensions_bar_->ToggleNightShiftPanel(); return extensions_bar_->night_shift_panel_for_testing() != nullptr; }
   if (id == "history") { ShowHistory(); return true; }
   if (id == "rss") { ShowRss(); return true; }
   if (id == "settings") { shell_->OpenGeneralSettings(); return true; }
@@ -3541,7 +3578,13 @@ content::KeyboardEventProcessingResult WorkspaceWindow::PreHandlePageKeyEvent(
   const bool escape_fullscreen = key == ui::VKEY_ESCAPE && accelerator.modifiers() == 0 && fullscreen_page_;
   auto action = shell_->ShortcutFor(accelerator);
   if (escape_fullscreen) action = "exit_fullscreen";
-  if (action.empty() && !escape_peek) return Result::NOT_HANDLED;
+  if (action.empty() && !escape_peek) {
+    const auto zoom = PageZoomStep(accelerator);
+    if (!zoom) return Result::NOT_HANDLED;
+    consumed_keys_.insert(key); suppress_shortcut_char_ = true;
+    ZoomPage(source, *zoom);
+    return Result::HANDLED;
+  }
   consumed_keys_.insert(key); suppress_shortcut_char_ = true;
   // All actions are deferred: close/restore/sleep may destroy the source page.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
@@ -3692,10 +3735,10 @@ void WorkspaceWindow::SaveConfiguration(base::OnceCallback<void(bool)> done) {
   dict.Set("clean_address_copies", clean_address_copies_);
   dict.Set("assistant", assistant_settings_.ToValue());
   if (night_shift_config_.managed) dict.Set("night_shift", night_shift_config_.ToValue());
-  {
-    base::ListValue pinned;
-    for (const auto& id : night_shift_pinned_) pinned.Append(id);
-    dict.Set("night_shift_pinned", std::move(pinned));
+  if (!night_shift_hidden_.empty()) {
+    base::ListValue hidden;
+    for (const auto& id : night_shift_hidden_) hidden.Append(id);
+    dict.Set("night_shift_hidden", std::move(hidden));
   }
   const auto* replaced_starter = import_replaces_starter_ ? model_.Find(starter_workspace_id_) : nullptr;
   base::ListValue profile_list;
@@ -4035,9 +4078,9 @@ void WorkspaceWindow::RestoreConfiguration(std::string json) {
     shift_click_peek_ = dict->FindBool("shift_click_peek").value_or(true);
     clean_address_copies_ = dict->FindBool("clean_address_copies").value_or(true);
     night_shift_config_ = NightShiftConfig::FromValue(dict->FindDict("night_shift"));
-    night_shift_pinned_.clear();
-    if (const auto* pinned = dict->FindList("night_shift_pinned"))
-      for (const auto& id : *pinned) if (id.is_string()) night_shift_pinned_.insert(id.GetString());
+    night_shift_hidden_.clear();
+    if (const auto* hidden = dict->FindList("night_shift_hidden"))
+      for (const auto& id : *hidden) if (id.is_string()) night_shift_hidden_.insert(id.GetString());
     ++night_shift_generation_;
     assistant_settings_ = AssistantSettings::FromValue(dict->FindDict("assistant"));
     shell_->SetAssistantAllowed(assistant_settings_.enabled);

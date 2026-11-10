@@ -16,8 +16,8 @@ Linked stylesheets also subscribe to CSSOM change events. Animation-frame
 polling remains limited to inline styles when the proxy is unavailable.
 
 Zitter registers Night Shift as a built-in component extension for regular
-profiles. Its settings page, opened from the popup's gear or the extension's
-Options, controls Night Shift for the whole app: on or off, all profiles or
+profiles. Its settings page, opened from the panel's settings row or the
+extension's Options, controls Night Shift for the whole app: on or off, all profiles or
 selected ones, and the default look (brightness, contrast, sepia, grayscale and
 whether to override a site's own dark theme). Zitter passes the profiles to the
 page in its `state` query parameter. The page reports each change by replacing
@@ -27,17 +27,26 @@ extension's `settings.html`, saves it in `ZitterWorkspaces.json` and writes
 settings are saved once, each profile keeps the switch it had before. When
 disabled, Night Shift removes its existing page styles and unregisters both
 content scripts. A site's own tuning overrides only the values it sets; the
-rest follow the defaults. Its action popup controls the current site's mode, brightness
-and contrast. When CORS prevents access to an already-loaded linked stylesheet,
+rest follow the defaults.
+
+The extension has no toolbar action or popup page. Zitter shows a native moon
+button in the header and a native panel under it (`extensions_bar.cc`). The
+panel reads and writes the site's record in the extension's local storage
+(`night_shift.cc`), so it opens without starting an extension page. The page's
+content script follows each change through `storage.onChanged`. The moon can be
+unpinned from the extensions menu, where Night Shift keeps its own row.
+
+When CORS prevents access to an already-loaded linked stylesheet,
 the extension can read an anonymous CSS response with limits on origin,
 response type, redirects, size and lifetime. Other resources use the page's
 ordinary CORS rules. Private profiles do not run the component.
 
-The popup's repair action opens a scoped Assistant session that can sample
+The panel's repair action opens a scoped Assistant session that can sample
 computed colors and propose typed color rules. The model receives neither page
 text nor screenshots through this action. A proposal is tied to the document
-that was inspected. Opening the popup starts a temporary comparison. Closing
-it restores the saved state. Saving affects the site in that profile, and Undo
+that was inspected. Opening the panel starts a temporary comparison: Zitter
+calls `zitterNightShiftReview` in the extension's isolated world, which the page
+cannot reach. Closing the panel restores the saved state. Saving affects the site in that profile, and Undo
 restores the previous saved fix.
 
 Run `python tools/refresh_darkreader.py` to reproduce the assets. The refresh
@@ -46,8 +55,7 @@ checks both upstream archives and uses a pinned esbuild version.
 ## Browser verification
 
 The Chromium-backed `NightShiftBrowserTest.NativeActionReviewsScopedRepair`
-opens the real extension action popup in both appearance modes and checks its
-rendered background. Each appearance change must produce fresh Metal frames in
+opens the native panel in both appearance modes. Each appearance change must produce fresh Metal frames in
 the browser header and sidebar when Metal is requested. The compositor run
 checks that both Metal surfaces are hidden. A loopback model fixture drives the
 native assistant tool round-trip, including refusal of an unrelated tool, then

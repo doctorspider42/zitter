@@ -444,9 +444,6 @@ copy("night_shift_files") {
   sources = [
     "chromium/night_shift/manifest.json",
     "chromium/night_shift/moon.png",
-    "chromium/night_shift/panel.css",
-    "chromium/night_shift/panel.html",
-    "chromium/night_shift/panel.js",
     "chromium/night_shift/settings.css",
     "chromium/night_shift/settings.html",
     "chromium/night_shift/settings.js",

@@ -393,7 +393,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void ResizeSidebar(int amount, bool done);
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
-  void OpenGeneralSettings();
+  // With `query`, the list opens filtered to it.
+  void OpenGeneralSettings(std::u16string_view query = {});
   // The |z⟩ menu (design: Menu Zitter): the macOS menu bar's commands on
   // Windows, below |anchor|.
   void ShowAppMenu(views::View* anchor);
