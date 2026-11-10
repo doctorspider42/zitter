@@ -8,12 +8,12 @@
 #if defined(ZITTER_DEV_BUILD)
 #define ZITTER_PRODUCT_NAME "Zitter Dev"
 #define ZITTER_SETUP_NAME "Zitter Dev Setup"
+IDI_SETUP ICON "../app/zitter-dev.ico"
 #else
 #define ZITTER_PRODUCT_NAME "Zitter"
 #define ZITTER_SETUP_NAME "Zitter Setup"
-#endif
-
 IDI_SETUP ICON "../app/zitter.ico"
+#endif
 
 IDR_FONT_SERIF RCDATA "../../assets/fonts/InstrumentSerif-Regular.ttf"
 IDR_FONT_SERIF_ITALIC RCDATA "../../assets/fonts/InstrumentSerif-Italic.ttf"

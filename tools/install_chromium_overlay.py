@@ -773,21 +773,39 @@ def patch_extensions_logo(text, slot):
 # shows it for the file, taskbar and window. All icons must be in that one .rc
 # (their image IDs collide across .res files), so Zitter's takes Chromium's slot.
 WINDOW_ICON_FILE = "chrome/app/chrome_dll.rc"
+WINDOW_ICON_BUILD_FILE = "chrome/app/BUILD.gn"
+WINDOW_ICON_BUILD_ANCHOR = ('  if (is_win) {\n'
+                            '    sources += [\n'
+                            '      "chrome_dll.rc",\n')
+
+
+def patch_window_icon_build(text):
+    marker = '    import("//zitter/chromium/app/windows_channel.gni")\n'
+    replacement = ('  if (is_win) {\n' + marker +
+                   '    if (zitter_dev_build) {\n'
+                   '      defines = [ "ZITTER_DEV_BUILD" ]\n'
+                   '    }\n'
+                   '    sources += [\n'
+                   '      "chrome_dll.rc",\n')
+    return _patch_once(text, WINDOW_ICON_BUILD_ANCHOR, replacement, marker,
+                       "Windows icon build")
 
 
 def patch_window_icon(text):
     original = ('#else\n'
                 'IDR_MAINFRAME       ICON                        "theme\\chromium\\win\\chromium.ico"\n'
                 '#endif\n')
-    replacement = ('#else\n'
-                   '// Zitter: zitter.exe\'s icon (chromium/app/zitter.ico).\n'
-                   'IDR_MAINFRAME       ICON                        "../../zitter/chromium/app/zitter.ico"\n'
-                   '#endif\n')
-    if text.count(replacement) == 1:
-        return text
-    if text.count(original) != 1 or "Zitter: zitter.exe's icon" in text:
-        raise ValueError("Unexpected upstream Windows icon resource layout; review the patch")
-    return text.replace(original, replacement, 1)
+    marker = "// Zitter: zitter.exe's icon follows its installation channel."
+    stable_icon = 'IDR_MAINFRAME       ICON                        "../../zitter/chromium/app/zitter.ico"\n'
+    previous = ('#else\n// Zitter: zitter.exe\'s icon (chromium/app/zitter.ico).\n'
+                + stable_icon + '#endif\n')
+    replacement = ('#else\n' + marker + '\n'
+                   '#if defined(ZITTER_DEV_BUILD)\n'
+                   'IDR_MAINFRAME       ICON                        "../../zitter/chromium/app/zitter-dev.ico"\n'
+                   '#else\n' + stable_icon + '#endif\n#endif\n')
+    if previous in text:
+        text = _patch_once(text, previous, replacement, marker, "Windows icon resource")
+    return _patch_once(text, original, replacement, marker, "Windows icon resource")
 
 # zitter.exe sideloads its design fonts (Fonts\ beside it) into the browser's
 # DirectWrite collection, the hook web tests use for Ahem. Variable fonts must
@@ -1002,6 +1020,9 @@ def install(checkout, dry_run=False):
     window_icon = checkout / WINDOW_ICON_FILE
     window_icon_original = read(window_icon)
     window_icon_patched = patch_window_icon(window_icon_original)
+    window_icon_build = checkout / WINDOW_ICON_BUILD_FILE
+    window_icon_build_original = read(window_icon_build)
+    window_icon_build_patched = patch_window_icon_build(window_icon_build_original)
     legacy_uia = checkout / "content/browser/renderer_host/legacy_render_widget_host_win.cc"
     legacy_uia_original = read(legacy_uia)
     legacy_uia_patched = patch_legacy_renderer_uia(legacy_uia_original)
@@ -1061,6 +1082,8 @@ def install(checkout, dry_run=False):
                 write(direct_write, direct_write_patched)
             if window_icon_patched != window_icon_original:
                 write(window_icon, window_icon_patched)
+            if window_icon_build_patched != window_icon_build_original:
+                write(window_icon_build, window_icon_build_patched)
             if legacy_uia_patched != legacy_uia_original:
                 write(legacy_uia, legacy_uia_patched)
             if search_highlight_patched != search_highlight_original:
@@ -1088,6 +1111,10 @@ def install(checkout, dry_run=False):
             write(media_header, media_header_original)
             write(media_source, media_source_original)
             write(component_service, component_original)
+            if window_icon_patched != window_icon_original:
+                write(window_icon, window_icon_original)
+            if window_icon_build_patched != window_icon_build_original:
+                write(window_icon_build, window_icon_build_original)
             if legacy_uia_patched != legacy_uia_original:
                 write(legacy_uia, legacy_uia_original)
             for path, text in {**extension_tabs, **extensions_logo}.items():

@@ -353,6 +353,9 @@ Notes:
   Invoke work. Keyboard: Tab, Enter, Space, Esc.
 ## Zitter Dev for side-by-side testing
 
+For the incremental component browser and standalone setup workflow, see the
+[local Dev install skill](../.agents/skills/zitter-dev-install/SKILL.md).
+
 Enable `zitter_dev_build = true` in a Windows build directory's `args.gn`. Start
 from `chromium/windows-release.args.gn` and save the arguments to
 `.chromium/src/out/ZitterWinDev/args.gn`. Use the toolchain environment above.
@@ -371,8 +374,9 @@ python tools/package_win.py --out .chromium/src/out/ZitterWinDev --setup .chromi
 ```
 
 The unsigned `Zitter-Dev-*-win-x64-setup.exe` installs for the current user under
-`%LOCALAPPDATA%\Programs\Zitter Dev`. Dev has its own Start menu shortcuts,
-taskbar identity, Apps & features entry and browsing data under
+`%LOCALAPPDATA%\Programs\Zitter Dev`. Dev uses a lime version of the Windows app
+and setup icon. It has its own Start menu shortcuts, taskbar identity,
+Apps & features entry and browsing data under
 `%LOCALAPPDATA%\Zitter Dev`. Explicit `--user-data-dir` paths must be inside
 that directory. Install a newer local build over it to keep Dev data.
 

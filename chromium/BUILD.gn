@@ -3,10 +3,7 @@ import("//testing/test.gni")
 import("//build/rust/rust_static_library.gni")
 
 if (is_win) {
-  declare_args() {
-    # Build an isolated, per-user installation for local testing.
-    zitter_dev_build = false
-  }
+  import("chromium/app/windows_channel.gni")
 }
 
 # Native assistant core. Uses Chromium's vendored crates and toolchain only.

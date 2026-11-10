@@ -1,0 +1,6 @@
+# Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+
+declare_args() {
+  # Build an isolated, per-user installation for local testing.
+  zitter_dev_build = false
+}
