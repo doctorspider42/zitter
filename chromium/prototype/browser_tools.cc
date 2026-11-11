@@ -101,8 +101,13 @@ std::vector<Shortcut> ArcShortcuts() {
   add("right_pane", T(u"Aktywuj prawą stronę podziału"), ui::VKEY_2, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
   add("third_pane", T(u"Aktywuj trzeci panel podziału"), ui::VKEY_3, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
   add("fourth_pane", T(u"Aktywuj czwarty panel podziału"), ui::VKEY_4, ui::EF_CONTROL_DOWN | ui::EF_SHIFT_DOWN);
-  add("back", T(u"Wstecz"), ui::VKEY_LEFT, p);
-  add("forward", T(u"Dalej"), ui::VKEY_RIGHT, p);
+#if BUILDFLAG(IS_WIN)
+  const int navigation_modifier = ui::EF_ALT_DOWN;
+#else
+  const int navigation_modifier = p;
+#endif
+  add("back", T(u"Wstecz"), ui::VKEY_LEFT, navigation_modifier);
+  add("forward", T(u"Dalej"), ui::VKEY_RIGHT, navigation_modifier);
 #if BUILDFLAG(IS_WIN)
   add("timeline", T(u"Time Machine przestrzeni"), ui::VKEY_H, p | ui::EF_SHIFT_DOWN);
 #else
@@ -336,6 +341,11 @@ BrowserTools BrowserTools::FromValue(const base::DictValue& dict) {
       const auto* entry = item.GetIfDict(); if (!entry) { valid = false; break; }
       const auto* id = entry->FindString("id"); const auto* chord = entry->FindString("chord");
       if (!id || !chord) { valid = false; break; }
+#if BUILDFLAG(IS_WIN)
+      // Older versions persisted every default alongside custom bindings.
+      if ((*id == "back" && *chord == "Ctrl+Left") ||
+          (*id == "forward" && *chord == "Ctrl+Right")) continue;
+#endif
       if (!saved.insert(*id).second) { valid = false; break; }
       auto parsed = ParseShortcut(*chord); if (!parsed) { valid = false; break; }
       auto found = std::find_if(proposed.begin(), proposed.end(), [&](const auto& shortcut) { return shortcut.id == *id; });

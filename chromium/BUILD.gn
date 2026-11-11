@@ -265,6 +265,7 @@ source_set("shell") {
     "chromium/prototype/arc_importer.h",
     "chromium/prototype/arc_importer.cc",
     "chromium/prototype/browser_import_data.h",
+    "chromium/prototype/import_database_snapshot.h",
     "chromium/prototype/browser_import_data.cc",
     "chromium/prototype/sidebar_layout.cc",
     "chromium/prototype/sidebar_layout.h",
@@ -561,7 +562,7 @@ test("arc_importer_unittests") {
     "chromium/prototype/browser_data.h",
   ]
   include_dirs = [ "." ]
-  deps = [ ":core", "//base", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest", "//url" ]
+  deps = [ ":core", "//base", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest", "//sql", "//url" ]
 }
 if (!is_mac) {
   # macOS keeps the CoreText harness: tools/check_editor_text_layout.py.

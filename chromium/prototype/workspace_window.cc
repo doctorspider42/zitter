@@ -173,12 +173,17 @@
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #elif BUILDFLAG(IS_WIN)
 #include <windows.h>
+#include <appmodel.h>
+#include <shellapi.h>
 
 #include "chrome/app/chrome_dll_resource.h"
 #include "chromium/prototype/workspace_frame_win.h"
 #include "chromium/prototype/jump_list_win.h"
 #include "chromium/prototype/password_csv_import.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util_win.h"
+#include "base/win/registry.h"
+#include "base/win/scoped_gdi_object.h"
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/image/image_family.h"
 #include "ui/gfx/win/icon_util.h"
@@ -2812,9 +2817,10 @@ void WorkspaceWindow::QueueImportedFavicons(const ArcImport& source) {
   auto request = std::make_shared<ImportedFaviconTargets>(std::move(targets));
   ++import_favicon_reads_;
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(
-      [](std::vector<ImportSourceProfile> sources, std::shared_ptr<const ImportedFaviconTargets> targets) {
-        return ReadImportedFavicons(sources, *targets);
-      }, source.sources, request), base::BindOnce(
+      [](std::vector<ImportSourceProfile> sources, std::shared_ptr<const ImportedFaviconTargets> targets,
+         ImportBrowser browser) {
+        return ReadImportedFavicons(sources, *targets, browser);
+      }, source.sources, request, source.options.browser), base::BindOnce(
       [](base::WeakPtr<WorkspaceWindow> window, std::shared_ptr<ImportedFaviconTargets> targets,
          std::vector<ImportedFavicon> icons) {
         if (!window) return;
@@ -4452,15 +4458,97 @@ void WorkspaceWindow::FinishConfiguration() {
 }
 
 #if BUILDFLAG(IS_WIN)
+namespace {
+SkBitmap ReadBrowserIcon(const base::FilePath& path, int index) {
+  // Only read resources from local application files.
+  const auto& value = path.value();
+  if (!path.IsAbsolute() || value.size() < 3 || value[1] != L':') return {};
+  HICON large = nullptr;
+  const auto count = ::ExtractIconExW(value.c_str(), index, &large, nullptr, 1);
+  base::win::ScopedGDIObject<HICON> icon(large);
+  if (count != 1 || !icon.is_valid()) return {};
+  auto bitmap = IconUtil::CreateSkBitmapFromHICON(icon.get());
+  bitmap.setImmutable();
+  return bitmap;
+}
+
+SkBitmap ReadArcBrowserIcon() {
+  constexpr wchar_t kArcFamily[] = L"TheBrowserCompany.Arc_ttt1ap7aakyb4";
+  UINT32 count = 0;
+  UINT32 length = 0;
+  if (::GetPackagesByPackageFamily(kArcFamily, &count, nullptr, &length, nullptr) !=
+      ERROR_INSUFFICIENT_BUFFER) return {};
+  std::vector<PWSTR> names(count);
+  std::vector<wchar_t> buffer(length);
+  if (::GetPackagesByPackageFamily(kArcFamily, &count, names.data(), &length, buffer.data()) !=
+      ERROR_SUCCESS) return {};
+  for (UINT32 i = 0; i < count; ++i) {
+    UINT32 path_length = 0;
+    if (::GetPackagePathByFullName(names[i], &path_length, nullptr) !=
+        ERROR_INSUFFICIENT_BUFFER) continue;
+    std::vector<wchar_t> path(path_length);
+    if (::GetPackagePathByFullName(names[i], &path_length, path.data()) != ERROR_SUCCESS)
+      continue;
+    const base::FilePath package(path.data());
+    auto icon = ReadBrowserIcon(package.AppendASCII("assets/DesktopShortcut.ico"), 0);
+    if (icon.drawsNothing()) icon = ReadBrowserIcon(package.AppendASCII("Arc.exe"), 0);
+    if (!icon.drawsNothing()) return icon;
+  }
+  return {};
+}
+
+SkBitmap FindWelcomeBrowserIcon(ImportBrowser browser) {
+  std::u16string_view executable;
+  switch (browser) {
+    case ImportBrowser::kArc: return ReadArcBrowserIcon();
+    case ImportBrowser::kChrome: executable = u"chrome.exe"; break;
+    case ImportBrowser::kEdge: executable = u"msedge.exe"; break;
+    case ImportBrowser::kBrave: executable = u"brave.exe"; break;
+    case ImportBrowser::kFirefox: executable = u"firefox.exe"; break;
+    case ImportBrowser::kOpera: executable = u"opera.exe"; break;
+    case ImportBrowser::kVivaldi: executable = u"vivaldi.exe"; break;
+  }
+  for (HKEY hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE}) {
+    for (base::win::RegistryValueIterator registration(hive, L"Software\\RegisteredApplications");
+         registration.Valid(); ++registration) {
+      if (registration.Type() != REG_SZ) continue;
+      const std::wstring_view capabilities(registration.Value());
+      if (!capabilities.starts_with(L"Software\\Clients\\StartMenuInternet\\")) continue;
+      base::win::RegKey key(hive, registration.Value(), KEY_QUERY_VALUE);
+      std::wstring location;
+      if (key.ReadValue(L"ApplicationIcon", &location) != ERROR_SUCCESS) continue;
+      const size_t comma = location.rfind(L',');
+      int index = 0;
+      if (comma != std::wstring::npos) {
+        if (!base::StringToInt(base::AsStringPiece16(location).substr(comma + 1), &index)) continue;
+        location.resize(comma);
+      }
+      if (location.size() >= 2 && location.front() == L'"' && location.back() == L'"')
+        location = location.substr(1, location.size() - 2);
+      const base::FilePath path(location);
+      if (!base::EqualsCaseInsensitiveASCII(base::AsStringPiece16(path.BaseName().value()),
+                                            executable)) continue;
+      auto icon = ReadBrowserIcon(path, index);
+      if (!icon.drawsNothing()) return icon;
+    }
+  }
+  return {};
+}
+}  // namespace
+
 void WorkspaceWindow::ShowWelcome() {
   // Which browsers this computer has: their data folders, read off the UI thread.
   config_runner_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([] {
-        std::vector<ImportBrowser> found;
-        for (const auto browser : {ImportBrowser::kChrome, ImportBrowser::kEdge, ImportBrowser::kBrave, ImportBrowser::kArc})
-          if (base::DirectoryExists(DefaultBrowserDirectory(browser))) found.push_back(browser);
+        std::vector<WorkspaceShell::WelcomeSetup::Source> found;
+        for (const auto browser : {ImportBrowser::kChrome, ImportBrowser::kEdge, ImportBrowser::kBrave,
+                                   ImportBrowser::kArc, ImportBrowser::kFirefox,
+                                   ImportBrowser::kOpera, ImportBrowser::kVivaldi})
+          if (base::DirectoryExists(DefaultBrowserDirectory(browser)))
+            found.push_back({browser, FindWelcomeBrowserIcon(browser)});
         return found;
       }),
-      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::vector<ImportBrowser> found) {
+      base::BindOnce([](base::WeakPtr<WorkspaceWindow> window,
+                       std::vector<WorkspaceShell::WelcomeSetup::Source> found) {
         if (!window || window->onboarding_complete_) return;
         const auto* starter = window->model_.Find(window->starter_workspace_id_);
         WorkspaceShell::WelcomeSetup setup;
@@ -4476,14 +4564,18 @@ void WorkspaceWindow::ShowWelcome() {
           window->AssistantStateChanged();
         }, window);
         setup.import_browser = base::BindRepeating(&WorkspaceWindow::StartWelcomeImport, window);
-        setup.import_passwords = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window, base::OnceCallback<void(std::u16string)> report) {
+        setup.import_passwords = base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window,
+            gfx::NativeWindow owner, base::OnceCallback<void(std::u16string)> report) {
           auto* page = window ? window->contents(window->active_id()) : nullptr;
-          if (!page) return;
-          ImportPasswordsFromCsv(page, base::BindOnce([](base::OnceCallback<void(std::u16string)> report, PasswordCsvOutcome outcome) {
-            if (outcome.cancelled) return;
+          if (!page) { std::move(report).Run(T(u"Nie udało się zaimportować pliku CSV.")); return; }
+          ImportPasswordsFromCsv(page, owner, base::BindOnce([](base::WeakPtr<WorkspaceWindow> window,
+              std::string workspace, base::OnceCallback<void(std::u16string)> report, PasswordCsvOutcome outcome) {
+            if (window && outcome.imported && workspace == window->starter_workspace_id_)
+              window->starter_has_imported_passwords_ = true;
+            if (outcome.cancelled) { std::move(report).Run({}); return; }
             std::move(report).Run(outcome.imported ? TF(u"Zaimportowano haseł: {}.", {base::NumberToString16(outcome.count)})
                                                    : T(u"Nie udało się zaimportować pliku CSV."));
-          }, std::move(report)));
+          }, window, window->active_id(), std::move(report)));
         }, window->weak_factory_.GetWeakPtr());
         window->shell_->ShowWelcome(std::move(setup), base::BindOnce(&WorkspaceWindow::WelcomeFinished, window));
       }, weak_factory_.GetWeakPtr()));
@@ -4501,15 +4593,12 @@ void WorkspaceWindow::WelcomeFinished(WorkspaceShell::WelcomeResult result) {
   DismissImport();
 }
 
-void WorkspaceWindow::StartWelcomeImport(ImportBrowser browser, base::OnceCallback<void(bool, std::u16string)> done) {
+void WorkspaceWindow::StartWelcomeImport(BrowserImportOptions options, base::OnceCallback<void(bool, std::u16string)> done) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || welcome_import_done_) {
     std::move(done).Run(false, T(u"Nie można teraz rozpocząć importu. Spróbuj ponownie."));
     return;
   }
   welcome_import_done_ = std::move(done);
-  BrowserImportOptions options;
-  options.browser = browser;
-  options.history = true;
   PreviewBrowserImport(options);
 }
 #endif
@@ -4707,7 +4796,9 @@ bool WorkspaceWindow::MovePin(std::string id, std::string parent, std::string be
     auto previous_profile = pins_[storage];
     std::erase_if(pins_[workspace], [&](const auto& item) { return item.id == id; });
     moved.parent_id.clear(); moved.profile_pin = true;
-    pins_[storage].push_back(std::move(moved));
+    auto& favorites = pins_[storage];
+    favorites.insert(std::ranges::find(favorites, before, &PinnedItem::id),
+                     std::move(moved));
     profiles_busy_ = true; UpdateShell();
     SaveConfiguration(base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string workspace, std::string storage,
         std::vector<PinnedItem> previous, std::vector<PinnedItem> previous_profile, bool ok) {
@@ -5155,7 +5246,8 @@ void WorkspaceWindow::CommitArcImport() {
   if (!onboarding_complete_ && model_.workspaces().size() == 1 && !starter_workspace_id_.empty()) {
     const auto* starter = model_.Find(starter_workspace_id_);
     auto host = std::find_if(hosts_.begin(), hosts_.end(), [&](const auto& h) { return h.workspace_id == starter_workspace_id_; });
-    import_replaces_starter_ = starter && (starter->name == "Moja przestrzeń" || starter->name == base::UTF16ToUTF8(T(u"Moja przestrzeń"))) &&
+    import_replaces_starter_ = starter && !starter_has_imported_passwords_ &&
+        (starter->name == "Moja przestrzeń" || starter->name == base::UTF16ToUTF8(T(u"Moja przestrzeń"))) &&
         starter->profile_id == "personal-profile" && pinned_items(starter->id).empty() &&
         host != hosts_.end() && host->tabs.size() == 1 && host->split.empty() &&
         !IsWorkspaceTabUrl(TabUrl(*host, host->view));

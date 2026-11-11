@@ -426,8 +426,12 @@ its open pull requests. Each search shows up to 100 results. The active
 workspace refreshes every five minutes, and the context menu can request an
 immediate refresh. The optional API token is stored using the operating
 system's credential encryption. A failed refresh keeps the previous results.
-Chrome, Edge and Brave read their local Chromium `Local State` and each regular
-profile's `Bookmarks` file. Profile display names become workspace names; folder
+Chrome, Edge, Brave, Opera, and Vivaldi read their local Chromium `Local State`
+and each regular profile's `Bookmarks` file. Opera also reads its custom
+bookmark folders and supports its older single-profile layout. Firefox reads
+profiles from `profiles.ini`, bookmarks and history from `places.sqlite`, and
+cached icons from `favicons.sqlite`. Firefox, Opera, and Vivaldi support bookmark,
+favicon, and history import. Profile display names become workspace names; folder
 hierarchies become workspace pins. Sources are read only. Invalid/non-HTTP(S)
 links and unsupported items are counted as skipped. Arc Split View becomes a
 folder of supported child tabs; unpinned Today tabs are excluded. Passwords are
@@ -460,6 +464,8 @@ A fresh installation starts with one **Moja przestrzeń** workspace and one
 profile. Skipping import keeps that workspace. A successful first-run import
 replaces the untouched starter workspace and its profile, so only imported
 spaces remain. A failed import preserves the starter and can be retried.
+The Windows wizard stays on the import step after each successful source so
+additional browsers can be imported before continuing.
 Existing installations and customized workspaces remain intact; later imports
 add spaces and skip previously imported ones, retaining local icon changes.
 Pins load on demand and retain their hierarchy across restarts.

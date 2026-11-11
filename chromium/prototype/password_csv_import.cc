@@ -29,14 +29,15 @@ namespace {
 // utility process and adds what isn't saved yet.
 class CsvImport final : public ui::SelectFileDialog::Listener {
  public:
-  CsvImport(content::WebContents* contents, base::OnceCallback<void(PasswordCsvOutcome)> done)
+  CsvImport(content::WebContents* contents, gfx::NativeWindow owner,
+            base::OnceCallback<void(PasswordCsvOutcome)> done)
       : profile_(Profile::FromBrowserContext(contents->GetBrowserContext())), done_(std::move(done)) {
     dialog_ = ui::SelectFileDialog::Create(this, std::make_unique<ChromeSelectFilePolicy>(contents));
     ui::SelectFileDialog::FileTypeInfo types;
     types.extensions = {{FILE_PATH_LITERAL("csv")}};
     types.include_all_files = true;
     dialog_->SelectFile(ui::SelectFileDialog::SELECT_OPEN_FILE, T(u"Wybierz plik CSV z hasłami"), base::FilePath(),
-                        &types, 1, FILE_PATH_LITERAL("csv"), contents->GetTopLevelNativeWindow());
+                        &types, 1, FILE_PATH_LITERAL("csv"), owner);
   }
   ~CsvImport() override {
     if (dialog_) dialog_->ListenerDestroyed();
@@ -75,7 +76,8 @@ class CsvImport final : public ui::SelectFileDialog::Listener {
 };
 }  // namespace
 
-void ImportPasswordsFromCsv(content::WebContents* contents, base::OnceCallback<void(PasswordCsvOutcome)> done) {
-  new CsvImport(contents, std::move(done));
+void ImportPasswordsFromCsv(content::WebContents* contents, gfx::NativeWindow owner,
+                            base::OnceCallback<void(PasswordCsvOutcome)> done) {
+  new CsvImport(contents, owner, std::move(done));
 }
 }  // namespace zitter::prototype

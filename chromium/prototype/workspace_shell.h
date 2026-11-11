@@ -27,6 +27,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/events/event_handler.h"
 #include "ui/views/context_menu_controller.h"
@@ -589,15 +590,19 @@ class WorkspaceShell final : public ui::EventHandler,
   // default browser, import and the first space, in a tool window.
   struct WelcomeSetup {
     // Browsers found on this computer, in the import step.
-    std::vector<ImportBrowser> sources;
+    struct Source {
+      ImportBrowser browser;
+      SkBitmap icon;
+    };
+    std::vector<Source> sources;
     std::u16string space_name;
     SkColor space_color = 0;
     bool assistant_enabled = false;
     base::RepeatingCallback<void(bool)> set_assistant_enabled;
     base::RepeatingCallback<void(views::View*, std::string)> build_assistant_backends;
     // Passwords from a CSV export; reports the line to show under the source.
-    base::RepeatingCallback<void(base::OnceCallback<void(std::u16string)>)> import_passwords;
-    base::RepeatingCallback<void(ImportBrowser, base::OnceCallback<void(bool, std::u16string)>)> import_browser;
+    base::RepeatingCallback<void(gfx::NativeWindow, base::OnceCallback<void(std::u16string)>)> import_passwords;
+    base::RepeatingCallback<void(BrowserImportOptions, base::OnceCallback<void(bool, std::u16string)>)> import_browser;
   };
   struct WelcomeResult {
     std::u16string space_name;

@@ -25,7 +25,8 @@ struct ImportedFavicon {
 using ImportedFaviconTargets = std::map<std::string, std::set<GURL>>;
 std::vector<ImportedFavicon> ReadImportedFavicons(
     const std::vector<ImportSourceProfile>& sources,
-    const ImportedFaviconTargets& targets);
+    const ImportedFaviconTargets& targets,
+    ImportBrowser browser);
 
 struct ImportedProfileData {
   std::string profile_id;

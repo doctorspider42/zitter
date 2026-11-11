@@ -1413,7 +1413,7 @@ fn checkbox_layout(width: i32, line_height: i32, line_count: usize, left: i32, t
 pub struct ImportForm { selection: ffi::ImportSelection, preview: ffi::ImportSelection, epoch: u64, scheduled: bool, waiting: bool, can_apply: bool, busy: bool, applying: bool, submitted: bool, message: String }
 fn import_defaults() -> ffi::ImportSelection { ffi::ImportSelection { browser:0, separate_profiles:true, bookmarks:true, history:false, cookies:false } }
 fn import_copy() -> ffi::ImportCopy {
-    ffi::ImportCopy { title:t("Przenieś się do Zittera").into(), dismiss:t("Zamknij import").into(), intro:t("Wybierz przeglądarkę i dane, które chcesz przenieść.").into(), source_label:t("Przeglądarka źródłowa").into(), source_ax:t("Przeglądarka do importu").into(), heading:t("Co chcesz przenieść?").into(), profiles:t("Oddzielne profile przeglądania").into(), history:t("Historia przeglądania").into(), cookies:t("Ciasteczka i sesje witryn").into(), apply_label:t("Importuj").into(), browsers:vec!["Arc".into(),"Google Chrome".into(),"Microsoft Edge".into(),"Brave".into()] }
+    ffi::ImportCopy { title:t("Przenieś się do Zittera").into(), dismiss:t("Zamknij import").into(), intro:t("Wybierz przeglądarkę i dane, które chcesz przenieść.").into(), source_label:t("Przeglądarka źródłowa").into(), source_ax:t("Przeglądarka do importu").into(), heading:t("Co chcesz przenieść?").into(), profiles:t("Oddzielne profile przeglądania").into(), history:t("Historia przeglądania").into(), cookies:t("Ciasteczka i sesje witryn").into(), apply_label:t("Importuj").into(), browsers:vec!["Arc".into(),"Google Chrome".into(),"Microsoft Edge".into(),"Brave".into(),"Firefox".into(),"Opera".into(),"Vivaldi".into()] }
 }
 fn new_import_form() -> Box<ImportForm> { Box::new(ImportForm { selection:import_defaults(), preview:import_defaults(), epoch:0, scheduled:false, waiting:false, can_apply:false, busy:false, applying:false, submitted:false, message:String::new() }) }
 impl ImportForm {
@@ -1422,7 +1422,7 @@ impl ImportForm {
     fn select(&mut self, selection: ffi::ImportSelection) -> ffi::ImportDispatch {
         if self.applying||self.submitted {return self.dispatch(ffi::ImportAction::None);}
         self.next_epoch();self.can_apply=false;self.waiting=false;
-        if selection.browser>3 {self.scheduled=false;self.busy=false;self.message=t("Wybierz przeglądarkę źródłową.").into();return self.dispatch(ffi::ImportAction::None);}
+        if selection.browser>6 {self.scheduled=false;self.busy=false;self.message=t("Wybierz przeglądarkę źródłową.").into();return self.dispatch(ffi::ImportAction::None);}
         self.selection=selection;self.scheduled=true;self.busy=true;self.message=t("Odczytywanie danych…").into();self.dispatch(ffi::ImportAction::Preview)
     }
     fn cancel_scan(&mut self) {self.next_epoch();self.scheduled=false;self.waiting=false;}
@@ -4365,10 +4365,10 @@ mod tests {
     }
     fn import_ready_form() -> Box<ImportForm> {let mut f=new_import_form();let s=import_defaults();f.select(s.clone());f.begin_preview(s);f.set_status("Gotowe",true,false,false);f}
     #[test] fn import_form_preserves_defaults_sources_and_copy() {
-        let s=import_defaults();assert_eq!(s.browser,0);assert!(s.separate_profiles&&s.bookmarks&&!s.history&&!s.cookies);let c=import_copy();assert_eq!(c.browsers,vec!["Arc","Google Chrome","Microsoft Edge","Brave"]);assert_eq!(c.apply_label,"Importuj");assert!(c.cookies.contains("sesje"));
+        let s=import_defaults();assert_eq!(s.browser,0);assert!(s.separate_profiles&&s.bookmarks&&!s.history&&!s.cookies);let c=import_copy();assert_eq!(c.browsers,vec!["Arc","Google Chrome","Microsoft Edge","Brave","Firefox","Opera","Vivaldi"]);assert_eq!(c.apply_label,"Importuj");assert!(c.cookies.contains("sesje"));
     }
     #[test] fn import_form_selects_all_browsers_without_forcing_data_categories() {
-        let mut f=new_import_form();for browser in 0..4 {let mut s=import_defaults();s.browser=browser;s.bookmarks=false;s.separate_profiles=false;let r=f.select(s);assert!(matches!(r.action,ffi::ImportAction::Preview));assert!(!r.selection.bookmarks&&!r.selection.history&&!r.selection.cookies);assert_eq!(f.view(true,false).bookmarks_label,if browser==0 {"Przypięte karty, foldery i Ulubione"} else {"Zakładki i foldery"});}
+        let mut f=new_import_form();for browser in 0..7 {let mut s=import_defaults();s.browser=browser;s.bookmarks=false;s.separate_profiles=false;let r=f.select(s);assert!(matches!(r.action,ffi::ImportAction::Preview));assert!(!r.selection.bookmarks&&!r.selection.history&&!r.selection.cookies);assert_eq!(f.view(true,false).bookmarks_label,if browser==0 {"Przypięte karty, foldery i Ulubione"} else {"Zakładki i foldery"});}
     }
     #[test] fn import_form_debounce_dispatches_only_latest_visible_selection_once() {
         let mut f=new_import_form();let a=f.select(import_defaults());let mut current=import_defaults();current.browser=1;let b=f.select(current.clone());assert_ne!(a.epoch,b.epoch);assert!(matches!(f.take_scan(a.epoch,true,current.clone(),true,false).action,ffi::ImportAction::None));

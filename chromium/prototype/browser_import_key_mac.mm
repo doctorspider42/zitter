@@ -13,6 +13,9 @@ std::optional<ImportedCookieKey> ReadImportedCookieKey(ImportBrowser browser) {
     case ImportBrowser::kChrome: account = "Chrome"; break;
     case ImportBrowser::kEdge: account = "Microsoft Edge"; break;
     case ImportBrowser::kBrave: account = "Brave"; break;
+    case ImportBrowser::kFirefox:
+    case ImportBrowser::kOpera:
+    case ImportBrowser::kVivaldi: return std::nullopt;
   }
   auto password = crypto::apple::KeychainV2::GetInstance().FindGenericPassword(
       std::string(account) + " Safe Storage", account);

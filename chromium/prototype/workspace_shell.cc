@@ -70,6 +70,7 @@
 #include "ui/views/controls/prefix_selector.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/views/controls/scroll_view.h"
+#include "ui/views/controls/scrollbar/overlay_scroll_bar.h"
 #include "ui/views/controls/scrollbar/scroll_bar.h"
 #include "ui/views/controls/resize_area.h"
 #include "ui/base/cursor/cursor.h"
@@ -4950,7 +4951,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   import_form_=std::make_unique<ImportFormState>();
   std::array<std::u16string,10> import_copy={T(u"Przenieś się do Zittera"),T(u"Zamknij import"),T(u"Wybierz przeglądarkę i dane, które chcesz przenieść."),T(u"Przeglądarka źródłowa"),T(u"Przeglądarka do importu"),T(u"Co chcesz przenieść?"),T(u"Oddzielne profile przeglądania"),T(u"Historia przeglądania"),T(u"Ciasteczka i sesje witryn"),T(u"Importuj")};
-  std::vector<std::u16string> import_browsers={u"Arc",u"Google Chrome",u"Microsoft Edge",u"Brave"};
+  std::vector<std::u16string> import_browsers;
   {const auto c=sidebar::import_copy();auto text=[](const rust::String& value){return base::UTF8ToUTF16(std::string(value));};import_copy={text(c.title),text(c.dismiss),text(c.intro),text(c.source_label),text(c.source_ax),text(c.heading),text(c.profiles),text(c.history),text(c.cookies),text(c.apply_label)};import_browsers.clear();for(const auto& b:c.browsers)import_browsers.push_back(text(b));}
   auto import_text=[&](views::View* parent,std::u16string text,SkColor ink,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false)->views::View* {
     return parent->AddChildView(std::make_unique<SceneParagraph>(std::move(text),delta,weight!=gfx::Font::Weight::NORMAL,ink));
@@ -7829,6 +7830,39 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
   const auto found=tab_lists_.find(state_.workspace_id);
   if(found==tab_lists_.end()||!found->second.node_graph)return std::nullopt;
   const auto& cache=found->second;
+  // Favorites are a grid. Resolve their insertion edge before testing the
+  // vertical list, whose rows can share the same Y coordinate here.
+  std::vector<std::pair<const PinnedItem*, gfx::Rect>> favorites;
+  if (allow_profile) {
+    for (const auto& pin : state_.pins) {
+      if (!pin.profile_pin) continue;
+      const auto button = cache.pin_buttons.find(pin.id);
+      if (button == cache.pin_buttons.end() || !button->second->IsDrawn())
+        continue;
+      auto* holder = button->second->parent();
+      if (holder->parent()->GetBoundsInScreen().Contains(point))
+        favorites.emplace_back(&pin, holder->GetBoundsInScreen());
+    }
+  }
+  if (!favorites.empty()) {
+    const auto distance = [&](const auto& favorite) {
+      const auto center = favorite.second.CenterPoint();
+      return std::pair(std::abs(point.y() - center.y()),
+                       std::abs(point.x() - center.x()));
+    };
+    const auto nearest = std::ranges::min_element(favorites, {}, distance);
+    const auto& bounds = nearest->second;
+    const bool after = (point.x() >= bounds.CenterPoint().x()) != base::i18n::IsRTL();
+    const auto before = after ? std::next(nearest) : nearest;
+    SidebarReorder out;
+    out.pinned = true;
+    out.parent = "@profile";
+    if (before != favorites.end()) out.before_pin = before->first->id;
+    const bool right_edge = after != base::i18n::IsRTL();
+    out.indicator = gfx::Rect(right_edge ? bounds.right() : bounds.x() - 2,
+                              bounds.y(), 2, bounds.height());
+    return out;
+  }
   // Rows in visual order with what a drop before or after each one means.
   struct Meta {bool pinned;std::string pin,parent;bool folder,expanded;size_t before_tab,after_tab;gfx::Rect bounds;};
   std::vector<Meta> metas;std::vector<sidebar::ReorderRow> rows;
@@ -7841,6 +7875,7 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
   for(const auto& entry:cache.node_graph->graph->pin_tree().entries){
     if(!entry.visible||entry.index>=state_.pins.size())continue;
     const auto& pin=state_.pins[entry.index];
+    if (pin.profile_pin) continue;
     const auto button=cache.pin_buttons.find(pin.id);
     views::View* view=button==cache.pin_buttons.end()?nullptr:button->second.get();
     if(pinned_pair&&pinned_pair->pin==entry.index)view=cache.pin_pair;
@@ -7867,10 +7902,6 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
   const auto& meta=metas[target.row];const auto& r=meta.bounds;
   out.indicator=gfx::Rect(r.x(),target.after?r.bottom():r.y()-2,r.width(),2);
   if(!meta.pinned){out.before_tab=target.after?meta.after_tab:meta.before_tab;return out;}
-  if (std::ranges::any_of(state_.pins,[&](const auto& pin){return pin.id==meta.pin&&pin.profile_pin;})) {
-    if (!allow_profile) return std::nullopt;
-    out.parent="@profile";out.before_pin=target.after?"":meta.pin;return out;
-  }
   if(target.into||(target.after&&meta.expanded)) {
     // Into a folder: dropped on its row, or just below an open folder's header.
     out.parent=meta.pin;
@@ -12431,6 +12462,126 @@ class WelcomeButton final : public views::Button {
 BEGIN_METADATA(WelcomeButton)
 END_METADATA
 
+class WelcomeImportAction final : public views::Button {
+  METADATA_HEADER(WelcomeImportAction, views::Button)
+ public:
+  enum class Glyph { kConfirm, kExpand, kCollapse, kDone, kPassword, kNone };
+  WelcomeImportAction(PressedCallback callback, std::u16string name, Glyph glyph,
+                      SkColor color, std::u16string title = {},
+                      std::u16string detail = {}, SkBitmap icon = {})
+      : views::Button(std::move(callback)), glyph_(glyph), color_(color),
+        title_(std::move(title)), detail_(std::move(detail)),
+        icon_(gfx::ImageSkia::CreateFrom1xBitmap(icon)) {
+    GetViewAccessibility().SetName(name);
+    SetInstallFocusRingOnFocus(false);
+    if (glyph == Glyph::kExpand || glyph == Glyph::kCollapse)
+      SetExpanded(glyph == Glyph::kCollapse);
+    if (glyph == Glyph::kDone || glyph == Glyph::kNone) {
+      GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+      SetFocusBehavior(FocusBehavior::NEVER);
+      SetCanProcessEventsWithinSubtree(false);
+    } else {
+      SetFocusBehavior(FocusBehavior::ALWAYS);
+      SetTooltipText(std::move(name));
+    }
+    SetAnimateOnStateChange(false);
+  }
+
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    return title_.empty() ? gfx::Size(40, 40) : gfx::Size(160, 52);
+  }
+  void SetExpanded(bool expanded) {
+    glyph_ = expanded ? Glyph::kCollapse : Glyph::kExpand;
+    if (expanded) GetViewAccessibility().SetIsExpanded();
+    else GetViewAccessibility().SetIsCollapsed();
+    SchedulePaint();
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this, color_);
+    auto bounds = GetLocalBounds();
+    if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED)
+      FillRound(canvas, bounds, 8, p.bg_hover);
+    if (glyph_ == Glyph::kConfirm && GetEnabled()) {
+      auto tile = bounds;
+      tile.Inset(4);
+      FillRound(canvas, tile, 8, p.accent_soft);
+    }
+    const int center_y = height() / 2;
+    const int end = title_.empty() ? width() / 2 : width() - 20;
+    const auto accent = GetEnabled() ? p.accent_ink : p.ink_muted;
+    if (!title_.empty()) {
+      if (glyph_ == Glyph::kPassword) {
+        DrawSiteIcon(canvas, vector_icons::kPasswordManagerIcon, 13, center_y - 11, 22, accent);
+      } else if (!icon_.isNull()) {
+        canvas->DrawImageInt(icon_, 0, 0, icon_.width(), icon_.height(),
+                             12, center_y - 13, 26, 26, true);
+      } else {
+        const gfx::Rect monogram(12, center_y - 13, 26, 26);
+        FillRound(canvas, monogram, 7, p.accent_soft);
+        canvas->DrawStringRectWithFlags(title_.substr(0, 1),
+            DesignFont(2, 13, 700, false), accent, monogram, gfx::Canvas::TEXT_ALIGN_CENTER);
+      }
+      DrawSiteText(canvas, title_, DesignFont(2, 14, 600, false), p.ink,
+                   gfx::Rect(50, center_y - 17, std::max(0, end - 65), 18));
+      DrawSiteText(canvas, detail_, DesignFont(2, 12, 400, false), p.ink_muted,
+                   gfx::Rect(50, center_y + 1, std::max(0, end - 65), 16));
+    }
+    switch (glyph_) {
+      case Glyph::kConfirm:
+        DrawSiteIcon(canvas, kMenuImportIcon, end - 9, center_y - 9, 18, accent);
+        break;
+      case Glyph::kDone:
+        DrawSiteIcon(canvas, views::kCheckIcon, end - 9, center_y - 9, 18, p.ok);
+        break;
+      case Glyph::kPassword:
+        DrawChevron(canvas, gfx::PointF(end, center_y), 1, p.ink_muted);
+        break;
+      case Glyph::kExpand:
+        DrawSiteIcon(canvas, vector_icons::kKeyboardArrowDownIcon, end - 9, center_y - 9, 18, p.ink);
+        break;
+      case Glyph::kCollapse:
+        DrawSiteIcon(canvas, vector_icons::kKeyboardArrowUpIcon, end - 9, center_y - 9, 18, p.ink);
+        break;
+      case Glyph::kNone:
+        break;
+    }
+    if (HasFocus()) StrokeRound(canvas, bounds, 8, p.focus);
+  }
+
+ private:
+  Glyph glyph_;
+  const SkColor color_;
+  const std::u16string title_;
+  const std::u16string detail_;
+  const gfx::ImageSkia icon_;
+};
+BEGIN_METADATA(WelcomeImportAction)
+END_METADATA
+
+class WelcomeImportChoices final : public views::View {
+  METADATA_HEADER(WelcomeImportChoices, views::View)
+ public:
+  explicit WelcomeImportChoices(SkColor color) : color_(color) {}
+
+ private:
+  void OnPaint(gfx::Canvas* canvas) override {
+    if (children().empty()) return;
+    const auto* choices = children().front().get();
+    if (choices->children().empty()) return;
+    const auto line = Palette(this, color_).line_strong;
+    const int x = 25;
+    const int last = choices->y() + choices->children().back()->bounds().CenterPoint().y();
+    canvas->FillRect(gfx::Rect(x, 0, 1, last + 1), line);
+    for (const auto& checkbox : choices->children()) {
+      const int y = choices->y() + checkbox->bounds().CenterPoint().y();
+      canvas->FillRect(gfx::Rect(x, y, choices->x() - x - 3, 1), line);
+    }
+  }
+  const SkColor color_;
+};
+BEGIN_METADATA(WelcomeImportChoices)
+END_METADATA
+
 // `.zt-toggle`: 34 × 20, a 12 px knob.
 class WelcomeSwitch final : public views::Button {
   METADATA_HEADER(WelcomeSwitch, views::Button)
@@ -12553,9 +12704,6 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   WelcomeView(WorkspaceShell::WelcomeSetup setup, base::OnceCallback<void(WorkspaceShell::WelcomeResult)> done)
       : setup_(std::move(setup)), done_(std::move(done)), color_(setup_.space_color),
         assistant_enabled_(setup_.assistant_enabled), setup_name_(setup_.space_name) {
-    // Import one source at a time, without opening a second configuration panel.
-    import_on_.assign(setup_.sources.size(), false);
-    if (!import_on_.empty()) import_on_[0] = true;
     Build();
   }
   ~WelcomeView() override = default;
@@ -12645,7 +12793,14 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 
   void ShowStep(size_t step) {
     if (import_busy_) return;
-    if (imported_ || (step == 4 && SelectedSource())) step = 3;
+    if (step == 4 && !imported_sources_.empty()) step = 3;
+    const auto import_scroll_offset = import_scroll_
+        ? import_scroll_->GetVisibleRect().origin() : gfx::Point();
+    if (step != 3) selected_import_.reset();
+    confirm_import_ = nullptr;
+    import_scroll_ = nullptr;
+    import_options_row_ = nullptr;
+    import_toggle_ = nullptr;
     step_ = step;
     // The page's own views go with it; the step list and footer stay.
     if (name_field_) setup_name_ = name_field_->GetText();
@@ -12743,19 +12898,33 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         break;
       }
       case 3: {
-        Headline(page_, T(u"Przenieś swoje dane"), 48);
-        if (!imported_) {
-          Body(page_, setup_.sources.empty() ? T(u"Nie znalazłem innych przeglądarek na tym komputerze.")
-                                             : T(u"Znalazłem przeglądarki na tym komputerze. Ich dane zostaną bez zmian."));
-          auto* scroll = page_->AddChildView(std::make_unique<views::ScrollView>());
-          scroll->ClipHeightTo(0, 210);
-          scroll->SetBackgroundColor(Palette(this, color_).bg_base);
-          auto* sources = scroll->SetContents(std::make_unique<views::View>());
-          sources->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets(), 8));
-          for (size_t i = 0; i < setup_.sources.size(); ++i) AddSource(sources, i);
-          if (SelectedSource()) Body(page_, T(u"Przestrzenie utworzymy z importowanych danych. Nie musisz nazywać pierwszej przestrzeni."), 12, true);
+        Headline(page_, T(u"Przenieś swoje dane"), 44);
+        if (setup_.sources.empty()) {
+          Body(page_, T(u"Nie znalazłem innych przeglądarek na tym komputerze."));
+        } else {
+          Body(page_, T(u"Zaimportuj dane z wybranych przeglądarek, a potem przejdź dalej."), 13, true);
+          import_scroll_ = page_->AddChildView(std::make_unique<views::ScrollView>(
+              views::ScrollView::ScrollWithLayers::kDisabled));
+          import_scroll_->ClipHeightTo(0, 600);
+          import_scroll_->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
+          import_scroll_->SetVerticalScrollBar(std::make_unique<views::OverlayScrollBar>(
+              views::ScrollBar::Orientation::kVertical));
+          import_scroll_->SetDrawOverflowIndicator(false);
+          layout->SetFlexForView(import_scroll_, 1);
+          import_scroll_->SetBackgroundColor(Palette(this, color_).bg_base);
+          // A permanent contents layer keeps the viewport clip alive while
+          // checkbox focus and ink layers come and go.
+          auto list = std::make_unique<views::View>();
+          list->SetPaintToLayer();
+          list->layer()->SetFillsBoundsOpaquely(false);
+          auto* sources = import_scroll_->SetContents(std::move(list));
+          sources->SetLayoutManager(std::make_unique<views::BoxLayout>(
+              views::BoxLayout::Orientation::kVertical,
+              gfx::Insets::TLBR(0, 0, 0, import_scroll_->vertical_scroll_bar()->GetThickness()), 2));
+          for (const auto& source : setup_.sources) AddSource(sources, source);
         }
-        if (!import_status_.empty()) Body(page_, import_status_);
+        if (!import_status_.empty()) Body(page_, import_status_, 12);
+        if (setup_.import_passwords) AddPasswordImportAction();
         break;
       }
       case 4: {
@@ -12782,30 +12951,36 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         break;
       }
     }
-    // Footer: the step, then Back, Skip (import) and Next.
+    // Footer: step count and navigation.
     auto* row = footer_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::TLBR(16, 0, 0, 0), 8));
     row->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
     footer_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Palette(this, color_).line));
-    const bool importing = SelectedSource().has_value() || imported_;
-    steps_[4]->SetVisible(!importing);
-    auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1), base::NumberToString16(importing ? 4 : 5)}), DesignFont(2, 12, 500, false), false);
+    const bool has_imports = !imported_sources_.empty();
+    steps_[4]->SetVisible(!has_imports);
+    auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1),
+        base::NumberToString16(has_imports ? 4 : 5)}), DesignFont(2, 12, 500, false), false);
     row->SetFlexForView(count, 1);
-    if (step > 0 && !imported_)
-      footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), step - 1),
-                                                            T(u"Wstecz"), WelcomeButton::Look::kQuiet));
-    if (step == 3 && !setup_.sources.empty() && !imported_)
-      footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::Next, base::Unretained(this), false),
-                                                            T(u"Pomiń"), WelcomeButton::Look::kQuiet));
-    const std::u16string next = step == 0 ? T(u"Zaczynamy") : imported_ ? T(u"Otwórz Zitter") : step == 3 && SelectedSource() ? T(u"Importuj")
-                                : step == 4 ? T(u"Otwórz Zitter") : step == 1 && !IsZitterDefaultBrowser() ? T(u"Nie teraz") : T(u"Kontynuuj");
-    auto* primary = footer_->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::Next, base::Unretained(this), true),
-        next, step == 0 ? WelcomeButton::Look::kZing
-                       : step == 1 && !IsZitterDefaultBrowser() ? WelcomeButton::Look::kQuiet : WelcomeButton::Look::kPrimary));
+    if (step > 0)
+      footer_->AddChildView(std::make_unique<WelcomeButton>(
+          base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), step - 1),
+          T(u"Wstecz"), WelcomeButton::Look::kQuiet));
+    const std::u16string next = step == 0 ? T(u"Zaczynamy")
+        : step == 4 ? T(u"Otwórz Zitter")
+        : step == 1 && !IsZitterDefaultBrowser() ? T(u"Nie teraz") : T(u"Kontynuuj");
+    footer_->AddChildView(std::make_unique<WelcomeButton>(
+        base::BindRepeating(&WelcomeView::Next, base::Unretained(this)), next,
+        step == 0 ? WelcomeButton::Look::kZing
+                  : step == 1 && !IsZitterDefaultBrowser() ? WelcomeButton::Look::kQuiet
+                                                          : WelcomeButton::Look::kPrimary));
     // Steps: done ones checked, the current one in the accent.
     Recolor();
     InvalidateLayout();
     if (GetWidget()) DeprecatedLayoutImmediately();
-    (void)primary;
+    if (import_scroll_) {
+      const int max_offset = std::max(0, import_scroll_->contents()->height() -
+                                            import_scroll_->GetVisibleRect().height());
+      import_scroll_->ScrollToOffset(gfx::PointF(0, std::clamp(import_scroll_offset.y(), 0, max_offset)));
+    }
     SchedulePaint();
   }
   struct Preset { SkColor color; std::string label; };
@@ -12817,57 +12992,68 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     }
     return presets;
   }
-  void AddSource(views::View* parent, size_t index) {
+  void AddSource(views::View* parent, const WorkspaceShell::WelcomeSetup::Source& source) {
+    using Glyph = WelcomeImportAction::Glyph;
+    const auto browser = source.browser;
+    const auto name = ImportBrowserName(browser);
+    auto* row = parent->AddChildView(std::make_unique<views::View>());
+    row->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kVertical));
+    StyleImportRow(row, false);
+    const bool done = imported_sources_.contains(browser);
+    const bool busy = importing_source_ == browser;
+    const bool expanded = selected_import_ && selected_import_->browser == browser;
+    const auto detail = done ? T(u"Zaimportowano") : busy ? T(u"Importowanie…") : T(u"Opcje importu");
+    auto* header = row->AddChildView(std::make_unique<views::View>());
+    auto* layout = header->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 4));
+    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    auto* title = header->AddChildView(std::make_unique<WelcomeImportAction>(
+        views::Button::PressedCallback(),
+        done || busy ? name + u" · " + detail : name,
+        done ? Glyph::kDone : Glyph::kNone,
+        color_, name, detail, source.icon));
+    layout->SetFlexForView(title, 1);
+    if (done || busy) return;
+    auto* action = header->AddChildView(std::make_unique<WelcomeImportAction>(
+        base::BindRepeating(&WelcomeView::ImportFromRow, base::Unretained(this), browser),
+        TF(u"Importuj dane z {}", {name}), Glyph::kConfirm, color_));
+    auto* toggle = header->AddChildView(std::make_unique<WelcomeImportAction>(
+        views::Button::PressedCallback(),
+        TF(u"Opcje importu z {}", {name}), Glyph::kExpand, color_));
+    toggle->SetCallback(base::BindRepeating(&WelcomeView::ToggleImportOptions,
+        base::Unretained(this), browser, base::Unretained(toggle), base::Unretained(action)));
+    if (expanded) AddImportOptions(toggle, action);
+  }
+
+  void StyleImportRow(views::View* row, bool expanded) {
     const auto p = Palette(this, color_);
-    auto* card = parent->AddChildView(std::make_unique<views::View>());
-    card->SetBackground(views::CreateRoundedRectBackground(p.bg_raised, 12));
-    card->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(12, 16), 8));
-    auto* head = card->AddChildView(std::make_unique<views::View>());
-    auto* head_layout = head->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 12));
-    head_layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-    const std::u16string name = ImportBrowserName(setup_.sources[index]);
-    // Design: Chrome C on sky, Edge E on mint, Arc A on coral (Brave B on amber).
-    const auto presets = Presets();
-    const auto browser = setup_.sources[index];
-    const size_t tone = browser == ImportBrowser::kChrome ? 2 : browser == ImportBrowser::kEdge ? 5 : browser == ImportBrowser::kArc ? 1 : 3;
-    const auto tile_palette = Palette(this, presets.size() > tone ? presets[tone].color : color_);
-    const std::u16string letter = browser == ImportBrowser::kChrome ? u"C" : browser == ImportBrowser::kEdge ? u"E"
-                                  : browser == ImportBrowser::kArc ? u"A" : u"B";
-    auto* tile = Text(head, letter, DesignFont(2, 13, 700, false), false);
-    std::erase(muted_labels_, tile);
-    tile->SetPreferredSize(gfx::Size(28, 28));
-    tile->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-    tile->SetEnabledColor(tile_palette.on_accent);
-    tile->SetBackground(views::CreateRoundedRectBackground(tile_palette.accent, 8));
-    auto* title = Text(head, name, DesignFont(2, 13, 600, false), false);
-    std::erase(muted_labels_, title);
-    ink_labels_.push_back(title);
-    head_layout->SetFlexForView(title, 1);
-    auto* toggle = head->AddChildView(std::make_unique<WelcomeSwitch>(
-        base::BindRepeating(&WelcomeView::ToggleSource, base::Unretained(this), index), TF(u"Importuj: {}", {name})));
-    toggle->SetOn(import_on_[index]);
-    switches_.push_back(toggle);
-    if (!import_on_[index]) return;
-    auto row = [&](std::u16string mark, bool ok, std::u16string label, std::u16string how) {
-      auto* line = card->AddChildView(std::make_unique<views::View>());
-      auto* layout = line->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::TLBR(0, 40, 0, 0), 10));
-      layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-      auto* sign = Text(line, mark, DesignFont(2, 13, 700, false), false);
-      if (ok) { std::erase(muted_labels_, sign); ok_labels_.push_back(sign); }
-      auto* text = Text(line, label, DesignFont(2, 13, 400, false), false);
-      std::erase(muted_labels_, text);
-      ink_labels_.push_back(text);
-      if (!how.empty()) Text(line, u"· " + how, DesignFont(2, 13, 400, false), false);
-      layout->SetFlexForView(line->children().back(), 1);
-      return line;
-    };
-    row(u"✓", true, T(u"Zakładki, historia i otwarte karty"), {});
-    if (setup_.sources[index] != ImportBrowser::kArc && setup_.import_passwords) {
-      auto* passwords = row(u"✓", true, T(u"Hasła"), password_status_.empty() ? T(u"z pliku CSV wyeksportowanego w przeglądarce") : password_status_);
-      passwords->AddChildView(std::make_unique<WelcomeButton>(base::BindRepeating(&WelcomeView::ImportPasswords, base::Unretained(this)),
-                                                              T(u"Wskaż plik…"), WelcomeButton::Look::kOutline));
-    }
-    row(u"–", false, T(u"Zalogowania w serwisach"), T(u"w serwisach zalogujesz się ponownie"));
+    row->SetBackground(expanded ? views::CreateRoundedRectBackground(p.bg_hover, 8) : nullptr);
+    row->SetBorder(expanded ? views::CreateRoundedRectBorder(1, 8, p.line_strong)
+        : views::CreatePaddedBorder(
+              views::CreateSolidSidedBorder(gfx::Insets::TLBR(0, 0, 1, 0), p.line),
+              gfx::Insets::TLBR(1, 1, 0, 1)));
+  }
+
+  void AddImportOptions(WelcomeImportAction* toggle, WelcomeImportAction* action) {
+    auto* row = toggle->parent()->parent();
+    StyleImportRow(row, true);
+    import_toggle_ = toggle;
+    import_toggle_->SetExpanded(true);
+    import_options_row_ = row->AddChildView(std::make_unique<WelcomeImportChoices>(color_));
+    auto* options = import_options_row_->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::TLBR(0, 46, 8, 0), 8));
+    options->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
+    auto* choices = import_options_row_->AddChildView(std::make_unique<views::View>());
+    choices->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kVertical, gfx::Insets(), 2));
+    options->SetFlexForView(choices, 1);
+    AddImportOption(choices, selected_import_->browser == ImportBrowser::kArc
+        ? T(u"Przypięte karty, foldery i Ulubione") : T(u"Zakładki i foldery"),
+        &BrowserImportOptions::bookmarks);
+    AddImportOption(choices, T(u"Historia przeglądania"), &BrowserImportOptions::history);
+    confirm_import_ = action;
+    UpdateImportConfirmation();
   }
   void Recolor() {
     const auto p = Palette(this, color_);
@@ -12882,68 +13068,110 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     }
     for (auto* view : {static_cast<views::View*>(this), main_.get()}) view->SchedulePaint();
   }
-  std::optional<ImportBrowser> SelectedSource() const {
-    for (size_t i = 0; i < import_on_.size(); ++i)
-      if (import_on_[i]) return setup_.sources[i];
-    return std::nullopt;
-  }
-  void ToggleSource(size_t index) {
-    const bool on = !import_on_[index];
-    std::fill(import_on_.begin(), import_on_.end(), false);
-    import_on_[index] = on;
-    ShowStep(3);
-  }
   void PickColor(SkColor color) {
     color_ = color;
     for (WelcomeSwatch* swatch : swatches_) swatch->SetPicked(swatch->color() == color);
     Recolor();
   }
   void ImportPasswords() {
-    setup_.import_passwords.Run(base::BindOnce([](base::WeakPtr<WelcomeView> view, std::u16string status) {
+    SetImportBusy(true);
+    setup_.import_passwords.Run(GetWidget()->GetNativeWindow(), base::BindOnce([](base::WeakPtr<WelcomeView> view, std::u16string status) {
       if (!view) return;
-      view->password_status_ = std::move(status);
+      view->SetImportBusy(false);
+      if (!status.empty()) view->password_status_ = std::move(status);
       if (view->step_ == 3) view->ShowStep(3);
     }, weak_factory_.GetWeakPtr()));
   }
-  void Next(bool primary) {
-    if (import_busy_) return;
-    if (step_ == 3 && !imported_) {
-      if (const auto source = SelectedSource(); primary && source) {
-        import_status_ = T(u"Importowanie wybranych danych…");
-        ShowStep(3);
-        import_busy_ = true;
-        nav_->SetEnabled(false);
-        page_->SetEnabled(false);
-        footer_->SetEnabled(false);
-        setup_.import_browser.Run(*source, base::BindOnce([](base::WeakPtr<WelcomeView> view, bool ok, std::u16string status) {
+  void AddPasswordImportAction() {
+    auto* csv = page_->AddChildView(std::make_unique<WelcomeImportAction>(
+        base::BindRepeating(&WelcomeView::ImportPasswords, base::Unretained(this)),
+        T(u"Importuj hasła z CSV…"), WelcomeImportAction::Glyph::kPassword, color_,
+        T(u"Hasła"), password_status_.empty() ? T(u"Importuj z pliku CSV") : password_status_));
+    csv->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 1, 0),
+                                                Palette(this, color_).line));
+  }
+  void ToggleImportOptions(ImportBrowser browser, WelcomeImportAction* toggle,
+                           WelcomeImportAction* action) {
+    if (import_busy_ || imported_sources_.contains(browser)) return;
+    const bool opening = import_toggle_ != toggle;
+    if (import_options_row_) {
+      import_toggle_->SetExpanded(false);
+      StyleImportRow(import_toggle_->parent()->parent(), false);
+      import_toggle_ = nullptr;
+      confirm_import_->SetEnabled(true);
+      confirm_import_ = nullptr;
+      auto* options = import_options_row_.get();
+      import_options_row_ = nullptr;
+      options->parent()->RemoveChildViewT(options);
+    }
+    selected_import_.reset();
+    if (opening) {
+      selected_import_ = BrowserImportOptions{.browser = browser};
+      AddImportOptions(toggle, action);
+    }
+    DeprecatedLayoutImmediately();
+  }
+  void AddImportOption(views::View* parent, std::u16string name,
+                       bool BrowserImportOptions::*option) {
+    auto* checkbox = parent->AddChildView(std::make_unique<views::Checkbox>(name));
+    checkbox->SetChecked((*selected_import_).*option);
+    checkbox->SetCallback(base::BindRepeating(
+        [](WelcomeView* view, views::Checkbox* checkbox, bool BrowserImportOptions::*option) {
+          (*view->selected_import_).*option = checkbox->GetChecked();
+          view->UpdateImportConfirmation();
+        }, base::Unretained(this), base::Unretained(checkbox), option));
+  }
+  void UpdateImportConfirmation() {
+    confirm_import_->SetEnabled(selected_import_->bookmarks || selected_import_->history);
+  }
+  void SetImportBusy(bool busy) {
+    import_busy_ = busy;
+    for (auto* section : {nav_.get(), page_.get(), footer_.get()}) section->SetEnabled(!busy);
+  }
+  void ImportFromRow(ImportBrowser browser) {
+    ImportSource(selected_import_ && selected_import_->browser == browser
+                     ? *selected_import_ : BrowserImportOptions{.browser = browser});
+  }
+  void ImportSource(BrowserImportOptions options) {
+    if (import_busy_ || imported_sources_.contains(options.browser) ||
+        (!options.bookmarks && !options.history)) return;
+    selected_import_.reset();
+    import_status_.clear();
+    importing_source_ = options.browser;
+    ShowStep(3);
+    SetImportBusy(true);
+    setup_.import_browser.Run(options, base::BindOnce(
+        [](base::WeakPtr<WelcomeView> view, ImportBrowser browser, bool ok, std::u16string status) {
           if (!view) return;
-          view->import_busy_ = false;
-          view->imported_ = ok;
+          view->SetImportBusy(false);
+          view->importing_source_.reset();
+          if (ok) view->imported_sources_.insert(browser);
           view->import_status_ = std::move(status);
-          view->nav_->SetEnabled(true);
-          view->page_->SetEnabled(true);
-          view->footer_->SetEnabled(true);
           view->ShowStep(3);
-        }, weak_factory_.GetWeakPtr()));
-        return;
-      }
-      std::fill(import_on_.begin(), import_on_.end(), false);
-    }
-    if (imported_) {
+        }, weak_factory_.GetWeakPtr(), options.browser));
+  }
+
+  void Next() {
+    if (import_busy_) return;
+    if (step_ == 4 || (step_ == 3 && !imported_sources_.empty())) {
       if (GetWidget()) GetWidget()->Close();
-      return;
+    } else {
+      ShowStep(step_ + 1);
     }
-    if (step_ < 4) { ShowStep(step_ + 1); return; }
-    if (GetWidget()) GetWidget()->Close();
   }
 
   WorkspaceShell::WelcomeSetup setup_;
   base::OnceCallback<void(WorkspaceShell::WelcomeResult)> done_;
   size_t step_ = 0;
   bool import_busy_ = false;
-  bool imported_ = false;
+  std::optional<BrowserImportOptions> selected_import_;
+  raw_ptr<WelcomeImportAction> confirm_import_ = nullptr;
+  raw_ptr<views::ScrollView> import_scroll_ = nullptr;
+  raw_ptr<views::View> import_options_row_ = nullptr;
+  raw_ptr<WelcomeImportAction> import_toggle_ = nullptr;
+  std::optional<ImportBrowser> importing_source_;
+  std::set<ImportBrowser> imported_sources_;
   std::u16string import_status_;
-  std::vector<bool> import_on_;
   SkColor color_;
   bool assistant_enabled_ = false;
   bool assistant_help_ = false;
@@ -12986,13 +13214,17 @@ void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(Wel
   delegate->SetTitle(T(u"Witaj w Zitter"));
   delegate->SetIcon(widget_->widget_delegate()->GetWindowIcon());
   delegate->SetModalType(ui::mojom::ModalType::kWindow);
+  const int welcome_height = std::max(620, 470 + 56 * static_cast<int>(setup.sources.size()));
   auto* view = delegate->SetContentsView(std::make_unique<WelcomeView>(std::move(setup), std::move(done)));
   welcome_delegate_ = std::move(delegate);
   views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET, views::Widget::InitParams::TYPE_WINDOW);
   params.delegate = welcome_delegate_.get();
   params.parent = widget_->GetNativeView();
   const gfx::Rect window = widget_->GetWindowBoundsInScreen();
-  params.bounds = gfx::Rect(window.CenterPoint() - gfx::Vector2d(480, 310), gfx::Size(960, 620));
+  params.bounds = gfx::Rect(window.CenterPoint() - gfx::Vector2d(480, welcome_height / 2),
+                           gfx::Size(960, welcome_height));
+  params.bounds.AdjustToFit(display::Screen::Get()
+                               ->GetDisplayNearestWindow(widget_->GetNativeWindow()).work_area());
   welcome_widget_ = std::make_unique<views::Widget>(std::move(params));
   welcome_widget_->SetColorModeOverride(widget_->color_mode_override());
   welcome_widget_->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
@@ -14234,7 +14466,7 @@ BrowserImportOptions WorkspaceShell::import_options() const {
 #if BUILDFLAG(IS_WIN)
   options.cookies = false;
 #else
-  options.cookies = CheckValue(import_cookies_);
+  options.cookies = BrowserSupportsCookieImport(options.browser) && CheckValue(import_cookies_);
 #endif
   return options;
 }
@@ -14281,6 +14513,9 @@ bool WorkspaceShell::import_panel_contains_scene_text(std::string_view text) con
   if(!import_root_)return false;auto find=[&](auto&& self,views::View* view)->bool{if(auto* source=views::AsViewClass<SceneSelect>(view))if(source->contains_text(text))return true;if(auto* node=views::AsViewClass<SceneParagraph>(view))if(node->contains_scene_text(text))return true;if(auto* group=views::AsViewClass<SceneActionGroup>(view))if(group->contains_text(text))return true;if(auto* choices=views::AsViewClass<SceneCheckboxGroup>(view))if(choices->contains_text(text))return true;for(const auto& child:view->children())if(self(self,child.get()))return true;return false;};return find(find,import_root_);
 }
 void WorkspaceShell::ImportSelectionChanged() {
+#if !BUILDFLAG(IS_WIN)
+  import_cookies_->SetVisible(BrowserSupportsCookieImport(import_options().browser));
+#endif
   if(import_form_){import_preview_timer_.Stop();const auto request=import_form_->form->select(ImportUiSelection(import_options()));RefreshRustImportControls();PositionPanels();if(request.action!=sidebar::ImportAction::Preview)return;
     CancelSceneActions(import_root_);CancelSceneCheckboxes(import_root_);callbacks_.invalidate_import.Run();
     import_preview_timer_.Start(FROM_HERE,base::Milliseconds(200),base::BindOnce(&WorkspaceShell::DispatchImportPreview,weak_factory_.GetWeakPtr(),request.epoch));return;

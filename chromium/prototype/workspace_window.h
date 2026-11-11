@@ -99,7 +99,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // The first run's wizard instead of the bare import offer.
   void ShowWelcome();
   void WelcomeFinished(WorkspaceShell::WelcomeResult result);
-  void StartWelcomeImport(ImportBrowser browser, base::OnceCallback<void(bool, std::u16string)> done);
+  void StartWelcomeImport(BrowserImportOptions options, base::OnceCallback<void(bool, std::u16string)> done);
 #endif
   bool import_ready() const { return pending_import_.has_value() && pending_import_->error.empty(); }
   const ArcImport* import_preview() const { return pending_import_ ? &*pending_import_ : nullptr; }
@@ -557,6 +557,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::vector<std::pair<std::string, std::string>> jump_list_spaces_;
 #endif
   std::string starter_workspace_id_;
+  bool starter_has_imported_passwords_ = false;
   bool import_replaces_starter_ = false;
   size_t import_preview_generation_ = 0;
   std::map<std::string, std::vector<PinnedItem>> pins_;

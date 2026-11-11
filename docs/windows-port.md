@@ -407,9 +407,15 @@ updates and is intended for local testing.
   first space. The default-browser button opens Zitter's Default apps page for
   either a per-user or machine installation, with instructions for Windows 10
   and 11. Returning to the wizard checks both HTTP and HTTPS associations.
-  Import runs inside the wizard and reports success or a retryable error there.
-  Selecting import hides the first-space name/color step because the imported
-  data supplies the spaces. Skipping import keeps that step.
+  Each browser card has a chevron for bookmark and history options and an
+  import action in its header. The action imports bookmarks while collapsed
+  and applies the selected options while expanded. The wizard sizes the list
+  to show the detected browsers when screen space allows. A scrollbar appears
+  if the list overflows. Passwords can
+  be imported separately from a CSV file into the current profile.
+  Completed sources are checked off, and a failed source can be retried in
+  place. Continue closes the wizard after a successful browser import.
+  Continuing without a browser import opens the first-space name and color step.
 - The installer offers “Launch Zitter after installation”, enabled by default
   for interactive installs and updates. `--no-launch` disables it. Quiet setup
   launches Zitter after a successful browser-initiated update. For an all-users

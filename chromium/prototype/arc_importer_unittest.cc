@@ -155,7 +155,8 @@ TEST(ArcImporterTest, DISABLED_ReadsThisComputersArc) {
 
 // The same for Chromium browsers' bookmarks (Chrome, Edge, Brave), by hand.
 TEST(ArcImporterTest, DISABLED_ReadsThisComputersChromiumBrowsers) {
-  for (auto browser : {ImportBrowser::kChrome, ImportBrowser::kEdge, ImportBrowser::kBrave}) {
+  for (auto browser : {ImportBrowser::kChrome, ImportBrowser::kEdge, ImportBrowser::kBrave,
+                       ImportBrowser::kFirefox, ImportBrowser::kOpera, ImportBrowser::kVivaldi}) {
     const auto directory = DefaultBrowserDirectory(browser);
     if (directory.empty() || !base::DirectoryExists(directory)) continue;
     BrowserImportOptions options;

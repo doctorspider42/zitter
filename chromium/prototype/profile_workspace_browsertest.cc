@@ -3502,6 +3502,49 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationFiltersRecor
   shell->OpenTools(2); window_.reset();  // Detach after the filter's view was destroyed.
 }
 
+#if BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ControlArrowsMoveByWordOnWindows) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
+  EXPECT_TRUE(shell->ShortcutFor(ui::Accelerator(ui::VKEY_LEFT, ui::EF_CONTROL_DOWN)).empty());
+  EXPECT_TRUE(shell->ShortcutFor(ui::Accelerator(ui::VKEY_RIGHT, ui::EF_CONTROL_DOWN)).empty());
+  EXPECT_EQ("back", shell->ShortcutFor(ui::Accelerator(ui::VKEY_LEFT, ui::EF_ALT_DOWN)));
+  EXPECT_EQ("forward", shell->ShortcutFor(ui::Accelerator(ui::VKEY_RIGHT, ui::EF_ALT_DOWN)));
+
+  base::ListValue shortcuts;
+  shortcuts.Append(base::DictValue().Set("id", "back").Set("chord", "Ctrl+Left"));
+  shortcuts.Append(base::DictValue().Set("id", "forward").Set("chord", "Ctrl+Right"));
+  shortcuts.Append(base::DictValue().Set("id", "sidebar").Set("chord", "F6"));
+  const auto tools = BrowserTools::FromValue(base::DictValue().Set("shortcuts", std::move(shortcuts)));
+  for (const auto& shortcut : tools.shortcuts) {
+    if (shortcut.id == "back") EXPECT_EQ("Alt+Left", FormatShortcut(shortcut.accelerator));
+    if (shortcut.id == "forward") EXPECT_EQ("Alt+Right", FormatShortcut(shortcut.accelerator));
+    if (shortcut.id == "sidebar") EXPECT_EQ("F6", FormatShortcut(shortcut.accelerator));
+  }
+
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, R"(
+    const input = document.body.appendChild(document.createElement('input'));
+    input.id = 'word-test';
+    input.value = 'alpha beta';
+    input.focus();
+    input.setSelectionRange(10, 10);
+  )"));
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_LEFT, true, false, false, false));
+  EXPECT_EQ(6, content::EvalJs(page, "document.querySelector('#word-test').selectionStart"));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_RIGHT, true, false, false, false));
+  EXPECT_EQ(10, content::EvalJs(page, "document.querySelector('#word-test').selectionStart"));
+  EXPECT_EQ(url, page->GetLastCommittedURL());
+}
+#endif
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ConfigurableNativeKeyboardShortcuts) {
   base::DictValue older;
   base::ListValue bindings;
@@ -9099,6 +9142,26 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowserImportsCopyCachedFavico
   ASSERT_TRUE(base::WriteFile(profile.AppendASCII("Bookmarks"), base::StringPrintf(
       R"({"roots":{"bookmark_bar":{"type":"folder","name":"Bookmarks","children":[
         {"type":"url","name":"Imported page","url":"%s"}]}}})", url.spec().c_str())));
+  const auto firefox = source.GetPath().AppendASCII("Profiles").AppendASCII("test.default");
+  ASSERT_TRUE(base::CreateDirectory(firefox));
+  ASSERT_TRUE(base::WriteFile(source.GetPath().AppendASCII("profiles.ini"),
+      "[Profile0]\nName=Test Firefox\nIsRelative=1\nPath=Profiles/test.default\n"));
+  {
+    sql::Database places("History");
+    ASSERT_TRUE(places.Open(firefox.AppendASCII("places.sqlite")));
+    ASSERT_TRUE(places.Execute("CREATE TABLE moz_bookmarks(id INTEGER, parent INTEGER, "
+                               "type INTEGER, title TEXT, fk INTEGER, guid TEXT, position INTEGER)"));
+    ASSERT_TRUE(places.Execute("CREATE TABLE moz_places(id INTEGER, url TEXT, title TEXT, "
+                               "visit_count INTEGER, typed INTEGER, last_visit_date INTEGER, hidden INTEGER)"));
+    ASSERT_TRUE(places.Execute("INSERT INTO moz_bookmarks VALUES "
+                               "(1,0,2,'Toolbar',NULL,'toolbar_____',0),"
+                               "(2,1,1,'Imported page',1,'bookmark____',0)"));
+    sql::Statement page_row(places.GetUniqueStatement(
+        "INSERT INTO moz_places VALUES(1,?,'Imported page',2,1,?,0)"));
+    page_row.BindString(0, url.spec());
+    page_row.BindInt64(1, (base::Time::Now() - base::Time::UnixEpoch()).InMicroseconds());
+    ASSERT_TRUE(page_row.Run());
+  }
   {
     sql::Database db("Thumbnail");
     ASSERT_TRUE(db.Open(profile.AppendASCII("Favicons")));
@@ -9116,18 +9179,33 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowserImportsCopyCachedFavico
     auto png = gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false);
     ASSERT_TRUE(png);
     sql::Statement image(db.GetUniqueStatement("INSERT INTO favicon_bitmaps VALUES (1,0,0,?,1)"));
-    image.BindBlob(0, std::move(*png));
+    image.BindBlob(0, base::span(*png));
     ASSERT_TRUE(image.Run());
+    sql::Database firefox_icons("Thumbnail");
+    ASSERT_TRUE(firefox_icons.Open(firefox.AppendASCII("favicons.sqlite")));
+    ASSERT_TRUE(firefox_icons.Execute("CREATE TABLE moz_pages_w_icons(id INTEGER, page_url TEXT)"));
+    ASSERT_TRUE(firefox_icons.Execute("CREATE TABLE moz_icons_to_pages(page_id INTEGER, icon_id INTEGER)"));
+    ASSERT_TRUE(firefox_icons.Execute("CREATE TABLE moz_icons(id INTEGER, icon_url TEXT, width INTEGER, data BLOB)"));
+    ASSERT_TRUE(firefox_icons.Execute("INSERT INTO moz_icons_to_pages VALUES(1,1)"));
+    sql::Statement firefox_page(firefox_icons.GetUniqueStatement("INSERT INTO moz_pages_w_icons VALUES(1,?)"));
+    firefox_page.BindString(0, url.spec());
+    ASSERT_TRUE(firefox_page.Run());
+    sql::Statement firefox_icon(firefox_icons.GetUniqueStatement(
+        "INSERT INTO moz_icons VALUES(1,'https://favicon.test/test.png',32,?)"));
+    firefox_icon.BindBlob(0, std::move(*png));
+    ASSERT_TRUE(firefox_icon.Run());
   }
   const std::string active = window_->active_id();
   auto* page = window_->contents(active);
   for (auto browser : {ImportBrowser::kArc, ImportBrowser::kChrome,
-                       ImportBrowser::kEdge, ImportBrowser::kBrave}) {
+                       ImportBrowser::kEdge, ImportBrowser::kBrave, ImportBrowser::kFirefox,
+                       ImportBrowser::kOpera, ImportBrowser::kVivaldi}) {
     SCOPED_TRACE(base::UTF16ToUTF8(ImportBrowserName(browser)));
     ASSERT_TRUE(window_->Select(active));
     BrowserImportOptions options;
     options.browser = browser;
-    window_->PreviewBrowserImport(options, browser == ImportBrowser::kArc
+    options.history = browser == ImportBrowser::kFirefox;
+    window_->PreviewBrowserImport(options, browser == ImportBrowser::kArc || browser == ImportBrowser::kFirefox
         ? source.GetPath() : profile.DirName());
     ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
     const auto preview = *window_->import_preview();
@@ -9686,6 +9764,51 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
              (mode == ThemeMode::kLight ? 1 : 2);
     }));
   }
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FavoriteDragInsertsBetweenTiles) {
+  std::vector<std::string> order;
+  for (int i = 0; i < 4; ++i) {
+    const auto url = embedded_test_server()->GetURL("/storage_probe.html?favorite=" + std::to_string(i));
+    ASSERT_TRUE(window_->NavigateFromBar(url, i != 0));
+    ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+    ASSERT_TRUE(window_->PinTab(window_->tab_count("work") - 1, "@profile", ""));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    order.push_back(window_->pinned_items("work").back().id);
+  }
+  auto* shell = window_->shell();
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  base::RunLoop().RunUntilIdle();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  const auto native = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point point) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), done.GetCallback(), native));
+    ASSERT_TRUE(done.Wait());
+  };
+  auto button = [&](int state) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, native));
+    ASSERT_TRUE(done.Wait());
+  };
+  const auto start = shell->pin_button(order[0])->GetBoundsInScreen().CenterPoint();
+  move(start);
+  button(ui_controls::DOWN);
+  move(start + gfx::Vector2d(14, 0));
+  const auto bounds = shell->pin_button(order[2])->GetBoundsInScreen();
+  move(gfx::Point(bounds.right() - 4, bounds.CenterPoint().y()));
+  EXPECT_TRUE(shell->sidebar_drop_target_for_testing());
+  button(ui_controls::UP);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->pinned_items("work")[2].id == order[0] && !window_->profiles_busy();
+  }));
+  const auto& pins = window_->pinned_items("work");
+  EXPECT_EQ(order[1], pins[0].id);
+  EXPECT_EQ(order[2], pins[1].id);
+  EXPECT_EQ(order[3], pins[3].id);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderRemovalKeepsOpenedPinsAsTabs) {
@@ -10398,13 +10521,23 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportReplacesStarterA
 }
 
 #if BUILDFLAG(IS_WIN)
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetriesInPlace) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsMultipleBrowsersAndRetriesInPlace) {
   base::ScopedAllowBlockingForTesting files;
   base::ScopedTempDir source;
   ASSERT_TRUE(source.CreateUniqueTempDir());
   base::ScopedPathOverride app_data(kImportAppData, source.GetPath());
   ASSERT_TRUE(base::CreateDirectory(ArcData(source.GetPath())));
   ASSERT_TRUE(base::WriteFile(ArcData(source.GetPath()).AppendASCII("StorableSidebar.json"), "{}"));
+  const auto chrome_profile = ChromeData(source.GetPath()).AppendASCII("Default");
+  ASSERT_TRUE(base::CreateDirectory(chrome_profile));
+  ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Microsoft/Edge/User Data")));
+  ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("BraveSoftware/Brave-Browser/User Data")));
+  ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Vivaldi/User Data")));
+  ASSERT_TRUE(base::WriteFile(chrome_profile.AppendASCII("Bookmarks"), R"json(
+    {"roots":{"bookmark_bar":{"type":"folder","name":"Bookmarks bar","children":[
+      {"type":"url","id":"1","name":"Excluded bookmark","url":"https://example.test/excluded"}
+    ]}}}
+  )json"));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
   const auto directory = g_browser_process->profile_manager()->user_data_dir();
@@ -10491,17 +10624,71 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetrie
     ClickControl(find_step(u"Asystent AI"));
     render(mode == ThemeMode::kLight ? "assistant-light.png" : "assistant-dark.png");
   }
+  shell->welcome_widget_for_testing()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kLight);
   ClickControl(import_step);
-  render("import.png");
+  render("import-light.png");
   auto* first_space = find_step(u"Pierwsza przestrzeń");
   ASSERT_TRUE(first_space);
-  EXPECT_FALSE(first_space->GetVisible());
-  auto* apply = FindButton(welcome, u"Importuj");
-  ASSERT_TRUE(apply);
-  ClickControl(apply);
+  EXPECT_TRUE(first_space->GetVisible());
+  auto* csv = FindButton(welcome, u"Importuj hasła z CSV…");
+  ASSERT_TRUE(csv);
+  EXPECT_GE(csv->height(), 40);
+  auto* chrome_toggle = FindButton(welcome, u"Opcje importu z Google Chrome");
+  ASSERT_TRUE(chrome_toggle);
+  auto* chrome_import = FindButton(welcome, u"Importuj dane z Google Chrome");
+  ASSERT_TRUE(chrome_import);
+  views::ScrollView* import_scroll = nullptr;
+  for (auto* ancestor = chrome_toggle->parent(); ancestor; ancestor = ancestor->parent()) {
+    import_scroll = views::AsViewClass<views::ScrollView>(ancestor);
+    if (import_scroll) break;
+  }
+  ASSERT_TRUE(import_scroll);
+  if (work_area.height() >= 862)
+    EXPECT_LE(import_scroll->contents()->height(), import_scroll->GetVisibleRect().height());
+  auto compact_bounds = welcome_widget->GetWindowBoundsInScreen();
+  compact_bounds.set_height(std::min(compact_bounds.height(), 620));
+  welcome_widget->SetBounds(compact_bounds);
+  welcome_widget->LayoutRootViewIfNecessary();
+  const auto import_bounds = chrome_import->GetBoundsInScreen();
+  const auto toggle_bounds = chrome_toggle->GetBoundsInScreen();
+  ClickControl(chrome_toggle);
+  EXPECT_EQ(chrome_import, FindButton(welcome, u"Importuj dane z Google Chrome"));
+  EXPECT_EQ(import_bounds, chrome_import->GetBoundsInScreen());
+  auto* history_option = find_control(find_control, welcome, ax::mojom::Role::kCheckBox,
+                                      u"Historia przeglądania");
+  ASSERT_TRUE(history_option);
+  EXPECT_TRUE(import_scroll->vertical_scroll_bar()->GetVisible());
+  EXPECT_FALSE(import_scroll->GetDrawOverflowIndicator());
+  auto* viewport_layer = import_scroll->contents()->parent()->layer();
+  ASSERT_TRUE(viewport_layer);
+  EXPECT_TRUE(viewport_layer->GetMasksToBounds());
+  ASSERT_TRUE(import_scroll->contents()->layer());
+  history_option->RequestFocus();
+  import_scroll->ScrollByOffset(gfx::PointF(0, 1000));
+  EXPECT_GT(import_scroll->GetVisibleRect().y(), 0);
+  EXPECT_EQ(viewport_layer, import_scroll->contents()->parent()->layer());
+  EXPECT_TRUE(viewport_layer->GetMasksToBounds());
+  import_scroll->ScrollToOffset(gfx::PointF());
+  ASSERT_EQ(chrome_toggle, FindButton(welcome, u"Opcje importu z Google Chrome"));
+  EXPECT_EQ(toggle_bounds, chrome_toggle->GetBoundsInScreen());
+  auto click_point = toggle_bounds.CenterPoint();
+  views::View::ConvertPointFromScreen(welcome, &click_point);
+  auto* hit = welcome->GetEventHandlerForPoint(click_point);
+  ASSERT_EQ(chrome_toggle, hit);
+  ClickControl(hit);
+  EXPECT_FALSE(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Historia przeglądania"));
+  EXPECT_EQ(1u, window_->workspaces().size());
+  ClickControl(FindButton(welcome, u"Opcje importu z Arc"));
+  EXPECT_EQ(1u, window_->workspaces().size());
+  EXPECT_FALSE(window_->profiles_busy());
+  render("import-options-light.png");
+  ClickControl(FindButton(welcome, u"Opcje importu z Arc"));
+  EXPECT_FALSE(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Historia przeglądania"));
+  EXPECT_EQ(1u, window_->workspaces().size());
+  ClickControl(FindButton(welcome, u"Importuj dane z Arc"));
   // Missing source data leaves the same wizard available for retry.
   ASSERT_TRUE(base::test::RunUntil([&] {
-    auto* retry = FindButton(welcome, u"Importuj");
+    auto* retry = FindButton(welcome, u"Opcje importu z Arc");
     return retry && retry->GetEnabledInViewsSubtree();
   }));
   EXPECT_EQ(1u, window_->workspaces().size());
@@ -10510,19 +10697,43 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetrie
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
   ASSERT_TRUE(base::DeletePathRecursively(ArcData(source.GetPath())));
   ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"), ArcData(source.GetPath()), true));
-  ClickControl(FindButton(welcome, u"Importuj"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(welcome, u"Otwórz Zitter") != nullptr; }));
+  ClickControl(FindButton(welcome, u"Importuj dane z Arc"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->workspaces().size() == 3 && !window_->profiles_busy() &&
+           find_control(find_control, welcome, ax::mojom::Role::kStaticText, u"Arc · Zaimportowano");
+  }));
   EXPECT_EQ(3u, window_->workspaces().size());
   for (const auto& space : window_->workspaces()) EXPECT_TRUE(space.id.starts_with("arc-space-"));
   EXPECT_FALSE(shell->import_visible());
-  EXPECT_FALSE(FindButton(welcome, u"Importuj"));
+  ASSERT_TRUE(find_control(find_control, welcome, ax::mojom::Role::kStaticText, u"Arc · Zaimportowano"));
+  ClickControl(FindButton(welcome, u"Opcje importu z Google Chrome"));
+  auto* confirm = FindButton(welcome, u"Importuj dane z Google Chrome");
+  ASSERT_TRUE(confirm);
+  ClickControl(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Zakładki i foldery"));
+  EXPECT_FALSE(confirm->GetEnabledInViewsSubtree());
+  ClickControl(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Historia przeglądania"));
+  EXPECT_TRUE(confirm->GetEnabledInViewsSubtree());
+  shell->welcome_widget_for_testing()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark);
+  ClickControl(import_step);
+  render("import-options-dark.png");
+  ClickControl(FindButton(welcome, u"Importuj dane z Google Chrome"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->workspaces().size() == 4 && !window_->profiles_busy() &&
+           find_control(find_control, welcome, ax::mojom::Role::kStaticText,
+                        u"Google Chrome · Zaimportowano");
+  }));
+  EXPECT_EQ(4u, window_->workspaces().size());
+  EXPECT_TRUE(window_->pinned_items("chrome-space-Default").empty());
+  EXPECT_EQ(welcome_widget, shell->welcome_widget_for_testing());
+  shell->welcome_widget_for_testing()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark);
+  ClickControl(import_step);
   render("import-finished.png");
-  ClickControl(FindButton(welcome, u"Otwórz Zitter"));
+  ClickControl(FindButton(welcome, u"Kontynuuj"));
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->welcome_widget_for_testing() && window_->configuration_saved(); }));
   window_.reset();
   window_ = std::make_unique<WorkspaceWindow>(directory);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
-  EXPECT_EQ(3u, window_->workspaces().size());
+  EXPECT_EQ(4u, window_->workspaces().size());
   EXPECT_FALSE(window_->shell()->import_visible());
   EXPECT_FALSE(window_->shell()->welcome_widget_for_testing());
   EXPECT_TRUE(window_->assistant_settings().enabled);
@@ -10564,7 +10775,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
   auto* next = FindButton(welcome, u"Nie teraz");
   ClickControl(next ? next : FindButton(welcome, u"Kontynuuj"));
   ClickControl(FindButton(welcome, u"Kontynuuj"));
-  ClickControl(FindButton(welcome, u"Pomiń"));
+  ClickControl(FindButton(welcome, u"Kontynuuj"));
   auto find_field = [](auto&& self, views::View* view) -> views::Textfield* {
     if (auto* field = views::AsViewClass<views::Textfield>(view)) return field;
     for (const auto& child : view->children())
