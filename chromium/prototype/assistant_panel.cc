@@ -34,10 +34,14 @@
 #include "base/uuid.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/base/models/dialog_model.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/events/event.h"
@@ -45,6 +49,9 @@
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/textarea/textarea.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/controls/webview/webview.h"
+#include "ui/views/bubble/bubble_dialog_model_host.h"
+#include "ui/views/window/dialog_delegate.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/controls/scrollbar/overlay_scroll_bar.h"
@@ -56,6 +63,19 @@
 
 namespace zitter::prototype {
 namespace {
+struct ShortcutAccess {
+  bool AssistantPermissions::*permission;
+  const char16_t* label;
+};
+// Positions are persisted in the shortcut permission mask.
+constexpr auto kShortcutAccess = std::to_array<ShortcutAccess>({
+    {&AssistantPermissions::pages, u"Odczyt stron"},
+    {&AssistantPermissions::web, u"Wyszukiwanie w sieci"},
+    {&AssistantPermissions::actions, u"Działania w przeglądarce"},
+    {&AssistantPermissions::tabs, u"Odczyt otwartych kart"},
+    {&AssistantPermissions::history, u"Odczyt historii przeglądania"},
+});
+constexpr int kShortcutAccessMask = (1 << kShortcutAccess.size()) - 1;
 constexpr std::array<const char16_t*, 4> kProviderLabels = {u"OpenAI", u"Codex", u"Claude Code", u"Ollama"};
 // Letter tiles for pages take a stable color from their host.
 constexpr std::array<uint32_t, 6> kPageColors = {0xffff8a66, 0xff5cc8ff, 0xffffc35c, 0xffff7eb6, 0xff5fe0b8, 0xffb4a6ff};
@@ -262,7 +282,10 @@ base::DictValue AssistantSettings::ToValue() const {
   base::ListValue list, enabled_backends;
   for (const auto& model : models) list.Append(base::DictValue().Set("provider", model.provider).Set("id", model.id).Set("visible", model.visible));
   for (bool backend : backends) enabled_backends.Append(backend);
+  base::DictValue remembered;
+  for (const auto& [key, permissions] : shortcut_access) remembered.Set(key, permissions);
   return base::DictValue().Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
+      .Set("shortcut_access", std::move(remembered))
       .Set("catalog_version", 4).Set("codex_path", codex_path).Set("claude_path", claude_path)
       .Set("ollama_configured", ollama_configured)
       .Set("encrypted_api_key", encrypted_api_key).Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
@@ -321,6 +344,12 @@ AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
   if (const auto* permissions = value->FindDict("permissions")) {
     auto flag = [&](const char* key, bool fallback) { return permissions->FindBool(key).value_or(fallback); };
     result.defaults = {flag("tabs", false), flag("pages", false), flag("actions", false), flag("history", false), flag("web", true), flag("confirm_clicks", true)};
+  }
+  if (const auto* remembered = value->FindDict("shortcut_access")) {
+    for (const auto [key, mask] : *remembered) {
+      if (mask.is_int() && mask.GetInt() > 0 && mask.GetInt() <= kShortcutAccessMask)
+        result.shortcut_access.emplace(key, mask.GetInt());
+    }
   }
   result.background = value->FindBool("background").value_or(true);
   result.confirm_background = value->FindBool("confirm_background").value_or(true);
@@ -412,6 +441,7 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
 }
 
 AssistantPanel::~AssistantPanel() {
+  if (shortcut_dialog_) shortcut_dialog_->Close();
   if (save_timer_.IsRunning()) SaveSessions();
   menu_monitor_.reset();
   // Overlays left in the shell call back only through weak pointers.
@@ -1344,8 +1374,15 @@ void AssistantPanel::Ask(std::u16string text) {
   Send(false);
 }
 std::u16string AssistantPanel::draft_for_testing() const { return std::u16string(prompt_->GetText()); }
-void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions,
-                                      bool needs_web, bool night_shift) {
+void AssistantPanel::PreparePageAction(std::u16string text, AssistantShortcut shortcut,
+                                      bool night_shift) {
+  if (shortcut_dialog_ && !shortcut_dialog_->IsClosed()) {
+    shortcut_dialog_->Activate();
+    return;
+  }
+  auto* current = window_->AssistantTabView("@current");
+  if (!current || !current->GetWebContents()) return;
+  auto document = current->GetWebContents()->GetPrimaryMainFrame()->GetWeakDocumentPtr();
   // Keep the previous conversation and composer intact, including running work.
   const auto previous = selected().key;
   selected().composer_draft = prompt_->GetText();
@@ -1360,13 +1397,84 @@ void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions,
   prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size()));
   if (!night_shift) InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
   PromptChanged();
-  const auto& access = selected().permissions;
-  if (access.pages && (!needs_web || access.web) && (!needs_actions || access.actions) && !selected().provider.empty()) {
-    Send(false);
-  } else {
-    ToggleMenu(Menu::kAccess);
-    prompt_->RequestFocus();
+  auto& access = selected().permissions;
+  const auto& remembered = window_->assistant_settings().shortcut_access;
+  const std::string key = selected().profile + "/" + shortcut.id;
+  const auto grant = remembered.find(key);
+  const int granted = grant == remembered.end() ? 0 : grant->second;
+  int missing = 0;
+  int requested = 0;
+  std::vector<std::u16string> labels;
+  for (size_t i = 0; i < kShortcutAccess.size(); ++i) {
+    const auto [permission, label] = kShortcutAccess[i];
+    if (!(shortcut.required.*permission)) continue;
+    requested |= 1 << i;
+    if (granted & (1 << i)) access.*permission = true;
+    if (access.*permission) continue;
+    missing |= 1 << i;
+    labels.push_back(u"• " + T(label));
   }
+  UpdateControls();
+  if (!missing) {
+    if (!selected().provider.empty()) Send(false);
+    return;
+  }
+  auto accept = base::BindRepeating(
+      [](base::WeakPtr<AssistantPanel> panel, std::string session_key, std::string grant_key,
+         content::WeakDocumentPtr document, int missing, int apply, bool remember) {
+        if (!panel || panel->selected().key != session_key ||
+            panel->selected().profile != panel->window_->AssistantProfileId() ||
+            !panel->window_->assistant_settings().enabled) return;
+        auto* tab = panel->window_->AssistantTabView("@current");
+        auto* frame = document.AsRenderFrameHostIfValid();
+        if (!frame || !tab || !tab->GetWebContents() ||
+            tab->GetWebContents()->GetPrimaryMainFrame() != frame) return;
+        if (remember) {
+          auto settings = panel->window_->assistant_settings();
+          settings.shortcut_access[grant_key] |= missing;
+          panel->window_->SetAssistantSettings(std::move(settings));
+        }
+        for (size_t i = 0; i < kShortcutAccess.size(); ++i)
+          if (apply & (1 << i)) panel->selected().permissions.*kShortcutAccess[i].permission = true;
+        panel->UpdateControls();
+        if (!panel->selected().provider.empty()) panel->Send(false);
+      }, weak_factory_.GetWeakPtr(), selected().key, key, document, missing,
+      missing | (requested & granted));
+  auto cancel = base::BindRepeating([](base::WeakPtr<AssistantPanel> panel, const std::string& key) {
+    if (!panel || panel->selected().key != key) return;
+    panel->prompt_->SetText(u"");
+    panel->chips_.clear();
+    panel->RenderChips();
+    panel->PromptChanged();
+  }, weak_factory_.GetWeakPtr(), selected().key);
+  auto remember = std::make_shared<bool>(false);
+  auto dialog = ui::DialogModel::Builder()
+      .SetTitle(T(u"Zezwolić na dostęp?"))
+      .AddParagraph(ui::DialogModelLabel(base::JoinString(labels, u"\n")), shortcut.title)
+      .AddOkButton(base::BindOnce([](base::RepeatingCallback<void(bool)> accept,
+                                    std::shared_ptr<bool> remember) { accept.Run(*remember); },
+                                  accept, remember),
+                   ui::DialogModel::Button::Params().SetLabel(T(u"Zezwól")))
+      .AddCancelButton(base::BindOnce(cancel),
+                       ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")))
+      .SetCloseActionCallback(base::BindOnce(cancel))
+      .AddExtraButton(base::BindRepeating(
+          [](base::WeakPtr<AssistantPanel> panel, std::shared_ptr<bool> remember,
+             const ui::Event&) {
+            if (!panel || !panel->shortcut_dialog_ || panel->shortcut_dialog_->IsClosed()) return;
+            *remember = true;
+            panel->shortcut_dialog_->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+          }, weak_factory_.GetWeakPtr(), remember),
+          ui::DialogModel::Button::Params().SetLabel(T(u"Zawsze zezwalaj")))
+      .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
+      .Build();
+  auto* parent = window_->widget();
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(
+      views::BubbleDialogModelHost::CreateModal(std::move(dialog), ui::mojom::ModalType::kWindow),
+      parent->GetNativeWindow(), parent->GetNativeView());
+  prompt->SetColorModeOverride(parent->color_mode_override());
+  shortcut_dialog_ = prompt->GetWeakPtr();
+  prompt->Show();
 }
 void AssistantPanel::SendForTesting(std::string text, bool background) {
   prompt_->SetText(base::UTF8ToUTF16(text)); Send(background);

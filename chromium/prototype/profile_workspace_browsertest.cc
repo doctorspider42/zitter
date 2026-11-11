@@ -1059,6 +1059,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRou
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraftsAndAccess) {
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html")));
+  auto disabled_backends = window_->assistant_settings();
+  disabled_backends.backends.fill(false);
+  window_->SetAssistantSettings(std::move(disabled_backends));
   window_->ShowAssistant();auto* panel=window_->assistant();ASSERT_TRUE(panel);
   ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
   panel->TypeForTesting(u"Keep my draft");
@@ -1069,11 +1072,38 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraft
   EXPECT_FALSE(panel->busy());
   EXPECT_NE(panel->draft_for_testing(),u"Keep my draft");
   EXPECT_FALSE(panel->permissions_for_testing().pages);
-  EXPECT_EQ(panel->open_menu_for_testing(),AssistantPanel::Menu::kAccess);
+  ASSERT_TRUE(panel->shortcut_dialog_for_testing());
   ASSERT_FALSE(panel->chips_for_testing().empty());
   EXPECT_EQ(panel->chips_for_testing().front().ref,"@current");
+  panel->shortcut_dialog_for_testing()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  EXPECT_TRUE(panel->permissions_for_testing().pages);
+  EXPECT_TRUE(panel->permissions_for_testing().tabs);
+  EXPECT_TRUE(window_->assistant_settings().shortcut_access.empty());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->shortcut_dialog_for_testing(); }));
   panel->SelectSessionForTesting(before-1);
   EXPECT_EQ(panel->draft_for_testing(),u"Keep my draft");
+  bar->RunAssistantCommandForTesting(0);
+  ASSERT_TRUE(panel->shortcut_dialog_for_testing());
+  auto* consent = panel->shortcut_dialog_for_testing()->widget_delegate()->AsDialogDelegate();
+  consent->ResetViewShownTimeStampForTesting();
+  ClickControl(consent->GetExtraView());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->shortcut_dialog_for_testing(); }));
+  EXPECT_TRUE(panel->permissions_for_testing().pages);
+  const auto stored = window_->assistant_settings().ToValue();
+  EXPECT_EQ(AssistantSettings::FromValue(&stored).shortcut_access,
+            window_->assistant_settings().shortcut_access);
+  ASSERT_EQ(window_->assistant_settings().shortcut_access.size(), 1u);
+  bar->RunAssistantCommandForTesting(0);
+  EXPECT_FALSE(panel->shortcut_dialog_for_testing());
+  EXPECT_TRUE(panel->permissions_for_testing().pages);
+  window_->WriteAssistantSettings(base::DictValue().Set("command", "clear_shortcut_access"));
+  EXPECT_TRUE(window_->assistant_settings().shortcut_access.empty());
+  bar->RunAssistantCommandForTesting(0);
+  ASSERT_TRUE(panel->shortcut_dialog_for_testing());
+  panel->shortcut_dialog_for_testing()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  EXPECT_TRUE(panel->draft_for_testing().empty());
+  EXPECT_FALSE(panel->permissions_for_testing().pages);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->shortcut_dialog_for_testing(); }));
   bar->RunAssistantCommandForTesting(6);
   ASSERT_TRUE(window_->shell()->general_widget());
   EXPECT_TRUE(window_->shell()->general_widget()->IsVisible());
@@ -13755,6 +13785,11 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
            !bar->night_shift_panel_for_testing();
   }));
   auto* assistant = window_->assistant();
+  if (auto* consent = assistant->shortcut_dialog_for_testing()) {
+    assistant->ConfigureForTesting("", "", assistant->permissions_for_testing());
+    consent->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !assistant->shortcut_dialog_for_testing(); }));
+  }
   const auto prompt = base::UTF16ToUTF8(assistant->draft_for_testing());
   ASSERT_GE(prompt.size(), 36u);
   const auto request_id = prompt.substr(prompt.size() - 36);
@@ -13852,13 +13887,13 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
   ASSERT_TRUE(base::test::RunUntil([&] {
     return content::EvalJs(page, kCaptionColor) == "rgb(224, 224, 224)";
   }));
-  // Closing keeps the saved repair; Undo removes it.
+  // Closing keeps the saved repair; Reset removes it.
   bar->ToggleNightShiftPanel();
   ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_panel_for_testing(); }));
   EXPECT_EQ("rgb(224, 224, 224)", content::EvalJs(page, kCaptionColor));
   bar->ToggleNightShiftPanel();
   ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "repaired"; }));
-  bar->RunNightShiftCommandForTesting(7);
+  bar->RunNightShiftCommandForTesting(14);
   ASSERT_TRUE(base::test::RunUntil([&] {
     return content::EvalJs(page, kCaptionColor) == "rgb(52, 52, 52)";
   }));

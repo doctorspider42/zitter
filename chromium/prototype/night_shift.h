@@ -60,6 +60,7 @@ struct NightShiftSite {
   int brightness = 100, contrast = 100;
   bool tuned = false;     // Own brightness or contrast.
   bool repaired = false;  // A saved assistant repair, which Undo restores from.
+  bool can_undo_repair = false;
   base::DictValue stored;
   // A repair the assistant staged for this very document, waiting for review.
   std::optional<base::DictValue> draft;

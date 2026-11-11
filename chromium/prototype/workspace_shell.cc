@@ -9397,6 +9397,13 @@ void WorkspaceShell::BuildAssistantPreferences() {
   auto text=[](const base::DictValue& d,const char* key){const auto* v=d.FindString(key);return v?base::UTF8ToUTF16(*v):std::u16string();};
   auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){if(shell&&shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(std::move(command));};
   assistant_models_list_->RemoveAllChildViews();
+  if (data.FindBool("has_shortcut_access").value_or(false)) {
+    auto* clear = PreferenceAction(assistant_models_list_, base::BindRepeating(
+        [](decltype(write) write, base::WeakPtr<WorkspaceShell> shell, const ui::Event&) {
+          write(shell, base::DictValue().Set("command", "clear_shortcut_access"));
+        }, write, weak), T(u"Wyczyść zapamiętane zgody skrótów"));
+    clear->SetEnabled(enabled);
+  }
   const auto* default_model=data.FindString("default_model");
   const auto* models=data.FindList("models");
   {

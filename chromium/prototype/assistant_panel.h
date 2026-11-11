@@ -3,6 +3,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_ASSISTANT_PANEL_H_
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,6 +41,11 @@ struct AssistantPermissions {
   base::DictValue ToValue() const;
   bool operator==(const AssistantPermissions&) const = default;
 };
+struct AssistantShortcut {
+  std::string id;
+  std::u16string title;
+  AssistantPermissions required;
+};
 // Backends in their stable order: openai, codex, claude, ollama.
 inline constexpr std::array<const char*, 4> kAssistantProviders = {"openai", "codex", "claude", "ollama"};
 std::u16string AssistantProviderLabel(std::string_view provider);
@@ -60,6 +66,7 @@ struct AssistantSettings {
   std::string encrypted_api_key;  // OS-encrypted, base64 encoded; never sent to the UI.
   std::string default_model;  // "<provider>/<id>"
   AssistantPermissions defaults;
+  std::map<std::string, int> shortcut_access;
   bool background = true, confirm_background = true;
   int concurrency = 12;
   bool BackendEnabled(std::string_view provider) const;
@@ -139,13 +146,14 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // Sends `text` as the user would, in the selected session; a session that
   // is busy or waiting for an answer keeps its work and only shows.
   void Ask(std::u16string text);
-  // Prepares a fresh page-scoped draft without changing permission grants.
-  void PreparePageAction(std::u16string text, bool needs_actions, bool needs_web,
+  // Starts a fresh page-scoped chat and requests any missing shortcut access.
+  void PreparePageAction(std::u16string text, AssistantShortcut shortcut,
                          bool night_shift = false);
   void SendForTesting(std::string text, bool background = false);
   void ConfigureForTesting(std::string provider, std::string model, AssistantPermissions permissions);
   bool ContainsForTesting(std::string_view text) const;
   AssistantPermissions permissions_for_testing() const;
+  views::Widget* shortcut_dialog_for_testing() const { return shortcut_dialog_.get(); }
   void ToggleMenuForTesting(Menu menu) { ToggleMenu(menu); }
   Menu open_menu_for_testing() const { return menu_; }
   gfx::Rect menu_bounds_for_testing() const;
@@ -368,6 +376,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
 #if BUILDFLAG(IS_WIN)
   base::win::ScopedHandle process_job_;
 #endif
+  base::WeakPtr<views::Widget> shortcut_dialog_;
   base::WeakPtrFactory<AssistantPanel> weak_factory_{this};
 };
 }

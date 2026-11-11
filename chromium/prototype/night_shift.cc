@@ -250,7 +250,11 @@ void ReadNightShiftSite(content::WebContents* page, base::OnceCallback<void(Nigh
         site.brightness = Percent(&site.stored, "brightness", Percent(defaults, "brightness", 100));
         site.contrast = Percent(&site.stored, "contrast", Percent(defaults, "contrast", 100));
         site.tuned = Percent(&site.stored, "brightness", 0) || Percent(&site.stored, "contrast", 0);
-        site.repaired = IsRepair(site.stored.Find("repair"));
+        const auto* repair = site.stored.Find("repair");
+        const auto* previous = site.stored.Find("previousRepair");
+        site.repaired = IsRepair(repair);
+        site.can_undo_repair = site.repaired && IsRepair(previous) &&
+            *repair->GetDict().FindList("rules") != *previous->GetDict().FindList("rules");
         if (!site.on()) { std::move(done).Run(std::move(site)); return; }
         // The whole (small) session area: asked for one key, the session
         // store answered empty on Windows even while the draft was there.

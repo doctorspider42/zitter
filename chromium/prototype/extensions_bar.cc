@@ -1631,6 +1631,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
       case 11: SetMode(site_.force ? "on" : "dark"); break;
       case 12: SetMode("off"); break;
       case 13: ToggleProfile(); break;
+      case 14: ResetRepair(); break;
     }
   }
   void SetBrightnessForTesting(int value) { if (brightness_) brightness_->SetValueForTesting(value); }
@@ -1731,12 +1732,15 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
         (with_fix_ ? after : before)->SetTone(QuietButton::Tone::kSelected);
         auto [discard, save] = pair(T(u"Odrzuć"), 6, T(u"Zapisz dla tej witryny"), 5);
         save->SetTone(QuietButton::Tone::kPrimary);
-      } else if (site_.repaired) {
-        AddRow(kTurnIcon, T(u"Cofnij poprawkę"), Command(7));
       } else if (bar_->callbacks_.assistant_available && bar_->callbacks_.assistant_available.Run() &&
                  bar_->callbacks_.fix_night_shift) {
         AddRow(kAssistantSparkIcon, T(u"Popraw dla tej strony"), Command(8));
       }
+    }
+    if (site_.repaired && !site_.draft) {
+      if (site_.can_undo_repair)
+        AddRow(kTurnIcon, T(u"Cofnij ostatnią zmianę"), Command(7));
+      AddRow(kTurnIcon, T(u"Resetuj poprawkę"), Command(14));
     }
     body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
     AddRow(&kSettingsGearIcon, T(u"Ustawienia Night Shift"), Command(9));
@@ -1820,8 +1824,12 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
     }, weak_factory_.GetWeakPtr()));
   }
   void Undo() {
-    if (!site_.repaired || !page_) return;
+    if (!site_.can_undo_repair || site_.draft || !page_) return;
     UndoNightShiftRepair(page_.get(), site_, base::BindOnce(&NightShiftPanel::Load, weak_factory_.GetWeakPtr()));
+  }
+  void ResetRepair() {
+    if (!site_.repaired || site_.draft) return;
+    Write(base::DictValue().Set("repair", base::Value()).Set("previousRepair", base::Value()), true);
   }
 
   raw_ptr<ExtensionsBar> bar_;

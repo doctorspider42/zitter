@@ -1027,7 +1027,8 @@ base::DictValue WorkspaceWindow::AssistantSettingsForShell() {
         .Set("enabled", assistant_settings_.backends[i]));
   return base::DictValue().Set("enabled", assistant_settings_.enabled && !configuration_invalid_).Set("backends", std::move(backends))
       .Set("codex_path", assistant_settings_.codex_path).Set("claude_path", assistant_settings_.claude_path)
-      .Set("has_saved_key",!assistant_settings_.encrypted_api_key.empty()).Set("status", assistant_backend_status_.Clone()).Set("models", std::move(models)).Set("default_model", assistant_settings_.default_model);
+      .Set("has_saved_key",!assistant_settings_.encrypted_api_key.empty()).Set("status", assistant_backend_status_.Clone()).Set("models", std::move(models)).Set("default_model", assistant_settings_.default_model)
+      .Set("has_shortcut_access", !assistant_settings_.shortcut_access.empty());
 }
 // Credentials are decrypted only for a provider operation, never exposed to settings,
 // transcripts, model prompts, command-line arguments or diagnostic output.
@@ -1194,6 +1195,11 @@ void WorkspaceWindow::WriteAssistantSettings(base::DictValue value) {
     return nullptr;
   };
   if (!command) return;
+  if (*command == "clear_shortcut_access") {
+    settings.shortcut_access.clear();
+    SetAssistantSettings(std::move(settings));
+    return;
+  }
   if (*command == "check" && provider) { CheckAssistantConnection(*provider); return; }
   if (*command == "discover" && provider) { CheckAssistantConnection(*provider, true); return; }
   if (*command == "cli_path" && provider && (*provider == "codex" || *provider == "claude")) {
@@ -1388,7 +1394,9 @@ void WorkspaceWindow::PrepareNightShiftRepair(content::WebContents* page) {
     const char16_t* prompt = UiLanguageIsEnglish()
         ? u"Fix Night Shift colors for this site. Use night_shift_inspect then night_shift_propose if needed. Request ID: "
         : u"Popraw kolory Night Shift dla tej witryny. Użyj night_shift_inspect, a w razie potrzeby night_shift_propose. Identyfikator zlecenia: ";
-    assistant_->PreparePageAction(prompt + base::UTF8ToUTF16(night_shift_request_), false, false, true);
+    assistant_->PreparePageAction(prompt + base::UTF8ToUTF16(night_shift_request_),
+        {"night_shift_repair", T(u"Popraw dla tej strony"), {.pages = true, .web = false}},
+        /*night_shift=*/true);
   }
 }
 void WorkspaceWindow::OpenAdBlockingRules() {
@@ -1553,7 +1561,16 @@ void WorkspaceWindow::RunAssistantPageAction(int command) {
   if (command < 0 || command >= static_cast<int>(prompts.size()) || !assistant_settings_.enabled ||
       !AssistantPageActionsAvailable()) return;
   ShowAssistant();
-  if (assistant_) assistant_->PreparePageAction(prompts[command], command == 1 || command == 2, command == 3);
+  if (assistant_) {
+    const std::array<AssistantShortcut, 5> shortcuts = {{
+      {"summarize", T(u"Podsumuj stronę"), {.tabs = true, .pages = true, .web = false}},
+      {"add_search_engine", T(u"Dodaj wyszukiwarkę"), {.tabs = true, .pages = true, .actions = true, .web = false}},
+      {"block_ads", T(u"Zablokuj reklamy"), {.tabs = true, .pages = true, .actions = true, .web = false}},
+      {"check_facts", T(u"Sprawdź fakty"), {.tabs = true, .pages = true, .web = true}},
+      {"extract_data", T(u"Wyciągnij dane"), {.tabs = true, .pages = true, .web = false}},
+    }};
+    assistant_->PreparePageAction(prompts[command], shortcuts[command]);
+  }
 }
 std::string WorkspaceWindow::AssistantTargetFor(views::View* view) {
   for (const auto& [key, target] : assistant_targets_) if (target->view() == view) return key;

@@ -610,7 +610,8 @@ pub static EN: &[(&str, &str)] = &[
     ("listopada", "November"),
     ("grudnia", "December"),
     // Night Shift panel (design: Night Shift).
-    ("Cofnij poprawkę", "Undo site fix"),
+    ("Cofnij ostatnią zmianę", "Undo last change"),
+    ("Resetuj poprawkę", "Reset site fix"),
     ("Jasność", "Brightness"),
     ("Kontrast", "Contrast"),
     ("Niedostępne na tej stronie", "Unavailable on this page"),
