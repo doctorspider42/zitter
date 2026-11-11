@@ -112,7 +112,7 @@
     function siteSettings(value, base) {
         const data = value ?? {};
         const look = defaults(base);
-        const mode = data.mode === "off" || data.mode === "on" ? data.mode : "auto";
+        const mode = ["off", "on", "dark"].includes(data.mode) ? data.mode : "auto";
         return {
             mode,
             force: mode === "on" || (mode === "off" && data.force === true) || (mode === "auto" && look.force),
@@ -147,5 +147,7 @@
 
     globalThis.NightShiftPolicy = Object.freeze({
         siteKey, siteSettings, storedSite, defaults, selector, repair, repairCss,
+        active: (enabled, settings) => settings.mode === "on" || settings.mode === "dark" ||
+            (enabled && settings.mode !== "off"),
     });
 })();

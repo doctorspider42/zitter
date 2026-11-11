@@ -152,6 +152,21 @@ def check_extension(browser, port):
     tab_id = manager.eval(f"chrome.tabs.query({{}}).then(tabs => tabs.find(t => t.url === '{site}/').id)")
     assert message(type="tab-settings", tabId=tab_id)["enabled"] is False
     assert registered() == 0 and not page.eval(DARK)
+    key = "site:127.0.0.1:" + str(port)
+    message(type="set-site", tabId=tab_id, key=key, settings={"mode": "dark", "brightness": 105})
+    until(lambda: page.eval(DARK) and registered() == 2, "site override with profile default off")
+    assert not other.eval(DARK)
+    until(lambda: not native.eval(DARK), "native dark detection for a site override")
+    message(type="set-global", enabled=True)
+    message(type="set-global", enabled=False)
+    until(lambda: page.eval(DARK) and not other.eval(DARK), "site override survives profile disable")
+    reloaded = page.eval("performance.timeOrigin")
+    page.call("Page.reload")
+    until(lambda: page.eval("performance.timeOrigin") != reloaded and page.eval(DARK),
+          "persisted site override after navigation")
+    assert message(type="tab-settings", tabId=tab_id)["settings"]["brightness"] == 105
+    message(type="set-site", tabId=tab_id, key=key, settings={"mode": "auto", "brightness": None})
+    until(lambda: not page.eval(DARK) and registered() == 0, "return to disabled profile default")
     message(type="set-global", enabled=True)
     until(lambda: page.eval(DARK) and other.eval(DARK), "the theme on open tabs")
     until(lambda: native.eval("getComputedStyle(document.body).backgroundColor === 'rgb(16, 16, 16)'") and
@@ -215,6 +230,7 @@ def check_extension(browser, port):
     until(lambda: page.eval(caption) != "rgb(237, 219, 255)", "undoing the saved repair")
     print("Repair comparison, close, save and undo passed")
 
+    write(mode="auto")
     message(type="set-global", enabled=False)
     until(lambda: not page.eval(DARK) and not other.eval(DARK), "global off on open tabs")
     assert registered() == 0

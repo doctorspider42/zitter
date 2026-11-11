@@ -80,11 +80,15 @@ int Percent(const base::DictValue* dict, const char* name, int fallback) {
   return value && *value >= 75 && *value <= 125 ? *value : fallback;
 }
 
+std::string SiteMode(const base::DictValue& data) {
+  const auto* mode = data.FindString("mode");
+  return mode && (*mode == "off" || *mode == "on" || *mode == "dark") ? *mode : "auto";
+}
+
 // What a site record keeps (site_policy.js storedSite): tuning only where the
 // person set it, so the app-wide defaults still reach every other value.
 base::DictValue Normalized(const base::DictValue& data) {
-  const auto* raw_mode = data.FindString("mode");
-  const std::string mode = raw_mode && (*raw_mode == "off" || *raw_mode == "on") ? *raw_mode : "auto";
+  const auto mode = SiteMode(data);
   base::DictValue stored;
   stored.Set("mode", mode);
   stored.Set("force", mode == "on" || (mode == "off" && data.FindBool("force").value_or(false)));
@@ -143,13 +147,17 @@ void EnsureNightShift(Profile* profile) {
 }
 
 bool NightShiftConfig::EnabledFor(const std::string& profile_id) const {
+  if (const auto it = profile_overrides.find(profile_id); it != profile_overrides.end()) return it->second;
   return enabled && (all_profiles || profiles.contains(profile_id));
 }
 
 base::DictValue NightShiftConfig::ToValue() const {
   base::ListValue list;
   for (const auto& id : profiles) list.Append(id);
+  base::DictValue overrides;
+  for (const auto& [id, on] : profile_overrides) overrides.Set(id, on);
   return base::DictValue()
+      .Set("profile_overrides", std::move(overrides))
       .Set("enabled", enabled)
       .Set("all_profiles", all_profiles)
       .Set("profiles", std::move(list))
@@ -166,6 +174,9 @@ NightShiftConfig NightShiftConfig::FromValue(const base::DictValue* value) {
   config.managed = true;
   config.enabled = value->FindBool("enabled").value_or(false);
   config.all_profiles = value->FindBool("all_profiles").value_or(true);
+  if (const auto* overrides = value->FindDict("profile_overrides"))
+    for (const auto [id, on] : *overrides)
+      if (on.is_bool()) config.profile_overrides.emplace(id, on.GetBool());
   if (const auto* list = value->FindList("profiles")) {
     for (const auto& id : *list)
       if (id.is_string() && !id.GetString().empty()) config.profiles.insert(id.GetString());
@@ -176,6 +187,18 @@ NightShiftConfig NightShiftConfig::FromValue(const base::DictValue* value) {
   config.grayscale = Clamped(value, "grayscale", 0, 100, 0);
   config.force = value->FindBool("force").value_or(false);
   return config;
+}
+
+void SetNightShiftProfileEnabled(Profile* profile, bool enabled, base::OnceClosure done) {
+  auto* registry = profile ? extensions::ExtensionRegistry::Get(profile) : nullptr;
+  auto* storage = profile ? extensions::StorageFrontend::Get(profile) : nullptr;
+  const auto* extension = registry ? registry->enabled_extensions().GetByID(kNightShiftId) : nullptr;
+  if (!extension || !storage || !profile->IsRegularProfile()) { std::move(done).Run(); return; }
+  storage->Set(base::WrapRefCounted(extension), extensions::StorageAreaNamespace::kLocal,
+               base::DictValue().Set("enabled", enabled),
+               base::BindOnce([](base::OnceClosure done, extensions::StorageFrontend::ResultStatus) {
+                 std::move(done).Run();
+               }, std::move(done)));
 }
 
 void PushNightShift(Profile* profile, bool enabled, const NightShiftConfig& config, base::OnceClosure done) {
@@ -220,8 +243,7 @@ void ReadNightShiftSite(content::WebContents* page, base::OnceCallback<void(Nigh
         site.enabled = values.FindBool("enabled").value_or(false);
         const auto* defaults = values.FindDict("defaults");
         if (const auto* data = site.key.empty() ? nullptr : values.FindDict(site.key)) site.stored = data->Clone();
-        const auto* mode = site.stored.FindString("mode");
-        site.mode = mode && (*mode == "off" || *mode == "on") ? *mode : "auto";
+        site.mode = SiteMode(site.stored);
         const bool default_force = defaults && defaults->FindBool("force").value_or(false);
         site.force = site.mode == "on" || (site.mode == "off" && site.stored.FindBool("force").value_or(false)) ||
                      (site.mode == "auto" && default_force);

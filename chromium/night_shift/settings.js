@@ -107,7 +107,7 @@ function renderProfiles() {
         name.append(title, detail);
         const check = document.createElement("input");
         check.type = "checkbox";
-        check.checked = config.all_profiles || config.profiles.includes(profile.id);
+        check.checked = config.profile_overrides[profile.id] ?? (config.enabled && (config.all_profiles || config.profiles.includes(profile.id)));
         check.disabled = config.all_profiles || !config.enabled;
         check.setAttribute("aria-label", profile.name);
         check.addEventListener("change", () => {
@@ -161,7 +161,7 @@ async function renderSites() {
             tag.textContent = copy.off;
         } else if (settings.repair) {
             tag.textContent = copy.fix;
-        } else if (settings.mode === "on") {
+        } else if (settings.mode === "on" || settings.mode === "dark") {
             tag.textContent = copy.always;
         } else if (Number.isInteger(raw.brightness)) {
             tag.textContent = format(copy.tuned, raw.brightness);
@@ -217,15 +217,17 @@ async function managed() {
         enabled: saved ? saved.enabled === true : own.enabled === true,
         all_profiles: saved ? saved.all_profiles !== false : true,
         profiles: (saved?.profiles ?? ids).filter(id => ids.includes(id)),
+        profile_overrides: Object.fromEntries(Object.entries(saved?.profile_overrides ?? {})
+            .filter(([id, enabled]) => ids.includes(id) && typeof enabled === "boolean")),
         brightness: look.brightness, contrast: look.contrast, sepia: look.sepia, grayscale: look.grayscale,
         force: look.force,
     };
     if (saved) {
         Object.assign(config, defaults(saved));
     }
-    toggle.addEventListener("change", () => change({enabled: toggle.checked}));
-    get("scope-all").addEventListener("click", () => change({all_profiles: true}));
-    get("scope-some").addEventListener("click", () => change({all_profiles: false}));
+    toggle.addEventListener("change", () => change({enabled: toggle.checked, profile_overrides: {}}));
+    get("scope-all").addEventListener("click", () => change({all_profiles: true, profile_overrides: {}}));
+    get("scope-some").addEventListener("click", () => change({all_profiles: false, profile_overrides: {}}));
     for (const id of SLIDERS) {
         get(id).addEventListener("input", () => change({[id]: Number(get(id).value)}));
     }

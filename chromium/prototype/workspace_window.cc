@@ -1109,6 +1109,19 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   }, base::Unretained(this));
   extension_callbacks.night_shift_state =
       base::BindRepeating(&WorkspaceWindow::NightShiftSettingsState, base::Unretained(this));
+  extension_callbacks.set_night_shift_enabled = base::BindRepeating(
+      [](WorkspaceWindow* window, Profile* profile, bool enabled, base::OnceClosure done) {
+        const auto id = window->ProfileIdOf(profile);
+        if (window->is_private() || !window->configuration_ready_ || id.empty()) {
+          std::move(done).Run();
+          return;
+        }
+        if (window->night_shift_config_.managed) {
+          window->night_shift_config_.profile_overrides[id] = enabled;
+          window->SaveConfiguration();
+        }
+        SetNightShiftProfileEnabled(profile, enabled, std::move(done));
+      }, base::Unretained(this));
   extension_callbacks.fix_night_shift =
       base::BindRepeating(&WorkspaceWindow::PrepareNightShiftRepair, weak_factory_.GetWeakPtr());
   extension_callbacks.block_with_assistant = base::BindRepeating([](WorkspaceWindow* window) {
@@ -2376,6 +2389,9 @@ void WorkspaceWindow::ApplyNightShiftSettings(base::DictValue value) {
   // Only profiles that exist; a removed one must not come back as a name.
   std::erase_if(config.profiles, [this](const std::string& id) {
     return std::ranges::none_of(profiles_, [&id](const auto& entry) { return entry.info.id == id; });
+  });
+  std::erase_if(config.profile_overrides, [this](const auto& entry) {
+    return std::ranges::none_of(profiles_, [&](const auto& profile) { return profile.info.id == entry.first; });
   });
   night_shift_config_ = std::move(config);
   ++night_shift_generation_;

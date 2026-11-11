@@ -84,7 +84,7 @@
     }
 
     function observeNativeDark() {
-        if (!current?.enabled || current.settings.mode !== "auto" || current.dark || !document.documentElement) {
+        if (!current?.enabled || current.settings.force || current.dark || !document.documentElement) {
             return;
         }
         detector.runDarkThemeDetector(dark => {
@@ -97,7 +97,7 @@
         const root = document.documentElement;
         if (!root) {
             document.addEventListener("DOMContentLoaded", () => {
-                if (current?.enabled && current.settings.mode === "auto" && !current.dark) {
+                if (current?.enabled && !current.settings.force && !current.dark) {
                     startObservation();
                 }
             }, {once: true});
@@ -124,7 +124,7 @@
             dispose();
             return;
         }
-        const detect = state.enabled && state.settings.mode === "auto" && !state.settings.force && !state.dark;
+        const detect = state.enabled && !state.settings.force && !state.dark;
         const previouslyDetected = Boolean(nativeObservation);
         current = state;
         if (!detect) {
@@ -155,11 +155,7 @@
         if (area !== "local" || (!changes.enabled && !changes.defaults && (!current?.key || !changes[current.key]))) {
             return;
         }
-        if (changes.enabled?.newValue === false) {
-            dispose();
-        } else {
-            refresh();
-        }
+        refresh();
     }
 
     function onPageShow(event) {

@@ -59,6 +59,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     // JSON for the Night Shift settings page: the profiles and the app-wide
     // configuration (absent until it was saved once).
     base::RepeatingCallback<std::string()> night_shift_state;
+    base::RepeatingCallback<void(Profile*, bool, base::OnceClosure)> set_night_shift_enabled;
     // The assistant button shows or hides the panel.
     base::RepeatingClosure toggle_assistant_panel;
     // Starts a new conversation.

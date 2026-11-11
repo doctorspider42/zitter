@@ -974,8 +974,7 @@ class MoonButton final : public views::Button, public views::ContextMenuControll
 BEGIN_METADATA(MoonButton)
 END_METADATA
 
-// The Night Shift panel's first block, built like the shield card: a tile
-// with the crescent, the site's state in `label`, the site.
+// The current site's status and host above its appearance controls.
 class NightCard final : public views::View {
   METADATA_HEADER(NightCard, views::View)
  public:
@@ -983,26 +982,19 @@ class NightCard final : public views::View {
     SetPreferredSize(gfx::Size(kMenuWidth - 8, 48));
     GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
   }
-  void Set(bool on, std::u16string state, std::u16string site) {
-    on_ = on; state_ = std::move(state); site_ = std::move(site);
+  void Set(std::u16string state, std::u16string site) {
+    state_ = std::move(state); site_ = std::move(site);
     GetViewAccessibility().SetName(site_ + u", " + state_);
     SchedulePaint();
   }
   void OnPaint(gfx::Canvas* canvas) override {
-    const gfx::RectF tile(8, 8, 32, 32);
-    FillRound(canvas, tile, 6, on_ ? palette_.accent_soft : palette_.bg_hover);
-    const gfx::RectF glyph(16, 16, 16, 16);
-    const SkColor ink = on_ ? palette_.accent_ink : palette_.ink_muted;
-    StrokeIcon(canvas, kMoonIcon, glyph, ink);
-    if (on_) StrokeIcon(canvas, kMoonSparkIcon, glyph, ink);
-    const int x = 52, right = width() - 8;
+    const int x = 8, right = width() - 8;
     canvas->DrawStringRectWithFlags(state_, DesignFont(2, 12, 400), palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
     canvas->DrawStringRectWithFlags(site_, DesignFont(2, 13, 600), palette_.ink, gfx::Rect(x, 23, right - x, 18),
                                     gfx::Canvas::NO_SUBPIXEL_RENDERING);
   }
  private:
   sidebar::DesignPalette palette_;
-  bool on_ = false;
   std::u16string state_, site_;
 };
 BEGIN_METADATA(NightCard)
@@ -1012,14 +1004,15 @@ END_METADATA
 class SwitchRow final : public views::Button {
   METADATA_HEADER(SwitchRow, views::Button)
  public:
-  SwitchRow(PressedCallback callback, std::u16string text, bool on, const sidebar::DesignPalette& palette)
-      : views::Button(std::move(callback)), text_(std::move(text)), on_(on), palette_(palette) {
+  SwitchRow(PressedCallback callback, std::u16string text, bool on, const sidebar::DesignPalette& palette,
+            bool heading = false)
+      : views::Button(std::move(callback)), text_(std::move(text)), on_(on), palette_(palette), heading_(heading) {
     GetViewAccessibility().SetRole(ax::mojom::Role::kSwitch);
     GetViewAccessibility().SetName(text_);
     GetViewAccessibility().SetCheckedState(on ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
     int w = kMenuWidth - 8 - 16 - 34 - 12, h = 0;
     gfx::Canvas::SizeStringInt(text_, DesignFont(2, 13, 400), &w, &h, 0, gfx::Canvas::MULTI_LINE);
-    SetPreferredSize(gfx::Size(kMenuWidth - 8, std::max(36, h + 16)));
+    SetPreferredSize(gfx::Size(kMenuWidth - 8, std::max(heading ? 44 : 36, h + 16)));
   }
   bool on() const { return on_; }
   void PaintButtonContents(gfx::Canvas* canvas) override {
@@ -1028,11 +1021,16 @@ class SwitchRow final : public views::Button {
       FillRound(canvas, box, 8, palette_.bg_hover);
     const int track_x = width() - 8 - 34;
     // The text sits on the switch's middle, one line or two.
-    const auto font = DesignFont(2, 13, 400);
-    int text_width = track_x - 12 - 8, text_height = 0;
+    const auto font = DesignFont(2, heading_ ? 14 : 13, heading_ ? 600 : 400);
+    const int text_x = heading_ ? 44 : 8;
+    if (heading_) {
+      FillRound(canvas, gfx::RectF(8, (height() - 26) / 2.f, 26, 26), 7, palette_.accent_soft);
+      StrokeIcon(canvas, kMoonIcon, gfx::RectF(13, (height() - 16) / 2.f, 16, 16), palette_.accent_ink);
+    }
+    int text_width = track_x - 12 - text_x, text_height = 0;
     gfx::Canvas::SizeStringInt(text_, font, &text_width, &text_height, 0, gfx::Canvas::MULTI_LINE);
     canvas->DrawStringRectWithFlags(text_, font, GetEnabled() ? palette_.ink : palette_.ink_faint,
-                                    gfx::Rect(8, (height() - text_height) / 2, track_x - 12 - 8, text_height),
+                                    gfx::Rect(text_x, (height() - text_height) / 2, track_x - 12 - text_x, text_height),
                                     gfx::Canvas::MULTI_LINE);
     const gfx::RectF track(track_x, (height() - 19) / 2.f, 34, 19);
     FillRound(canvas, track, 9.5f, on_ ? palette_.accent : palette_.line_strong);
@@ -1045,6 +1043,7 @@ class SwitchRow final : public views::Button {
   std::u16string text_;
   bool on_;
   sidebar::DesignPalette palette_;
+  bool heading_ = false;
 };
 BEGIN_METADATA(SwitchRow)
 END_METADATA
@@ -1609,9 +1608,9 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
     if (!page_) return;
     ReadNightShiftSite(page_.get(), base::BindOnce(&NightShiftPanel::Loaded, weak_factory_.GetWeakPtr()));
   }
-  bool ready() const { return ready_; }
+  bool ready() const { return ready_ && !busy_; }
   std::string state() const {
-    if (!ready_) return {};
+    if (!ready()) return {};
     if (site_.draft) return "draft";
     if (site_.repaired) return "repaired";
     return site_.on() ? site_.mode : "off";
@@ -1628,6 +1627,10 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
       case 7: Undo(); break;
       case 8: bar_->FixNightShift(); break;
       case 9: bar_->OpenNightShiftSettings(); break;
+      case 10: SetMode("auto"); break;
+      case 11: SetMode(site_.force ? "on" : "dark"); break;
+      case 12: SetMode("off"); break;
+      case 13: ToggleProfile(); break;
     }
   }
   void SetBrightnessForTesting(int value) { if (brightness_) brightness_->SetValueForTesting(value); }
@@ -1636,6 +1639,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
   void Loaded(NightShiftSite site) {
     site_ = std::move(site);
     ready_ = true;
+    busy_ = false;
     // A staged repair shows right away, as on the page it was made for.
     if (site_.draft && !draft_shown_ && page_) {
       draft_shown_ = true;
@@ -1653,11 +1657,10 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
     Build();
   }
   std::u16string StateText() const {
-    if (!site_.enabled) return T(u"Wyłączone w tym profilu");
     if (site_.key.empty()) return T(u"Niedostępne na tej stronie");
     if (site_.mode == "off") return T(u"Wyłączony dla tej witryny");
-    if (site_.mode == "on") return T(u"Tryb ciemny włączony");
-    return T(u"Tryb automatyczny");
+    if (site_.mode == "on" || site_.mode == "dark") return T(u"Tryb ciemny włączony");
+    return site_.enabled ? T(u"Tryb automatyczny") : T(u"Wyłączone w tym profilu");
   }
   MenuRow* AddRow(MenuGlyph glyph, std::u16string text, base::RepeatingClosure run) {
     auto* row = body_->AddChildView(std::make_unique<MenuRow>(std::move(run), palette_, kFooterHeight));
@@ -1676,13 +1679,28 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
   void Build() {
     body_->RemoveAllChildViews();
     brightness_ = nullptr;
-    body_->AddChildView(std::make_unique<MenuHeader>(palette_, u"Night Shift"));
+    auto* profile_switch = body_->AddChildView(std::make_unique<SwitchRow>(
+        Command(13), u"Night Shift", site_.enabled, palette_, true));
+    profile_switch->GetViewAccessibility().SetName(T(u"Night Shift domyślnie w tym profilu"));
+    profile_switch->SetTooltipText(T(u"Domyślnie dla witryn w tym profilu"));
+    profile_switch->SetEnabled(!busy_ && bool(bar_->callbacks_.set_night_shift_enabled));
+    body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
     const std::string host = site_.key.empty() ? std::string() : site_.key.substr(5);
     body_->AddChildView(std::make_unique<NightCard>(palette_))->Set(
-        site_.on(), StateText(), host.empty() ? u"Night Shift" : base::UTF8ToUTF16(host));
-    auto* site_switch = body_->AddChildView(std::make_unique<SwitchRow>(
-        Command(0), T(u"Tryb ciemny dla tej witryny"), site_.on(), palette_));
-    site_switch->SetEnabled(site_.enabled && !site_.key.empty());
+        StateText(), host.empty() ? u"Night Shift" : base::UTF8ToUTF16(host));
+    auto* modes = body_->AddChildView(std::make_unique<views::View>());
+    auto* mode_layout = modes->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(2, 8), 2));
+    const std::array<std::u16string, 3> labels = {T(u"Domyślnie"), T(u"Ciemna"), T(u"Jasna")};
+    const int selected = site_.mode == "off" ? 2 : site_.mode == "auto" ? 0 : 1;
+    for (int i = 0; i < 3; ++i) {
+      auto* button = modes->AddChildView(std::make_unique<QuietButton>(Command(10 + i), labels[i], palette_));
+      button->GetViewAccessibility().SetRole(ax::mojom::Role::kRadioButton);
+      button->GetViewAccessibility().SetCheckedState(i == selected ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
+      button->SetEnabled(!busy_ && !site_.key.empty());
+      if (i == selected) button->SetTone(QuietButton::Tone::kSelected);
+      mode_layout->SetFlexForView(button, 1);
+    }
     if (site_.on()) {
       body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
       const auto tune = [](base::WeakPtr<NightShiftPanel> panel, const std::string& name, int value, bool commit) {
@@ -1693,7 +1711,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
       body_->AddChildView(std::make_unique<TuneRow>(T(u"Kontrast"), site_.contrast, palette_,
           base::BindRepeating(tune, weak_factory_.GetWeakPtr(), std::string("contrast"))));
       body_->AddChildView(std::make_unique<SwitchRow>(
-          Command(1), T(u"Stosuj także na stronach z własnym trybem ciemnym"), site_.mode == "on", palette_));
+          Command(1), T(u"Stosuj także na stronach z własnym trybem ciemnym"), site_.force, palette_));
       if (site_.tuned || site_.mode == "on") AddRow(kTurnIcon, T(u"Przywróć ustawienia"), Command(2));
       if (site_.draft) {
         body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
@@ -1738,10 +1756,29 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
     WriteNightShiftSite(page_.get(), site_.key, std::move(change), std::move(done));
   }
   void ToggleSite() {
-    if (!site_.enabled || site_.key.empty()) return;
-    Write(base::DictValue().Set("mode", site_.on() ? "off" : site_.force ? "on" : "auto"), true);
+    if (site_.key.empty()) return;
+    SetMode(site_.on() ? "off" : site_.force ? "on" : "dark");
   }
-  void ToggleForce() { if (site_.on()) Write(base::DictValue().Set("mode", site_.mode == "on" ? "auto" : "on"), true); }
+  void SetMode(const std::string& mode) {
+    if (busy_ || !page_ || site_.key.empty()) return;
+    tune_timer_.Stop();
+    auto change = std::exchange(pending_, base::DictValue());
+    change.Set("mode", mode);
+    busy_ = true;
+    Write(std::move(change), true);
+  }
+  void ToggleProfile() {
+    if (busy_ || !page_ || !bar_->callbacks_.set_night_shift_enabled) return;
+    FlushTuning();
+    busy_ = true;
+    Build();
+    bar_->callbacks_.set_night_shift_enabled.Run(bar_->profile(), !site_.enabled,
+        base::BindOnce([](base::WeakPtr<ExtensionsBar> bar, base::WeakPtr<NightShiftPanel> panel) {
+          if (bar) bar->RefreshNightShift();
+          if (panel) panel->Load();
+        }, bar_->weak_factory_.GetWeakPtr(), weak_factory_.GetWeakPtr()));
+  }
+  void ToggleForce() { if (site_.on()) SetMode(site_.force ? "dark" : "on"); }
   // Back to the app-wide look from the Night Shift settings.
   void Reset() {
     Write(base::DictValue().Set("brightness", base::Value()).Set("contrast", base::Value()).Set("mode", "auto"), true);
@@ -1794,6 +1831,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
   base::WeakPtr<content::WebContents> page_;
   NightShiftSite site_;
   bool ready_ = false;
+  bool busy_ = false;
   bool draft_shown_ = false;
   bool previewing_ = false;
   bool with_fix_ = true;

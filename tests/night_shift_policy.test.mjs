@@ -3,7 +3,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import "../chromium/night_shift/site_policy.js";
 
-const {siteKey, siteSettings, storedSite, defaults, repair, repairCss} = globalThis.NightShiftPolicy;
+const {siteKey, siteSettings, storedSite, defaults, repair, repairCss, active} = globalThis.NightShiftPolicy;
+test("site appearance overrides the profile default independently of native dark forcing", () => {
+    for (const enabled of [false, true]) {
+        assert.equal(active(enabled, siteSettings({mode: "auto"})), enabled);
+        assert.equal(active(enabled, siteSettings({mode: "off"})), false);
+        assert.equal(active(enabled, siteSettings({mode: "on"})), true);
+        assert.equal(active(enabled, siteSettings({mode: "dark"})), true);
+    }
+    assert.equal(siteSettings({mode: "dark"}, {force: true}).force, false);
+    assert.equal(siteSettings({mode: "on"}).force, true);
+    assert.equal(storedSite({mode: "dark", brightness: 105}).mode, "dark");
+});
 const caption = {
     path: [{tag: "article", id: "story"}, {tag: "figcaption", classes: ["muted"]}],
     property: "color",

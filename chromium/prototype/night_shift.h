@@ -2,6 +2,7 @@
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_NIGHT_SHIFT_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_NIGHT_SHIFT_H_
 
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -26,6 +27,7 @@ struct NightShiftConfig {
   bool enabled = false;
   bool all_profiles = true;
   std::set<std::string> profiles;  // Used when !all_profiles.
+  std::map<std::string, bool> profile_overrides;
   int brightness = 100, contrast = 100;  // 75..125
   int sepia = 0;                         // 0..50
   int grayscale = 0;                     // 0..100
@@ -40,6 +42,7 @@ struct NightShiftConfig {
 // Writes the profile's switch and the default look into the extension's own
 // storage; the extension reacts to the change like to its own settings.
 void PushNightShift(Profile* profile, bool enabled, const NightShiftConfig& config, base::OnceClosure done);
+void SetNightShiftProfileEnabled(Profile* profile, bool enabled, base::OnceClosure done);
 
 // The settings page reports a change by replacing its URL fragment with
 // "#apply=<json>". Only the extension's own settings page is listened to.
@@ -52,7 +55,7 @@ void ObserveNightShiftSettings(content::WebContents* contents,
 struct NightShiftSite {
   bool enabled = false;  // Night Shift runs in this profile.
   std::string key;       // Empty on pages without site settings.
-  std::string mode = "auto";  // auto, on (also over a site's own dark theme), off
+  std::string mode = "auto";  // auto, dark, on (also over a site's own dark theme), off
   bool force = false;
   int brightness = 100, contrast = 100;
   bool tuned = false;     // Own brightness or contrast.
@@ -62,7 +65,7 @@ struct NightShiftSite {
   std::optional<base::DictValue> draft;
   std::string draft_label;
 
-  bool on() const { return enabled && !key.empty() && mode != "off"; }
+  bool on() const { return !key.empty() && (mode == "on" || mode == "dark" || (enabled && mode != "off")); }
 };
 
 // "site:<host[:port]>" for http(s) pages, as site_policy.js siteKey().

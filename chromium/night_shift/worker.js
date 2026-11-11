@@ -3,7 +3,7 @@
 import "./site_policy.js";
 import {compatibility} from "./vendor/compatibility.js";
 
-const {repair, siteKey, siteSettings, storedSite} = globalThis.NightShiftPolicy;
+const {repair, siteKey, siteSettings, storedSite, active} = globalThis.NightShiftPolicy;
 const ENABLED = "enabled";
 const DEFAULTS = "defaults";
 const MAX_STYLESHEET_BYTES = 1024 * 1024;
@@ -47,10 +47,12 @@ async function configureScripts(enabled) {
     }
 }
 
-async function applyToOpenTabs() {
+async function applyToOpenTabs(values) {
     const tabs = await chrome.tabs.query({url: ["http://*/*", "https://*/*"]});
     await Promise.allSettled(tabs.map(async tab => {
-        if (tab.id == null || tab.discarded) {
+        const key = siteKey(tab.url);
+        if (tab.id == null || tab.discarded || !key ||
+            !active(values[ENABLED] === true, siteSettings(values[key]))) {
             return;
         }
         const frames = await chrome.scripting.executeScript({
@@ -74,40 +76,27 @@ async function applyToOpenTabs() {
 }
 
 async function setEnabled(enabled) {
-    if (enabled) {
-        await configureScripts(true);
-        try {
-            await chrome.storage.local.set({[ENABLED]: true});
-        } catch (error) {
-            await configureScripts(false);
-            throw error;
-        }
-        await applyToOpenTabs();
-    } else {
-        await chrome.storage.local.set({[ENABLED]: false});
-        await configureScripts(false);
-    }
+    await chrome.storage.local.set({[ENABLED]: enabled});
+    await restoreRegistration();
     return {enabled};
 }
 
 async function restoreRegistration() {
-    const values = await chrome.storage.local.get(ENABLED);
-    await configureScripts(values[ENABLED] === true);
+    const values = await chrome.storage.local.get(null);
+    const needed = values[ENABLED] === true || Object.entries(values).some(([key, value]) =>
+        key.startsWith("site:") && active(false, siteSettings(value)));
+    await configureScripts(needed);
+    if (needed) await applyToOpenTabs(values);
 }
 
 chrome.runtime.onStartup.addListener(() => enqueue(restoreRegistration).catch(console.error));
 // Zitter switches Night Shift for every profile at once by writing ENABLED.
 chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes[ENABLED]) {
+    if (area !== "local" || !Object.entries(changes).some(([key, change]) =>
+        key === ENABLED || (key.startsWith("site:") && change.oldValue?.mode !== change.newValue?.mode))) {
         return;
     }
-    const enabled = changes[ENABLED].newValue === true;
-    enqueue(async () => {
-        await configureScripts(enabled);
-        if (enabled) {
-            await applyToOpenTabs();
-        }
-    }).catch(console.error);
+    enqueue(restoreRegistration).catch(console.error);
 });
 chrome.runtime.onInstalled.addListener(() => enqueue(restoreRegistration).catch(console.error));
 
@@ -136,11 +125,9 @@ async function getDocumentState(sender) {
     }
     const values = await chrome.storage.local.get([ENABLED, DEFAULTS, key]);
     const settings = siteSettings(values[key], values[DEFAULTS]);
-    if (values[ENABLED] !== true) {
-        return {enabled: false, globallyDisabled: true};
-    }
-    if (settings.mode === "off") {
-        return {enabled: false, key};
+    const profileEnabled = values[ENABLED] === true;
+    if (!active(profileEnabled, settings)) {
+        return {enabled: false, key, globallyDisabled: !profileEnabled};
     }
 
     const frameUrl = siteKey(sender.url) ? sender.url : sender.tab.url;
@@ -166,7 +153,7 @@ async function linkedStylesheet(message, sender) {
         throw new Error("Unavailable top-level site");
     }
     const values = await chrome.storage.local.get([ENABLED, key]);
-    if (values[ENABLED] !== true || siteSettings(values[key]).mode === "off") {
+    if (!active(values[ENABLED] === true, siteSettings(values[key]))) {
         throw new Error("Night Shift is disabled");
     }
     const response = await fetch(url, {
@@ -215,7 +202,7 @@ async function tabSettings(tabId) {
 
 async function writeSite(message) {
     const current = await tabSettings(message.tabId);
-    if (!current.enabled || !current.key || message.key !== current.key) {
+    if (!current.key || message.key !== current.key) {
         throw new Error("The tab's site or extension state changed");
     }
     // null drops a value, so the site follows the app-wide default again.
@@ -248,7 +235,7 @@ async function draftFor(tabId) {
     const key = draftKey(tabId);
     const data = (await chrome.storage.session.get(key))[key];
     const proposal = repair(data?.proposal);
-    if (!proposal || !current.enabled || current.settings.mode === "off" ||
+    if (!proposal || !active(current.enabled, current.settings) ||
         data.url !== current.url || typeof data.documentId !== "string") {
         return null;
     }

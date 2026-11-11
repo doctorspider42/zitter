@@ -13588,7 +13588,7 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativePanelSwitchesAndTunesTheSite
   ASSERT_EQ(true, content::EvalJs(settings, R"(
       chrome.runtime.sendMessage({type:'set-global', enabled:true}).then(response => response.ok)
   )"));
-  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/tab_favicon_probe.html"), true));
   auto* page = window_->contents("work");
   ASSERT_TRUE(content::WaitForLoadStop(page));
   auto* bar = window_->extensions_bar();
@@ -13623,11 +13623,32 @@ IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativePanelSwitchesAndTunesTheSite
   ASSERT_TRUE(base::test::RunUntil([&] { return moon_name() == T(u"Night Shift: wyłączony dla tej witryny"); }));
   EXPECT_NE(std::string::npos, stored().find("\"mode\":\"off\""));
   bar->RunNightShiftCommandForTesting(0);
-  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "auto"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "dark"; }));
   bar->RunNightShiftCommandForTesting(1);
   ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "on"; }));
   bar->SetNightShiftBrightnessForTesting(110);
   ASSERT_TRUE(base::test::RunUntil([&] { return stored().find("\"brightness\":110") != std::string::npos; })) << stored();
+  // The header changes the profile default while the explicit site stays dark.
+  bar->RunNightShiftCommandForTesting(13);
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored().find("\"enabled\":false") != std::string::npos; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "on"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, "Boolean(document.querySelector('.darkreader--user-agent'))").ExtractBool();
+  }));
+  bar->RunNightShiftCommandForTesting(10);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "off"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !content::EvalJs(page, "Boolean(document.querySelector('.darkreader--user-agent'))").ExtractBool();
+  }));
+  bar->RunNightShiftCommandForTesting(11);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "dark"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, "Boolean(document.querySelector('.darkreader--user-agent'))").ExtractBool();
+  }));
+  EXPECT_NE(std::string::npos, stored().find("\"brightness\":110"));
+  bar->RunNightShiftCommandForTesting(13);
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored().find("\"enabled\":true") != std::string::npos; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_ready_for_testing(); }));
   // Reset: the app-wide look again.
   bar->RunNightShiftCommandForTesting(2);
   ASSERT_TRUE(base::test::RunUntil([&] {
