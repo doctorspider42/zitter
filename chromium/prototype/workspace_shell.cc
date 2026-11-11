@@ -12708,10 +12708,19 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   }
   ~WelcomeView() override = default;
 
+  gfx::Size GetMinimumSize() const override { return gfx::Size(680, 470); }
+
   void AddedToWidget() override {
     observation_.Observe(GetWidget());
     // The palette needs the widget's color provider.
-    if (!shown_) { shown_ = true; ShowStep(0); }
+    if (!shown_) {
+      shown_ = true;
+      const auto& command = *base::CommandLine::ForCurrentProcess();
+      ShowStep(command.HasSwitch("zitter-dev-channel") &&
+                       command.HasSwitch("zitter-dev-clean-profile") &&
+                       command.HasSwitch("zitter-dev-welcome-import")
+                   ? 3 : 0);
+    }
   }
   void RemovedFromWidget() override { observation_.Reset(); }
   // Back from Windows' Settings: the default browser step shows the choice.
@@ -13214,6 +13223,7 @@ void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(Wel
   delegate->SetTitle(T(u"Witaj w Zitter"));
   delegate->SetIcon(widget_->widget_delegate()->GetWindowIcon());
   delegate->SetModalType(ui::mojom::ModalType::kWindow);
+  delegate->SetCanResize(true);
   const int welcome_height = std::max(620, 470 + 56 * static_cast<int>(setup.sources.size()));
   auto* view = delegate->SetContentsView(std::make_unique<WelcomeView>(std::move(setup), std::move(done)));
   welcome_delegate_ = std::move(delegate);
