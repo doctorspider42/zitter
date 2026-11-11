@@ -13528,9 +13528,50 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
   ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
   EXPECT_FALSE(Shown(bar, popup->id())->popup_open);
 
+  bar->RunAction(popup->id());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible();
+  }));
+  bar->RunAction(popup->id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
+  EXPECT_FALSE(Shown(bar, popup->id())->popup_open);
+
   bar->RunAction(clicker->id());
   ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, clicker->id())->badge == "ok"; }));
   EXPECT_FALSE(bar->popup_for_testing());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolbarPanelsFadeBeforeClosing) {
+  gfx::ScopedAnimationDurationScaleMode animations(gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->WritePreference("ad_blocking", 1));
+  auto* bar = window_->extensions_bar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->shield_button_for_testing() != nullptr; }));
+  const auto check_fade = [&](auto toggle, auto get) {
+    (bar->*toggle)();
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      auto* panel = (bar->*get)();
+      return panel && panel->IsVisible() && panel->GetLayer() &&
+             panel->GetLayer()->opacity() == 1.0f;
+    }));
+    auto* panel = (bar->*get)();
+    (bar->*toggle)();
+    EXPECT_EQ(panel, (bar->*get)());
+    EXPECT_TRUE(panel->IsVisible());
+    EXPECT_FLOAT_EQ(0.0f, panel->GetLayer()->GetTargetOpacity());
+    (bar->*toggle)();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !(bar->*get)(); }));
+  };
+  for (auto mode : {ui::ColorProviderKey::ColorMode::kLight,
+                    ui::ColorProviderKey::ColorMode::kDark}) {
+    window_->widget()->SetColorModeOverride(mode);
+    ASSERT_NO_FATAL_FAILURE(check_fade(&ExtensionsBar::ToggleShieldPanel,
+                                       &ExtensionsBar::shield_panel_for_testing));
+    ASSERT_NO_FATAL_FAILURE(check_fade(&ExtensionsBar::ToggleNightShiftPanel,
+                                       &ExtensionsBar::night_shift_panel_for_testing));
+    ASSERT_NO_FATAL_FAILURE(check_fade(&ExtensionsBar::ToggleMenu, &ExtensionsBar::menu_for_testing));
+  }
 }
 
 // Extension pages (options, chrome://extensions, links from popups) open as

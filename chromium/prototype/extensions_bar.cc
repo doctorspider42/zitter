@@ -1,5 +1,8 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/extensions_bar.h"
+
+#include "ui/display/screen.h"
+#include "ui/views/animation/animation_builder.h"
 #include "ui/views/controls/label.h"
 #include "chromium/prototype/assistant_visuals.h"
 
@@ -86,6 +89,48 @@ namespace {
 using extensions::Extension;
 using extensions::ExtensionAction;
 using SiteInteraction = extensions::SitePermissionsHelper::SiteInteraction;
+
+void IgnoreToolbarBubbleClose(base::WeakPtr<views::Widget> widget,
+                              views::Widget::ClosedReason) {
+  if (widget)
+    widget->MakeCloseSynchronous(base::BindOnce(&IgnoreToolbarBubbleClose, widget));
+}
+
+std::unique_ptr<views::Widget> CreateToolbarBubble(
+    views::BubbleDialogDelegate* delegate,
+    views::Widget::ClosedCallback on_close,
+    bool fade_out = false) {
+  if (fade_out) {
+    on_close = base::BindOnce(
+        [](views::BubbleDialogDelegate* delegate, views::Widget::ClosedCallback close,
+           views::Widget::ClosedReason reason) {
+          auto* widget = delegate->GetWidget();
+          const auto duration = gfx::Animation::RichAnimationDuration(base::Milliseconds(140));
+          if (!widget || !widget->IsVisible() || !widget->GetLayer() || duration.is_zero()) {
+            std::move(close).Run(reason);
+            return;
+          }
+
+          // Keep the widget and its contents alive while the compositor fades
+          // their layer. A second close request during the fade is redundant.
+          IgnoreToolbarBubbleClose(widget->GetWeakPtr(), reason);
+          widget->GetRootView()->SetCanProcessEventsWithinSubtree(false);
+          auto [ended, aborted] = base::SplitOnceCallback(base::BindOnce(std::move(close), reason));
+          views::AnimationBuilder()
+              .SetPreemptionStrategy(ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET)
+              .OnEnded(std::move(ended))
+              .OnAborted(std::move(aborted))
+              .Once()
+              .SetDuration(duration)
+              .SetOpacity(widget->GetLayer(), 0.0f, gfx::Tween::LINEAR);
+        }, base::Unretained(delegate), std::move(on_close));
+  }
+  auto widget = views::BubbleDialogDelegate::CreateBubble(delegate, std::move(on_close));
+  // Native visibility transitions only handle opening. The optional close
+  // animation above runs before destroying the widget.
+  widget->SetVisibilityAnimationTransition(views::Widget::ANIMATE_SHOW);
+  return widget;
+}
 
 // Design: Extensions. IconButton 28 px, 2 px apart; a 16 px `line` stroke
 // between the pinned actions and the puzzle; a 296 px menu with 44 px rows.
@@ -1427,10 +1472,19 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
     bar_->PopupRevealed();
   }
   // Using the window again closes the popup, as in Chrome.
-  void AnchorActivated() { if (GetWidget() && GetWidget()->IsVisible()) Close(); }
+  void AnchorActivated() {
+    if (!GetWidget() || !GetWidget()->IsVisible()) return;
+    // Activation arrives before the toolbar button's click. Let the button
+    // toggle this popup closed instead of closing it and starting a new one.
+    if (GetAnchorView() && GetAnchorView()->GetBoundsInScreen().Contains(
+                               display::Screen::Get()->GetCursorScreenPoint())) return;
+    Close();
+  }
   void HostClosed(extensions::ExtensionHost*) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
-        [](base::WeakPtr<ExtensionsBar> bar) { if (bar) bar->ClosePopup(); }, bar_->weak_factory_.GetWeakPtr()));
+        [](base::WeakPtr<ExtensionsBar> bar, uint64_t generation) {
+          if (bar && bar->popup_generation_ == generation) bar->ClosePopup();
+        }, bar_->weak_factory_.GetWeakPtr(), bar_->popup_generation_));
   }
   raw_ptr<ExtensionsBar> bar_;
   std::unique_ptr<extensions::ExtensionViewHost> host_;
@@ -2029,11 +2083,11 @@ void ExtensionsBar::ToggleMenu() {
   if (!profile_ || !puzzle_ || !GetWidget()) return;
   menu_ = std::make_unique<Menu>(this, puzzle_);
   // Never delete a widget on its own closing stack.
-  menu_widget_ = views::BubbleDialogDelegate::CreateBubble(menu_.get(), base::BindOnce(
+  menu_widget_ = CreateToolbarBubble(menu_.get(), base::BindOnce(
       [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
             base::BindOnce(&ExtensionsBar::DestroyMenu, bar));
-      }, weak_factory_.GetWeakPtr()));
+      }, weak_factory_.GetWeakPtr()), /*fade_out=*/true);
   static_cast<PuzzleButton*>(puzzle_.get())->SetOpen(true);
   menu_widget_->Show();
 }
@@ -2069,6 +2123,7 @@ void ExtensionsBar::ShowPopup(const Extension& extension, views::View* anchor) {
   GURL url = action->GetPopupUrl(tab_id());
   if (!url.is_valid()) return;
   DestroyPopup();
+  const auto generation = ++popup_generation_;
   const auto open = base::BindRepeating(
       [](base::WeakPtr<ExtensionsBar> bar, const GURL& url, bool) {
         if (!bar) return;
@@ -2080,11 +2135,13 @@ void ExtensionsBar::ShowPopup(const Extension& extension, views::View* anchor) {
   auto host = std::make_unique<extensions::ExtensionViewHost>(&extension, profile_, url,
       extensions::mojom::ViewType::kExtensionPopup, std::move(delegate));
   popup_ = std::make_unique<Popup>(this, anchor, std::move(host));
-  popup_widget_ = views::BubbleDialogDelegate::CreateBubble(popup_.get(), base::BindOnce(
-      [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
+  popup_widget_ = CreateToolbarBubble(popup_.get(), base::BindOnce(
+      [](base::WeakPtr<ExtensionsBar> bar, uint64_t generation, views::Widget::ClosedReason) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-            base::BindOnce(&ExtensionsBar::DestroyPopup, bar));
-      }, weak_factory_.GetWeakPtr()));
+            base::BindOnce([](base::WeakPtr<ExtensionsBar> bar, uint64_t generation) {
+              if (bar && bar->popup_generation_ == generation) bar->DestroyPopup();
+            }, bar, generation));
+      }, weak_factory_.GetWeakPtr(), generation));
   popup_id_ = extension.id();
   for (auto& button : buttons_) {
     button->SetPopupOpen(button->id() == popup_id_);
@@ -2218,11 +2275,11 @@ void ExtensionsBar::ToggleFingerprintPanel() {
   ClosePopup();
   fingerprint_panel_ = std::make_unique<FingerprintPanel>(this, fingerprint_button_);
   // Never delete a widget on its own closing stack.
-  fingerprint_widget_ = views::BubbleDialogDelegate::CreateBubble(fingerprint_panel_.get(), base::BindOnce(
+  fingerprint_widget_ = CreateToolbarBubble(fingerprint_panel_.get(), base::BindOnce(
       [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
             base::BindOnce(&ExtensionsBar::DestroyFingerprintPanel, bar));
-      }, weak_factory_.GetWeakPtr()));
+      }, weak_factory_.GetWeakPtr()), /*fade_out=*/true);
   static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(true);
   fingerprint_widget_->Show();
 }
@@ -2282,11 +2339,11 @@ void ExtensionsBar::ToggleShieldPanel() {
   if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
   shield_panel_ = std::make_unique<ShieldPanel>(this, shield_button_);
   // Never delete a widget on its own closing stack.
-  shield_widget_ = views::BubbleDialogDelegate::CreateBubble(shield_panel_.get(), base::BindOnce(
+  shield_widget_ = CreateToolbarBubble(shield_panel_.get(), base::BindOnce(
       [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
             base::BindOnce(&ExtensionsBar::DestroyShieldPanel, bar));
-      }, weak_factory_.GetWeakPtr()));
+      }, weak_factory_.GetWeakPtr()), /*fade_out=*/true);
   static_cast<ShieldButton*>(shield_button_.get())->SetOpen(true);
   shield_widget_->Show();
 }
@@ -2343,11 +2400,11 @@ void ExtensionsBar::ToggleNightShiftPanel() {
   if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
   night_shift_panel_ = std::make_unique<NightShiftPanel>(this, anchor);
   // Never delete a widget on its own closing stack.
-  night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(night_shift_panel_.get(), base::BindOnce(
+  night_shift_widget_ = CreateToolbarBubble(night_shift_panel_.get(), base::BindOnce(
       [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
             base::BindOnce(&ExtensionsBar::DestroyNightShiftPanel, bar));
-      }, weak_factory_.GetWeakPtr()));
+      }, weak_factory_.GetWeakPtr()), /*fade_out=*/true);
   if (auto* button = views::AsViewClass<MoonButton>(night_shift_button_.get())) button->SetOpen(true);
   // The panel shows itself once it has read the site: a few milliseconds.
   night_shift_panel_->Load();

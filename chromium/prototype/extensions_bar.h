@@ -245,6 +245,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   std::unique_ptr<Popup> popup_;
   std::unique_ptr<views::Widget> popup_widget_;
   std::string popup_id_;
+  uint64_t popup_generation_ = 0;
   std::unique_ptr<ExtensionsContextMenu> context_menu_;
   std::unique_ptr<ExtensionsUninstall> uninstall_;
   bool menu_rebuild_pending_ = false;
