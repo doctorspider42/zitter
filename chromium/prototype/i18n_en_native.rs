@@ -568,7 +568,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Przejęto kartę. Zadanie zatrzymane.", "Tab taken over. Task stopped."),
     ("Przypięta karta. Otwarcie uśpionej wymaga zgody na akcje.", "Pinned tab. Opening a sleeping one needs the actions permission."),
     ("Równoległe źródła, raport z cytatami", "Parallel sources, a report with citations"),
-    ("Przypnij panel", "Pin panel"),
+    ("Przypnij panel asystenta", "Pin Assistant panel"),
     ("Zacznij z domyślnym dostępem", "Start with default access"),
     ("Spróbuj innej nazwy albo adresu.", "Try another name or address."),
     ("Szukaj modelu", "Search models"),

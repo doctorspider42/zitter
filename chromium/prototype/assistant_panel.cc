@@ -1052,7 +1052,7 @@ void AssistantPanel::BuildSettingsMenu(views::View* body) {
   auto* title = head->AddChildView(CreateAssistantEyebrow(T(u"Ustawienia asystenta"), {}));
   SetSidebarPanelLayout(head, false, gfx::Insets(), 4, title, true);
   AssistantRow pin;
-  pin.title = T(u"Przypnij panel");
+  pin.title = T(u"Przypnij panel asystenta");
   pin.toggle = pinned_;
   pin.mark = {AssistantGlyph::kPin, {}, SK_ColorTRANSPARENT};
   body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
