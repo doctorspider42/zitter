@@ -175,6 +175,9 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/checkbox.h"
+#include "components/vector_icons/vector_icons.h"
+#include "ui/color/color_id.h"
+#include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/menu/menu_controller.h"
@@ -441,14 +444,14 @@ bool IsValidFolderTitle(std::string_view title) {
 bool IsGitHubFolder(const std::vector<prototype::PinnedItem>& pins,
                     std::string_view id) {
   const auto item = std::ranges::find(pins, id, &prototype::PinnedItem::id);
-  return item != pins.end() && item->github.has_value();
+  return item != pins.end() && item->live_folder.has_value();
 }
 
-bool ValidGitHubScope(const prototype::GitHubLiveFolder& config) {
-  return (!config.login.empty() || !config.repository.empty()) &&
-         (config.login.empty() || RE2::FullMatch(config.login, "[a-zA-Z0-9-]{1,39}")) &&
-         (config.repository.empty() ||
-          RE2::FullMatch(config.repository, "[a-zA-Z0-9-]{1,39}/[a-zA-Z0-9_.-]{1,100}"));
+bool ValidGitHubScope(const prototype::LiveFolderConfig& config) {
+  return (!config.account.empty() || !config.filter.empty()) &&
+         (config.account.empty() || RE2::FullMatch(config.account, "[a-zA-Z0-9-]{1,39}")) &&
+         (config.filter.empty() ||
+          RE2::FullMatch(config.filter, "[a-zA-Z0-9-]{1,39}/[a-zA-Z0-9_.-]{1,100}"));
 }
 
 bool ValidGitHubToken(std::string_view token) {
@@ -1186,7 +1189,7 @@ struct WorkspaceLab::GitHubRefresh {
   std::string workspace;
   std::string profile;
   std::string folder;
-  prototype::GitHubLiveFolder config;
+  prototype::LiveFolderConfig config;
   bool manual = false;
   std::vector<std::string> queries;
   std::map<std::string, size_t> result_indexes;
@@ -1525,17 +1528,40 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                                                std::move(title));
       }, weak);
   if (!private_owner_ && !smoke_ && !session_path_.empty()) {
-    callbacks.configure_github_folder = base::BindRepeating(
+    callbacks.github_live_folders_only = true;
+    callbacks.configure_live_folder = base::BindRepeating(
         [](base::WeakPtr<WorkspaceLab> lab, std::string workspace, std::string folder,
-           std::string title, prototype::GitHubLiveFolder config,
-           std::string token, bool remove_token) {
-          return lab && lab->ConfigureGitHubFolder(
+           std::string title, prototype::LiveFolderConfig config,
+           std::string token, bool remove_token, bool) {
+          return lab && config.provider == LiveFolderProvider::kGitHub &&
+              lab->ConfigureGitHubFolder(
               std::move(workspace), std::move(folder), std::move(title),
               std::move(config), std::move(token), remove_token);
         }, weak);
-    callbacks.refresh_github_folder =
+    callbacks.refresh_live_folder =
         base::BindRepeating(&WorkspaceLab::RefreshGitHubFolder, weak);
   }
+  callbacks.rename_sidebar_tab = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, std::optional<size_t> index,
+         std::string id, std::u16string title) {
+        if (!lab || !lab->CanEditWorkspace() || title.size() > 256)
+          return false;
+        if (!id.empty()) {
+          auto& pins = lab->PinStorage(lab->active_index_, id);
+          const auto pin = std::ranges::find(pins, id, &prototype::PinnedItem::id);
+          if (pin == pins.end() || pin->folder || IsGitHubFolder(pins, pin->parent_id))
+            return false;
+          pin->custom_title = base::UTF16ToUTF8(title);
+        } else {
+          auto& tabs = lab->tabs_[lab->active_index_];
+          if (!index || *index >= tabs.size())
+            return false;
+          tabs[*index].custom_title = std::move(title);
+        }
+        lab->RefreshShell();
+        lab->PersistWorkspaceChanges();
+        return true;
+      }, weak);
   callbacks.rename_folder = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string workspace, std::string id,
          std::string title) {
@@ -1663,6 +1689,32 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   auto trailing = std::make_unique<views::View>();
   trailing->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
+  auto add_toolbar_button = [&](const gfx::VectorIcon& icon,
+                                const std::u16string& label,
+                                views::Button::PressedCallback callback) {
+    auto button = std::make_unique<views::ImageButton>(std::move(callback));
+    button->SetImageModel(views::Button::STATE_NORMAL,
+                          ui::ImageModel::FromVectorIcon(icon, ui::kColorIcon, 16));
+    button->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
+    button->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
+    button->SetPreferredSize(gfx::Size(30, 30));
+    button->SetTooltipText(label);
+    button->GetViewAccessibility().SetName(label);
+    return trailing->AddChildView(std::move(button));
+  };
+  if (IsManagedExtensionSession() && !private_owner_) {
+    add_toolbar_button(vector_icons::kExtensionOldIcon, prototype::T(u"Rozszerzenia"),
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab) lab->shell_->OpenExtensionsSettings();
+        }, weak));
+  }
+  assistant_toolbar_button_ = add_toolbar_button(
+      vector_icons::kChatSparkIcon, prototype::T(u"Asystent"),
+      base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+        if (lab && !lab->ShowAssistant(false))
+          lab->shell_->OpenAssistantSettings();
+      }, weak));
+  assistant_toolbar_button_->SetVisible(false);
   adblock_shield_button_ = trailing->AddChildView(
       std::make_unique<prototype::ShieldButton>(
           base::BindRepeating(&WorkspaceLab::ToggleAdblockShield, weak),
@@ -1915,6 +1967,7 @@ void WorkspaceLab::AppendWorkspace(Workspace workspace, const base::DictValue* e
     AddTab(index, std::move(tab.url),
            std::move(tab.title).value_or(std::u16string()),
            std::move(tab.pin).value_or(std::string()));
+    tabs_[index].back().custom_title = std::move(tab.custom_title).value_or(std::u16string());
   }
   selected_[index] = static_cast<size_t>(*entry->FindInt("active"));
   sleeping_[index] = entry->FindBool("sleeping").value_or(false);
@@ -2767,6 +2820,7 @@ WorkspaceLab::~WorkspaceLab() {
   private_fingerprint_subscription_ = {};
   fingerprint_toolbar_.reset();
   fingerprint_button_ = nullptr;
+  assistant_toolbar_button_ = nullptr;
   webauthn_probe_.reset();
   devtools_.reset();
   ad_blocking_rules_panel_.reset();
@@ -7779,7 +7833,7 @@ bool WorkspaceLab::CreatePinnedFolder(std::string workspace, std::string parent,
 
 bool WorkspaceLab::ConfigureGitHubFolder(std::string workspace, std::string folder,
                                          std::string title,
-                                         prototype::GitHubLiveFolder config,
+                                         prototype::LiveFolderConfig config,
                                          std::string token, bool remove_token) {
   const auto* space = model_.active();
   title = std::string(base::TrimWhitespaceASCII(title, base::TRIM_ALL));
@@ -7795,11 +7849,11 @@ bool WorkspaceLab::ConfigureGitHubFolder(std::string workspace, std::string fold
   config.encrypted_token.clear();
   if (!folder.empty()) {
     const auto item = std::ranges::find(pins, folder, &prototype::PinnedItem::id);
-    if (item == pins.end() || !item->github)
+    if (item == pins.end() || !item->live_folder)
       return false;
     previous = *item;
     if (!remove_token)
-      config.encrypted_token = item->github->encrypted_token;
+      config.encrypted_token = item->live_folder->encrypted_token;
   } else {
     if (pins.size() >= prototype::kMaxWorkspaceSessionTabs)
       return false;
@@ -7809,7 +7863,7 @@ bool WorkspaceLab::ConfigureGitHubFolder(std::string workspace, std::string fold
   prototype::PinnedItem updated = previous.value_or(
       prototype::PinnedItem{std::move(folder), {}, {}, GURL(), true});
   updated.title = std::move(title);
-  updated.github = std::move(config);
+  updated.live_folder = std::move(config);
   if (token.empty())
     return SaveGitHubFolder(std::move(workspace), space->profile_id,
                             std::move(previous), std::move(updated));
@@ -7829,7 +7883,7 @@ bool WorkspaceLab::ConfigureGitHubFolder(std::string workspace, std::string fold
               prototype::T(u"Nie udało się bezpiecznie zapisać tokena GitHub"), {}, {});
           return;
         }
-        updated.github->encrypted_token = base::Base64Encode(ciphertext);
+        updated.live_folder->encrypted_token = base::Base64Encode(ciphertext);
         if (!lab->SaveGitHubFolder(std::move(workspace), std::move(profile),
                                    std::move(previous), std::move(updated))) {
           lab->shell_->ShowFolderSaveError();
@@ -7886,7 +7940,7 @@ void WorkspaceLab::ScheduleGitHubRefresh() {
   const auto& workspace = model_.active()->id;
   GitHubFolderKey candidate;
   for (const auto& pin : pins_[active_index_]) {
-    if (!pin.github || !ValidGitHubScope(*pin.github))
+    if (!pin.live_folder || !ValidGitHubScope(*pin.live_folder))
       continue;
     const GitHubFolderKey key(workspace, pin.id);
     const auto previous = github_next_refresh_.find(key);
@@ -7914,7 +7968,7 @@ void WorkspaceLab::StartGitHubRefresh(std::string folder, bool manual) {
     return;
   const auto& pins = pins_[active_index_];
   const auto target = std::ranges::find(pins, folder, &prototype::PinnedItem::id);
-  if (target == pins.end() || !target->github || !ValidGitHubScope(*target->github))
+  if (target == pins.end() || !target->live_folder || !ValidGitHubScope(*target->live_folder))
     return;
   github_timer_.Stop();
   github_refresh_ = std::make_unique<GitHubRefresh>();
@@ -7922,11 +7976,13 @@ void WorkspaceLab::StartGitHubRefresh(std::string folder, bool manual) {
   job.workspace = space->id;
   job.profile = space->profile_id;
   job.folder = std::move(folder);
-  job.config = *target->github;
+  job.config = *target->live_folder;
   job.manual = manual;
   github_next_refresh_[{job.workspace, job.folder}] = base::TimeTicks::Now() + base::Minutes(5);
 
-  const auto& [login, repository, ciphertext] = job.config;
+  const auto& login = job.config.account;
+  const auto& repository = job.config.filter;
+  const auto& ciphertext = job.config.encrypted_token;
   const auto scope = repository.empty() ? "" : " repo:" + repository;
   if (login.empty()) {
     job.queries.push_back(scope);
@@ -7972,7 +8028,7 @@ bool WorkspaceLab::GitHubRefreshIsCurrent() const {
   const auto& pins = pins_[active_index_];
   const auto folder = std::ranges::find(pins, github_refresh_->folder,
                                        &prototype::PinnedItem::id);
-  return folder != pins.end() && folder->github == github_refresh_->config;
+  return folder != pins.end() && folder->live_folder == github_refresh_->config;
 }
 
 void WorkspaceLab::FetchGitHubResults(std::string token) {
@@ -8136,7 +8192,7 @@ bool WorkspaceLab::RemovePinnedFolder(std::string workspace, std::string id,
   const auto folder = std::ranges::find(pins, id, &prototype::PinnedItem::id);
   if (folder == pins.end() || !folder->folder)
     return false;
-  if (contents || folder->github) {
+  if (contents || folder->live_folder) {
     std::vector<size_t> subtree;
     {
       const auto nodes = PinNodes(pins);
@@ -8184,7 +8240,7 @@ bool WorkspaceLab::PinTab(size_t index, std::string parent, std::string before) 
                                                      : tab.deferred_title;
   std::string id = "pin-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
   if (!PlacePin(pins, {id, {}, title.empty() ? std::string(url.host()) : base::UTF16ToUTF8(title.substr(0, 8192)),
-                 url}, std::move(parent), std::move(before))) {
+                 url, false, false, std::nullopt, base::UTF16ToUTF8(tab.custom_title)}, std::move(parent), std::move(before))) {
     return false;
   }
   tab.pin = std::move(id);
@@ -9371,6 +9427,7 @@ void WorkspaceLab::CommitTimelineLayout(size_t workspace,
       AddTab(workspace, std::move(tab.url),
              std::move(tab.title).value_or(std::u16string()),
              pin != pins.end() && !pin->folder ? pin->id : "");
+      tabs_[workspace].back().custom_title = std::move(tab.custom_title).value_or(std::u16string());
     }
     splits_[workspace] = std::move(*split);
     selected_[workspace] = *active;
@@ -9705,9 +9762,12 @@ void WorkspaceLab::RefreshShell() {
     } else if (!page && url.SchemeIsHTTPOrHTTPS()) {
       cached_icon_urls.insert(url);
     }
+    if (!tabs[index].custom_title.empty())
+      title = tabs[index].custom_title;
     state.tabs.push_back({title.empty() ? u"New tab" : std::move(title),
                           url, index, tabs[index].pin, {tabs[index].id, 1},
-                          page && page->IsCurrentlyAudible() && !page->IsAudioMuted()});
+                          page && page->IsCurrentlyAudible() && !page->IsAudioMuted(),
+                          0, !tabs[index].custom_title.empty()});
   }
   ReadCachedFavicons(state, cached_icon_urls);
   const GURL developer_url = state.url;
@@ -10660,6 +10720,8 @@ base::DictValue WorkspaceLab::CaptureWorkspaceSession(size_t workspace) const {
                                                   : title.substr(0, 8192));
     if (!tab.pin.empty())
       entry.Set("pin", tab.pin);
+    if (!tab.custom_title.empty())
+      entry.Set("custom_title", base::UTF16ToUTF8(tab.custom_title));
     tabs.Append(std::move(entry));
   }
   auto entry = base::DictValue()
@@ -10936,7 +10998,7 @@ bool WorkspaceLab::RunProbePaletteCommand(std::u16string_view query,
 void WorkspaceLab::RunGitHubFolderProbe(std::string phase) {
   auto& pins = pins_[active_index_];
   const std::string workspace = model_.active()->id;
-  prototype::GitHubLiveFolder config{"", "example/project", ""};
+  prototype::LiveFolderConfig config{"", "example/project", ""};
   if (phase == "create") {
     if (!pins.empty() ||
         !ConfigureGitHubFolder(workspace, "", "Pull requests", config,
@@ -10945,7 +11007,7 @@ void WorkspaceLab::RunGitHubFolderProbe(std::string phase) {
       return;
     }
   } else {
-    if (pins.empty() || !pins.front().github) {
+    if (pins.empty() || !pins.front().live_folder) {
       Finish(false);
       return;
     }
@@ -10975,7 +11037,7 @@ void WorkspaceLab::CheckGitHubFolderProbe(std::string phase, base::TimeTicks dea
     Finish(false);
     return;
   }
-  const bool complete = !github_refresh_ && !pins.empty() && pins.front().github &&
+  const bool complete = !github_refresh_ && !pins.empty() && pins.front().live_folder &&
       github_next_refresh_.contains({model_.active()->id, pins.front().id}) &&
       (wrong_profile ? pins.size() == 1
                      : pins.size() == 2 && pins[1].parent_id == pins[0].id &&
@@ -13865,9 +13927,34 @@ void WorkspaceLab::CheckClosedFavoriteDuplicate(std::string research,
     Finish(false);
     return;
   }
-  SelectWorkspace("personal");
-  std::puts("Zitter Content verified shared profile favorites");
-  RequestClose();
+  shell_->BuildTabMenu(selected_[active_index_], {});
+  auto* menu = shell_->workspace_menu();
+  for (size_t index = 0; index < menu->GetItemCount(); ++index) {
+    if (menu->GetLabelAt(index) != prototype::T(u"Przypnij do profilu") ||
+        !menu->IsEnabledAt(index)) {
+      continue;
+    }
+    menu->ActivatedAt(index);
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+          if (!lab)
+            return;
+          const auto id = lab->tabs_[lab->active_index_][lab->selected_[lab->active_index_]].pin;
+          if (id.empty() || !std::ranges::contains(lab->profile_favorites_["work"], id,
+                                                  &prototype::PinnedItem::id) ||
+              !lab->Unpin(id, lab->tabs_[lab->active_index_].size())) {
+            LOG(ERROR) << "The tab menu did not add a profile favorite";
+            lab->Finish(false);
+            return;
+          }
+          lab->SelectWorkspace("personal");
+          std::puts("Zitter Content verified shared profile favorites and tab menu pinning");
+          lab->RequestClose();
+        }, weak_factory_.GetWeakPtr()));
+    return;
+  }
+  LOG(ERROR) << "The open tab has no enabled profile favorite command";
+  Finish(false);
 }
 
 void WorkspaceLab::CheckWorkspaceReassignmentProbe(

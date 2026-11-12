@@ -221,6 +221,9 @@ void WorkspaceLab::UpdateAssistantHostSettings() {
   assistant_host_settings_.enabled = enabled;
   assistant_host_settings_.background = false;
   shell_->SetAssistantAllowed(enabled);
+  if (assistant_toolbar_button_)
+    assistant_toolbar_button_->SetVisible(CanConfigureAssistant() && assistant_settings_ &&
+                                          assistant_settings_->enabled);
   if (assistant_) {
     if (was_enabled && !enabled)
       assistant_->CredentialsChanged();
@@ -432,7 +435,7 @@ void WorkspaceLab::WriteAssistantSettings(base::DictValue command) {
       if (model == settings.models.end())
         return;
       const auto full_id = *provider + "/" + model->id;
-      if (*action == "default") {
+      if (*action == "default" && settings.BackendEnabled(*provider)) {
         model->visible = true;
         settings.default_model = full_id;
       } else if (*action == "visible" && settings.default_model != full_id) {

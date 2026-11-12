@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_STANDARD = {
-    "algorithm", "cmath", "cstddef", "functional", "map", "optional", "span",
+    "algorithm", "array", "cmath", "cstddef", "functional", "map", "optional", "span",
     "string", "string_view", "unordered_map", "utility", "vector",
 }
 PRODUCT_DIRECTORIES = ("zitter/core/", "zitter/ports/", "zitter/application/")

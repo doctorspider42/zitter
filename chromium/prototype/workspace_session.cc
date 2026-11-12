@@ -32,6 +32,8 @@ std::optional<std::vector<WorkspaceSessionTab>> ReadWorkspaceSessionTabs(
     WorkspaceSessionTab entry{.url = std::move(url)};
     if (const auto* title = tab->FindString("title"); title && title->size() <= 32768)
       entry.title = base::UTF8ToUTF16(*title);
+    if (const auto* title = tab->FindString("custom_title"); title && title->size() <= 32768)
+      entry.custom_title = base::UTF8ToUTF16(*title);
     if (const auto* pin = tab->FindString("pin"))
       entry.pin = *pin;
     restored.push_back(std::move(entry));

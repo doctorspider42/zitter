@@ -93,6 +93,7 @@
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "extensions/browser/background_script_executor.h"
+#include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -3909,6 +3910,40 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ContextMenusMarkDestructiveAct
   EXPECT_EQ(shell->workspace_menu()->GetLabelAt(last-2),u"Ustawienia przestrzeni");
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, EmptySidebarOpensActiveWorkspaceMenu) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  ASSERT_TRUE(window_->Select("work"));
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  const auto inspect = base::BindRepeating([](WorkspaceShell* shell) {
+    const auto* menu = shell->workspace_menu();
+    ASSERT_TRUE(menu);
+    EXPECT_EQ(u"Nowy folder", menu->GetLabelAt(3));
+    for (size_t i = 0; i < menu->GetItemCount(); ++i)
+      EXPECT_NE(u"Live Folders", menu->GetLabelAt(i));
+    const auto* profiles = menu->GetSubmenuModelAt(0);
+    ASSERT_TRUE(profiles);
+    EXPECT_TRUE(profiles->IsItemCheckedAt(0));
+    EXPECT_FALSE(profiles->IsItemCheckedAt(1));
+  }, base::Unretained(shell));
+  for (auto* target : {shell->workspace_button("work"), shell->sidebar_view()}) {
+    ASSERT_TRUE(target);
+    EXPECT_TRUE(RunWithMenuInspection(shell, base::BindOnce([](views::View* view) {
+      view->ShowContextMenu(view->GetBoundsInScreen().CenterPoint(),
+                            ui::mojom::MenuSourceType::kMouse);
+    }, base::Unretained(target)), inspect));
+  }
+  shell->BuildWorkspaceMenu("work");
+  auto* menu = shell->workspace_menu();
+  ASSERT_TRUE(menu->IsEnabledAt(3));
+  menu->ActivatedAt(3);
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog() != nullptr; }));
+  shell->folder_dialog()->CloseNow();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->folder_dialog() == nullptr; }));
+}
+
 // Space panel (design: space settings): the name saves itself, a profile row
 // switches the space at once (the pressed row is rebuilt), and a new space can
 // make its own profile.
@@ -4001,8 +4036,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FooterAddMenuOpensTabFolderAnd
   ASSERT_TRUE(shell->footer_action_for_testing(1));EXPECT_TRUE(shell->footer_action_for_testing(1)->GetVisible());EXPECT_EQ(u"Pobrane",shell->footer_action_for_testing(1)->GetTooltipText());EXPECT_FALSE(shell->footer_action_for_testing(2));
   shell->ShowAddMenu();ASSERT_TRUE(base::test::RunUntil([&]{return shell->add_menu_running_for_testing();}));
   auto* menu=shell->add_menu_for_testing();ASSERT_TRUE(menu);ASSERT_EQ(3u,menu->GetItemCount());
-  EXPECT_EQ(u"Nowa karta",menu->GetLabelAt(0));EXPECT_EQ(u"Nowy folder",menu->GetLabelAt(1));EXPECT_EQ(u"Nowa przestrzeń…",menu->GetLabelAt(2));
-  for(size_t i=0;i<3;++i)EXPECT_FALSE(menu->GetIconAt(i).IsEmpty());
+  EXPECT_EQ(u"Nowa karta",menu->GetLabelAt(0));EXPECT_EQ(u"Nowy folder",menu->GetLabelAt(1));
+  EXPECT_EQ(u"Nowa przestrzeń…",menu->GetLabelAt(2));
+  for(size_t i=0;i<menu->GetItemCount();++i)EXPECT_FALSE(menu->GetIconAt(i).IsEmpty());
   ui::Accelerator accelerator;EXPECT_TRUE(menu->GetAcceleratorAt(0,&accelerator));EXPECT_EQ(ui::VKEY_T,accelerator.key_code());EXPECT_FALSE(menu->GetAcceleratorAt(1,&accelerator));
   shell->CancelContextMenuForTesting();ASSERT_TRUE(base::test::RunUntil([&]{return !shell->add_menu_running_for_testing();}));
   menu->ActivatedAt(1);ASSERT_TRUE(base::test::RunUntil([&]{return shell->folder_dialog()!=nullptr;}));shell->folder_dialog()->CloseNow();
@@ -7805,7 +7841,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   EXPECT_EQ("work", window_->active_id());
   EXPECT_EQ(u"", shell->emoji_input()->GetText());
   shell->BuildWorkspaceMenu("personal");
-  shell->workspace_menu()->ActivatedAt(6, 0);
+  shell->workspace_menu()->ActivatedAt(shell->workspace_menu()->GetItemCount()-1, 0);
   ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u && !window_->profiles_busy(); }));
   EXPECT_EQ("work", window_->active_id());
@@ -7818,12 +7854,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceContextAppearanceAndD
   EXPECT_EQ(0xFFCE826Bu, shell->workspace_color("personal"));
   EXPECT_EQ(u"🚀", shell->workspace_emoji("personal"));
   shell->BuildWorkspaceMenu("personal");
-  shell->workspace_menu()->ActivatedAt(6, 0);
+  shell->workspace_menu()->ActivatedAt(shell->workspace_menu()->GetItemCount()-1, 0);
   ASSERT_TRUE(AcceptWorkspaceRemoval(shell));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->workspaces().size() == 1u; }));
   EXPECT_EQ("work", window_->active_id());
   shell->BuildWorkspaceMenu("work");
-  EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(6));
+  EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(shell->workspace_menu()->GetItemCount()-1));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceRemovalToastStaysInTheWindow) {
@@ -7838,7 +7874,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceRemovalToastStaysInTh
     window_->widget()->SetBounds(gfx::Rect(corners[i], size));
     if (i % 2 == 0) {
       shell->BuildWorkspaceMenu("personal");
-      shell->workspace_menu()->ActivatedAt(6, 0);
+      shell->workspace_menu()->ActivatedAt(shell->workspace_menu()->GetItemCount()-1, 0);
     } else {
       shell->OpenWorkspaceSettings();
       auto* remove = FindButton(shell->settings_widget()->GetContentsView(), u"Usuń przestrzeń");
@@ -9632,6 +9668,93 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PinnedMenuEditsResetsAndUnpins
   EXPECT_FALSE(menu->IsEnabledAt(*menu->GetIndexOfCommandId(27)));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRenamesTabsAndReturnsDepartedPin) {
+  auto* shell = window_->shell();
+  shell->SetThemeMode(ThemeMode::kLight);
+  shell->SetWorkspaceAnimations(false);
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  const auto home = embedded_test_server()->GetURL("/storage_probe.html?rename-home");
+  const auto away = embedded_test_server()->GetURL("/storage_probe.html?rename-away");
+  ASSERT_TRUE(window_->NavigateFromBar(home, false));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, "document.title = 'Page title';"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->tab_button(0)->GetTooltipText() == u"Page title";
+  }));
+
+  auto activate = [&](std::optional<size_t> index, const std::string& pin,
+                      std::u16string_view label) {
+    shell->BuildTabMenu(index, pin);
+    auto* menu = shell->tab_context_menu_for_testing();
+    for (size_t item = 0; item < menu->GetItemCount(); ++item) {
+      if (menu->GetLabelAt(item) != label) continue;
+      menu->ActivatedAt(item, 0);
+      return true;
+    }
+    return false;
+  };
+  auto rename = [&](std::optional<size_t> index, const std::string& pin,
+                    std::u16string_view old_name, std::u16string_view new_name,
+                    ui::KeyboardCode key) {
+    ASSERT_TRUE(activate(index, pin, u"Zmień nazwę"));
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      auto* editor = shell->sidebar_rename_editor_for_testing();
+      return editor && editor->view()->IsDrawn() && editor->view()->GetWidget()->IsVisible();
+    }));
+    auto* editor = shell->sidebar_rename_editor_for_testing();
+    EXPECT_EQ(old_name, editor->GetText());
+    EXPECT_EQ(window_->widget()->color_mode_override(), editor->view()->GetWidget()->color_mode_override());
+    EXPECT_EQ(gfx::Range(0, old_name.size()), editor->GetSelectedRange());
+    editor->SetText(new_name);
+    ui::KeyEvent event(ui::EventType::kKeyPressed, key, ui::EF_NONE);
+    EXPECT_TRUE(editor->view()->OnKeyPressed(event));
+    EXPECT_FALSE(editor->view()->GetWidget()->IsVisible());
+  };
+
+  rename(0, "", u"Page title", u"Cancelled", ui::VKEY_ESCAPE);
+  EXPECT_EQ(u"Page title", shell->tab_button(0)->GetTooltipText());
+  rename(0, "", u"Page title", u"  Research 日本語  ", ui::VKEY_RETURN);
+  EXPECT_EQ(u"Research 日本語", shell->tab_button(0)->GetTooltipText());
+  ASSERT_TRUE(content::ExecJs(page, "document.title = 'Updated title';"));
+  ASSERT_TRUE(activate(0, "", u"Przywróć tytuł strony"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->tab_button(0)->GetTooltipText() == u"Updated title";
+  }));
+
+  shell->SetThemeMode(ThemeMode::kDark);
+  ASSERT_TRUE(window_->PinTab(0, "", ""));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  const auto pin = window_->pinned_items("work").back().id;
+  rename(std::nullopt, pin, u"Updated title", u"Project home", ui::VKEY_RETURN);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+  EXPECT_EQ("Project home", window_->pinned_items("work").back().custom_title);
+  EXPECT_EQ(u"Project home", shell->pin_button(pin)->GetTooltipText());
+  ASSERT_TRUE(window_->NavigateFromBar(away, false));
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  const auto return_label = T(u"Wróć do przypiętego adresu");
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    auto* button = FindButton(shell->pin_button(pin), return_label);
+    return button && button->IsDrawn();
+  }));
+  auto* return_button = FindButton(shell->pin_button(pin), return_label);
+  EXPECT_EQ(TF(u"Wróć do przypiętego adresu: {}", {base::UTF8ToUTF16(home.spec())}),
+            return_button->GetTooltipText());
+  ClickControl(return_button);
+  ASSERT_TRUE(base::test::RunUntil([&] { return page->GetVisibleURL() == home; }));
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  EXPECT_EQ(u"Project home", shell->pin_button(pin)->GetTooltipText());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !return_button->IsDrawn();
+  }));
+  ASSERT_TRUE(content::ExecJs(page, "document.title = 'Pinned page title';"));
+  ASSERT_TRUE(activate(std::nullopt, pin, u"Przywróć tytuł strony"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !window_->profiles_busy() && shell->pin_button(pin)->GetTooltipText() == u"Pinned page title";
+  }));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ClosedPinMenuUnpinsLazilyAndResetOpensItsSavedUrl) {
   const auto url = embedded_test_server()->GetURL("/storage_probe.html?closed-pin");
   ASSERT_TRUE(window_->RestorePins("work", {{"closed", "", "Closed pin", url, false}}));
@@ -10017,7 +10140,32 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   for (const auto& workspace : window_->workspaces()) EXPECT_EQ("work-profile", workspace.profile_id);
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GitHubLiveFolderRefreshesAndPersists) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LiveFoldersAreHiddenAndPreservedByDefault) {
+  ASSERT_TRUE(window_->Select("work"));
+  const std::vector<PinnedItem> pins{
+      {"live", "", "Live folder", GURL(), true, false, LiveFolderConfig{"octocat", "", ""}},
+      {"cached", "live", "Cached PR", GURL("https://github.com/owner/repo/pull/17")},
+      {"regular", "", "Regular folder", GURL(), true},
+  };
+  ASSERT_TRUE(window_->RestorePins("work", pins));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
+  EXPECT_EQ(pins, window_->pinned_items("work"));
+  EXPECT_FALSE(window_->shell()->pin_button("live"));
+  EXPECT_FALSE(window_->shell()->pin_button("cached"));
+  EXPECT_TRUE(window_->shell()->pin_button("regular"));
+  EXPECT_FALSE(window_->ConfigureLiveFolder(
+      "work", "", "New live folder", {"octocat", "", ""}, "", false));
+}
+
+class LiveFoldersBrowserTest : public ZitterProfilesBrowserTest {
+ public:
+  LiveFoldersBrowserTest() { features_.InitAndEnableFeature(kZitterLiveFolders); }
+
+ private:
+  base::test::ScopedFeatureList features_;
+};
+
+IN_PROC_BROWSER_TEST_F(LiveFoldersBrowserTest, GitHubLiveFolderRefreshesAndPersists) {
   std::atomic<int> requests = 0;
   std::atomic<bool> close_pr = false;
   content::URLLoaderInterceptor github(base::BindRepeating(
@@ -10039,10 +10187,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GitHubLiveFolderRefreshesAndPe
       }, &requests, &close_pr));
 
   ASSERT_TRUE(window_->Select("work"));
-  ASSERT_TRUE(window_->ConfigureGitHubFolder("work", "", "Pull Requests", {"octocat", "owner/repo", ""}, "", false));
+  ASSERT_TRUE(window_->ConfigureLiveFolder("work", "", "Pull Requests", {"octocat", "owner/repo", ""}, "", false));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->pinned_items("work").size() == 2; }));
   const auto saved = window_->pinned_items("work");
-  ASSERT_TRUE(saved[0].github);
+  ASSERT_TRUE(saved[0].live_folder);
   auto* shell = window_->shell();
   auto* folder = shell->pin_button(saved[0].id);
   ASSERT_TRUE(folder);
@@ -10050,6 +10198,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GitHubLiveFolderRefreshesAndPe
   EXPECT_EQ(saved[1].url, GURL("https://github.com/owner/repo/pull/17"));
   EXPECT_EQ(saved[1].parent_id, saved[0].id);
   EXPECT_EQ(requests.load(), 2);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !window_->profiles_busy() && window_->configuration_saved();
+  }));
+  ASSERT_TRUE(window_->ConfigureLiveFolder("work", saved[0].id, saved[0].title,
+                                          *saved[0].live_folder, "", false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !window_->LiveFoldersEnabled("work", LiveFolderProvider::kGitHub) &&
+           window_->configuration_saved();
+  }));
+  EXPECT_TRUE(window_->LiveFoldersEnabled("personal", LiveFolderProvider::kGitHub));
   ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy() && window_->configuration_saved(); }));
   window_.reset();
   window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
@@ -10057,9 +10215,80 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GitHubLiveFolderRefreshesAndPe
   EXPECT_EQ(window_->pinned_items("work"), saved);
   close_pr = true;
   ASSERT_TRUE(window_->Select("work"));
-  window_->RefreshGitHubFolder("work", saved[0].id);
+  shell = window_->shell();
+  EXPECT_FALSE(window_->LiveFoldersEnabled("work", LiveFolderProvider::kGitHub));
+  shell->BuildFolderMenu(saved[0].id);
+  EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(1));
+  window_->RefreshLiveFolder("work", saved[0].id);
+  EXPECT_EQ(requests.load(), 2);
+  EXPECT_EQ(window_->pinned_items("work"), saved);
+  ASSERT_TRUE(window_->ConfigureLiveFolder("work", saved[0].id, saved[0].title,
+                                          *saved[0].live_folder, "", false));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->pinned_items("work").size() == 1; }));
   EXPECT_EQ(window_->pinned_items("work").front(), saved[0]);
+}
+
+IN_PROC_BROWSER_TEST_F(LiveFoldersBrowserTest, GitLabAndJiraLiveFoldersRefreshIndependently) {
+  content::URLLoaderInterceptor providers(base::BindRepeating(
+      [](content::URLLoaderInterceptor::RequestParams* params) {
+        const auto& request = params->url_request;
+        std::string body;
+        if (request.url.host() == "gitlab.com" && request.url.path() == "/api/v4/merge_requests") {
+          EXPECT_NE(request.url.query().find("scope=reviews_for_me"), std::string::npos);
+          EXPECT_EQ(request.headers.GetHeader("PRIVATE-TOKEN"), "glpat-test");
+          body = R"([{"web_url":"https://gitlab.com/group/team/repo/-/merge_requests/2","title":"Review layout"},
+                     {"web_url":"https://example.test/group/repo/-/merge_requests/3","title":"Wrong host"}])";
+        } else if (request.url.host() == "company.atlassian.net" &&
+                   request.url.path() == "/rest/api/3/search/jql") {
+          EXPECT_NE(request.url.query().find("jql=filter+%3D+12345"), std::string::npos);
+          EXPECT_EQ(request.headers.GetHeader("Authorization"),
+                    "Basic YUBleGFtcGxlLnRlc3Q6amlyYS10ZXN0LXRva2Vu");
+          body = R"({"issues":[{"key":"APP-42","fields":{"summary":"Fix scrolling"}}],"isLast":true})";
+        } else {
+          return false;
+        }
+        EXPECT_EQ(request.credentials_mode, network::mojom::CredentialsMode::kOmit);
+        EXPECT_EQ(request.redirect_mode, network::mojom::RedirectMode::kError);
+        content::URLLoaderInterceptor::WriteResponse(
+            "HTTP/1.1 200 OK\nContent-Type: application/json\n\n", body, params->client.get());
+        return true;
+      }));
+
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->ConfigureLiveFolder(
+      "work", "", "Reviews", {"", "", "", LiveFolderProvider::kGitLab}, "glpat-test", false));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->pinned_items("work").size() == 2 && !window_->profiles_busy();
+  }));
+  ASSERT_TRUE(window_->ConfigureLiveFolder(
+      "work", "", "Issues",
+      {"a@example.test", "filter = 12345", "", LiveFolderProvider::kJira, "company.atlassian.net"},
+      "jira-test-token", false));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->pinned_items("work").size() == 4 && window_->configuration_saved();
+  }));
+  const auto saved = window_->pinned_items("work");
+  ASSERT_TRUE(saved[0].live_folder);
+  ASSERT_TRUE(saved[2].live_folder);
+  EXPECT_EQ(saved[1].url, GURL("https://gitlab.com/group/team/repo/-/merge_requests/2"));
+  EXPECT_EQ(saved[3].url, GURL("https://company.atlassian.net/browse/APP-42"));
+  EXPECT_EQ(saved[3].title, "APP-42 Fix scrolling");
+  EXPECT_FALSE(saved[0].live_folder->encrypted_token.empty());
+  EXPECT_FALSE(saved[2].live_folder->encrypted_token.empty());
+
+  ASSERT_TRUE(window_->ConfigureLiveFolder("work", saved[0].id, saved[0].title,
+                                          *saved[0].live_folder, "", false, false));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !window_->LiveFoldersEnabled("work", LiveFolderProvider::kGitLab) &&
+           window_->configuration_saved();
+  }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_FALSE(window_->LiveFoldersEnabled("work", LiveFolderProvider::kGitLab));
+  EXPECT_TRUE(window_->LiveFoldersEnabled("work", LiveFolderProvider::kJira));
+  EXPECT_TRUE(window_->LiveFoldersEnabled("personal", LiveFolderProvider::kGitLab));
+  EXPECT_EQ(window_->pinned_items("work"), saved);
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersistence) {
@@ -11464,7 +11693,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceRemovalUndoUnload
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->SetWorkspaceAnimations(false);
   ASSERT_TRUE(window_->Select("personal"));ASSERT_TRUE(window_->EditWorkspace("Prywatne 日本語 🦀","personal-profile"));
   const auto url=embedded_test_server()->GetURL("/storage_probe.html");auto* personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_EQ("kept",content::EvalJs(personal,"writeMarker('kept')"));ASSERT_TRUE(window_->Select("work"));
-  auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(6,0);ASSERT_TRUE(AcceptWorkspaceRemoval(shell));};
+  auto open=[&](const std::string& id){shell->BuildWorkspaceMenu(id);shell->workspace_menu()->ActivatedAt(shell->workspace_menu()->GetItemCount()-1,0);ASSERT_TRUE(AcceptWorkspaceRemoval(shell));};
   open("personal");ASSERT_TRUE(base::test::RunUntil([&]{return !window_->tab_count("personal")&&!window_->lifecycle_pending();}));EXPECT_EQ(u"Usunięto przestrzeń Prywatne 日本語 🦀",shell->toast_text_for_testing());
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));shell->UndoToast();ASSERT_EQ(2u,window_->workspaces().size());EXPECT_EQ("Prywatne 日本語 🦀",window_->workspaces()[1].name);EXPECT_EQ("work",window_->active_id());
   ASSERT_TRUE(window_->Select("personal"));personal=window_->contents("personal");ASSERT_TRUE(content::NavigateToURL(personal,url));EXPECT_NE(std::string::npos,content::EvalJs(personal,"readMarker()").ExtractString().find("kept"));ArmUnsaved(personal);ASSERT_TRUE(window_->Select("work"));
@@ -11472,7 +11701,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMetalSidebarBrowserTest, WorkspaceRemovalUndoUnload
   open("personal");AnswerUnload(personal,true);
   ASSERT_TRUE(base::test::RunUntil([&]{return !window_->lifecycle_pending()&&!window_->contents("personal");}));EXPECT_EQ(u"Usunięto przestrzeń Prywatne 日本語 🦀",shell->toast_text_for_testing());EXPECT_EQ("work",window_->active_id());ASSERT_EQ(2u,window_->profiles().size());
   ASSERT_TRUE(window_->AddWorkspace("Retained profile","personal-profile"));const auto retained=window_->active_id();EXPECT_EQ(personal_.get(),window_->contents(retained)->GetBrowserContext());ASSERT_TRUE(content::NavigateToURL(window_->contents(retained),url));EXPECT_NE(std::string::npos,content::EvalJs(window_->contents(retained),"readMarker()").ExtractString().find("kept"));
-  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->RemoveWorkspace(retained));shell->BuildWorkspaceMenu("work");EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(6));
+  ASSERT_TRUE(window_->Select("work"));ASSERT_TRUE(window_->RemoveWorkspace(retained));shell->BuildWorkspaceMenu("work");EXPECT_FALSE(shell->workspace_menu()->IsEnabledAt(shell->workspace_menu()->GetItemCount()-1));
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->configuration_saved();}));
 }
 // Compilation only; do not execute before the requested GUI checkpoint.
@@ -13623,6 +13852,20 @@ class NightShiftBrowserTest : public ZitterProfilesBrowserTest {
     ZitterProfilesBrowserTest::SetUpOnMainThread();
   }
 };
+
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, RestoresComponentWhenSwitchingBackToProfile) {
+  ASSERT_TRUE(window_->Select("personal"));
+  auto* bar = window_->extensions_bar();
+  ASSERT_TRUE(bar->night_shift_button_for_testing());
+  auto* registry = extensions::ExtensionRegistry::Get(personal_);
+  extensions::ExtensionRegistrar::Get(personal_)->TerminateExtension(kNightShiftId);
+  ASSERT_TRUE(registry->terminated_extensions().Contains(kNightShiftId));
+  EXPECT_FALSE(bar->night_shift_button_for_testing());
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->Select("personal"));
+  EXPECT_TRUE(registry->enabled_extensions().Contains(kNightShiftId));
+  EXPECT_TRUE(bar->night_shift_button_for_testing());
+}
 
 // Design: Night Shift · ustawienia. One switch for the app reaches every
 // profile, and the default look lands in each profile's extension storage.

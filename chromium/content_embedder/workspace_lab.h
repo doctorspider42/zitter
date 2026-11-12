@@ -338,7 +338,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool CanEditWorkspace() const;
   bool CreatePinnedFolder(std::string workspace, std::string parent, std::string title);
   bool ConfigureGitHubFolder(std::string workspace, std::string folder,
-                             std::string title, prototype::GitHubLiveFolder config,
+                             std::string title, prototype::LiveFolderConfig config,
                              std::string token, bool remove_token);
   bool SaveGitHubFolder(std::string workspace, std::string profile,
                         std::optional<prototype::PinnedItem> previous,
@@ -917,6 +917,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
 
   std::unique_ptr<prototype::FingerprintToolbar> fingerprint_toolbar_;
   raw_ptr<views::View> fingerprint_button_ = nullptr;
+  raw_ptr<views::View> assistant_toolbar_button_ = nullptr;
   base::CallbackListSubscription private_fingerprint_subscription_;
   raw_ptr<prototype::ShieldButton> adblock_shield_button_ = nullptr;
   raw_ptr<prototype::ShieldCard> adblock_shield_card_ = nullptr;
@@ -1046,6 +1047,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
     WorkspaceExtensionTabOwner extension_tab = {};
     std::unique_ptr<content::WebContents> discarded_page = {};
     bool native_muted = false;
+    std::u16string custom_title = {};
   };
   bool shift_click_peek_ = true;
   bool clean_address_copies_ = true;

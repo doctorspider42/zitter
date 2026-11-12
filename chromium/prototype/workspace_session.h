@@ -20,6 +20,7 @@ struct WorkspaceSessionTab {
   GURL url;
   std::optional<std::u16string> title;
   std::optional<std::string> pin;
+  std::optional<std::u16string> custom_title;
 };
 
 std::optional<std::vector<WorkspaceSessionTab>> ReadWorkspaceSessionTabs(

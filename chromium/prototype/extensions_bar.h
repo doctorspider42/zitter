@@ -14,6 +14,8 @@
 #include "base/timer/timer.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
+#include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_registry_observer.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view.h"
@@ -34,7 +36,8 @@ class ExtensionsUninstall;
 // action popups. Extensions belong to a Chromium profile, not to a space, so
 // the bar always follows the profile of the page on screen. Browser-free: it
 // talks to the profile's ToolbarActionsModel and the page's tab helpers.
-class ExtensionsBar final : public views::View, public ToolbarActionsModel::Observer {
+class ExtensionsBar final : public views::View, public ToolbarActionsModel::Observer,
+                            public extensions::ExtensionRegistryObserver {
   METADATA_HEADER(ExtensionsBar, views::View)
  public:
   struct Callbacks {
@@ -107,6 +110,10 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void OnToolbarActionRemoved(const ToolbarActionsModel::ActionId& id) override;
   void OnToolbarActionUpdated(const ToolbarActionsModel::ActionId& id) override;
   void OnToolbarModelInitialized() override;
+  void OnExtensionLoaded(content::BrowserContext*, const extensions::Extension*) override;
+  void OnExtensionUnloaded(content::BrowserContext*, const extensions::Extension*,
+                           extensions::UnloadedExtensionReason) override;
+  void OnShutdown(extensions::ExtensionRegistry*) override;
   void OnToolbarPinnedActionsChanged() override;
   void OnToolbarActionsModelShutdown() override;
 
@@ -212,6 +219,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   raw_ptr<Profile> profile_ = nullptr;
   base::WeakPtr<content::WebContents> page_;
   base::ScopedObservation<ToolbarActionsModel, ToolbarActionsModel::Observer> model_observation_{this};
+  base::ScopedObservation<extensions::ExtensionRegistry, extensions::ExtensionRegistryObserver>
+      registry_observation_{this};
   std::vector<raw_ptr<ActionButton>> buttons_;
   raw_ptr<views::View> divider_ = nullptr;
   raw_ptr<views::View> puzzle_ = nullptr;

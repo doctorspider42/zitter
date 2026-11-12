@@ -3414,7 +3414,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                         emit(cx+offset+(x-y)*0.707-0.65,cy-offset-(x+y)*0.707-0.65,1.3,1.3,0.65,i.ink,"",0.0,false);
                     }
                 }
-            } else if i.glyph==12 {
+            } else if i.glyph==14 {
                 // Speaker and sound waves in the tab's trailing slot.
                 emit(cx-6.0,cy-2.0,3.0,4.0,0.8,i.ink,"",0.0,false);
                 for (dx,height) in [(-3.0,5.0),(-2.0,7.0),(-1.0,9.0)] {
@@ -3425,6 +3425,18 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                         let a=-0.85+1.7*n as f32/10.0;
                         emit(cx+radius*a.cos()-0.65,cy+radius*a.sin()-0.65,
                              1.3,1.3,0.65,i.ink,"",0.0,false);
+                    }
+                }
+            } else if i.glyph==12 || i.glyph==13 {
+                let segments: &[(f32, f32, f32, f32)] = if i.glyph == 12 {
+                    &[(5.0,-5.0,5.0,3.0),(5.0,3.0,-5.0,3.0),(-5.0,3.0,-1.0,-1.0),(-5.0,3.0,-1.0,7.0)]
+                } else {
+                    &[(-5.0,0.0,-1.0,4.0),(-1.0,4.0,6.0,-4.0)]
+                };
+                for &(x0,y0,x1,y1) in segments {
+                    for n in 0..=16 {
+                        let t = n as f32 / 16.0;
+                        emit(cx+x0+(x1-x0)*t-0.8,cy+y0+(y1-y0)*t-0.8,1.6,1.6,0.8,i.ink,"",0.0,false);
                     }
                 }
             } else if i.glyph==6 {
@@ -3618,7 +3630,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
     if let Some(caret) = caret {
         emit(i.x + geometry.title.x as f32, i.y, 12.0, i.height, 0.0, i.ink, caret, 10.0, false);
     }
-    emit(title_x, i.y, (geometry.title.width as f32 - (title_x - i.x - geometry.title.x as f32)).max(0.0), i.height,
+    emit(title_x, i.y, (geometry.title.width as f32 - (title_x - i.x - geometry.title.x as f32) - i.title_width).max(0.0), i.height,
          0.0, i.ink, title, i.font_size, i.active);
     if i.close && i.close_visible {
         emit(i.x + geometry.close.x as f32 + 5.0, i.y,

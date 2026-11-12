@@ -1843,9 +1843,12 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
     fingerprint_toolbar_->Close();
     CloseMenus();
     model_observation_.Reset();
+    registry_observation_.Reset();
     profile_ = profile;
     ObserveFingerprintProtection();
     if (auto* model = profile_ && !callbacks_.private_mode ? ToolbarActionsModel::Get(profile_) : nullptr) model_observation_.Observe(model);
+    if (profile_ && !callbacks_.private_mode)
+      registry_observation_.Observe(extensions::ExtensionRegistry::Get(profile_));
     Rebuild();
     return;
   }
@@ -2135,6 +2138,21 @@ void ExtensionsBar::OnToolbarActionUpdated(const ToolbarActionsModel::ActionId& 
   ScheduleMenuRebuild();
 }
 void ExtensionsBar::OnToolbarModelInitialized() { Rebuild(); }
+
+void ExtensionsBar::OnExtensionLoaded(content::BrowserContext*,
+                                     const extensions::Extension* extension) {
+  if (extension->id() == kNightShiftId) Rebuild();
+}
+
+void ExtensionsBar::OnExtensionUnloaded(content::BrowserContext*,
+                                       const extensions::Extension* extension,
+                                       extensions::UnloadedExtensionReason) {
+  if (extension->id() == kNightShiftId) Rebuild();
+}
+
+void ExtensionsBar::OnShutdown(extensions::ExtensionRegistry*) {
+  registry_observation_.Reset();
+}
 void ExtensionsBar::OnToolbarPinnedActionsChanged() { Rebuild(); }
 void ExtensionsBar::OnToolbarActionsModelShutdown() {
   model_observation_.Reset();
