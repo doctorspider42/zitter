@@ -16404,8 +16404,12 @@ void WorkspaceLab::OpenExtensionPopupAt(std::string id, gfx::Rect anchor) {
 content::WebContents* WorkspaceLab::ShowExtensionBubble(
     ProfileContext& profile, const GURL& url, std::u16string title,
     gfx::Rect anchor) {
-  if (extension_popup_widget_)
+  if (extension_popup_widget_ && !extension_popup_widget_->IsClosed())
     return nullptr;
+  // Keep the delegate alive while Views finishes notifying widget observers.
+  extension_popup_view_ = nullptr;
+  extension_popup_widget_.reset();
+  extension_popup_delegate_.reset();
   auto view = std::make_unique<LabWebView>(&profile);
   view->SetPreferredSize(gfx::Size(380, 420));
   auto* contents = view->GetWebContents(url);
@@ -16433,14 +16437,6 @@ content::WebContents* WorkspaceLab::ShowExtensionBubble(
   bubble.set_close_on_deactivate(true);
   bubble.SetContentsView(std::move(view));
   extension_popup_widget_ = views::BubbleDialogDelegate::CreateBubble(&bubble);
-  extension_popup_widget_->MakeCloseSynchronous(base::BindOnce(
-      [](base::WeakPtr<WorkspaceLab> lab, views::Widget::ClosedReason) {
-        if (!lab)
-          return;
-        lab->extension_popup_view_ = nullptr;
-        lab->extension_popup_widget_.reset();
-        lab->extension_popup_delegate_.reset();
-      }, weak_factory_.GetWeakPtr()));
   extension_popup_widget_->SetColorModeOverride(widget_->color_mode_override());
   extension_popup_widget_->Show();
   extension_popup_view_->RequestFocus();
@@ -17846,7 +17842,10 @@ void WorkspaceLab::CheckActiveTabActionProbe(
 }
 
 void WorkspaceLab::CheckExtensionPopup(GURL url, base::TimeTicks deadline) {
-  auto* page = extension_popup_view_ ? extension_popup_view_->web_contents() : nullptr;
+  auto* page = extension_popup_widget_ && !extension_popup_widget_->IsClosed() &&
+                       extension_popup_view_
+                   ? extension_popup_view_->web_contents()
+                   : nullptr;
   auto* frame = page ? page->GetPrimaryMainFrame() : nullptr;
   const bool owning_popup = frame && page->GetLastCommittedURL() == url &&
       frame->GetLastCommittedOrigin() == url::Origin::Create(url) &&
