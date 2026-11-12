@@ -123,7 +123,7 @@ class ArchivePaths {
   std::map<std::string, PathEntry> paths_;
 };
 
-std::optional<ArchiveFiles> ReadArchive(const std::string& archive) {
+std::optional<ArchiveFiles> ReadArchive(const std::string& archive, bool web_store) {
   zip::ZipReader reader;
   if (!reader.OpenFromString(archive))
     return std::nullopt;
@@ -132,15 +132,28 @@ std::optional<ArchiveFiles> ReadArchive(const std::string& archive) {
   ArchivePaths paths;
   size_t count = 0;
   size_t total = 0;
+  bool saw_store_directory = false;
+  bool saw_store_contents = false;
   while (const auto* entry = reader.Next()) {
     std::string_view name = entry->path_in_original_encoding;
     if (entry->is_directory && name.ends_with('/'))
       name.remove_suffix(1);
     if (++count > kMaxArchiveEntries || entry->is_unsafe || entry->is_encrypted ||
-        entry->is_symbolic_link || entry->path != entry->physical_path ||
-        !paths.Add(name, entry->is_directory)) {
+        entry->is_symbolic_link || entry->path != entry->physical_path) {
       return std::nullopt;
     }
+    // Chrome's signed verification index is not an executable resource.
+    // This host verifies the full CRX and never exposes the index to extensions.
+    if (web_store && name == "_metadata" && entry->is_directory &&
+        !std::exchange(saw_store_directory, true)) {
+      continue;
+    }
+    if (web_store && name == "_metadata/verified_contents.json" &&
+        !entry->is_directory && !std::exchange(saw_store_contents, true)) {
+      continue;
+    }
+    if (!paths.Add(name, entry->is_directory))
+      return std::nullopt;
     if (entry->is_directory)
       continue;
     const size_t remaining =
@@ -173,14 +186,14 @@ class ExtensionArchiveImpl final : public mojom::ExtensionArchive {
     CHECK(sandbox::policy::Sandbox::IsProcessSandboxed());
   }
 
-  void Extract(mojo_base::BigBuffer archive, ExtractCallback callback) override {
+  void Extract(mojo_base::BigBuffer archive, bool web_store, ExtractCallback callback) override {
     const auto pid = static_cast<uint32_t>(base::GetCurrentProcId());
     if (archive.size() == 0 || archive.size() > kMaxFixtureArchiveSize) {
       std::move(callback).Run(pid, std::nullopt);
       return;
     }
     const std::string bytes(base::as_string_view(base::span(archive)));
-    std::move(callback).Run(pid, ReadArchive(bytes));
+    std::move(callback).Run(pid, ReadArchive(bytes, web_store));
   }
 
  private:
@@ -215,7 +228,7 @@ std::optional<ExtractedExtensionFiles> ValidateExtractedFiles(
 
 class ExtensionArchiveRequest final : public ExtensionArchiveExtraction {
  public:
-  ExtensionArchiveRequest(std::string_view archive, Completion completion)
+  ExtensionArchiveRequest(std::string_view archive, bool web_store, Completion completion)
       : completion_(std::move(completion)),
         remote_(content::ServiceProcessHost::Launch<mojom::ExtensionArchive>(
             content::ServiceProcessHost::Options()
@@ -226,7 +239,7 @@ class ExtensionArchiveRequest final : public ExtensionArchiveExtraction {
     timeout_.Start(FROM_HERE, base::Seconds(10), this,
                    &ExtensionArchiveRequest::Fail);
     remote_->Extract(
-        mojo_base::BigBuffer(base::as_byte_span(archive)),
+        mojo_base::BigBuffer(base::as_byte_span(archive)), web_store,
         base::BindOnce(&ExtensionArchiveRequest::OnReply, base::Unretained(this)));
   }
 
@@ -253,18 +266,19 @@ class ExtensionArchiveRequest final : public ExtensionArchiveExtraction {
 
 std::unique_ptr<ExtensionArchiveExtraction> ExtensionArchiveExtraction::Start(
     std::string_view verified_archive,
+    bool web_store,
     Completion completion) {
-  return std::make_unique<ExtensionArchiveRequest>(verified_archive,
+  return std::make_unique<ExtensionArchiveRequest>(verified_archive, web_store,
                                                    std::move(completion));
 }
 
 std::optional<ExtractedExtensionFiles> ExtractExtensionFixture(
-    std::string_view verified_archive) {
+    std::string_view verified_archive, bool web_store) {
   // Startup callers hold the Workspace lock and have no BrowserContext yet.
   base::RunLoop loop(base::RunLoop::Type::kNestableTasksAllowed);
   std::optional<ExtractedExtensionFiles> files;
   auto request = ExtensionArchiveExtraction::Start(
-      verified_archive,
+      verified_archive, web_store,
       base::BindOnce(
           [](std::optional<ExtractedExtensionFiles>* result,
              base::OnceClosure done,

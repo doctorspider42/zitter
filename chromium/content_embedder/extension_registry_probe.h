@@ -112,6 +112,8 @@ void MarkWorkspaceExtensionTabWindowClosing(WorkspaceExtensionTab* tab);
 std::vector<prototype::PageMenuItem> WorkspaceExtensionPageMenu(
     content::RenderFrameHost& frame, const content::ContextMenuParams& params);
 
+void DispatchWorkspaceExtensionWindowEvent(content::BrowserContext& context,
+                                          bool focused, bool removed = false);
 void DispatchWorkspaceExtensionCommand(content::BrowserContext& profile,
                                        const extensions::Extension& extension,
                                        const std::string& command,

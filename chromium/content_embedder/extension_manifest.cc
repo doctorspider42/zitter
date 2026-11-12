@@ -43,6 +43,11 @@
 #include "components/policy/core/common/schema.h"
 #include "components/version_info/version_info.h"
 #include "crypto/hash.h"
+#include "net/base/url_util.h"
+#include "net/url_request/redirect_info.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "extension_archive_service.h"
 #include "extension_registry_probe.h"
 #include "extensions/browser/api/declarative_net_request/file_backed_ruleset_source.h"
@@ -374,21 +379,58 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
     return name == "extension" || name == "tabs" || name == "windows" ||
            name == "fontSettings" || name == "commands" ||
            name == "contextMenus" || name == "action" || name == "webNavigation" || name == "sidePanel" ||
-           name == "notifications" || name == "privacy" || CoreExtensionsAPIProvider::IsAPISchemaGenerated(name);
+           name == "notifications" || name == "privacy" || name == "cookies" || CoreExtensionsAPIProvider::IsAPISchemaGenerated(name);
   }
 
   std::string_view GetAPISchema(const std::string& name) override {
     if (name == "windows") {
-      return R"json({"namespace":"windows","properties":{
-        "WINDOW_ID_NONE":{"type":"integer","value":-1},
-        "WINDOW_ID_CURRENT":{"type":"integer","value":-2}
-      }})json";
+      return R"json({
+        "namespace":"windows",
+        "properties":{
+          "WINDOW_ID_NONE":{"type":"integer","value":-1},
+          "WINDOW_ID_CURRENT":{"type":"integer","value":-2}
+        },
+        "types":[{"id":"windows.QueryOptions","type":"object","properties":{
+          "populate":{"type":"boolean","optional":true},
+          "windowTypes":{"type":"array","items":{"type":"string"},"optional":true}
+        }}],
+        "functions":[
+          {"name":"getCurrent","type":"function","parameters":[
+            {"name":"options","$ref":"windows.QueryOptions","optional":true}
+          ],"returns_async":{"name":"callback","parameters":[
+            {"name":"window","type":"object","additionalProperties":{"type":"any"}}
+          ]}},
+          {"name":"getAll","type":"function","parameters":[
+            {"name":"options","$ref":"windows.QueryOptions","optional":true}
+          ],"returns_async":{"name":"callback","parameters":[
+            {"name":"windows","type":"array","items":{"type":"object","additionalProperties":{"type":"any"}}}
+          ]}}
+        ],
+        "events":[
+          {"name":"onFocusChanged","type":"function","parameters":[{"name":"windowId","type":"integer"}]},
+          {"name":"onRemoved","type":"function","parameters":[{"name":"windowId","type":"integer"}]}
+        ]
+      })json";
     }
     if (name == "extension") {
       return R"json({"namespace":"extension","functions":[{
         "name":"getBackgroundPage","type":"function","parameters":[],
         "returns":{"name":"backgroundPage","type":"object","optional":true}
       }]})json";
+    }
+    if (name == "cookies") {
+      return R"json({
+        "namespace":"cookies",
+        "functions":[{"name":"get","type":"function","parameters":[
+          {"name":"details","type":"object","properties":{
+            "url":{"type":"string"},"name":{"type":"string"},
+            "storeId":{"type":"string","optional":true}
+          }}],
+          "returns_async":{"name":"callback","parameters":[
+            {"name":"cookie","type":"object","additionalProperties":{"type":"any"},"optional":true}
+          ]}
+        }]
+      })json";
     }
     if (name == "privacy") {
       return
@@ -700,7 +742,7 @@ bool IsSupportedExtensionApi(std::string_view api) {
 #if BUILDFLAG(IS_MAC)
       "nativeMessaging", "notifications",
 #endif
-      "activeTab", "alarms", "clipboardRead", "clipboardWrite", "contextMenus",
+      "activeTab", "alarms", "clipboardRead", "clipboardWrite", "contextMenus", "cookies",
       "declarativeNetRequest",
       "fontSettings", "idle", "offscreen", "privacy", "scripting", "sidePanel",
       "storage", "tabs",
@@ -795,12 +837,14 @@ bool SupportsExtensionManifest(const extensions::Extension& extension) {
   }
   const auto* resources = extension.GetManifestData<extensions::WebAccessibleResourcesInfo>();
   if (resources && !std::ranges::all_of(resources->web_accessible_resources,
-      [](const auto& entry) {
+      [&](const auto& entry) {
         return !entry.allow_all_extensions &&
                entry.extension_ids.empty() && !entry.matches.is_empty() &&
                std::ranges::all_of(entry.matches, [&](const auto& pattern) {
                  if (pattern.match_all_urls())
                    return entry.use_dynamic_url;
+                 if (extension.from_webstore() && IsAllWebHosts(pattern))
+                   return true;
                  return !pattern.host().empty() &&
                         pattern.host() != "*" && pattern.path() == "/*" &&
                         (pattern.scheme() == "http" || pattern.scheme() == "https" ||
@@ -869,6 +913,7 @@ struct SignedFixture {
   std::string id;
   ExtractedExtensionFiles files;
   std::vector<uint8_t> key_hash;
+  bool web_store = false;
 };
 
 bool IsFixtureLink(const base::FilePath& path) {
@@ -951,7 +996,8 @@ std::optional<bool> ReadExtensionUserState(const base::FilePath& path) {
 
 std::optional<SignedFixture> VerifySignedFixture(
     const base::FilePath& path,
-    const std::vector<uint8_t>& trusted_key_hash) {
+    const std::vector<uint8_t>& trusted_key_hash,
+    std::string_view expected_store_id = {}) {
   SignedFixture fixture;
   if (!IsFixtureFile(path, kMaxFixtureArchiveSize) ||
       !base::ReadFileToStringWithMaxSize(path, &fixture.archive,
@@ -963,9 +1009,16 @@ std::optional<SignedFixture> VerifySignedFixture(
   std::vector<std::vector<uint8_t>> required_keys;
   if (!trusted_key_hash.empty())
     required_keys.push_back(trusted_key_hash);
-  if (crx_file::Verify(path, crx_file::VerifierFormat::CRX3, required_keys,
-                       {file_hash.begin(), file_hash.end()}, &fixture.public_key,
-                       &fixture.id, nullptr) != crx_file::VerifierResult::OK_FULL) {
+  const auto verify = [&](crx_file::VerifierFormat format) {
+    return crx_file::Verify(path, format, required_keys,
+                            {file_hash.begin(), file_hash.end()}, &fixture.public_key,
+                            &fixture.id, nullptr) == crx_file::VerifierResult::OK_FULL;
+  };
+  fixture.web_store = verify(crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF);
+  if (!expected_store_id.empty()) {
+    if (!fixture.web_store || fixture.id != expected_store_id)
+      return std::nullopt;
+  } else if (!fixture.web_store && !verify(crx_file::VerifierFormat::CRX3)) {
     return std::nullopt;
   }
   // The trusted proof must be the developer key associated with this CRX ID.
@@ -985,7 +1038,7 @@ std::optional<SignedFixture> VerifyFixtureArchive(
   auto fixture = VerifySignedFixture(path, trusted_key_hash);
   if (!fixture)
     return std::nullopt;
-  auto files = ExtractExtensionFixture(fixture->archive);
+  auto files = ExtractExtensionFixture(fixture->archive, fixture->web_store);
   if (!files)
     return std::nullopt;
   fixture->files = std::move(*files);
@@ -999,7 +1052,8 @@ bool MatchesSignedIdentity(const extensions::Extension& extension,
 }
 
 scoped_refptr<extensions::Extension> LoadFixture(const base::FilePath& path,
-                                                int flags) {
+                                                int flags,
+                                                const SignedFixture* fixture = nullptr) {
   std::string manifest_error;
   auto manifest = extensions::file_util::LoadManifest(path, &manifest_error);
   constexpr auto location = extensions::mojom::ManifestLocation::kUnpacked;
@@ -1018,6 +1072,18 @@ scoped_refptr<extensions::Extension> LoadFixture(const base::FilePath& path,
       LOG(ERROR) << "Extension manifest has an invalid or unsupported minimum_chrome_version";
       return nullptr;
     }
+  }
+
+  if (fixture && fixture->web_store) {
+    if (!manifest->contains("key"))
+      manifest->Set("key", fixture->public_key);
+    if (const auto* update = manifest->FindString("update_url");
+        update && GURL(*update) == GURL(extension_urls::kChromeWebstoreUpdateURL)) {
+      manifest->Remove("update_url");
+    }
+    // This embedder has no extension keyword provider.
+    manifest->Remove("omnibox");
+    flags |= extensions::Extension::FROM_WEBSTORE;
   }
 
   // Content never grants extensions access to private profiles. Keep
@@ -1203,7 +1269,7 @@ scoped_refptr<extensions::Extension> ReadExtractedFixtureVersion(
     return nullptr;
   }
 
-  auto extension = LoadFixture(version_dir, extensions::Extension::REQUIRE_KEY);
+  auto extension = LoadFixture(version_dir, extensions::Extension::REQUIRE_KEY, &fixture);
   if (!extension || !MatchesSignedIdentity(*extension, fixture) ||
       (has_generated_index &&
        !extensions::declarative_net_request::HasAnyDNRPermission(*extension)) ||
@@ -1677,7 +1743,7 @@ std::optional<ReviewedFixture> ReviewSelectedFixture(
       !WriteFixturePackage(fixture, staging.GetPath())) {
     return std::nullopt;
   }
-  const auto extension = LoadFixture(staging.GetPath(), extensions::Extension::REQUIRE_KEY);
+  const auto extension = LoadFixture(staging.GetPath(), extensions::Extension::REQUIRE_KEY, &fixture);
   if (!extension || !MatchesSignedIdentity(*extension, fixture) ||
       (extensions::declarative_net_request::HasAnyDNRPermission(*extension) &&
        !IndexVerifiedStaticRulesets(*extension))) {
@@ -1691,11 +1757,13 @@ std::optional<ReviewedFixture> ReviewSelectedFixture(
   std::u16string error;
   auto installed = extensions::Extension::Create(
       final_path, extension->location(), *extension->manifest()->value(),
-      extensions::Extension::REQUIRE_KEY, &error);
+      extensions::Extension::REQUIRE_KEY |
+          (fixture.web_store ? extensions::Extension::FROM_WEBSTORE : 0), &error);
   if (!installed || !MatchesSignedIdentity(*installed, fixture))
     return std::nullopt;
   if (current) {
-    if (!MatchesActiveFixture(profile, fixture, *current) ||
+    if ((current->from_webstore() && !fixture.web_store) ||
+        !MatchesActiveFixture(profile, fixture, *current) ||
         installed->version() <= current->version()) {
       return std::nullopt;
     }
@@ -1765,9 +1833,49 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
       : profile_(profile), installed_(std::move(installed)), review_(std::move(review)) {
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-        base::BindOnce(&VerifySignedFixture, source, std::vector<uint8_t>()),
+        base::BindOnce(&VerifySignedFixture, source, std::vector<uint8_t>(), std::string()),
         base::BindOnce(&SelectedExtensionInstall::OnVerified,
                        weak_factory_.GetWeakPtr()));
+  }
+
+  SelectedExtensionInstall(
+      network::mojom::URLLoaderFactory* factory, std::string id,
+      std::string installed_version, const base::FilePath& profile,
+      std::vector<scoped_refptr<const extensions::Extension>> installed,
+      Review review)
+      : profile_(profile), installed_(std::move(installed)), review_(std::move(review)) {
+    auto request = std::make_unique<network::ResourceRequest>();
+    auto url = GURL(extension_urls::kChromeWebstoreUpdateURL);
+    url = net::AppendQueryParameter(url, "response", "redirect");
+    url = net::AppendQueryParameter(url, "prodversion", version_info::GetVersionNumber());
+    url = net::AppendQueryParameter(url, "acceptformat", "crx3");
+    url = net::AppendQueryParameter(
+        url, "x", "id=" + id + "&v=" + installed_version + "&uc");
+    request->url = std::move(url);
+    request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+    constexpr auto annotation = net::DefineNetworkTrafficAnnotation(
+        "zitter_content_web_store_package", R"annotation(
+          semantics {
+            sender: "Zitter Extensions"
+            description: "Downloads a user-selected Chrome Web Store extension or checks an installed store extension for updates."
+            trigger: "The user selects a listing, or an installed store extension is due for an update check."
+            data: "Extension ID, installed extension version, and Chromium version."
+            destination: GOOGLE_OWNED_SERVICE
+          }
+          policy {
+            cookies_allowed: NO
+            setting: "Remove the extension to stop its update checks."
+            policy_exception_justification: "Zitter is an independent browser."
+          })annotation");
+    loader_ = network::SimpleURLLoader::Create(std::move(request), annotation);
+    loader_->SetTimeoutDuration(base::Minutes(2));
+    loader_->SetOnRedirectCallback(base::BindRepeating(
+        &SelectedExtensionInstall::OnStoreRedirect, weak_factory_.GetWeakPtr()));
+    loader_->DownloadToTempFile(
+        factory, base::BindOnce(&SelectedExtensionInstall::OnStoreDownloaded,
+                                weak_factory_.GetWeakPtr(), std::move(id),
+                                installed_version != "0.0.0.0"),
+        kMaxFixtureArchiveSize);
   }
 
   scoped_refptr<const extensions::Extension> Publish() override {
@@ -1781,6 +1889,46 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
   }
 
  private:
+  void OnStoreRedirect(const GURL&, const net::RedirectInfo& redirect,
+                       const network::mojom::URLResponseHead&,
+                       std::vector<std::string>*) {
+    const auto& next = redirect.new_url;
+    if (next.SchemeIs("https") && !next.has_port() &&
+        !next.has_username() && !next.has_password() &&
+        (next.host() == "clients2.googleusercontent.com" ||
+         next.host() == "clients2.google.com" ||
+         next.host() == "chromewebstore.google.com") &&
+        (next.path().starts_with("/crx/") || next.path() == "/service/update2/crx")) {
+      return;
+    }
+    loader_.reset();
+    std::move(review_).Run(std::nullopt);
+  }
+
+  void OnStoreDownloaded(std::string id, bool checking_update, base::FilePath path) {
+    const auto* response = loader_->ResponseInfo();
+    const bool up_to_date = checking_update && response && response->headers &&
+                            response->headers->response_code() == 204;
+    loader_.reset();
+    if (up_to_date) {
+      std::move(review_).Run(base::DictValue().Set("up_to_date", true));
+      return;
+    }
+    if (path.empty()) {
+      std::move(review_).Run(std::nullopt);
+      return;
+    }
+    base::ThreadPool::PostTaskAndReplyWithResult(
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+                    base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+        base::BindOnce([](base::FilePath file, std::string expected_id) {
+          auto candidate = VerifySignedFixture(base::MakeAbsoluteFilePath(file), {}, expected_id);
+          base::DeleteFile(file);
+          return candidate;
+        }, path, std::move(id)),
+        base::BindOnce(&SelectedExtensionInstall::OnVerified, weak_factory_.GetWeakPtr()));
+  }
+
   void OnVerified(std::optional<SignedFixture> fixture) {
     if (!fixture) {
       std::move(review_).Run(std::nullopt);
@@ -1788,7 +1936,7 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
     }
     verified_ = std::move(fixture);
     extraction_ = ExtensionArchiveExtraction::Start(
-        verified_->archive,
+        verified_->archive, verified_->web_store,
         base::BindOnce(&SelectedExtensionInstall::OnExtracted,
                        weak_factory_.GetWeakPtr()));
   }
@@ -1820,6 +1968,7 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
   const base::FilePath profile_;
   const std::vector<scoped_refptr<const extensions::Extension>> installed_;
   Review review_;
+  std::unique_ptr<network::SimpleURLLoader> loader_;
   std::unique_ptr<ExtensionArchiveExtraction> extraction_;
   std::optional<SignedFixture> verified_;
   std::optional<ReviewedFixture> reviewed_;
@@ -1856,7 +2005,7 @@ bool InstallWorkspaceFixture(const base::FilePath& source,
   const auto package = staging.GetPath().AppendASCII("package");
   if (!WriteFixturePackage(*fixture, package))
     return false;
-  const auto extension = LoadFixture(package, extensions::Extension::REQUIRE_KEY);
+  const auto extension = LoadFixture(package, extensions::Extension::REQUIRE_KEY, &*fixture);
   if (!extension || !MatchesSignedIdentity(*extension, *fixture) ||
       (extensions::declarative_net_request::HasAnyDNRPermission(*extension) &&
        !IndexVerifiedStaticRulesets(*extension))) {
@@ -1916,6 +2065,16 @@ std::unique_ptr<WorkspaceExtensionInstall> WorkspaceExtensionInstall::Start(
     Review review) {
   return std::make_unique<SelectedExtensionInstall>(source, profile, std::move(installed),
                                                    std::move(review));
+}
+
+std::unique_ptr<WorkspaceExtensionInstall> WorkspaceExtensionInstall::FromWebStore(
+    network::mojom::URLLoaderFactory* factory, std::string id,
+    std::string installed_version, const base::FilePath& profile,
+    std::vector<scoped_refptr<const extensions::Extension>> installed,
+    Review review) {
+  return std::make_unique<SelectedExtensionInstall>(
+      factory, std::move(id), std::move(installed_version), profile,
+      std::move(installed), std::move(review));
 }
 
 void InitializeLabExtensionsClient() {

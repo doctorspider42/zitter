@@ -75,6 +75,10 @@
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/security_principal.h"
 #include "content/public/browser/service_worker_context.h"
+#include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_options.h"
+#include "net/cookies/cookie_partition_key_collection.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "content/public/browser/service_worker_running_info.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
@@ -2064,6 +2068,140 @@ ZITTER_SIDE_PANEL_FUNCTION(LabSidePanelGetBehaviorFunction, "getPanelBehavior", 
 ZITTER_SIDE_PANEL_FUNCTION(LabSidePanelSetBehaviorFunction, "setPanelBehavior", SIDEPANEL_SETPANELBEHAVIOR);
 #undef ZITTER_SIDE_PANEL_FUNCTION
 
+base::DictValue WorkspaceExtensionWindow(
+    BrowserContext& context,
+    const std::vector<WorkspaceExtensionTab*>& tabs,
+    const extensions::Extension& extension,
+    bool populate) {
+  auto result = base::DictValue()
+                    .Set("id", kWorkspaceExtensionWindowId)
+                    .Set("focused", tabs.front()->workspace().IsExtensionWindowFocused(context))
+                    .Set("incognito", false)
+                    .Set("alwaysOnTop", false)
+                    .Set("type", "normal")
+                    .Set("state", "normal");
+  if (populate) {
+    base::ListValue entries;
+    for (auto* tab : tabs)
+      entries.Append(tab->MetadataFor(extension));
+    result.Set("tabs", std::move(entries));
+  }
+  return result;
+}
+
+class LabWindowsGetCurrentFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("windows.getCurrent", WINDOWS_GETCURRENT)
+
+ private:
+  ~LabWindowsGetCurrentFunction() override = default;
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(extension() && (args().empty() ||
+        (args().size() == 1 && (args()[0].is_dict() || args()[0].is_none()))));
+    const auto tabs = WorkspaceExtensionTab::InProfile(browser_context());
+    if (tabs.empty())
+      return RespondNow(Error("No current window."));
+    const bool populate = !args().empty() && args()[0].is_dict() &&
+        args()[0].GetDict().FindBool("populate").value_or(false);
+    return RespondNow(WithArguments(WorkspaceExtensionWindow(*browser_context(), tabs, *extension(), populate)));
+  }
+};
+
+class LabWindowsGetAllFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("windows.getAll", WINDOWS_GETALL)
+
+ private:
+  ~LabWindowsGetAllFunction() override = default;
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(extension() && (args().empty() ||
+        (args().size() == 1 && (args()[0].is_dict() || args()[0].is_none()))));
+    const auto tabs = WorkspaceExtensionTab::InProfile(browser_context());
+    const auto* options = args().empty() ? nullptr : args()[0].GetIfDict();
+    const auto* types = options ? options->FindList("windowTypes") : nullptr;
+    base::ListValue result;
+    if (!tabs.empty() && (!types || types->contains("normal"))) {
+      result.Append(WorkspaceExtensionWindow(
+          *browser_context(), tabs, *extension(), options && options->FindBool("populate").value_or(false)));
+    }
+    return RespondNow(WithArguments(std::move(result)));
+  }
+};
+
+class LabCookiesGetFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("cookies.get", COOKIES_GET)
+
+ private:
+  ~LabCookiesGetFunction() override = default;
+
+  ResponseAction Run() override {
+    if (args().size() != 1 || !args()[0].is_dict())
+      return RespondNow(Error("Invalid cookie details."));
+    const auto& details = args()[0].GetDict();
+    const auto* address = details.FindString("url");
+    const auto* name = details.FindString("name");
+    const auto* store = details.FindString("storeId");
+    if (!address || !name || (store && *store != "0"))
+      return RespondNow(Error("Invalid URL, cookie name or store."));
+    const GURL url(*address);
+    auto* context = browser_context();
+    if (!context || !extension() || context->IsOffTheRecord() ||
+        !url.SchemeIsHTTPOrHTTPS() || url.has_username() || url.has_password() ||
+        extension_urls::IsWebstoreDomain(url) ||
+        !extension()->permissions_data()->HasAPIPermission(
+            extensions::mojom::APIPermissionID::kCookie) ||
+        !extension()->permissions_data()->HasHostPermission(url)) {
+      return RespondNow(Error("The extension does not have access to this cookie store or URL."));
+    }
+    context->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess()
+        ->GetCookieList(url, net::CookieOptions::MakeAllInclusive(),
+                        net::CookiePartitionKeyCollection(),
+                        base::BindOnce(&LabCookiesGetFunction::OnCookies, this,
+                                       url, *name));
+    return RespondLater();
+  }
+
+  void OnCookies(GURL url, std::string name, const net::CookieAccessResultList& cookies,
+                 const net::CookieAccessResultList&) {
+    auto* context = browser_context();
+    if (!context || !extension() ||
+        !CanLoadExtensionProbeResources(*context, extension()->id()) ||
+        !extension()->permissions_data()->HasHostPermission(url)) {
+      Respond(Error("The extension no longer has access to this URL."));
+      return;
+    }
+    for (const auto& entry : cookies) {
+      const auto& cookie = entry.cookie;
+      if (cookie.Name() != name || cookie.IsPartitioned())
+        continue;
+      const char* same_site = "unspecified";
+      switch (cookie.SameSite()) {
+        case net::CookieSameSite::NO_RESTRICTION: same_site = "no_restriction"; break;
+        case net::CookieSameSite::LAX_MODE: same_site = "lax"; break;
+        case net::CookieSameSite::STRICT_MODE: same_site = "strict"; break;
+        case net::CookieSameSite::UNSPECIFIED: break;
+      }
+      auto result = base::DictValue()
+                        .Set("name", cookie.Name())
+                        .Set("value", cookie.Value())
+                        .Set("domain", cookie.Domain())
+                        .Set("hostOnly", cookie.IsHostCookie())
+                        .Set("path", cookie.Path())
+                        .Set("secure", cookie.SecureAttribute())
+                        .Set("httpOnly", cookie.IsHttpOnly())
+                        .Set("sameSite", same_site)
+                        .Set("session", !cookie.IsPersistent())
+                        .Set("storeId", "0");
+      if (cookie.IsPersistent())
+        result.Set("expirationDate", cookie.ExpiryDate().InSecondsFSinceUnixEpoch());
+      Respond(WithArguments(std::move(result)));
+      return;
+    }
+    Respond(WithArguments(base::Value()));
+  }
+};
+
 class LabManagementGetSelfFunction final : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.getSelf", MANAGEMENT_GETSELF)
@@ -2552,6 +2690,9 @@ class LabBrowserExtensionAPIProvider final
     registry->RegisterFunction<extensions::DeclarativeNetRequestTestMatchOutcomeFunction>();
     registry->RegisterFunction<LabSidePanelGetOptionsFunction>();
     registry->RegisterFunction<LabSidePanelSetOptionsFunction>();
+    registry->RegisterFunction<LabCookiesGetFunction>();
+    registry->RegisterFunction<LabWindowsGetCurrentFunction>();
+    registry->RegisterFunction<LabWindowsGetAllFunction>();
     registry->RegisterFunction<LabSidePanelOpenFunction>();
     registry->RegisterFunction<LabSidePanelCloseFunction>();
     registry->RegisterFunction<LabSidePanelGetLayoutFunction>();
@@ -3502,6 +3643,24 @@ void GrantWorkspaceExtensionActiveTab(content::WebContents& page,
       &page, tab->id(), profile);
   extensions::ActiveTabPermissionGranter::FromWebContents(&page)
       ->GrantIfRequested(extension);
+}
+
+void DispatchWorkspaceExtensionWindowEvent(BrowserContext& context,
+                                          bool focused, bool removed) {
+  if (context.IsOffTheRecord() || context.ShutdownStarted() ||
+      !user_prefs::UserPrefs::IsInitialized(&context)) {
+    return;
+  }
+  auto* router = extensions::EventRouter::Get(&context);
+  const char* event = removed ? "windows.onRemoved" : "windows.onFocusChanged";
+  if (router && router->HasEventListener(event)) {
+    router->BroadcastEvent(std::make_unique<extensions::Event>(
+        removed ? extensions::events::WINDOWS_ON_REMOVED
+                : extensions::events::WINDOWS_ON_FOCUS_CHANGED,
+        event, base::ListValue().Append(removed || focused ? kWorkspaceExtensionWindowId
+                                                          : extension_misc::kUnknownWindowId),
+        &context, extensions::mojom::ContextType::kPrivilegedExtension));
+  }
 }
 
 void DispatchWorkspaceExtensionCommand(BrowserContext& profile,

@@ -19,6 +19,10 @@ R"MANAGER(<!doctype html>
       <header><div><h1 id="heading"></h1><p id="profile" class="muted"></p></div>
         <label class="switch-label"><input id="developer" type="checkbox" role="switch"><span></span></label>
       </header>
+      <form id="store-install" class="filters" hidden>
+        <label class="search"><input id="store-link" type="text" autocomplete="off" required></label>
+        <button type="submit" id="store-add" class="primary"></button>
+      </form>
       <div id="tools" class="tools" hidden>
         <button type="button" id="install"></button>
       </div>

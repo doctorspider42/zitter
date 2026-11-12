@@ -59,7 +59,10 @@ window.zitterExtensionsReply = (id, reply) => {
   pending = null;
   if (!reply.colors) return;
   if (op !== 'read') {
-    localError = reply.ok ? '' : t('Nie udało się zapisać zmiany lub skrót jest zajęty.',
+    localError = reply.ok ? '' : op === 'installStore'
+        ? t('Sprawdź link z Chrome Web Store lub spróbuj za chwilę.',
+            'Check the Chrome Web Store link or try again in a moment.')
+        : t('Nie udało się zapisać zmiany lub skrót jest zajęty.',
                                    'The change could not be saved or the shortcut is already in use.');
   }
   delete reply.ok;
@@ -206,6 +209,7 @@ function renderDetail() {
     nodes.push(row);
   }
   nodes.push(element('h2', '', t('Informacje', 'Information')),
+      detailRow(t('Źródło', 'Source'), item.webStore ? 'Chrome Web Store' : t('Pakiet CRX', 'CRX package')),
       detailRow(t('Wersja', 'Version'), item.version),
       detailRow(t('Identyfikator', 'ID'), item.id), actions);
   $('detail-body').replaceChildren(...nodes);
@@ -277,6 +281,11 @@ function render() {
   labelButton($('install'), t('Zainstaluj lub zaktualizuj z CRX', 'Install or update from CRX'), 'package');
   $('developer').nextElementSibling.textContent = t('Tryb deweloperski', 'Developer mode');
   $('tools').hidden = !$('developer').checked || !state.canInstall;
+  $('store-install').hidden = !state.canInstall;
+  $('store-add').disabled = !!state.installBusy;
+  $('store-link').placeholder = t('Wklej link z Chrome Web Store', 'Paste a Chrome Web Store link');
+  $('store-link').setAttribute('aria-label', $('store-link').placeholder);
+  labelButton($('store-add'), t('Dodaj ze sklepu', 'Add from Web Store'), 'store');
   $('auto-pin-label').hidden = typeof state.autoPin !== 'boolean';
   $('auto-pin').checked = !!state.autoPin;
   $('auto-pin').nextElementSibling.textContent = t('Przypinaj nowe do paska', 'Pin new extensions to toolbar');
@@ -311,6 +320,10 @@ $('search').parentElement.prepend(icon('search'));
 $('search').addEventListener('input', renderList);
 $('developer').addEventListener('change', render);
 $('install').addEventListener('click', () => request('install'));
+$('store-install').addEventListener('submit', event => {
+  event.preventDefault();
+  request('installStore', {listing: $('store-link').value});
+});
 $('store').addEventListener('click', () => request('store'));
 $('auto-pin').addEventListener('change', () => request('autoPin', {value: $('auto-pin').checked}));
 request('read');

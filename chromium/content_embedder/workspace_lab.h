@@ -213,6 +213,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
                                              WorkspaceExtensionTab* target);
   bool NavigateExtensionTabHistory(WorkspaceExtensionTab& target, bool forward);
   void RefreshExtensionActionAppearance();
+  bool IsExtensionWindowFocused(content::BrowserContext& context) const;
   base::ListValue GetExtensionCommands(content::BrowserContext& profile,
                                       const extensions::Extension& extension,
                                       bool manager_details = false) const;
@@ -364,6 +365,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool ExitPageFullscreen();
   void SetPageFullscreen(content::WebContents* page, bool enter);
   void OnWidgetShowStateChanged(views::Widget* widget) override;
+  void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
   bool SplitShown() const;
   bool SplitTab(size_t index);
   void SplitPin(std::string id);
@@ -785,6 +787,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::map<ExtensionManagerIconKey, std::string> extension_manager_icons_;
   std::u16string extension_manager_status_;
   bool extension_manager_error_ = false;
+  bool InstallFromWebStore(std::string_view listing);
+  void CheckWebStoreUpdates();
+  void CheckNextWebStoreUpdate();
+  void OnWebStoreUpdate(std::string profile_id, std::optional<base::DictValue> review);
   void OpenExtensionPackage();
   void OpenExtensionOptions(std::string id);
   void OpenExtensionPopup(std::string id);
@@ -979,6 +985,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::array<std::unique_ptr<ExtensionNavigationProbe>, 2> extension_probes_;
   std::vector<std::unique_ptr<ManagedExtension>> managed_extensions_;
   scoped_refptr<ui::SelectFileDialog> extension_picker_;
+  base::RepeatingTimer web_store_update_timer_;
+  std::vector<std::pair<std::string, std::string>> web_store_updates_;
+  std::unique_ptr<WorkspaceExtensionInstall> web_store_update_;
   std::unique_ptr<WorkspaceExtensionInstall> extension_install_;
   size_t extension_install_profile_ = 0;
   std::optional<size_t> extension_tab_close_answers_;

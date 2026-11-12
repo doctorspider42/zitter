@@ -101,6 +101,7 @@
 #include "components/input/native_web_keyboard_event.h"
 #include "components/os_crypt/async/browser/os_crypt_async.h"
 #include "components/prefs/pref_service.h"
+#include "components/crx_file/id_util.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
@@ -2919,6 +2920,10 @@ WorkspaceLab::~WorkspaceLab() {
   if (extension_shortcut_target_ && widget_ && widget_->GetFocusManager())
     widget_->GetFocusManager()->UnregisterAccelerators(extension_shortcut_target_.get());
   fullscreen_observation_.Reset();
+  if (!private_owner_ && IsWorkspaceExtensionRuntime()) {
+    for (const auto& context : contexts_)
+      DispatchWorkspaceExtensionWindowEvent(*context, false, true);
+  }
   if (fullscreen_page_) {
     fullscreen_page_.reset();
     shell_->SetContentFullscreen(nullptr);
@@ -2943,6 +2948,8 @@ WorkspaceLab::~WorkspaceLab() {
   if (extension_picker_)
     extension_picker_->ListenerDestroyed();
   extension_install_.reset();
+  web_store_update_timer_.Stop();
+  web_store_update_.reset();
   private_session_.reset();
   if (!private_owner_) {
     for (const auto& context : contexts_)
@@ -3272,8 +3279,17 @@ void WorkspaceLab::StartWorkspace() {
   }
   for (auto& url : std::exchange(startup_external_urls_, {}))
     OpenExternalUrl(std::move(url));
-  if (restore_extensions)
+  if (restore_extensions) {
     StartManagedExtensions(0);
+    if (!session_probe_url_.is_valid()) {
+      web_store_update_timer_.Start(FROM_HERE, base::Hours(6), this,
+                                    &WorkspaceLab::CheckWebStoreUpdates);
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE,
+          base::BindOnce(&WorkspaceLab::CheckWebStoreUpdates, weak_factory_.GetWeakPtr()),
+          base::Seconds(30));
+    }
+  }
   if (startup_import_pending_ && CanImportBrowser())
     shell_->OpenImport();
   if (!startup_import_probe_.empty()) {
@@ -8691,6 +8707,18 @@ void WorkspaceLab::SetPageFullscreen(content::WebContents* page, bool enter) {
   widget_->LayoutRootViewIfNecessary();
   if (auto* frame = page->GetPrimaryMainFrame())
     frame->GetRenderWidgetHost()->SynchronizeVisualProperties();
+}
+
+bool WorkspaceLab::IsExtensionWindowFocused(content::BrowserContext& context) const {
+  return widget_ && widget_->IsActive() && model_.active() &&
+         WorkspaceProfile(active_index_) == &context;
+}
+
+void WorkspaceLab::OnWidgetActivationChanged(views::Widget* widget, bool active) {
+  if (widget == widget_.get() && !private_owner_ && IsWorkspaceExtensionRuntime() &&
+      model_.active()) {
+    DispatchWorkspaceExtensionWindowEvent(*WorkspaceProfile(active_index_), active);
+  }
 }
 
 void WorkspaceLab::OnWidgetShowStateChanged(views::Widget* widget) {
@@ -15845,6 +15873,116 @@ void WorkspaceLab::CheckManagedExtensionsForProbe(ManagedProbePhase phase,
       base::Milliseconds(50));
 }
 
+namespace {
+
+std::string WebStoreListingId(std::string_view listing) {
+  listing = base::TrimWhitespaceASCII(listing, base::TRIM_ALL);
+  if (crx_file::id_util::IdIsValid(listing))
+    return std::string(listing);
+  if (listing.size() > 2048)
+    return {};
+  const GURL url(listing);
+  if (!url.SchemeIs("https") || url.host() != "chromewebstore.google.com" ||
+      url.has_username() || url.has_password() || url.has_port()) {
+    return {};
+  }
+  const auto segments = base::SplitStringPiece(url.path(), "/", base::KEEP_WHITESPACE,
+                                              base::SPLIT_WANT_NONEMPTY);
+  if ((segments.size() != 2 && segments.size() != 3) || segments[0] != "detail" ||
+      !crx_file::id_util::IdIsValid(segments.back())) {
+    return {};
+  }
+  return std::string(segments.back());
+}
+
+}  // namespace
+
+bool WorkspaceLab::InstallFromWebStore(std::string_view listing) {
+  const auto id = WebStoreListingId(listing);
+  if (id.empty() || extension_install_ || web_store_update_ || !CanEditWorkspace() ||
+      !ExtensionDialogOwner() ||
+      (extension_picker_ && extension_picker_->IsRunning(ExtensionDialogOwner()->GetNativeWindow()))) {
+    return false;
+  }
+  const auto index = WorkspaceProfileIndex(active_index_);
+  auto& profile = *contexts_[index];
+  if (auto* manager = ManagedExtensionForProfile(profile, id);
+      manager && manager->uninstalling()) {
+    return false;
+  }
+  auto installed = GetConfiguredExtensions(profile);
+  const auto current = std::ranges::find(installed, id, &extensions::Extension::id);
+  const auto version = current == installed.end() ? "0.0.0.0"
+                                                 : (*current)->version().GetString();
+  extension_install_profile_ = index;
+  SetExtensionManagerStatus(prototype::T(u"Pobieram i weryfikuję podpis ze sklepu…"));
+  extension_install_ = WorkspaceExtensionInstall::FromWebStore(
+      profile.GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+      id, version, profile.GetPath(), std::move(installed),
+      base::BindOnce(&WorkspaceLab::OnExtensionReview, weak_factory_.GetWeakPtr(), index));
+  return true;
+}
+
+void WorkspaceLab::CheckWebStoreUpdates() {
+  if (private_owner_ || smoke_ || session_probe_url_.is_valid() || web_store_update_ ||
+      extension_install_ || !CanEditWorkspace()) {
+    return;
+  }
+  web_store_updates_.clear();
+  for (size_t i = 0; i < contexts_.size(); ++i) {
+    for (const auto& extension : GetConfiguredExtensions(*contexts_[i])) {
+      if (extension->from_webstore())
+        web_store_updates_.emplace_back(profiles_[i].id, extension->id());
+    }
+  }
+  CheckNextWebStoreUpdate();
+}
+
+void WorkspaceLab::CheckNextWebStoreUpdate() {
+  while (!web_store_updates_.empty() && CanEditWorkspace() && !extension_install_) {
+    auto [profile_id, id] = std::move(web_store_updates_.back());
+    web_store_updates_.pop_back();
+    const auto profile = std::ranges::find(profiles_, profile_id, &ContentProfileInfo::id);
+    if (profile == profiles_.end())
+      continue;
+    const size_t index = profile - profiles_.begin();
+    auto& context = *contexts_[index];
+    auto installed = GetConfiguredExtensions(context);
+    const auto current = std::ranges::find(installed, id, &extensions::Extension::id);
+    const auto* manager = ManagedExtensionForProfile(context, id);
+    if (current == installed.end() || !(*current)->from_webstore() || !manager ||
+        !manager->editable()) {
+      continue;
+    }
+    const auto version = (*current)->version().GetString();
+    web_store_update_ = WorkspaceExtensionInstall::FromWebStore(
+        context.GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
+        std::move(id), version, context.GetPath(), std::move(installed),
+        base::BindOnce(&WorkspaceLab::OnWebStoreUpdate, weak_factory_.GetWeakPtr(),
+                       std::move(profile_id)));
+    return;
+  }
+}
+
+void WorkspaceLab::OnWebStoreUpdate(std::string profile_id,
+                                    std::optional<base::DictValue> review) {
+  auto update = std::move(web_store_update_);
+  const auto profile = std::ranges::find(profiles_, profile_id, &ContentProfileInfo::id);
+  if (profile != profiles_.end() && review && review->contains("previous_version") &&
+      CanEditWorkspace()) {
+    const size_t index = profile - profiles_.begin();
+    const auto* id = review->FindString("id");
+    const auto* manager = id ? ManagedExtensionForProfile(*contexts_[index], *id) : nullptr;
+    if (manager && manager->editable() && review->FindBool("scope_expanded") == false) {
+      InstallReviewedExtension(index, *update, true);
+    } else if (manager && review->FindBool("scope_expanded") == true) {
+      SetExtensionManagerStatus(prototype::T(
+          u"Aktualizacja rozszerzenia wymaga sprawdzenia nowych uprawnień. Użyj ponownie linku ze sklepu."));
+    }
+  }
+  CheckNextWebStoreUpdate();
+}
+
 bool WorkspaceLab::OpenExtensionsManager() {
   if (private_owner_ || !CanEditWorkspace() || !model_.active() ||
       !IsManagedExtensionSession()) {
@@ -15870,9 +16008,10 @@ views::Widget* WorkspaceLab::ExtensionDialogOwner() const {
   auto* settings = shell_->general_widget();
   if (settings && settings->IsVisible())
     return settings;
-  if (web_contents() &&
-      web_contents()->GetLastCommittedURL() == GURL(prototype::kExtensionsTabUrl)) {
-    return widget_.get();
+  if (const auto* page = web_contents()) {
+    const auto& url = page->GetLastCommittedURL();
+    if (url == GURL(prototype::kExtensionsTabUrl) || !WebStoreListingId(url.spec()).empty())
+      return widget_.get();
   }
   return nullptr;
 }
@@ -15911,6 +16050,9 @@ base::DictValue WorkspaceLab::DispatchExtensionsManager(
       SetExtensionManagerStatus({});
       OpenExtensionPackage();
       ok = true;
+    } else if (*op == "installStore" && can_install) {
+      const auto* listing = request.FindString("listing");
+      ok = listing && InstallFromWebStore(*listing);
     } else if (*op == "autoPin" && checked && profile_prefs) {
       profile_prefs->SetBoolean(kManagerAutoPinPref, *checked);
       ok = true;
@@ -15982,6 +16124,7 @@ base::DictValue WorkspaceLab::DispatchExtensionsManager(
         .Set("name", extension->name())
         .Set("description", extensions::DescriptionInfo::GetDescription(*extension))
         .Set("version", extension->version().GetString())
+        .Set("webStore", extension->from_webstore())
         .Set("enabled", manager->enabled())
         .Set("requestedEnabled", manager->selection())
         .Set("editable", manager->editable() && CanEditWorkspace())
@@ -16038,6 +16181,7 @@ base::DictValue WorkspaceLab::DispatchExtensionsManager(
       .Set("colors", std::move(colors))
       .Set("profile", WorkspaceProfileName(active_index_))
       .Set("canInstall", can_install)
+      .Set("installBusy", extension_install_ || web_store_update_)
       .Set("autoPin", profile_prefs && profile_prefs->GetBoolean(kManagerAutoPinPref))
       .Set("dark", dark)
       .Set("english", prototype::UiLanguageIsEnglish())
@@ -16048,7 +16192,7 @@ base::DictValue WorkspaceLab::DispatchExtensionsManager(
 void WorkspaceLab::OpenExtensionPackage() {
   auto* settings = ExtensionDialogOwner();
   if (!settings || !settings->IsVisible() || !CanEditWorkspace() ||
-      extension_install_ ||
+      extension_install_ || web_store_update_ ||
       (extension_picker_ && extension_picker_->IsRunning(settings->GetNativeWindow()))) {
     return;
   }
@@ -16178,6 +16322,22 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
             lab->OpenExtensionsManager();
           }, weak))->SetRing(true);
   constexpr char kStore[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
+  if (web_contents() && base::CommandLine::ForCurrentProcess()->HasSwitch(
+                            kRestoreWorkspaceExtensions)) {
+    const auto listing = web_contents()->GetLastCommittedURL();
+    if (!WebStoreListingId(listing.spec()).empty()) {
+      auto* install = add_row(kStore, prototype::T(u"Zainstaluj z tej strony"),
+          prototype::kFooterHeight,
+          base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, GURL listing) {
+            if (!lab || !lab->web_contents() ||
+                lab->web_contents()->GetLastCommittedURL() != listing)
+              return;
+            lab->CloseExtensionsToolbarMenu();
+            lab->InstallFromWebStore(listing.spec());
+          }, weak, listing));
+      install->SetEnabled(!extension_install_ && !web_store_update_);
+    }
+  }
   add_row(kStore, u"Chrome Web Store", prototype::kFooterHeight,
           base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
             if (!lab)
@@ -16645,6 +16805,10 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
       LOG(ERROR) << "The Settings package review failed";
       Finish(false);
     }
+    return;
+  }
+  if (review->FindBool("up_to_date") == true) {
+    SetExtensionManagerStatus(prototype::T(u"Rozszerzenie jest aktualne."));
     return;
   }
   const auto text = [](const std::string& value) {

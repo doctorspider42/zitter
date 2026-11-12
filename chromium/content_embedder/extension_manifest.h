@@ -29,6 +29,10 @@ class FileBackedRulesetSource;
 }
 }
 
+namespace network::mojom {
+class URLLoaderFactory;
+}
+
 namespace zitter::content_embedder {
 
 inline constexpr char kExtensionManifestProbe[] =
@@ -103,6 +107,11 @@ class WorkspaceExtensionInstall {
   static std::unique_ptr<WorkspaceExtensionInstall> Start(
       const base::FilePath& source,
       const base::FilePath& profile,
+      std::vector<scoped_refptr<const extensions::Extension>> installed,
+      Review review);
+  static std::unique_ptr<WorkspaceExtensionInstall> FromWebStore(
+      network::mojom::URLLoaderFactory* factory, std::string id,
+      std::string installed_version, const base::FilePath& profile,
       std::vector<scoped_refptr<const extensions::Extension>> installed,
       Review review);
   virtual ~WorkspaceExtensionInstall() = default;

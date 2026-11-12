@@ -31,6 +31,7 @@ class ExtensionArchiveExtraction {
   // Keep the request alive until completion. Destruction cancels delivery.
   static std::unique_ptr<ExtensionArchiveExtraction> Start(
       std::string_view verified_archive,
+      bool web_store,
       Completion completion);
   virtual ~ExtensionArchiveExtraction() = default;
 
@@ -39,7 +40,7 @@ class ExtensionArchiveExtraction {
 };
 
 std::optional<ExtractedExtensionFiles> ExtractExtensionFixture(
-    std::string_view verified_archive);
+    std::string_view verified_archive, bool web_store = false);
 
 class LabUtilityClient : public content::ContentUtilityClient {
  public:

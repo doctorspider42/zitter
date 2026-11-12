@@ -52,6 +52,8 @@ button {
 button:hover:not(:disabled), .actions [aria-pressed=true] {
   background: var(--hover); color: var(--accent-ink);
 }
+button.primary { background: var(--accent); color: var(--on-accent); }
+button.primary:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); filter: brightness(.94); }
 button:disabled, input:disabled { opacity: .6; cursor: default; }
 button.outline, input:not([type=checkbox]), select {
   border: 1px solid var(--edge); border-radius: 8px; background: var(--surface);
