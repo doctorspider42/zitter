@@ -473,6 +473,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // Preferences on the Privacy category (fingerprint protection).
   void OpenPrivacySettings();
   void OpenExtensionsSettings();
+  void ShowExtensionsToolbarMenu(views::View* anchor, std::vector<PageMenuItem> items);
   void OpenTools(int page, bool return_to_settings = false);  // 0: Time Machine, 1: shortcuts, 2: search providers.
   void SyncShortcuts() { RefreshKeyRegistrations(); }
   bool CaptureShortcut(const ui::Accelerator& accelerator);
@@ -1156,6 +1157,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool sidebar_drop_target_for_testing() const { return sidebar_reorder_.has_value(); }
   views::View* sidebar_drag_overlay_for_testing() const { return drag_overlay_; }
   const views::View* profile_drop_slot_for_testing() const { return profile_drop_slot_.view(); }
+  bool DragTabToProfileForTesting(size_t tab);
  private:
   void OpenPalette(bool commands);
   void QueueTabCommand(int command);

@@ -134,6 +134,10 @@
 #include "content/public/common/isolated_world_ids.h"
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/browser/extension_action.h"
+#include "extensions/browser/extension_action_icon_factory.h"
+#include "extensions/browser/extension_prefs.h"
+#include "chromium/prototype/assistant_visuals.h"
+#include "ui/gfx/canvas.h"
 #include "extensions/browser/extension_action_manager.h"
 #include "extensions/common/api/commands/commands_handler.h"
 #include "extensions/common/constants.h"
@@ -175,9 +179,6 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/checkbox.h"
-#include "components/vector_icons/vector_icons.h"
-#include "ui/color/color_id.h"
-#include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/menu/menu_controller.h"
@@ -269,6 +270,82 @@ class WorkspacePasswordClear final : public password_manager::PasswordStoreConsu
 };
 
 namespace {
+
+constexpr char kExtensionsPuzzle[] =
+    "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.5 0 0 0 0 3H12v2H3v-2h1.5a1.5 1.5 0 0 0 0-3H3z";
+using ToolbarPalette = base::RepeatingCallback<sidebar::DesignPalette()>;
+
+class ContentToolbarButton final : public views::Button,
+                                   public extensions::ExtensionActionIconFactory::Observer {
+  METADATA_HEADER(ContentToolbarButton, views::Button)
+ public:
+  ContentToolbarButton(const char* path, std::u16string title,
+                       PressedCallback callback, ToolbarPalette palette)
+      : views::Button(std::move(callback)), path_(path), palette_(std::move(palette)) {
+    SetPreferredSize(gfx::Size(30, 30));
+    SetTooltipText(title);
+    GetViewAccessibility().SetName(title);
+  }
+  void SetExtensionAction(const extensions::Extension& extension,
+                          extensions::ExtensionAction& action, int tab_id) {
+    tab_id_ = tab_id;
+    badge_ = base::UTF8ToUTF16(action.GetDisplayBadgeText(tab_id)).substr(0, 2);
+    icon_factory_ = std::make_unique<extensions::ExtensionActionIconFactory>(
+        &extension, &action, this);
+    OnIconUpdated();
+  }
+  void OnIconUpdated() override {
+    if (icon_factory_)
+      icon_ = icon_factory_->GetIcon(tab_id_);
+    SchedulePaint();
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto palette = palette_.Run();
+    const bool hover = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED || HasFocus();
+    const gfx::RectF box(GetLocalBounds());
+    if (hover)
+      prototype::FillRound(canvas, box, 8, palette.bg_hover);
+    const int x = width() / 2 - 8;
+    const int y = height() / 2 - 8;
+    if (icon_.IsEmpty()) {
+      prototype::StrokeIcon(canvas, path_, gfx::RectF(x, y, 16, 16),
+                            hover ? palette.ink : palette.ink_muted);
+    } else {
+      const auto& image = icon_.AsImageSkia();
+      canvas->DrawImageInt(image, 0, 0, image.width(), image.height(), x, y, 16, 16, true);
+    }
+    if (!badge_.empty()) {
+      const gfx::Rect bounds(width() - 15, height() - 15, 14, 14);
+      prototype::FillRound(canvas, gfx::RectF(bounds), 7, palette.ink);
+      canvas->DrawStringRectWithFlags(badge_, prototype::DesignFont(2, 9, 700),
+                                      palette.bg_base, bounds, gfx::Canvas::TEXT_ALIGN_CENTER);
+    }
+  }
+ private:
+  const char* path_;
+  ToolbarPalette palette_;
+  gfx::Image icon_;
+  std::u16string badge_;
+  int tab_id_ = 0;
+  std::unique_ptr<extensions::ExtensionActionIconFactory> icon_factory_;
+};
+BEGIN_METADATA(ContentToolbarButton)
+END_METADATA
+
+class ContentToolbarDivider final : public views::View {
+  METADATA_HEADER(ContentToolbarDivider, views::View)
+ public:
+  explicit ContentToolbarDivider(ToolbarPalette palette) : palette_(std::move(palette)) {
+    SetPreferredSize(gfx::Size(9, 30));
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    canvas->FillRect(gfx::Rect(width() / 2, height() / 2 - 8, 1, 16), palette_.Run().line);
+  }
+ private:
+  ToolbarPalette palette_;
+};
+BEGIN_METADATA(ContentToolbarDivider)
+END_METADATA
 
 constexpr char kAdblockTrialPage[] = "/work/adblock-trial";
 constexpr char kAdblockCosmeticTrialPage[] = "/work/adblock-cosmetic-trial";
@@ -1689,42 +1766,36 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   auto trailing = std::make_unique<views::View>();
   trailing->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
-  auto add_toolbar_button = [&](const gfx::VectorIcon& icon,
-                                const std::u16string& label,
-                                views::Button::PressedCallback callback) {
-    auto button = std::make_unique<views::ImageButton>(std::move(callback));
-    button->SetImageModel(views::Button::STATE_NORMAL,
-                          ui::ImageModel::FromVectorIcon(icon, ui::kColorIcon, 16));
-    button->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
-    button->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
-    button->SetPreferredSize(gfx::Size(30, 30));
-    button->SetTooltipText(label);
-    button->GetViewAccessibility().SetName(label);
-    return trailing->AddChildView(std::move(button));
-  };
-  if (IsManagedExtensionSession() && !private_owner_) {
-    add_toolbar_button(vector_icons::kExtensionOldIcon, prototype::T(u"Rozszerzenia"),
-        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
-          if (lab) lab->shell_->OpenExtensionsSettings();
-        }, weak));
-  }
-  assistant_toolbar_button_ = add_toolbar_button(
-      vector_icons::kChatSparkIcon, prototype::T(u"Asystent"),
+  assistant_toolbar_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
+      prototype::kAssistantSparkIcon, prototype::T(u"Asystent"),
       base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
         if (lab && !lab->ShowAssistant(false))
           lab->shell_->OpenAssistantSettings();
-      }, weak));
+      }, weak), fingerprint.palette));
   assistant_toolbar_button_->SetVisible(false);
   adblock_shield_button_ = trailing->AddChildView(
       std::make_unique<prototype::ShieldButton>(
           base::BindRepeating(&WorkspaceLab::ToggleAdblockShield, weak),
           fingerprint.palette));
   adblock_shield_button_->SetVisible(false);
+  auto palette = fingerprint.palette;
   fingerprint_toolbar_ = std::make_unique<prototype::FingerprintToolbar>(
       std::move(fingerprint));
   fingerprint_button_ = trailing->AddChildView(
       fingerprint_toolbar_->CreateButton(/*private_mode=*/false));
   fingerprint_button_->SetVisible(false);
+  if (IsManagedExtensionSession() && !private_owner_) {
+    pinned_extension_toolbar_ = trailing->AddChildView(std::make_unique<views::View>());
+    pinned_extension_toolbar_->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
+    pinned_extension_toolbar_->SetVisible(false);
+    extension_toolbar_divider_ = trailing->AddChildView(
+        std::make_unique<ContentToolbarDivider>(palette));
+    extension_toolbar_divider_->SetVisible(false);
+    extensions_toolbar_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
+        kExtensionsPuzzle, prototype::T(u"Rozszerzenia"),
+        base::BindRepeating(&WorkspaceLab::ShowExtensionsToolbarMenu, weak), palette));
+  }
   if (private_owner_) {
     private_fingerprint_subscription_ = work.ObserveFingerprintProtection(
         base::BindRepeating(&WorkspaceLab::UpdateFingerprintToolbar, weak));
@@ -2821,6 +2892,9 @@ WorkspaceLab::~WorkspaceLab() {
   fingerprint_toolbar_.reset();
   fingerprint_button_ = nullptr;
   assistant_toolbar_button_ = nullptr;
+  extensions_toolbar_button_ = nullptr;
+  pinned_extension_toolbar_ = nullptr;
+  extension_toolbar_divider_ = nullptr;
   webauthn_probe_.reset();
   devtools_.reset();
   ad_blocking_rules_panel_.reset();
@@ -9654,7 +9728,36 @@ void WorkspaceLab::RefreshExtensionActionAppearance() {
   auto& profile = *WorkspaceProfile(active_index_);
   const auto& tab = tabs_[active_index_][selected_[active_index_]];
   const int tab_id = WorkspaceExtensionTabId(tab.extension_tab.get());
-  for (const auto& extension : GetConfiguredExtensions(profile)) {
+  const auto configured = GetConfiguredExtensions(profile);
+  if (pinned_extension_toolbar_) {
+    pinned_extension_toolbar_->RemoveAllChildViews();
+    if (auto* prefs = extensions::ExtensionPrefs::Get(&profile)) {
+      for (const auto& id : prefs->GetPinnedExtensions()) {
+        const auto extension = std::ranges::find_if(configured, [&](const auto& candidate) {
+          return candidate->id() == id;
+        });
+        if (extension == configured.end() || !CanLoadExtensionProbeResources(profile, id))
+          continue;
+        auto* action = extensions::ExtensionActionManager::Get(&profile)->GetExtensionAction(**extension);
+        if (!action)
+          continue;
+        auto button = std::make_unique<ContentToolbarButton>(
+            kExtensionsPuzzle, base::UTF8ToUTF16((*extension)->name()),
+            base::BindRepeating(&WorkspaceLab::OpenExtensionPopup, weak_factory_.GetWeakPtr(), id),
+            base::BindRepeating([](WorkspaceLab* lab) {
+              return sidebar::design_palette(
+                  lab->widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
+                  lab->shell_->active_workspace_color());
+            }, base::Unretained(this)));
+        button->SetExtensionAction(**extension, *action, tab_id);
+        pinned_extension_toolbar_->AddChildView(std::move(button));
+      }
+    }
+    const bool visible = !pinned_extension_toolbar_->children().empty();
+    pinned_extension_toolbar_->SetVisible(visible);
+    extension_toolbar_divider_->SetVisible(visible);
+  }
+  for (const auto& extension : configured) {
     auto* action = CanLoadExtensionProbeResources(profile, extension->id())
         ? extensions::ExtensionActionManager::Get(&profile)->GetExtensionAction(*extension)
         : nullptr;
@@ -13947,9 +14050,28 @@ void WorkspaceLab::CheckClosedFavoriteDuplicate(std::string research,
             lab->Finish(false);
             return;
           }
-          lab->SelectWorkspace("personal");
-          std::puts("Zitter Content verified shared profile favorites and tab menu pinning");
-          lab->RequestClose();
+          lab->shell_->SetPinned(true);
+          if (!lab->shell_->DragTabToProfileForTesting(lab->selected_[lab->active_index_])) {
+            LOG(ERROR) << "Could not drag a tab onto the profile drop slot";
+            lab->Finish(false);
+            return;
+          }
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+                if (!lab)
+                  return;
+                const auto pin = lab->tabs_[lab->active_index_][lab->selected_[lab->active_index_]].pin;
+                if (pin.empty() || !std::ranges::contains(lab->profile_favorites_["work"], pin,
+                                                         &prototype::PinnedItem::id) ||
+                    !lab->Unpin(pin, lab->tabs_[lab->active_index_].size())) {
+                  LOG(ERROR) << "Dropping the tab did not add a profile favorite";
+                  lab->Finish(false);
+                  return;
+                }
+                lab->SelectWorkspace("personal");
+                std::puts("Zitter Content verified shared profile favorites, tab menu pinning, and drag and drop");
+                lab->RequestClose();
+              }, lab));
         }, weak_factory_.GetWeakPtr()));
     return;
   }
@@ -15598,6 +15720,61 @@ void WorkspaceLab::OpenExtensionPackage() {
       ui::SelectFileDialog::SELECT_OPEN_FILE,
       prototype::T(u"Wybierz podpisane rozszerzenie"), {}, &types, 1,
       FILE_PATH_LITERAL("crx"), settings->GetNativeWindow());
+}
+
+void WorkspaceLab::ShowExtensionsToolbarMenu() {
+  auto& profile = *WorkspaceProfile(active_index_);
+  auto* prefs = extensions::ExtensionPrefs::Get(&profile);
+  const auto pinned = prefs ? prefs->GetPinnedExtensions() : extensions::ExtensionIdList();
+  std::vector<prototype::PageMenuItem> items;
+  const auto weak = weak_factory_.GetWeakPtr();
+  for (const auto& manager : managed_extensions_) {
+    if (!manager->OwnsProfile(profile))
+      continue;
+    auto name = base::UTF8ToUTF16(manager->name());
+    std::ranges::replace_if(name, [](char16_t c) { return c < 0x20; }, u' ');
+    base::i18n::SanitizeUserSuppliedString(&name);
+    const auto id = manager->id();
+    prototype::PageMenuItem item{.title = std::move(name)};
+    if (manager->action_popup().is_valid()) {
+      item.children.push_back({prototype::T(u"Otwórz"),
+          base::BindRepeating(&WorkspaceLab::OpenExtensionPopup, weak, id)});
+      const bool is_pinned = std::ranges::contains(pinned, id);
+      item.children.push_back({is_pinned ? prototype::T(u"Odepnij") : prototype::T(u"Przypnij"),
+          base::BindRepeating(&WorkspaceLab::SetExtensionToolbarPinned, weak, id, !is_pinned)});
+    }
+    if (manager->options_page().is_valid())
+      item.children.push_back({prototype::T(u"Opcje"),
+          base::BindRepeating(&WorkspaceLab::OpenExtensionOptions, weak, id)});
+    item.enabled = !item.children.empty();
+    items.push_back(std::move(item));
+  }
+  if (items.empty())
+    items.push_back({.title = prototype::T(u"Brak zainstalowanych rozszerzeń"), .enabled = false});
+  items.push_back({.separator = true});
+  items.push_back({prototype::T(u"Zarządzaj rozszerzeniami"),
+      base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+        if (lab)
+          lab->shell_->OpenExtensionsSettings();
+      }, weak)});
+  shell_->ShowExtensionsToolbarMenu(extensions_toolbar_button_, std::move(items));
+}
+
+void WorkspaceLab::SetExtensionToolbarPinned(std::string id, bool pinned) {
+  if (!CanEditWorkspace())
+    return;
+  auto& profile = *WorkspaceProfile(active_index_);
+  if (!ManagedExtensionForProfile(profile, id))
+    return;
+  auto* prefs = extensions::ExtensionPrefs::Get(&profile);
+  if (!prefs)
+    return;
+  auto ids = prefs->GetPinnedExtensions();
+  std::erase(ids, id);
+  if (pinned)
+    ids.push_back(std::move(id));
+  prefs->SetPinnedExtensions(ids);
+  RefreshExtensionActionAppearance();
 }
 
 void WorkspaceLab::OpenExtensionPopup(std::string id) {

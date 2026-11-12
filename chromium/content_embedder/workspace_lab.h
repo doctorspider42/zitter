@@ -775,6 +775,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void OpenExtensionPackage();
   void OpenExtensionOptions(std::string id);
   void OpenExtensionPopup(std::string id);
+  void ShowExtensionsToolbarMenu();
+  void SetExtensionToolbarPinned(std::string id, bool pinned);
   void CloseExtensionPopup();
   void CheckActiveTabActionProbe(GURL target, GURL popup, base::TimeTicks deadline);
   void CheckExtensionPopup(GURL url, base::TimeTicks deadline);
@@ -918,6 +920,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::unique_ptr<prototype::FingerprintToolbar> fingerprint_toolbar_;
   raw_ptr<views::View> fingerprint_button_ = nullptr;
   raw_ptr<views::View> assistant_toolbar_button_ = nullptr;
+  raw_ptr<views::View> extensions_toolbar_button_ = nullptr;
+  raw_ptr<views::View> pinned_extension_toolbar_ = nullptr;
+  raw_ptr<views::View> extension_toolbar_divider_ = nullptr;
   base::CallbackListSubscription private_fingerprint_subscription_;
   raw_ptr<prototype::ShieldButton> adblock_shield_button_ = nullptr;
   raw_ptr<prototype::ShieldCard> adblock_shield_card_ = nullptr;
@@ -1052,6 +1057,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool shift_click_peek_ = true;
   bool clean_address_copies_ = true;
   std::optional<prototype::AssistantSettings> assistant_settings_;
+  bool claude_login_pending_ = false;
   prototype::NightShiftConfig night_shift_config_;
   prototype::AssistantSettings assistant_host_settings_;
   std::array<base::DictValue, 4> assistant_provider_status_;

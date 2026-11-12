@@ -11,6 +11,8 @@
 #include "base/auto_reset.h"
 #include "base/base64.h"
 #include "base/environment.h"
+#include "base/command_line.h"
+#include "base/process/launch.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
@@ -361,6 +363,8 @@ base::DictValue WorkspaceLab::ReadAssistantSettings() const {
     }
   }
   return base::DictValue().Set("enabled", enabled)
+      .Set("claude_login_supported", BUILDFLAG(IS_MAC))
+      .Set("claude_login_pending", claude_login_pending_)
       .Set("backends", std::move(backends)).Set("status", std::move(statuses))
       .Set("models", std::move(models))
       .Set("has_saved_key", assistant_settings_ && !assistant_settings_->encrypted_api_key.empty())
@@ -378,6 +382,46 @@ void WorkspaceLab::WriteAssistantSettings(base::DictValue command) {
   const auto* action = command.FindString("command");
   if (!action)
     return;
+#if BUILDFLAG(IS_MAC)
+  if (*action == "claude_login") {
+    if (claude_login_pending_)
+      return;
+    claude_login_pending_ = true;
+    shell_->RefreshAssistantPreferences();
+    base::ThreadPool::PostTaskAndReplyWithResult(
+        FROM_HERE, {base::MayBlock(), base::WithBaseSyncPrimitives(),
+                    base::TaskPriority::USER_VISIBLE},
+        base::BindOnce([](std::string preferred) {
+          const auto cli = assistant::NativeCommand("ZITTER_CLAUDE_PATH", "claude", preferred);
+          if (cli.empty())
+            return false;
+          base::CommandLine login(cli);
+          login.AppendArg("auth");
+          login.AppendArg("login");
+          auto process = base::LaunchProcess(login, {});
+          if (!process.IsValid())
+            return false;
+          int exit_code = 1;
+          if (!process.WaitForExitWithTimeout(base::Minutes(3), &exit_code)) {
+            process.Terminate(1, true);
+            return false;
+          }
+          return exit_code == 0;
+        }, assistant_settings_->claude_path),
+        base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool ok) {
+          if (!lab)
+            return;
+          lab->claude_login_pending_ = false;
+          lab->shell_->RefreshAssistantPreferences();
+          if (ok) {
+            lab->CheckAssistantProvider(kClaude, false);
+          } else {
+            lab->shell_->ShowToast(prototype::T(u"Nie udało się zalogować do Claude Code. Spróbuj polecenia claude auth login w terminalu."), {}, {});
+          }
+        }, weak_factory_.GetWeakPtr()));
+    return;
+  }
+#endif
   auto settings = *assistant_settings_;
   if (*action == "clear_shortcut_access") {
     settings.shortcut_access.clear();
