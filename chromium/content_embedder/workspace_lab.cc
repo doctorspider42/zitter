@@ -278,6 +278,7 @@ constexpr char kExtensionsPuzzle[] =
     "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.5 0 0 0 0 3H12v2H3v-2h1.5a1.5 1.5 0 0 0 0-3H3z";
 constexpr char kNightShiftMoon[] =
     "M12.8 9.8A5.3 5.3 0 0 1 6.2 3.2a5.2 5.2 0 1 0 6.6 6.6z";
+constexpr char kNightShiftSpark[] = "M12 2v4m-2-2h4";
 using ToolbarPalette = base::RepeatingCallback<sidebar::DesignPalette()>;
 
 class ContentToolbarButton final : public views::Button,
@@ -285,8 +286,12 @@ class ContentToolbarButton final : public views::Button,
   METADATA_HEADER(ContentToolbarButton, views::Button)
  public:
   ContentToolbarButton(const char* path, std::u16string title,
-                       PressedCallback callback, ToolbarPalette palette)
-      : views::Button(std::move(callback)), path_(path), palette_(std::move(palette)) {
+                       PressedCallback callback, ToolbarPalette palette,
+                       const char* active_glyph = nullptr)
+      : views::Button(std::move(callback)),
+        path_(path),
+        active_glyph_(active_glyph),
+        palette_(std::move(palette)) {
     SetPreferredSize(gfx::Size(30, 30));
     SetTooltipText(title);
     GetViewAccessibility().SetName(title);
@@ -314,13 +319,18 @@ class ContentToolbarButton final : public views::Button,
     const auto palette = palette_.Run();
     const bool hover = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED || HasFocus();
     const gfx::RectF box(GetLocalBounds());
-    if (hover || toggled_)
-      prototype::FillRound(canvas, box, 8, toggled_ ? palette.accent_soft : palette.bg_hover);
+    const bool selected_background = toggled_ && !active_glyph_;
+    if (hover || selected_background)
+      prototype::FillRound(canvas, box, 8,
+                           selected_background ? palette.accent_soft : palette.bg_hover);
     const int x = width() / 2 - 8;
     const int y = height() / 2 - 8;
     if (icon_.IsEmpty()) {
-      prototype::StrokeIcon(canvas, path_, gfx::RectF(x, y, 16, 16),
-                            toggled_ ? palette.accent_ink : hover ? palette.ink : palette.ink_muted);
+      const gfx::RectF glyph(x, y, 16, 16);
+      const SkColor ink = toggled_ ? palette.accent_ink : hover ? palette.ink : palette.ink_muted;
+      prototype::StrokeIcon(canvas, path_, glyph, ink);
+      if (toggled_ && active_glyph_)
+        prototype::StrokeIcon(canvas, active_glyph_, glyph, ink);
     } else {
       const auto& image = icon_.AsImageSkia();
       canvas->DrawImageInt(image, 0, 0, image.width(), image.height(), x, y, 16, 16, true);
@@ -334,6 +344,7 @@ class ContentToolbarButton final : public views::Button,
   }
  private:
   const char* path_;
+  const char* active_glyph_;
   ToolbarPalette palette_;
   gfx::Image icon_;
   std::u16string badge_;
@@ -1816,7 +1827,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
         base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
           if (lab)
             lab->OpenNightShiftSettings(nullptr, true);
-        }, weak), palette));
+        }, weak), palette, kNightShiftSpark));
   }
   if (IsManagedExtensionSession() && !private_owner_) {
     pinned_extension_toolbar_ = trailing->AddChildView(std::make_unique<views::View>());
