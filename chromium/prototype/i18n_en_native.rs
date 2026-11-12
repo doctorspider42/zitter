@@ -105,6 +105,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Rozmowa", "Chat"),
     ("Zapytaj Zittera…", "Ask Zitter anything…"),
     ("Twoja sesja", "Your session"),
+    ("Sesje", "Sessions"),
     ("Sesje i model", "Sessions and model"),
     ("Potwierdzaj każde kliknięcie na stronie", "Confirm each page click"),
     ("Asystent steruje stroną · Esc zatrzymuje", "AI is controlling this page · Esc to stop"),
