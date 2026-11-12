@@ -1172,7 +1172,8 @@ def verify_reopened_session(root, origin, split_fixture, layout, pin_fixture=Fal
     expected = expected_session(origin, split_fixture, pin_fixture, sleep_fixture)
     if assistant_ciphertext:
         expected["assistant"] = dict(ASSISTANT_SETTINGS_REOPENED,
-                                     encrypted_api_key=assistant_ciphertext)
+                                     encrypted_api_key=assistant_ciphertext,
+                                     shortcut_access={})
         add_assistant_workspaces(expected, origin, pin_open=True)
     if edited_pin:
         expected["work"]["pins"][0]["title"] = "Work folder (edited)"

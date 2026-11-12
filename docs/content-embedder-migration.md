@@ -23,8 +23,8 @@ compositor and Metal. The standalone macOS GN graph has zero labels under
 `//chrome`. Development uses a separate checkout, output and disposable
 profile roots.
 The macOS build and `--plan` check both the transitive GN targets and
-Ninja's declared inputs. The current graph has 13,755 targets in its
-dependency list and only two declared inputs under `chrome/`, the
+Ninja's declared inputs. The merged Chromium 157 graph has 13,756
+dependency targets and only two declared inputs under `chrome/`, the
 Chromium version and branding metadata. Other inputs under that directory
 fail the build check. The package records the observed metadata inputs.
 The resumed macOS build passed the same dependency audit. The full
@@ -52,11 +52,11 @@ and the shared implementation.
 
 | Area | Evidence | Before cutover |
 | --- | --- | --- |
-| Workspace and browser services | Relocated macOS runs cover navigation, session restoration, pins and folders, split panes, profile and private-window separation, DevTools, printing, site permissions, certificate handling and fingerprint protection. Signed macOS trials cover the native save panel, selected HTTPS document and media types, quarantine, and interrupted-download recovery. Ad blocking covers the shield diagnostics, tab-scoped rule trials, and approval for saving and replacing profile rules with cosmetic updates on loaded pages. Assistant probes cover an approved, document-scoped ad blocking diagnosis, profile-scoped tab discovery, opening, navigation and closing, page reads, screenshots, editing and consent for clicks and Enter. | Verify the production reputation provider, real macOS screen sharing, and Assistant provider authorization and action consent. |
+| Workspace and browser services | Relocated macOS runs cover navigation, session restoration, pins and folders, split panes, profile and private-window separation, DevTools, printing, site permissions, certificate handling and fingerprint protection. Signed macOS trials cover the native save panel, selected HTTPS document and media types, quarantine, and interrupted-download recovery. Ad blocking covers the shield diagnostics, tab-scoped rule trials, and approval for saving and replacing profile rules with cosmetic updates on loaded pages. Assistant probes cover an approved, document-scoped ad blocking diagnosis, profile-scoped tab discovery, opening, navigation and closing, page reads, screenshots, editing and consent for clicks and Enter. | Verify the production reputation provider and live Assistant provider authorization. The signed 0.4.11 full-display trials passed. |
 | Extensions | Selected signed packages pass installation, update, restore, and profile-scoped Settings removal tests on macOS. Ordinary startup restores approved packages and skips damaged ones. The complete published uBO Lite package blocked an ad request and hid a matching page element in a loopback trial. Bitwarden filled both fields from its popup and inline suggestion on the first restored Work tab. Personal stayed empty. | Include the verified extension implementation in the next notarized package. |
-| Profiles and credentials | Disposable macOS trials cover two encrypted profile stores, an empty private context, password autofill, profile-scoped password deletion and virtual WebAuthn. The 0.1.3 to 0.1.4 replacement preserved both profiles with ad hoc outer signatures and a file Keychain. A separate signed fixture verified password autofill across those versions. | Exercise fresh startup and replacement with the system Keychain in a disposable account. Validate native passkeys with the managed browser entitlement. |
+| Profiles and credentials | Disposable macOS trials cover two encrypted profile stores, an empty private context, password autofill, profile-scoped password deletion and virtual WebAuthn. The 0.1.3 to 0.1.4 replacement preserved both profiles with ad hoc outer signatures and a file Keychain. A separate signed fixture verified password autofill across those versions. | Verify password autofill across a system Keychain replacement and validate native passkeys with the managed browser entitlement. Signed system Keychain startup and cookie persistence passed. |
 | Windows | The launcher, packaging and migration paths have implementation and fixture coverage. Some Windows sources compiled to x64 COFF. The macOS cross-toolchain generated a 50,470-action Windows x64 plan with zero `//chrome` dependency labels and linked a standalone SDK probe. | Build and run the packaged app on Windows. Exercise the sandbox, installer, updates, native credential services and DPAPI persistence on a clean installation. |
-| Release | The 0.1.1 through 0.1.4 macOS arm64 rehearsal DMGs passed notarization and Gatekeeper. The apps carry the production identifier. The 0.1.4 image uses the Content update asset name. | Exercise fresh startup with the system Keychain and deliver the next Content build through the ordinary update channel. Verify that both profiles survive. Native Windows installation is tracked separately. |
+| Release | The 0.1.1 through 0.1.4 macOS arm64 rehearsal DMGs passed notarization and Gatekeeper. The apps carry the production identifier. The 0.1.4 image uses the Content update asset name. | Deliver a subsequent Content build through the ordinary update channel and verify both profiles survive. The signed 0.4.11 replacement with the system Keychain passed. Native Windows installation is tracked separately. |
 | Local build cost | Matched macOS non-component builds completed 57,951 Chrome actions and 43,834 Content actions. Content used 22.9% less measured active build time in this run. A separate fingerprint channel narrows edits to its key implementation. | Repeat the cold timings with the machine awake and idle and compare equivalent release builds after feature parity. |
 
 The native Windows checkpoint is tracked separately. It starts with a local
@@ -171,7 +171,97 @@ On the next Chromium 157 build the private-window, cross-process
 fingerprint, and adblock timing and migration probes passed. The
 encrypted import probe still reached the native menu before AppKit
 reported a key or main window. It now retries the native menu command
-for up to four seconds before reporting failure.
+for up to four seconds before reporting failure. The signed extension
+registry trial passed on the same Chromium 157 build. It verified
+same-key updates, profile-scoped approval and removal, optional
+permission persistence and revocation, and rejection of changed
+archive bytes and oversized archives.
+The native menu readiness retry passed the encrypted browser import
+probe on Chromium 157. The fixture checked that the Keychain lookup
+followed confirmation, rejected invalid source data without publishing
+profiles, and restored both imported cookie values in the destination
+profiles after restart.
+
+The macOS Chromium 157 suite passed all 14 checks on Zitter snapshot
+`1333e04222c9e516b47d1d627a33b8942e663177` and Chromium
+`9a31f0acec1854d44e49a73fbf8017598151a583`. It covered profile
+persistence, password storage and autofill, private windows, encrypted
+import, cross-process fingerprint protection, DevTools, downloads,
+adblock timing and storage migration/rollback, Night Shift, the
+first-launch import offer, zoom, Arc import, GitHub folders, and signed
+extensions. GN header checking passed, with 13,756 transitive dependency
+labels and zero `//chrome` targets. The local 0.4.11 rehearsal passed
+Developer ID, timestamp, and Hardened Runtime checks on 11 Mach-O paths.
+The signed, relocated bundle also passed Workspace, DevTools, sandbox
+override rejection, profile isolation, and the private-window lifecycle.
+Apple accepted the signed application under submission
+`3bc8e3f1-c5ba-45dc-a171-10987764c3c8`. The ticket was stapled and
+Gatekeeper accepted the application as Notarized Developer ID. Apple
+accepted the arm64 DMG under submission
+`9f6693cd-8d0d-4107-946b-c800feb9af18`. The stapled disk image,
+mounted app, and quarantined copy passed distribution checks. The
+image SHA-256 is `75c1019258313948de4adf1832452186b142d95c4a075e0cf8ad2d7afa16553a`.
+The relocated DMG app passed runtime verification with its Developer
+ID seal intact, including the signed extension registry and sandboxed
+extension utility checks. The signed 0.1.6
+and 0.4.11 images passed replacement preflight with matching designated
+requirements. The isolated file Keychain replacement preserved Work
+and Personal sessions, encrypted cookies, local storage, and both
+Shared Dictionary network stores. The runtime replacement used ad hoc
+outer signatures to load the fixture. On 2026-11-12, the signed
+0.1.6 to 0.4.11 replacement passed on the disposable `tester` account
+using its system Keychain. Both notarized bundles retained their
+Developer ID signatures. Work and Personal restored their tabs,
+local storage, and encrypted cookies, and both Shared Dictionary
+stores remained inside their profile network directories. The system
+trial did not exercise password autofill. Delivery through the
+ordinary update channel remains open.
+
+A separate password upgrade probe used both notarized DMGs with their
+original Developer ID seals and an isolated OSCrypt test key. The 0.1.6
+app saved a Work credential. The 0.4.11 app autofilled it without
+rewriting its ciphertext and retained the existing password prompt
+regression coverage. System Keychain password persistence remains
+unverified.
+
+The updater metadata probe selected the exact notarized 0.4.11 image
+for Content 0.1.6 on arm64 using a local GitHub-format catalogue.
+It skipped newer prerelease, Chrome-backend, and Windows-only entries,
+verified the image digest and size, and rejected wrong architecture,
+backend, installed version, digest, and size. The probe used the same
+metadata sources as the release snapshot and did not download an asset
+from the public feed.
+
+The notarized 0.4.11 DMG passed the synthetic camera and microphone,
+tab and synthetic desktop capture, and native macOS picker cancellation
+probes in dark Metal. Picker cancellation did not select a source.
+On 2026-11-12, four native full-display runs on the disposable
+`tester` desktop passed against the notarized 0.4.11 bundle. Each
+delivered a video frame and verified track termination after Stop.
+Passkey preflight on the same
+signed bundle reported that the Apple-managed
+`com.apple.developer.web-browser.public-key-credential` entitlement
+is absent, so native passkeys remain unverified. The installed
+Chrome-backed Zitter bundle also lacks that entitlement and an
+embedded provisioning profile. The signature comparison establishes
+that the missing entitlement is shared by both bundles. It does not
+establish native passkey behavior on either backend.
+
+The notarized 0.4.11 DMG passed the HTTPS loopback reputation trial,
+including URL and artifact blocks, resumed requests, and quarantine
+for allowed user saves. The production identity rejected the standalone
+HTTP artifact fixture at startup. The unbranded Chromium 157 bundle from
+the same source snapshot passed all ten standalone artifact scenarios,
+including altered bytes and malformed or missing catalogues. A live
+reputation provider was not configured on the test Mac.
+
+The 0.4.11 DMG passed Assistant settings and encrypted test credential
+persistence on a loopback provider. The same Chromium 157 source
+snapshot passed the legacy Assistant migration and rollback fixture in
+the unbranded lab after the fixture accounted for the new
+`shortcut_access` settings field. The Developer ID bundle rejected
+the injected file Keychain fixture. Live provider authorization remains
+unverified.
 
 On first ordinary macOS launch, Content now opens the shared browser
 import panel. A cancelled process can reopen the pending offer, and a
@@ -2916,7 +3006,7 @@ The initial interactive window run reached the system picker and timed
 out without a source selection. A subsequent run with a manual
 selection of the synthetic Workspace window verified delivery of
 a native window frame and track termination after Stop.
-Native display frame delivery remains unverified.
+The notarized 0.4.11 bundle subsequently passed four full-display trials on a disposable macOS desktop.
 The rebuilt lab passed the existing tab and synthetic desktop
 capture regression suite.
 
