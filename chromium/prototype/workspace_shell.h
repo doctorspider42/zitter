@@ -474,7 +474,6 @@ class WorkspaceShell final : public ui::EventHandler,
   void OpenPrivacySettings();
   void OpenExtensionsSettings();
   void RevealProfileFavorite(std::string_view id);
-  void ShowExtensionsToolbarMenu(views::View* anchor, std::vector<PageMenuItem> items);
   void OpenTools(int page, bool return_to_settings = false);  // 0: Time Machine, 1: shortcuts, 2: search providers.
   void SyncShortcuts() { RefreshKeyRegistrations(); }
   bool CaptureShortcut(const ui::Accelerator& accelerator);
@@ -1286,6 +1285,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::map<std::string, raw_ptr<views::View>> preference_toggles_;
   std::map<std::string, raw_ptr<views::View>> extension_remove_buttons_;
   std::map<std::string, raw_ptr<views::View>> extension_options_buttons_;
+  std::map<std::string, raw_ptr<views::View>> extension_pin_buttons_;
   std::map<std::string, raw_ptr<views::View>> extension_popup_buttons_;
   struct ExtensionActionAppearance {
     gfx::Image icon;

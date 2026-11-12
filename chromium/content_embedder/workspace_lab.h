@@ -776,7 +776,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void OpenExtensionOptions(std::string id);
   void OpenExtensionPopup(std::string id);
   void ShowExtensionsToolbarMenu();
-  void SetExtensionToolbarPinned(std::string id, bool pinned);
+  bool SetExtensionToolbarPinned(std::string id, bool pinned);
+  void CloseExtensionsToolbarMenu();
+  content::WebContents* ShowExtensionDialog(ProfileContext& profile, const GURL& url,
+                                             std::u16string title, gfx::Size size,
+                                             bool action_popup);
   void CloseExtensionPopup();
   void CheckActiveTabActionProbe(GURL target, GURL popup, base::TimeTicks deadline);
   void CheckExtensionPopup(GURL url, base::TimeTicks deadline);
@@ -921,6 +925,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   raw_ptr<views::View> fingerprint_button_ = nullptr;
   raw_ptr<views::View> assistant_toolbar_button_ = nullptr;
   raw_ptr<views::View> extensions_toolbar_button_ = nullptr;
+  std::unique_ptr<views::BubbleDialogDelegate> extensions_toolbar_menu_;
+  std::unique_ptr<views::Widget> extensions_toolbar_menu_widget_;
   raw_ptr<views::View> pinned_extension_toolbar_ = nullptr;
   raw_ptr<views::View> extension_toolbar_divider_ = nullptr;
   base::CallbackListSubscription private_fingerprint_subscription_;

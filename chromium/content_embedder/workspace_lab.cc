@@ -136,6 +136,7 @@
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_icon_factory.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/browser/extension_registry.h"
 #include "chromium/prototype/assistant_visuals.h"
 #include "ui/gfx/canvas.h"
 #include "extensions/browser/extension_action_manager.h"
@@ -301,17 +302,18 @@ class ContentToolbarButton final : public views::Button,
       icon_ = icon_factory_->GetIcon(tab_id_);
     SchedulePaint();
   }
+  void SetToggledAppearance(bool toggled) { toggled_ = toggled; }
   void PaintButtonContents(gfx::Canvas* canvas) override {
     const auto palette = palette_.Run();
     const bool hover = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED || HasFocus();
     const gfx::RectF box(GetLocalBounds());
-    if (hover)
-      prototype::FillRound(canvas, box, 8, palette.bg_hover);
+    if (hover || toggled_)
+      prototype::FillRound(canvas, box, 8, toggled_ ? palette.accent_soft : palette.bg_hover);
     const int x = width() / 2 - 8;
     const int y = height() / 2 - 8;
     if (icon_.IsEmpty()) {
       prototype::StrokeIcon(canvas, path_, gfx::RectF(x, y, 16, 16),
-                            hover ? palette.ink : palette.ink_muted);
+                            toggled_ ? palette.accent_ink : hover ? palette.ink : palette.ink_muted);
     } else {
       const auto& image = icon_.AsImageSkia();
       canvas->DrawImageInt(image, 0, 0, image.width(), image.height(), x, y, 16, 16, true);
@@ -328,6 +330,7 @@ class ContentToolbarButton final : public views::Button,
   ToolbarPalette palette_;
   gfx::Image icon_;
   std::u16string badge_;
+  bool toggled_ = false;
   int tab_id_ = 0;
   std::unique_ptr<extensions::ExtensionActionIconFactory> icon_factory_;
 };
@@ -2896,6 +2899,8 @@ WorkspaceLab::~WorkspaceLab() {
   managed_cache_probe_host_.reset();
   media_access_.reset();
   adblock_count_subscription_ = {};
+  extensions_toolbar_menu_widget_.reset();
+  extensions_toolbar_menu_.reset();
   DestroyAdblockShield();
   adblock_shield_button_ = nullptr;
   private_fingerprint_subscription_ = {};
@@ -7232,6 +7237,10 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     return {};
   auto& profile = *WorkspaceProfile(active_index_);
   BrowserPreferences settings;
+  const auto* extension_prefs = IsWorkspaceExtensionRuntime() && !private_owner_
+      ? extensions::ExtensionPrefs::Get(&profile) : nullptr;
+  const auto pinned_extensions = extension_prefs
+      ? extension_prefs->GetPinnedExtensions() : extensions::ExtensionIdList();
   for (const auto& manager : managed_extensions_) {
     if (manager->OwnsProfile(profile)) {
       settings["extension_enabled." + manager->id()] = {
@@ -7242,8 +7251,12 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
       }
       if (manager->options_page().is_valid())
         settings["extension_options." + manager->id()] = {.editable = CanEditWorkspace()};
-      if (manager->action_popup().is_valid())
+      if (manager->action_popup().is_valid()) {
         settings["extension_popup." + manager->id()] = {.editable = CanEditWorkspace()};
+        settings["extension_pinned." + manager->id()] = {
+            .value = std::ranges::contains(pinned_extensions, manager->id()),
+            .editable = CanEditWorkspace() && extension_prefs};
+      }
     }
   }
   if (const auto* probe = ExtensionProbeForProfile(profile)) {
@@ -7331,6 +7344,9 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
     auto* manager = ManagedExtensionForProfile(profile, preference.substr(kUserScriptsPrefix.size()));
     return manager && CanEditWorkspace() && manager->SetUserScriptsAllowed(value == 1);
   }
+  constexpr std::string_view kPinnedPrefix = "extension_pinned.";
+  if (key.starts_with(kPinnedPrefix))
+    return SetExtensionToolbarPinned(key.substr(kPinnedPrefix.size()), value == 1);
   if (key == "extension_enabled") {
     if (!CanEditWorkspace())
       return false;
@@ -15744,65 +15760,147 @@ void WorkspaceLab::OpenExtensionPackage() {
 }
 
 void WorkspaceLab::ShowExtensionsToolbarMenu() {
+  if (extensions_toolbar_menu_widget_ && !extensions_toolbar_menu_widget_->IsClosed()) {
+    CloseExtensionsToolbarMenu();
+    return;
+  }
   auto& profile = *WorkspaceProfile(active_index_);
-  auto* prefs = extensions::ExtensionPrefs::Get(&profile);
+  const auto* prefs = extensions::ExtensionPrefs::Get(&profile);
   const auto pinned = prefs ? prefs->GetPinnedExtensions() : extensions::ExtensionIdList();
-  std::vector<prototype::PageMenuItem> items;
   const auto weak = weak_factory_.GetWeakPtr();
+  const auto palette = base::BindRepeating([](WorkspaceLab* lab) {
+    return sidebar::design_palette(
+        lab->widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
+        lab->shell_->active_workspace_color());
+  }, base::Unretained(this));
+  const auto colors = palette.Run();
+  shell_->CloseOverlays(true);
+  CloseAdblockShield();
+  fingerprint_toolbar_->Close();
+
+  extensions_toolbar_menu_ = std::make_unique<views::BubbleDialogDelegate>(
+      extensions_toolbar_button_, views::BubbleBorder::TOP_RIGHT);
+  auto& panel = *extensions_toolbar_menu_;
+  panel.SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  panel.SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  panel.set_margins(gfx::Insets(4));
+  panel.set_corner_radius(12);
+  panel.set_fixed_width(prototype::kMenuWidth);
+  panel.SetBackgroundColor(colors.bg_raised);
+  panel.SetTitle(prototype::T(u"Rozszerzenia"));
+  panel.SetShowTitle(false);
+  panel.SetShowCloseButton(false);
+
+  auto body = std::make_unique<views::View>();
+  body->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical));
+  body->AddChildView(std::make_unique<prototype::MenuHeader>(colors));
+  auto add_row = [&](const char* glyph, std::u16string title, int height,
+                     base::RepeatingClosure run) {
+    auto* row = body->AddChildView(std::make_unique<prototype::MenuRow>(
+        std::move(run), colors, height));
+    row->SetGlyph(glyph);
+    row->Init();
+    row->SetText(std::move(title), {}, false, 16);
+    return row;
+  };
+  bool empty = true;
   for (const auto& manager : managed_extensions_) {
     if (!manager->OwnsProfile(profile))
       continue;
+    empty = false;
     auto name = base::UTF8ToUTF16(manager->name());
     std::ranges::replace_if(name, [](char16_t c) { return c < 0x20; }, u' ');
     base::i18n::SanitizeUserSuppliedString(&name);
     const auto id = manager->id();
-    prototype::PageMenuItem item{.title = std::move(name)};
-    if (manager->action_popup().is_valid()) {
-      item.children.push_back({prototype::T(u"Otwórz"),
-          base::BindRepeating(&WorkspaceLab::OpenExtensionPopup, weak, id)});
-      const bool is_pinned = std::ranges::contains(pinned, id);
-      item.children.push_back({is_pinned ? prototype::T(u"Odepnij") : prototype::T(u"Przypnij"),
-          base::BindRepeating(&WorkspaceLab::SetExtensionToolbarPinned, weak, id, !is_pinned)});
+    const bool has_popup = manager->action_popup().is_valid();
+    const bool has_options = manager->options_page().is_valid();
+    auto* row = add_row(nullptr, name, 44,
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, std::string id,
+                               bool popup, bool options) {
+          if (!lab || (!popup && !options))
+            return;
+          lab->CloseExtensionsToolbarMenu();
+          if (popup)
+            lab->OpenExtensionPopup(id);
+          else
+            lab->OpenExtensionOptions(id);
+        }, weak, id, has_popup, has_options));
+    auto icon = std::make_unique<ContentToolbarButton>(
+        kExtensionsPuzzle, name, views::Button::PressedCallback(), palette);
+    icon->SetPreferredSize(gfx::Size(20, 20));
+    icon->SetCanProcessEventsWithinSubtree(false);
+    icon->GetViewAccessibility().SetIsIgnored(true);
+    const auto* extension = extensions::ExtensionRegistry::Get(&profile)
+                                ->enabled_extensions().GetByID(id);
+    if (extension) {
+      if (auto* action = extensions::ExtensionActionManager::Get(&profile)
+                             ->GetExtensionAction(*extension)) {
+        icon->SetExtensionAction(*extension, *action,
+            web_contents() ? WorkspaceExtensionTabIdForTesting(*web_contents()) : -1);
+      }
     }
-    if (manager->options_page().is_valid())
-      item.children.push_back({prototype::T(u"Opcje"),
-          base::BindRepeating(&WorkspaceLab::OpenExtensionOptions, weak, id)});
-    item.enabled = !item.children.empty();
-    items.push_back(std::move(item));
+    row->AddChildViewAt(std::move(icon), 0);
+    row->SetText(name, manager->enabled() ? std::u16string() : prototype::T(u"Wyłączone w tym profilu"),
+                 false, 16);
+    if (has_popup) {
+      const bool is_pinned = std::ranges::contains(pinned, id);
+      constexpr char kPin[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
+      auto pin = std::make_unique<ContentToolbarButton>(
+          kPin, prototype::TF(is_pinned ? u"Odepnij rozszerzenie: {}" : u"Przypnij rozszerzenie: {}", {name}),
+          base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, std::string id, bool pinned) {
+            if (lab && lab->SetExtensionToolbarPinned(std::move(id), pinned))
+              lab->CloseExtensionsToolbarMenu();
+          }, weak, id, !is_pinned), palette);
+      pin->SetToggledAppearance(is_pinned);
+      row->AddTrailing(row->AddChildView(std::move(pin)), true);
+    }
   }
-  if (BundledNightShiftSettingsPage(profile).is_valid()) {
-    items.insert(items.begin(), {u"Night Shift",
-        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
-          if (lab)
-            lab->OpenNightShiftSettings();
-        }, weak)});
-  }
-  if (items.empty())
-    items.push_back({.title = prototype::T(u"Brak zainstalowanych rozszerzeń"), .enabled = false});
-  items.push_back({.separator = true});
-  items.push_back({prototype::T(u"Zarządzaj rozszerzeniami"),
-      base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
-        if (lab)
-          lab->shell_->OpenExtensionsSettings();
-      }, weak)});
-  shell_->ShowExtensionsToolbarMenu(extensions_toolbar_button_, std::move(items));
+  if (empty)
+    add_row(nullptr, prototype::T(u"Brak zainstalowanych rozszerzeń"), 36, {})->SetEnabled(false);
+  body->AddChildView(std::make_unique<prototype::MenuSeparator>(colors.line));
+  add_row(prototype::kGearIcon, prototype::T(u"Zarządzaj rozszerzeniami"),
+          prototype::kFooterHeight, base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+            if (!lab)
+              return;
+            lab->CloseExtensionsToolbarMenu();
+            lab->shell_->OpenExtensionsSettings();
+          }, weak))->SetRing(true);
+  constexpr char kStore[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
+  add_row(kStore, u"Chrome Web Store", prototype::kFooterHeight,
+          base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+            if (!lab)
+              return;
+            lab->CloseExtensionsToolbarMenu();
+            lab->OpenExternalUrl(GURL("https://chromewebstore.google.com/category/extensions"));
+          }, weak));
+  panel.SetContentsView(std::move(body));
+  extensions_toolbar_menu_widget_ = views::BubbleDialogDelegate::CreateBubble(&panel);
+  extensions_toolbar_menu_widget_->Show();
 }
 
-void WorkspaceLab::SetExtensionToolbarPinned(std::string id, bool pinned) {
+void WorkspaceLab::CloseExtensionsToolbarMenu() {
+  if (extensions_toolbar_menu_widget_ && !extensions_toolbar_menu_widget_->IsClosed())
+    extensions_toolbar_menu_widget_->Close();
+}
+
+bool WorkspaceLab::SetExtensionToolbarPinned(std::string id, bool pinned) {
   if (!CanEditWorkspace())
-    return;
+    return false;
   auto& profile = *WorkspaceProfile(active_index_);
-  if (!ManagedExtensionForProfile(profile, id))
-    return;
+  const auto* manager = ManagedExtensionForProfile(profile, id);
+  if (!manager || !manager->action_popup().is_valid())
+    return false;
   auto* prefs = extensions::ExtensionPrefs::Get(&profile);
   if (!prefs)
-    return;
+    return false;
   auto ids = prefs->GetPinnedExtensions();
   std::erase(ids, id);
   if (pinned)
     ids.push_back(std::move(id));
   prefs->SetPinnedExtensions(ids);
   RefreshExtensionActionAppearance();
+  return true;
 }
 
 void WorkspaceLab::OpenExtensionPopup(std::string id) {
@@ -15823,13 +15921,22 @@ void WorkspaceLab::OpenExtensionPopup(std::string id) {
   auto name = base::UTF8ToUTF16(manager->name());
   std::ranges::replace_if(name, [](char16_t c) { return c < 0x20; }, u' ');
   base::i18n::SanitizeUserSuppliedString(&name);
+  ShowExtensionDialog(profile, url, std::move(name), gfx::Size(380, 420), true);
+}
+
+content::WebContents* WorkspaceLab::ShowExtensionDialog(
+    ProfileContext& profile, const GURL& url, std::u16string title,
+    gfx::Size size, bool action_popup) {
+  if (extension_popup_widget_)
+    return nullptr;
   auto view = std::make_unique<LabWebView>(&profile);
-  view->SetPreferredSize(gfx::Size(380, 420));
+  view->SetPreferredSize(size);
   auto* contents = view->GetWebContents(url);
-  extensions::SetViewType(contents, extensions::mojom::ViewType::kExtensionPopup);
+  if (action_popup)
+    extensions::SetViewType(contents, extensions::mojom::ViewType::kExtensionPopup);
   extension_popup_view_ = view.get();
   extension_popup_delegate_ = prototype::CreateSceneModalDialog(std::move(view), false);
-  extension_popup_delegate_->SetTitle(std::move(name));
+  extension_popup_delegate_->SetTitle(std::move(title));
   extension_popup_delegate_->SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));
   extension_popup_delegate_->SetButtonLabel(
       ui::mojom::DialogButton::kCancel, prototype::T(u"Zamknij"));
@@ -15848,6 +15955,7 @@ void WorkspaceLab::OpenExtensionPopup(std::string id) {
   extension_popup_widget_->Show();
   extension_popup_view_->RequestFocus();
   prototype::LoadWorkspaceTab(contents, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
+  return contents;
 }
 
 void WorkspaceLab::CloseExtensionPopup() {
@@ -15900,15 +16008,16 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document) {
     url = net::AppendOrReplaceQueryParameter(
         url, "document", extensions::ExtensionApiFrameIdMap::GetDocumentId(document).ToString());
   }
-  if (!CreateExtensionTab(context, url, /*active=*/true))
+  const auto available = widget_->GetWindowBoundsInScreen().size();
+  auto* page = ShowExtensionDialog(context, url, u"Night Shift",
+      gfx::Size(std::clamp(available.width() - 48, 240, 900),
+                std::clamp(available.height() - 100, 240, 600)),
+      false);
+  if (!page)
     return false;
-  auto* page = web_contents();
-  CHECK(page);
   NightShiftSettingsObserver::CreateForWebContents(
       page, url, base::BindRepeating(&WorkspaceLab::ApplyNightShiftSettings,
                                      weak_factory_.GetWeakPtr()));
-  shell_->CloseOverlays(true);
-  widget_->Activate();
   return true;
 }
 

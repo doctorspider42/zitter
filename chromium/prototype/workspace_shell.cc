@@ -248,10 +248,12 @@ class SceneParentNodes final {
 
 namespace {
 
+constexpr size_t kExtensionsPreferenceCategory = 12;
+
 sidebar::PreferenceSpec ExtensionPreference(const std::string& key,
                                             const std::u16string& title) {
   sidebar::PreferenceSpec row{};
-  row.category = 5;
+  row.category = kExtensionsPreferenceCategory;
   row.kind = sidebar::PreferenceRowKind::Toggle;
   row.key = key;
   row.title = base::UTF16ToUTF8(title);
@@ -5198,6 +5200,13 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   std::optional<sidebar::PreferenceCatalogue> preference_catalogue;
   {
     preference_catalogue=sidebar::preference_catalogue(true);
+    if (callbacks_.install_extension || callbacks_.show_extension_enablement ||
+        !callbacks_.extension_preferences.empty()) {
+      CHECK_EQ(preference_catalogue->categories.size(), kExtensionsPreferenceCategory);
+      preference_catalogue->categories.push_back(base::UTF16ToUTF8(T(u"Rozszerzenia")));
+      preference_catalogue->descriptions.push_back(base::UTF16ToUTF8(
+          T(u"Zarządzaj rozszerzeniami aktywnego profilu.")));
+    }
     if (callbacks_.show_extension_enablement) {
       preference_catalogue->rows.push_back(
           ExtensionPreference("extension_enabled", T(u"Rozszerzenie profilu")));
@@ -5206,7 +5215,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       preference_catalogue->rows.push_back(ExtensionPreference(key, title));
     if (callbacks_.install_extension) {
       sidebar::PreferenceSpec row{};
-      row.category = 5;
+      row.category = kExtensionsPreferenceCategory;
       row.kind = sidebar::PreferenceRowKind::Action;
       row.key = "install_extension";
       row.title = base::UTF16ToUTF8(T(u"Zainstaluj rozszerzenie"));
@@ -5520,6 +5529,7 @@ void WorkspaceShell::Detach() {
   extension_remove_buttons_.clear();
   extension_options_buttons_.clear();
   extension_popup_buttons_.clear();
+  extension_pin_buttons_.clear();
   extension_action_icons_.clear();
   extension_action_badges_.clear();
   download_directory_label_ = nullptr; download_directory_button_ = nullptr;
@@ -6974,9 +6984,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
   if (std::ranges::any_of(pins,&PinnedItem::profile_pin)) {
     favorites=root->AddChildView(std::make_unique<views::View>());
     favorites->SetLayoutManager(CreateProfileFavoritesLayout());
-    auto* heading = Label(root, T(u"ULUBIONE PROFILU"), kMuted, Font(-2));
-    root->ReorderChildView(heading, 0);
-    root->ReorderChildView(favorites, 1);
+    root->ReorderChildView(favorites, 0);
   }
   for(const auto& entry:plan){
     const auto* pin=&pins[entry.index];auto* parent=pin->profile_pin?favorites:groups.at(entry.parent);
@@ -8231,8 +8239,11 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
           muted ? T(u"Włącz dźwięk karty") : T(u"Wycisz kartę"),
           MenuIcon(vector_icons::kVolumeUpIcon));
     }
-    workspace_menu_->AddItemWithIcon(kPinProfileTab, T(u"Przypnij do profilu"),
-                                     MenuIcon(vector_icons::kStarOldIcon));
+    const auto pin = std::ranges::find(state_.pins, ContextPinId(), &PinnedItem::id);
+    const bool profile_favorite = pin != state_.pins.end() && pin->profile_pin;
+    workspace_menu_->AddItemWithIcon(profile_favorite ? kUnpinTab : kPinProfileTab,
+        profile_favorite ? T(u"Odepnij z ulubionych profilu") : T(u"Przypnij do profilu"),
+        MenuIcon(vector_icons::kStarOldIcon));
     move_tab_menu_ = std::make_unique<DesignMenuModel>(this);
     move_tab_workspaces_.clear();
     for (const auto& space : state_.workspaces) {
@@ -8249,6 +8260,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     if(metal_sidebar_) {
       const auto plan=sidebar::tab_context_menu(RowMenuState(state_,target.tab,target.valid,url,context_pin_));
       for (const auto& entry : plan) {
+        if (profile_favorite && entry.command == kUnpinTab) continue;
         if (entry.command == 0) workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
         else if (entry.command == kCloseTab)
           workspace_menu_->AddItemWithIcon(kCloseTab, T(u"Zamknij kartę"),
@@ -8262,7 +8274,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     context_workspace_id_ = state_.workspace_id;
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
     if (!ContextPinId().empty()) {
-      workspace_menu_->AddItem(kUnpinTab, T(u"Odepnij kartę"));
+      if (!profile_favorite) workspace_menu_->AddItem(kUnpinTab, T(u"Odepnij kartę"));
       workspace_menu_->AddItem(kEditPinnedUrl, T(u"Edytuj przypięty adres…"));
       workspace_menu_->AddItem(kResetPinnedUrl, T(u"Wróć do przypiętego adresu"));
       workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -9739,6 +9751,20 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
         popup->GetViewAccessibility().SetName(TF(u"Otwórz rozszerzenie: {}", {title}));
         extension_popup_buttons_["extension_popup." + id] = popup;
       }
+      if (callbacks_.open_extension_popup && key.starts_with(kExtensionPrefix)) {
+        const auto pin_key = "extension_pinned." + key.substr(kExtensionPrefix.size());
+        auto* pin = PreferenceAction(row, {}, T(u"Przypnij do paska"));
+        extension_pin_buttons_[pin_key] = pin;
+        SetActionCallback(pin, base::BindRepeating(
+            [](base::WeakPtr<WorkspaceShell> shell, std::string key) {
+              if (!shell || !shell->callbacks_.read_preferences)
+                return;
+              const auto prefs = shell->callbacks_.read_preferences.Run();
+              const auto current = prefs.find(key);
+              if (current != prefs.end() && current->second.editable)
+                shell->WritePreference(key, !current->second.value);
+            }, weak, pin_key));
+      }
       if (callbacks_.open_extension_options && key.starts_with(kExtensionPrefix)) {
         const auto id = key.substr(kExtensionPrefix.size());
         auto* options = PreferenceAction(
@@ -9925,6 +9951,13 @@ void WorkspaceShell::RefreshGeneralControls() {
       SetToggleOn(control, it != values.end() && it->second.value != 0);
     control->SetTooltipText(control_view(true, it != values.end(), it != values.end() && it->second.editable, it == values.end() ? T(u"Profil nie jest jeszcze gotowy") :
         !it->second.editable ? T(u"To ustawienie jest zarządzane") : T(u"Dotyczy aktywnego profilu")));
+  }
+  for (const auto& [key, pin] : extension_pin_buttons_) {
+    const auto value = values.find(key);
+    pin->parent()->SetVisible(value != values.end());
+    pin->SetEnabled(value != values.end() && value->second.editable);
+    SetActionText(pin, value != values.end() && value->second.value != 0
+                           ? T(u"Odepnij z paska") : T(u"Przypnij do paska"));
   }
   for (const auto& [key, popup] : extension_popup_buttons_) {
     const auto value = values.find(key);
@@ -10337,43 +10370,6 @@ void WorkspaceShell::OpenAdBlockingSettings() {
   OpenGeneralSettings();
   if (general_widget_ && general_widget_->IsVisible()) SelectPreferenceCategory(11);
 }
-void WorkspaceShell::ShowExtensionsToolbarMenu(views::View* anchor,
-                                                std::vector<PageMenuItem> items) {
-  if (!widget_ || !anchor || !anchor->IsDrawn())
-    return;
-  CloseOverlays(true);
-  workspace_menu_runner_.reset();
-  workspace_menu_ = std::make_unique<DesignMenuModel>(this);
-  int next_id = 39000;
-  auto add = [&](auto&& self, ui::SimpleMenuModel& menu, PageMenuItem& item) -> void {
-    if (item.separator) {
-      menu.AddSeparator(ui::NORMAL_SEPARATOR);
-      return;
-    }
-    const int id = next_id++;
-    if (!item.children.empty()) {
-      auto submenu = std::make_unique<DesignMenuModel>(this);
-      for (auto& child : item.children)
-        self(self, *submenu, child);
-      menu.AddSubMenu(id, item.title, submenu.get());
-      extension_page_menus_.push_back(std::move(submenu));
-    } else {
-      menu.AddItem(id, item.title);
-      menu.SetEnabledAt(menu.GetItemCount() - 1, item.enabled);
-      extension_page_actions_[id] = std::move(item.run);
-    }
-  };
-  link_menu_runner_.reset();
-  extension_page_menus_.clear();
-  extension_page_actions_.clear();
-  for (auto& item : items)
-    add(add, *workspace_menu_, item);
-  workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
-  workspace_menu_runner_->RunMenuAt(widget_, nullptr, anchor->GetBoundsInScreen(),
-      views::MenuAnchorPosition::kTopRight, ui::mojom::MenuSourceType::kNone,
-      gfx::NativeView(), ZitterMenuCorners());
-}
-
 void WorkspaceShell::RevealProfileFavorite(std::string_view id) {
   auto* row = pin_button(std::string(id));
   if (row) {
@@ -10387,7 +10383,8 @@ void WorkspaceShell::RevealProfileFavorite(std::string_view id) {
 
 void WorkspaceShell::OpenExtensionsSettings() {
   OpenGeneralSettings();
-  if (general_widget_ && general_widget_->IsVisible()) SelectPreferenceCategory(5);
+  if (general_widget_ && general_widget_->IsVisible())
+    SelectPreferenceCategory(kExtensionsPreferenceCategory);
 }
 void WorkspaceShell::OpenPrivacySettings() {
   OpenGeneralSettings();
