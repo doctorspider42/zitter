@@ -25,6 +25,7 @@
 #include "base/scoped_observation.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "base/unguessable_token.h"
 #include "base/values.h"
 #include "base/task/sequenced_task_runner.h"
@@ -181,7 +182,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
                base::span<const std::unique_ptr<ProfileContext>> extra_profiles = {},
                os_crypt_async::OSCryptAsync* os_crypt = nullptr,
                base::FilePath user_download_directory = {},
-               std::string download_safe_browsing_key = {});
+               std::string download_safe_browsing_key = {},
+               bool offer_startup_import = false,
+               std::string startup_import_probe = {});
   ~WorkspaceLab() override;
 
   void Start(base::OnceCallback<void(bool)> done,
@@ -334,6 +337,19 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool ResetPinnedUrl(std::string id);
   bool CanEditWorkspace() const;
   bool CreatePinnedFolder(std::string workspace, std::string parent, std::string title);
+  bool ConfigureGitHubFolder(std::string workspace, std::string folder,
+                             std::string title, prototype::GitHubLiveFolder config,
+                             std::string token, bool remove_token);
+  bool SaveGitHubFolder(std::string workspace, std::string profile,
+                        std::optional<prototype::PinnedItem> previous,
+                        prototype::PinnedItem folder);
+  void RefreshGitHubFolder(std::string workspace, std::string folder);
+  void ScheduleGitHubRefresh();
+  void StartGitHubRefresh(std::string folder, bool manual);
+  bool GitHubRefreshIsCurrent() const;
+  void FetchGitHubResults(std::string token);
+  void GitHubResultsReceived(std::string token, std::optional<std::string> body);
+  void FinishGitHubRefresh(bool ok);
   bool RenamePinnedFolder(std::string workspace, std::string id, std::string title);
   bool RemovePinnedFolder(std::string workspace, std::string id, bool contents);
   std::vector<prototype::PinnedItem> WorkspacePins(size_t workspace) const;
@@ -423,6 +439,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool CanImportBrowser() const;
   void PreviewBrowserImport(prototype::BrowserImportOptions options);
   void InvalidateBrowserImport();
+  void DismissBrowserImport();
   bool ApplyBrowserImport();
   void ImportDirectoriesReady(std::shared_ptr<prototype::BrowsingImportData> data);
   void ImportedBrowsingDataWritten(prototype::BrowsingImportResult result);
@@ -483,6 +500,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
                                 uint64_t generation, base::DictValue result);
   bool ShowAssistant(bool hover);
   const prototype::AssistantSettings& assistant_settings() const override;
+  void SetAssistantSettings(prototype::AssistantSettings settings) override;
+  content::WebContents* AssistantCurrentPage() override;
+  bool AssistantPageActionsAvailable() override;
+  void RunAssistantPageAction(int command) override;
   content::BrowserContext* AssistantBrowserContext() const override;
   std::string AssistantProfileId() const override;
   base::DictValue AssistantContext(const prototype::AssistantPermissions&) override;
@@ -635,6 +656,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool CheckSessionProbeSetup() const;
   void CheckSessionProbePage();
   void AdvanceSessionProbe();
+  void RunGitHubFolderProbe(std::string phase);
+  void CheckGitHubFolderProbe(std::string phase, base::TimeTicks deadline);
   void CheckCommandCenterProbe(bool reopening, base::TimeTicks deadline);
   void CheckClosedTabProbe(size_t phase, base::TimeTicks deadline);
   void CheckFilterListsProbe(bool restart, size_t phase, base::TimeTicks deadline);
@@ -644,6 +667,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void CheckFindReloadProbe(int phase, base::TimeTicks deadline);
   void CheckRssProbe(bool reopening, bool subscribed, base::TimeTicks deadline);
   void RunBrowserImportProbe(bool repeating);
+  void StartInteractiveImportProbe(std::string mode, base::TimeTicks deadline);
   void CheckInteractiveImportProbe(bool apply, bool repeat, base::TimeTicks deadline);
   void VerifyInteractiveImportedCookies();
   void FinishInteractiveImportProbe();
@@ -874,6 +898,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::unique_ptr<PendingBrowserImport> browser_import_;
   std::optional<prototype::ArcImport> browser_import_preview_;
   size_t browser_import_generation_ = 0;
+  bool startup_import_pending_ = false;
+  const std::string startup_import_probe_;
   std::unique_ptr<PrivateSession> private_session_;
   size_t pending_private_windows_ = 0;
   base::RepeatingCallback<bool(std::string)> native_menu_probe_;
@@ -1058,6 +1084,12 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::vector<std::vector<Tab>> tabs_;
   std::vector<std::vector<ClosedTab>> closed_tabs_;
   std::vector<std::vector<prototype::PinnedItem>> pins_;
+  struct GitHubRefresh;
+  std::unique_ptr<GitHubRefresh> github_refresh_;
+  base::OneShotTimer github_timer_;
+  using GitHubFolderKey = std::pair<std::string, std::string>;
+  GitHubFolderKey github_scheduled_folder_;
+  std::map<GitHubFolderKey, base::TimeTicks> github_next_refresh_;
   ProfileFavorites profile_favorites_;
   std::vector<WorkspaceSplit> splits_;
   std::vector<size_t> selected_;

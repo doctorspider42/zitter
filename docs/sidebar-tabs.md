@@ -9,3 +9,7 @@ Drag a tab to the top of the sidebar (the address and New Tab area), or onto an 
 Favicons come from Chromium’s page favicon driver and the profile’s local favicon database. The compositor and Metal use the same clipped bitmap recipe. Pages without an available favicon show a letter from the site name; RSS keeps its RSS icon. Favorites retain their titles in tooltips and accessibility labels.
 
 In the Command Center, run `> Refresh all favicons`. Zitter fetches page markup and icons for tabs and pinned pages in the current workspace, bypassing the cache. It updates the profile’s favicon database without reloading the open pages. Missing icons fall back to letters.
+
+When importing from Arc, Chrome, Edge, Brave, Firefox, Opera, or Vivaldi, Zitter reads cached PNG icons for pins and favorites from the source profile's favicon database. For uncached icons it tries the site's default favicon resource in the background. The imported links stay unopened and the current workspace stays selected. Reimporting also fills in icons for previously imported Spaces.
+
+GitHub Live Folders use a folder icon with a star in the sidebar.

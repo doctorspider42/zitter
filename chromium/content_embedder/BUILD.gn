@@ -228,6 +228,7 @@ lab_deps = [
   "//third_party/zlib/google:zip",
   "//ui/base",
   "//ui/base/clipboard",
+  "//ui/content_accelerators",
   "//ui/color",
   "//ui/native_theme",
   "//ui/display",

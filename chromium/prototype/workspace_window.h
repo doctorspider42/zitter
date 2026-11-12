@@ -17,6 +17,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/browsing_data_remover.h"
 #include "base/timer/timer.h"
+#include "chromium/prototype/night_shift.h"
 #include "base/time/clock.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/memory/raw_ptr.h"
@@ -102,13 +103,16 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // The first run's wizard instead of the bare import offer.
   void ShowWelcome();
   void WelcomeFinished(WorkspaceShell::WelcomeResult result);
-  void StartWelcomeImport(ImportBrowser browser, base::OnceCallback<void(bool, std::u16string)> done);
+  void StartWelcomeImport(BrowserImportOptions options, base::OnceCallback<void(bool, std::u16string)> done);
 #endif
   bool import_ready() const { return pending_import_.has_value() && pending_import_->error.empty(); }
   const ArcImport* import_preview() const { return pending_import_ ? &*pending_import_ : nullptr; }
   const std::vector<PinnedItem>& pinned_items(std::string_view workspace_id) const;
   void OpenPinnedItem(std::string id);
   bool CreatePinnedFolder(std::string workspace, std::string parent, std::string name);
+  bool ConfigureGitHubFolder(std::string workspace, std::string folder, std::string name,
+                             GitHubLiveFolder config, std::string token, bool remove_token);
+  void RefreshGitHubFolder(std::string workspace, std::string folder);
   bool RenamePinnedFolder(std::string workspace, std::string id, std::string name);
   bool RemovePinnedFolder(std::string workspace, std::string id, bool contents);
   // Undo of a folder removal: puts the workspace's earlier pins back.
@@ -149,7 +153,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowRss();
   RssPanel* rss_panel() const;
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
-  void ShowAssistant(bool hover = false);
+  void ShowAssistant();
   void NewAssistantConversation();
   // Creates the panel hidden, so its scheduled tasks run.
   void EnsureAssistant();
@@ -157,8 +161,14 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void AssistantStateChanged() override;
   // The toolbar button: shows or hides the panel.
   void ToggleAssistantFromBar();
+  // The page quick actions (0-4), shown as suggestions on a new conversation;
+  // 6 opens the assistant settings.
+  void RunAssistantPageAction(int command) override;
+  bool AssistantPageActionsAvailable() override;
+  content::WebContents* AssistantCurrentPage() override;
   // Opens the assistant and sends `prompt` (the shield's "block more").
   void AskAssistant(std::u16string prompt);
+  void PrepareNightShiftRepair(content::WebContents* page);
   // Settings → Blokowanie reklam, for the active profile.
   base::DictValue ReadAdBlocking();
   std::string WriteAdBlocking(base::DictValue command);
@@ -175,7 +185,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
                      base::OnceCallback<void(base::Value)> done, bool user_confirmed = false,
                      std::string background = {}) override;
   const AssistantSettings& assistant_settings() const override;
-  void SetAssistantSettings(AssistantSettings settings);
+  void SetAssistantSettings(AssistantSettings settings) override;
   // Settings rows for backends and models (Settings → Asystent AI).
   base::DictValue AssistantSettingsForShell();
   void WriteAssistantSettings(base::DictValue value);
@@ -240,7 +250,9 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool DuplicateTab(size_t index);
   bool DuplicatePin(std::string id);
   bool ReloadWorkspaceFavicons(std::string workspace);
-  bool workspace_favicons_pending_for_testing() const { return !favicon_refreshing_.empty(); }
+  bool workspace_favicons_pending_for_testing() const {
+    return import_favicon_reads_ || !favicon_refreshing_.empty() || !import_favicon_queue_.empty();
+  }
   ExtensionsBar* extensions_bar() const { return extensions_bar_; }
   bool OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split = false);
   WorkspaceShell* shell() const override;
@@ -418,6 +430,12 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   static views::WebView* LeaveSplit(Host& host, views::WebView* view);
   void ApplyPanes(const Host& host);
   bool InsertPin(std::string workspace, PinnedItem item, std::string before);
+  void SaveGitHubFolder(std::string workspace, std::string folder, std::string name,
+                        GitHubLiveFolder config);
+  void ScheduleGitHubRefresh();
+  void StartGitHubRefresh();
+  void FetchGitHubResults(std::string token);
+  void FinishGitHubRefresh(bool ok);
   base::DictValue CaptureHost(const Host& host) const;
   bool RestoreHost(Host& host, const base::DictValue& entry);
   void ReleaseHost(Host& host);
@@ -452,12 +470,31 @@ class WorkspaceWindow final : public WorkspaceRuntime,
     std::set<views::WebView*> popup_tabs;
     std::map<std::string, raw_ptr<views::WebView>> pin_tabs;
     std::optional<base::DictValue> sleeping;
+    // Tabs most recently shown first, for Ctrl+Tab. Entries may outlive their
+    // tab and are only compared, never dereferenced; RecentTabs() prunes them.
+    std::vector<views::WebView*> recent;
   };
   WorkspaceModel model_;
   raw_ptr<AssistantPanel> assistant_ = nullptr;
   base::CallbackListSubscription ad_blocking_changed_;
   std::map<std::string, std::unique_ptr<views::ViewTracker>> assistant_targets_;
   AssistantSettings assistant_settings_;
+  base::WeakPtr<content::WebContents> night_shift_target_;
+  GURL night_shift_url_;
+  std::string night_shift_document_;
+  std::string night_shift_request_;
+  base::ListValue night_shift_candidates_;
+  // Night Shift for the whole app (design: Night Shift · ustawienia).
+  NightShiftConfig night_shift_config_;
+  // Profile id -> config generation already written into its extension.
+  std::map<std::string, int> night_shift_pushed_;
+  int night_shift_generation_ = 0;
+  void PushNightShiftConfig(Profile* profile);
+  // Profiles whose bar hides the Night Shift moon (unpinned in the menu).
+  std::set<std::string> night_shift_hidden_;
+  std::string ProfileIdOf(Profile* profile) const;
+  void ApplyNightShiftSettings(base::DictValue value);
+  std::string NightShiftSettingsState();
   struct AssistantBackgroundPage {
     AssistantBackgroundPage();
     AssistantBackgroundPage(AssistantBackgroundPage&&);
@@ -520,14 +557,41 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   std::vector<std::pair<std::string, std::string>> jump_list_spaces_;
 #endif
   std::string starter_workspace_id_;
+  bool starter_has_imported_passwords_ = false;
   bool import_replaces_starter_ = false;
   size_t import_preview_generation_ = 0;
   std::map<std::string, std::vector<PinnedItem>> pins_;
+  using GitHubFolderKey = std::pair<std::string, std::string>;
+  struct GitHubRefresh {
+    GitHubFolderKey key;
+    std::string profile_id;
+    GitHubLiveFolder config;
+    std::vector<std::string> queries;
+    std::vector<PinnedItem> results;
+    bool manual = false;
+  };
+  base::OneShotTimer github_timer_;
+  std::map<GitHubFolderKey, base::TimeTicks> github_next_refresh_;
+  std::optional<GitHubFolderKey> github_manual_refresh_;
+  std::optional<GitHubRefresh> github_refresh_;
+  std::unique_ptr<network::SimpleURLLoader> github_loader_;
   mutable std::map<std::string, std::vector<PinnedItem>> combined_pins_;
   std::map<std::pair<std::string, std::string>, std::vector<uint32_t>> favicon_cache_;
   using FaviconKey = std::pair<std::string,std::string>;
   std::map<FaviconKey,uint64_t> favicon_generations_;
-  std::set<FaviconKey> favicon_refreshing_;
+  std::map<FaviconKey, bool> favicon_refreshing_;  // Whether to discard an icon on failure.
+  struct ImportedFaviconSource {
+    std::unique_ptr<ScopedProfileKeepAlive> lease;
+    std::unique_ptr<content::WebContents> page;
+  };
+  std::set<FaviconKey> import_favicon_queue_;
+  size_t import_favicon_reads_ = 0;
+  std::map<std::string, ImportedFaviconSource> import_favicon_sources_;
+  void QueueImportedFavicons(const ArcImport& source);
+  void PumpImportedFavicons();
+  void StartWorkspaceFavicon(Profile* profile, std::string profile_id,
+                             content::WebContents* source, GURL url,
+                             GURL known_icon, bool force);
   void FetchWorkspaceFavicon(Profile* profile,
                              base::WeakPtr<content::WebContents> source,
                              FaviconKey key, uint64_t generation, GURL known_icon);
@@ -547,6 +611,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool import_loading_ = false;
   std::vector<std::string> import_new_profile_ids_;
   std::vector<std::string> import_new_workspace_ids_;
+  std::vector<GitHubFolderKey> import_upgraded_github_folders_;
   base::FilePath configuration_path_;
   scoped_refptr<base::SequencedTaskRunner> config_runner_;
   gfx::Rect windowed_bounds_;
@@ -572,6 +637,21 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   struct ClosedTab { std::string workspace_id, profile_id; GURL url; std::u16string title; base::Time closed_at; };
   std::vector<ClosedTab> closed_tabs_;
   std::set<int> consumed_keys_;
+  // Ctrl+Tab walks tabs in most-recently-used order while Ctrl is held; the
+  // tab shown when Ctrl goes up becomes the most recent one.
+  struct TabCycle {
+    std::string workspace_id;
+    std::vector<views::WebView*> order;
+    size_t position = 0;
+    base::TimeTicks last_step;
+  };
+  std::optional<TabCycle> tab_cycle_;
+  base::RepeatingTimer tab_cycle_timer_;
+  void NoteRecentTab();
+  std::vector<views::WebView*> RecentTabs(const Host& host) const;
+  void CycleRecentTab(bool backwards);
+  void CheckTabCycle();
+  void FinishTabCycle();
   base::OneShotTimer session_timer_;
   base::OneShotTimer preconnect_timer_;
   std::string last_preconnect_profile_;

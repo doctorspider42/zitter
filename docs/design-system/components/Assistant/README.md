@@ -18,8 +18,10 @@ focused exception to the browser chrome's generally flat color treatment.
   13 DIP body text, 12 DIP role labels. User messages repeat their chips. Browser
   activity uses quiet status text.
 - Composer: 18 DIP radius, unframed 14 DIP editor, a wrapping row of 24 DIP chips
-  above it, then the tool row: `@`, Deep research and Background toggles, the model
-  chip with a chevron and the 36 DIP primary send/stop action.
+  above it, then the tool row with 28 DIP icon actions for `@`, Deep research and
+  Background, the model chip with a chevron and the 36 DIP primary send/stop action.
+  The Background action keeps its width during a run and describes its current
+  action in its accessible name and tooltip.
 - Chips: 6 DIP radius, a 16 DIP letter tile in the page's color (tools: an accent
   glyph), 12 DIP medium text. Pages have an accent tint, tools an outline. An 18 DIP
   × button removes the chip and is named “Remove <title>”.

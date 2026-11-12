@@ -353,6 +353,9 @@ Notes:
   Invoke work. Keyboard: Tab, Enter, Space, Esc.
 ## Zitter Dev for side-by-side testing
 
+For the incremental component browser and standalone setup workflow, see the
+[local Dev install skill](../.agents/skills/zitter-dev-install/SKILL.md).
+
 Enable `zitter_dev_build = true` in a Windows build directory's `args.gn`. Start
 from `chromium/windows-release.args.gn` and save the arguments to
 `.chromium/src/out/ZitterWinDev/args.gn`. Use the toolchain environment above.
@@ -371,8 +374,9 @@ python tools/package_win.py --out .chromium/src/out/ZitterWinDev --setup .chromi
 ```
 
 The unsigned `Zitter-Dev-*-win-x64-setup.exe` installs for the current user under
-`%LOCALAPPDATA%\Programs\Zitter Dev`. Dev has its own Start menu shortcuts,
-taskbar identity, Apps & features entry and browsing data under
+`%LOCALAPPDATA%\Programs\Zitter Dev`. Dev uses a lime version of the Windows app
+and setup icon. It has its own Start menu shortcuts, taskbar identity,
+Apps & features entry and browsing data under
 `%LOCALAPPDATA%\Zitter Dev`. Explicit `--user-data-dir` paths must be inside
 that directory. Install a newer local build over it to keep Dev data.
 
@@ -403,13 +407,20 @@ updates and is intended for local testing.
   first space. The default-browser button opens Zitter's Default apps page for
   either a per-user or machine installation, with instructions for Windows 10
   and 11. Returning to the wizard checks both HTTP and HTTPS associations.
-  Import runs inside the wizard and reports success or a retryable error there.
-  Selecting import hides the first-space name/color step because the imported
-  data supplies the spaces. Skipping import keeps that step.
+  Each browser card has a chevron for bookmark and history options and an
+  import action in its header. The action imports bookmarks while collapsed
+  and applies the selected options while expanded. The wizard sizes the list
+  to show the detected browsers when screen space allows. A scrollbar appears
+  if the list overflows. Passwords can
+  be imported separately from a CSV file into the current profile.
+  Completed sources are checked off, and a failed source can be retried in
+  place. Continue closes the wizard after a successful browser import.
+  Continuing without a browser import opens the first-space name and color step.
 - The installer offers “Launch Zitter after installation”, enabled by default
-  for interactive installs and updates. `--no-launch` disables it; `--quiet`
-  always suppresses launch. After an elevated install, the desktop shell launches
-  the browser as the signed-in user.
+  for interactive installs and updates. `--no-launch` disables it. Quiet setup
+  launches Zitter after a successful browser-initiated update. For an all-users
+  update, the original user session waits for elevated setup to finish, then
+  starts the browser.
 - Web notifications: a page's request goes through Zitter's site permission
   prompt, and once allowed `new Notification(…)` shows as a native Windows
   toast (Chromium's Windows notification platform, attributed to the site).

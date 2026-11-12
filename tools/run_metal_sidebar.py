@@ -71,7 +71,7 @@ def main():
     parser.add_argument("--port", type=int, default=8767)
     parser.add_argument("--raster", choices=["compositor", "metal"], default="compositor",
                         help="Rust UI painting: the Chromium compositor or in-process Metal")
-    parser.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads", "history", "rss", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "ad-blocking", "menu", "app-menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop", "passwords", "site", "site-data", "permission"], help="open this panel once the window is up (UI checks)")
+    parser.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads", "history", "rss", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "night-shift", "ad-blocking", "menu", "app-menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop", "passwords", "site", "site-data", "permission"], help="open this panel once the window is up (UI checks)")
     parser.add_argument("--load-extension", action="append", type=Path, default=[],
                         help="load an unpacked extension (UI checks of the extensions bar)")
     parser.add_argument("--scale", type=float, help="force this device scale factor (HiDPI checks, e.g. 1.25)")

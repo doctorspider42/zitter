@@ -34,7 +34,7 @@ unsaved-form checks. After shutdown completes, a separate helper waits for the
 browser to exit, checks the cached installer again, and runs setup against the
 same registered installation. Setup waits for the helper to exit and refuses to
 overwrite a running browser. An update preserves existing shortcuts and browsing
-data. It does not restart the browser automatically. If shutdown is cancelled,
+data. After setup succeeds, it starts the updated browser. If shutdown is cancelled,
 the update stays available; it is installed when the requested shutdown finally
 completes. If the browser is killed or another instance prevents installation,
 the next successful check can reuse the verified cached installer and offer it

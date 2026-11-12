@@ -7,6 +7,7 @@
 #include <set>
 #include <string>
 
+#include "base/base64.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -57,7 +58,12 @@ bool IsValidSession(const base::DictValue& session) {
                                          session.contains("clean_address_copies") +
                                          session.contains("shift_click_peek") +
                                          session.contains("assistant") +
-                                         session.contains("night_shift")) {
+                                         session.contains("night_shift") +
+                                         session.contains("startup_import_pending")) {
+    return false;
+  }
+  if (session.contains("startup_import_pending") &&
+      !session.FindBool("startup_import_pending").value_or(false)) {
     return false;
   }
   if (session.contains("night_shift") && !session.FindDict("night_shift"))
@@ -322,7 +328,7 @@ std::optional<std::vector<prototype::PinnedItem>> ReadPins(
   std::set<std::string_view> folders;
   for (const auto& value : list) {
     const auto* pin = value.GetIfDict();
-    if (!pin || pin->size() != 6)
+    if (!pin || pin->size() != 6u + pin->contains("github"))
       return std::nullopt;
     const auto* id = pin->FindString("id");
     const auto* title = pin->FindString("title");
@@ -343,7 +349,23 @@ std::optional<std::vector<prototype::PinnedItem>> ReadPins(
       return std::nullopt;
     if (*folder)
       folders.insert(*id);
-    pins.push_back({*id, *parent, *title, target, *folder, *profile_pin});
+    prototype::PinnedItem item{*id, *parent, *title, target, *folder, *profile_pin};
+    if (pin->contains("github")) {
+      const auto* github = pin->FindDict("github");
+      if (!*folder || !github || github->size() != 3)
+        return std::nullopt;
+      const auto* login = github->FindString("login");
+      const auto* repository = github->FindString("repository");
+      const auto* token = github->FindString("encrypted_token");
+      std::string ciphertext;
+      if (!login || login->size() > 39 || !repository ||
+          repository->size() > 140 || !token || token->size() > 4096 ||
+          (!token->empty() && !base::Base64Decode(*token, &ciphertext))) {
+        return std::nullopt;
+      }
+      item.github = prototype::GitHubLiveFolder{*login, *repository, *token};
+    }
+    pins.push_back(std::move(item));
   }
   return pins;
 }
@@ -409,13 +431,20 @@ std::optional<ProfileFavorites> ReadContentProfileFavorites(
 base::ListValue WriteWorkspacePins(const std::vector<prototype::PinnedItem>& pins) {
   base::ListValue result;
   for (const auto& pin : pins) {
-    result.Append(base::DictValue()
-                      .Set("id", pin.id)
-                      .Set("parent_id", pin.parent_id)
-                      .Set("title", pin.title)
-                      .Set("url", pin.url.spec())
-                      .Set("folder", pin.folder)
-                      .Set("profile_pin", pin.profile_pin));
+    auto item = base::DictValue()
+                    .Set("id", pin.id)
+                    .Set("parent_id", pin.parent_id)
+                    .Set("title", pin.title)
+                    .Set("url", pin.url.spec())
+                    .Set("folder", pin.folder)
+                    .Set("profile_pin", pin.profile_pin);
+    if (pin.github) {
+      item.Set("github", base::DictValue()
+                             .Set("login", pin.github->login)
+                             .Set("repository", pin.github->repository)
+                             .Set("encrypted_token", pin.github->encrypted_token));
+    }
+    result.Append(std::move(item));
   }
   return result;
 }

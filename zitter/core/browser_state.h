@@ -66,7 +66,7 @@ struct ProfileInfo {
   bool operator==(const ProfileInfo&) const = default;
 };
 
-enum class ImportBrowser { kArc, kChrome, kEdge, kBrave };
+enum class ImportBrowser { kArc, kChrome, kEdge, kBrave, kFirefox, kOpera, kVivaldi };
 
 struct BrowserImportOptions {
   ImportBrowser browser = ImportBrowser::kArc;

@@ -35,10 +35,14 @@
 #include "base/uuid.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/base/models/dialog_model.h"
 #include "ui/compositor/layer.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/events/event.h"
@@ -46,6 +50,9 @@
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/controls/textarea/textarea.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/controls/webview/webview.h"
+#include "ui/views/bubble/bubble_dialog_model_host.h"
+#include "ui/views/window/dialog_delegate.h"
 #include "ui/views/event_monitor.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/controls/scrollbar/overlay_scroll_bar.h"
@@ -57,6 +64,19 @@
 
 namespace zitter::prototype {
 namespace {
+struct ShortcutAccess {
+  bool AssistantPermissions::*permission;
+  const char16_t* label;
+};
+// Positions are persisted in the shortcut permission mask.
+constexpr auto kShortcutAccess = std::to_array<ShortcutAccess>({
+    {&AssistantPermissions::pages, u"Odczyt stron"},
+    {&AssistantPermissions::web, u"Wyszukiwanie w sieci"},
+    {&AssistantPermissions::actions, u"Działania w przeglądarce"},
+    {&AssistantPermissions::tabs, u"Odczyt otwartych kart"},
+    {&AssistantPermissions::history, u"Odczyt historii przeglądania"},
+});
+static_assert(kAssistantShortcutAccessMask == (1 << kShortcutAccess.size()) - 1);
 // Letter tiles for pages take a stable color from their host.
 constexpr std::array<uint32_t, 6> kPageColors = {0xffff8a66, 0xff5cc8ff, 0xffffc35c, 0xffff7eb6, 0xff5fe0b8, 0xffb4a6ff};
 std::u16string Fold(std::u16string_view text) { return base::i18n::ToLower(text); }
@@ -155,7 +175,8 @@ base::DictValue AssistantTask::ToValue() const {
   auto time = [](base::Time t) { return t.is_null() ? 0.0 : t.InMillisecondsFSinceUnixEpoch(); };
   return base::DictValue().Set("id", id).Set("name", name).Set("instruction", instruction).Set("provider", provider).Set("model", model)
       .Set("profile", profile).Set("permissions", permissions.ToValue()).Set("kind", kind).Set("days", days).Set("minute", minute)
-      .Set("active", active).Set("last_run", time(last_run)).Set("next_run", time(next_run)).Set("last_state", last_state);
+      .Set("active", active).Set("catch_up", catch_up)
+      .Set("last_run", time(last_run)).Set("next_run", time(next_run)).Set("last_state", last_state);
 }
 std::optional<AssistantTask> AssistantTask::FromValue(const base::DictValue& value) {
   AssistantTask task;
@@ -172,6 +193,7 @@ std::optional<AssistantTask> AssistantTask::FromValue(const base::DictValue& val
   task.days = value.FindInt("days").value_or(0) & 0x7f;
   task.minute = std::clamp(value.FindInt("minute").value_or(8 * 60), 0, 24 * 60 - 1);
   task.active = value.FindBool("active").value_or(true);
+  task.catch_up = value.FindBool("catch_up").value_or(true);
   auto time = [&](const char* key) { const double ms = value.FindDouble(key).value_or(0); return ms > 0 ? base::Time::FromMillisecondsSinceUnixEpoch(ms) : base::Time(); };
   task.last_run = time("last_run"); task.next_run = time("next_run");
   task.last_state = std::clamp(value.FindInt("last_state").value_or(0), 0, 3);
@@ -242,7 +264,9 @@ AssistantPanel::Message::~Message() = default;
 AssistantPanel::Session::Session() = default;
 AssistantPanel::Session::~Session() = default;
 
-AssistantPanel::AssistantPanel(AssistantHost* host) : host_(host) {
+AssistantPanel::AssistantPanel(AssistantHost* host)
+    : host_(host),
+      observed_default_permissions_(host->assistant_settings().defaults) {
   GetViewAccessibility().SetRole(ax::mojom::Role::kComplementary);
   GetViewAccessibility().SetName(T(u"Asystent AI"));
   SetBackground(CreateAssistantBackground());
@@ -252,17 +276,24 @@ AssistantPanel::AssistantPanel(AssistantHost* host) : host_(host) {
   auto weak=weak_factory_.GetWeakPtr();
 
   header_=AddChildView(std::make_unique<views::View>());
-  auto* identity=header_->AddChildView(std::make_unique<views::View>());
-  identity->AddChildView(CreateAssistantIdentity());
-  subtitle_=identity->AddChildView(scene_->MakeText(T(u"Nowa sesja"),false,false,0));
-  scene_->SetTextStyle(subtitle_,6,PanelScene::Tone::kMuted);
-  SetSidebarPanelLayout(identity,true,gfx::Insets::TLBR(0,0,0,0),0);
-  sessions_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSessions)),AssistantGlyph::kHistory,T(u"Sesje")));
-  tasks_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kTasks)),AssistantGlyph::kCalendar,T(u"Zadania zaplanowane")));
-  access_action_=header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kAccess)),AssistantGlyph::kShield,T(u"Dostęp tej sesji")));
-  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::NewSession,weak)),AssistantGlyph::kPlus,T(u"Nowa sesja")));
-  pin_action_=header_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->SetPinned(!self->pinned());},base::Unretained(this)),AssistantGlyph::kPin,T(u"Przypnij")));
-  SetSidebarPanelLayout(header_,false,gfx::Insets(),4,identity,true);
+  auto* title_row=header_->AddChildView(std::make_unique<views::View>());
+  auto* identity=title_row->AddChildView(CreateAssistantIdentity());
+  title_row->AddChildView(CreateAssistantIcon(
+      Later(base::BindRepeating(&AssistantPanel::NewSession, weak)),
+      AssistantGlyph::kPlus, T(u"Nowa sesja")));
+  access_action_ = title_row->AddChildView(CreateAssistantIcon(
+      Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kAccess)),
+      AssistantGlyph::kShield, T(u"Dostęp tej sesji")));
+  title_row->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSettings)),AssistantGlyph::kGear,T(u"Ustawienia asystenta")));
+  title_row->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::Hide,weak)),AssistantGlyph::kClose,T(u"Zamknij")));
+  SetSidebarPanelLayout(title_row,false,gfx::Insets(),4,identity,true);
+  auto* navigation=header_->AddChildView(std::make_unique<views::View>());
+  sessions_action_ = navigation->AddChildView(CreateAssistantIcon(
+      Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kSessions)),
+      AssistantGlyph::kHistory, T(u"Historia")));
+  tasks_action_=navigation->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kTasks)),AssistantGlyph::kCalendar,T(u"Zadania zaplanowane")));
+  SetSidebarPanelLayout(navigation,false,gfx::Insets(),4);
+  SetSidebarPanelLayout(header_,true,gfx::Insets(),6);
 
   background_=AddChildView(std::make_unique<views::View>());
   SetSidebarPanelLayout(background_,true,gfx::Insets(),6);
@@ -288,7 +319,7 @@ AssistantPanel::AssistantPanel(AssistantHost* host) : host_(host) {
   },base::Unretained(this)),AssistantGlyph::kAt,T(u"Wstaw kartę lub narzędzie")));
   // The tools are toggles: they insert or remove the same chips as @.
   research_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("research")),AssistantGlyph::kSpark,T(u"Deep research")));
-  background_chip_=tools_->AddChildView(CreateAssistantChip(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("background")),AssistantGlyph::kLayers,T(u"W tle")));
+  background_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("background")),AssistantGlyph::kLayers,T(u"W tle")));
   model_chip_=tools_->AddChildView(CreateAssistantChip(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kModel)),AssistantGlyph::kSpark,u""));
   send_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->Send(false);},base::Unretained(this)),AssistantGlyph::kArrow,T(u"Wyślij"),true));
   stop_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::Stop,base::Unretained(this)),AssistantGlyph::kStop,T(u"Stop"),true));
@@ -301,6 +332,7 @@ AssistantPanel::AssistantPanel(AssistantHost* host) : host_(host) {
 }
 
 AssistantPanel::~AssistantPanel() {
+  if (shortcut_dialog_) shortcut_dialog_->Close();
   if (save_timer_.IsRunning()) SaveSessions();
   menu_monitor_.reset();
   // Overlays left in the shell call back only through weak pointers.
@@ -310,7 +342,7 @@ AssistantPanel::~AssistantPanel() {
   // must still be released before the scene registry.
   viewport_ = nullptr;
   header_ = conversation_ = background_ = nullptr;
-  subtitle_ = sessions_action_ = tasks_action_ = access_action_ = pin_action_ = nullptr;
+  sessions_action_ = tasks_action_ = access_action_ = nullptr;
   composer_ = chips_view_ = tools_ = nullptr;
   research_chip_ = background_chip_ = model_chip_ = send_ = stop_ = nullptr;
   prompt_ = nullptr;
@@ -328,9 +360,11 @@ void AssistantPanel::Show(bool from_edge) {
   if (!host_->assistant_settings().enabled) return;
   hide_timer_.Stop();SetVisible(true); host_->shell()->LayoutAssistant(pinned_); prompt_->RequestFocus();
   unread_ = 0; NotifyBar();
+  // Opened from its button or a shortcut, the pointer is still elsewhere: an
+  // unpinned panel hides once the pointer moves and stays outside it.
   hover_check_.Stop();
   last_pointer_position_ = display::Screen::Get()->GetCursorScreenPoint();
-  pointer_exit_armed_ = from_edge || HoverBounds().Contains(last_pointer_position_);
+  pointer_exit_armed_ = HoverBounds().Contains(last_pointer_position_);
   WatchPointer();
 }
 void AssistantPanel::WatchPointer() {
@@ -361,8 +395,17 @@ void AssistantPanel::WatchPointer() {
 }
 gfx::Rect AssistantPanel::HoverBounds() const {
   auto bounds = GetBoundsInScreen();
-  bounds.Inset(gfx::Insets::TLBR(0, 0, 0, -24));
+  // The window's edge beside the panel and the gap up to its toolbar button.
+  bounds.Inset(gfx::Insets::TLBR(-48, 0, 0, -24));
   return bounds;
+}
+void AssistantPanel::Hide() {
+  // Hiding is presentation only. Drafts, open editors and pending questions
+  // remain intact, and a running task keeps working in the background.
+  hide_timer_.Stop(); hover_check_.Stop();
+  if (!GetVisible()) return;
+  CloseMenu();
+  SetVisible(false); host_->shell()->LayoutAssistant(false); NotifyBar();
 }
 bool AssistantPanel::busy() const { return selected().busy && !selected().background; }
 gfx::Size AssistantPanel::CalculatePreferredSize(const views::SizeBounds&) const {return {preferred_width_,560};}
@@ -371,10 +414,8 @@ void AssistantPanel::OnMouseEntered(const ui::MouseEvent&) {
 }
 void AssistantPanel::OnMouseExited(const ui::MouseEvent&) { pointer_exit_armed_ = true; WatchPointer(); }
 void AssistantPanel::Collapse() {
-  // Hiding is presentation only. Drafts, open editors and pending questions
-  // remain intact, and a running task keeps working in the background.
   if(pinned_||resize_start_width_)return;
-  hide_timer_.Stop();hover_check_.Stop();SetVisible(false);host_->shell()->LayoutAssistant(false);
+  Hide();
 }
 void AssistantPanel::OnResize(int amount,bool done) {
   pointer_exit_armed_ = true; WatchPointer();
@@ -390,7 +431,6 @@ void AssistantPanel::SetPinned(bool pinned) {
   last_pointer_position_ = display::Screen::Get()->GetCursorScreenPoint();
   pointer_exit_armed_ = true;
   WatchPointer();
-  UpdateAssistantButton(pin_action_, pinned ? T(u"Odepnij") : T(u"Przypnij"),pinned);
   host_->shell()->LayoutAssistant(pinned_);
 }
 AssistantPanel::Session* AssistantPanel::Find(const std::string& key, uint64_t epoch) {
@@ -441,8 +481,13 @@ void AssistantPanel::CreateSession(bool preserve_previous) {
   CloseMenu();
   // An untouched conversation is reused instead of piling up empty ones.
   const auto profile = host_->AssistantProfileId();
+  const auto& settings = host_->assistant_settings();
   for (size_t i = sessions_.size(); !preserve_previous && i-- > 0;) {
-    if (Started(*sessions_[i]) || !sessions_[i]->composer_draft.empty() || sessions_[i]->profile != profile || host_->AssistantHasBackground(sessions_[i]->key)) continue;
+    const auto& session = *sessions_[i];
+    if (Started(session) || session.night_shift || !session.composer_draft.empty() ||
+        session.profile != profile || session.permissions != settings.defaults ||
+        session.confirm_background != settings.confirm_background ||
+        host_->AssistantHasBackground(session.key)) continue;
     if (i != selected_) { if (busy()) Stop(); selected_ = i; }
     chips_.clear(); RenderChips(); RenderConversation(); UpdateControls(); UpdatePageControl();
     if (prompt_) prompt_->RequestFocus();
@@ -460,7 +505,6 @@ void AssistantPanel::CreateSession(bool preserve_previous) {
     sessions_.erase(idle);
     if (selected_ >= removed && selected_ > 0) --selected_;
   }
-  const auto& settings = host_->assistant_settings();
   auto session = std::make_unique<Session>();
   session->key = base::Uuid::GenerateRandomV4().AsLowercaseString();
   session->id = base::Uuid::GenerateRandomV4().AsLowercaseString();
@@ -607,11 +651,19 @@ void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
     selected_ += count;
   }
   if (std::ranges::any_of(sessions_, [](const auto& s) { return Started(*s); })) ScheduleSave();
-  if (const auto* tasks = saved ? saved->FindList("tasks") : nullptr)
-    for (const auto& item : *tasks)
-      if (const auto* dict = item.GetIfDict())
-        if (auto task = AssistantTask::FromValue(*dict); task && !FindTask(task->id)) tasks_.push_back(std::move(*task));
-  // A run missed while Zitter was closed happens once, shortly after start.
+  if (const auto* tasks = saved ? saved->FindList("tasks") : nullptr) {
+    for (const auto& item : *tasks) {
+      const auto* dict = item.GetIfDict();
+      auto task = dict ? AssistantTask::FromValue(*dict) : std::nullopt;
+      if (!task || FindTask(task->id)) continue;
+      if (task->active && !task->catch_up && !task->next_run.is_null() &&
+          task->next_run < scheduler_started_) {
+        task->next_run = task->kind == 3 ? base::Time() : AssistantTaskNextRun(*task, scheduler_started_);
+        ScheduleSave();
+      }
+      tasks_.push_back(std::move(*task));
+    }
+  }
   task_timer_.Start(FROM_HERE, base::Seconds(30), base::BindRepeating([](AssistantPanel* self) { self->CheckTasks(base::Time::Now()); }, base::Unretained(this)));
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce([](base::WeakPtr<AssistantPanel> self) {
     if (self) self->CheckTasks(base::Time::Now()); }, weak_factory_.GetWeakPtr()), base::Seconds(5));
@@ -658,15 +710,18 @@ void AssistantPanel::ResetRuntime() {
   for(auto& session:sessions_){session->id=base::Uuid::GenerateRandomV4().AsLowercaseString();session->auto_confirm=false;}
 }
 void AssistantPanel::RevokeAccess() {
-  CloseMenu();
   StopAll();
   selected().permissions={false,false,false,false,false,true};
   selected().auto_confirm=false;
+  std::erase_if(chips_, [](const auto& chip) { return chip.kind == "background"; });
+  RenderChips();
   ResetRuntime();UpdateControls();
   Append(selected(),base::UTF16ToUTF8(T(u"Dostęp odebrany. Zadania zatrzymane.")));
+  if (menu_ == Menu::kAccess) BuildMenu();
 }
 void AssistantPanel::SettingsChanged() {
   const auto& settings = host_->assistant_settings();
+  const auto previous = std::exchange(observed_default_permissions_, settings.defaults);
   if (!settings.enabled) {
     StopAll(); CloseMenu(); SetVisible(false); host_->shell()->LayoutAssistant(false);
     UpdatePageControl(); return;
@@ -676,8 +731,14 @@ void AssistantPanel::SettingsChanged() {
   const auto& d = settings.defaults;
   for (auto& session : sessions_) {
     auto p = session->permissions;
-    p.tabs &= d.tabs; p.pages &= d.pages; p.actions &= d.actions; p.history &= d.history; p.web &= d.web;
-    p.confirm_clicks |= d.confirm_clicks;
+    // Provider refreshes and unrelated settings writes must preserve explicit
+    // shortcut consent. Revoke when the user actually narrows a default.
+    p.tabs &= !previous.tabs || d.tabs;
+    p.pages &= !previous.pages || d.pages;
+    p.actions &= !previous.actions || d.actions;
+    p.history &= !previous.history || d.history;
+    p.web &= !previous.web || d.web;
+    p.confirm_clicks |= !previous.confirm_clicks && d.confirm_clicks;
     const bool confirm_background = session->confirm_background || settings.confirm_background;
     if (p != session->permissions || confirm_background != session->confirm_background || (!settings.background && session->background)) {
       session->permissions = p; session->confirm_background = confirm_background; narrowed = true;
@@ -710,7 +771,11 @@ void AssistantPanel::SyncSelectedModel() {
 
 // Menus ------------------------------------------------------------------
 void AssistantPanel::ToggleMenu(Menu menu) {
-  if (menu_ == menu || (menu == Menu::kTasks && menu_ == Menu::kTaskEditor)) { CloseMenu(); return; }
+  if (menu_ == menu || (menu == Menu::kTasks && menu_ == Menu::kTaskEditor)) {
+    CloseMenu();
+    if (menu == Menu::kSessions) prompt_->RequestFocus();
+    return;
+  }
   draft_instruction_ = nullptr; draft_time_ = nullptr;
   menu_ = menu; model_query_.clear(); confirm_clear_ = false;
   if (menu == Menu::kTasks) { unread_ = 0; NotifyBar(); }
@@ -743,10 +808,11 @@ void AssistantPanel::BuildMenu() {
   SetSidebarPanelLayout(surface.get(), true, gfx::Insets(6), 2);
   surface->GetViewAccessibility().SetRole(menu_ == Menu::kMention ? ax::mojom::Role::kListBox : ax::mojom::Role::kDialog);
   switch (menu_) {
-    case Menu::kSessions: surface->GetViewAccessibility().SetName(T(u"Sesje")); BuildSessionsMenu(surface.get()); break;
+    case Menu::kSessions: surface->GetViewAccessibility().SetName(T(u"Historia")); BuildSessionsMenu(surface.get()); break;
     case Menu::kTasks: surface->GetViewAccessibility().SetName(T(u"Zadania zaplanowane")); BuildTasksMenu(surface.get()); break;
     case Menu::kTaskEditor: surface->GetViewAccessibility().SetName(T(u"Zadanie zaplanowane")); BuildTaskEditor(surface.get()); break;
     case Menu::kAccess: surface->GetViewAccessibility().SetName(T(u"Dostęp tej sesji")); BuildAccessMenu(surface.get()); break;
+    case Menu::kSettings: surface->GetViewAccessibility().SetName(T(u"Ustawienia asystenta")); BuildSettingsMenu(surface.get()); break;
     case Menu::kModel: surface->GetViewAccessibility().SetName(T(u"Wybierz model")); BuildModelMenu(surface.get()); break;
     case Menu::kMention: surface->GetViewAccessibility().SetName(T(u"Wstaw kartę lub narzędzie")); BuildMentionMenu(surface.get()); break;
     case Menu::kNone: break;
@@ -761,7 +827,7 @@ void AssistantPanel::BuildMenu() {
     menu_monitor_ = views::EventMonitor::CreateWindowMonitor(menu_observer_.get(), GetWidget()->GetNativeWindow(), {ui::EventType::kMousePressed});
   }
   ReorderChildView(resize_handle_, children().size() - 1);
-  UpdateAssistantButton(sessions_action_, T(u"Sesje"), menu_ == Menu::kSessions);
+  UpdateAssistantButton(sessions_action_, T(u"Historia"), menu_ == Menu::kSessions);
   UpdateAssistantButton(tasks_action_, T(u"Zadania zaplanowane"), menu_ == Menu::kTasks || menu_ == Menu::kTaskEditor);
   UpdateControls();
   InvalidateLayout(); scene_->Schedule();
@@ -891,6 +957,13 @@ void AssistantPanel::BuildAccessMenu(views::View* body) {
   const int granted = static_cast<int>(std::ranges::count_if(grants, [](const auto& g) { return g.first; }));
   const bool started = !selected().messages.empty() || selected().busy;
   body->AddChildView(CreateAssistantEyebrow(T(u"Dostęp tej sesji"), TF(u"{} z 5", {base::NumberToString16(granted)})));
+  if (started && !granted) {
+    AssistantRow fresh;
+    fresh.title = T(u"Nowa sesja");
+    fresh.detail = T(u"Zacznij z domyślnym dostępem");
+    fresh.mark = {AssistantGlyph::kPlus, {}, SK_ColorTRANSPARENT};
+    body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::StartNewConversation, weak)), std::move(fresh)));
+  }
   for (size_t i = 0; i < grants.size(); ++i) {
     const auto& [on, label] = grants[i];
     AssistantRow row; row.title = label; row.toggle = on;
@@ -917,6 +990,58 @@ void AssistantPanel::BuildAccessMenu(views::View* body) {
   auto* spacer = actions->AddChildView(std::make_unique<views::View>());
   actions->AddChildView(CreateAssistantLink(Later(base::BindRepeating(&AssistantPanel::OpenSettings, weak)), T(u"Ustawienia")));
   SetSidebarPanelLayout(actions, false, gfx::Insets::TLBR(2, 4, 2, 0), 8, spacer, true);
+}
+void AssistantPanel::BuildSettingsMenu(views::View* body) {
+  auto weak = weak_factory_.GetWeakPtr();
+  const auto& settings = host_->assistant_settings();
+  const auto& d = settings.defaults;
+  auto* head = body->AddChildView(std::make_unique<views::View>());
+  head->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::CloseMenu, weak)), AssistantGlyph::kBack, T(u"Wróć")));
+  auto* title = head->AddChildView(CreateAssistantEyebrow(T(u"Ustawienia asystenta"), {}));
+  SetSidebarPanelLayout(head, false, gfx::Insets(), 4, title, true);
+  AssistantRow pin;
+  pin.title = T(u"Przypnij panel asystenta");
+  pin.toggle = pinned_;
+  pin.mark = {AssistantGlyph::kPin, {}, SK_ColorTRANSPARENT};
+  body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
+    if (!self) return;
+    self->SetPinned(!self->pinned());
+    self->BuildMenu();
+  }, weak)), std::move(pin)));
+  // The default model of every new conversation.
+  AssistantRow model; model.title = T(u"Model");
+  model.detail = settings.default_model.empty() ? T(u"Nie wybrano") : base::UTF8ToUTF16(settings.default_model);
+  body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kModel)), std::move(model)));
+  const std::array<std::tuple<bool, std::u16string, std::u16string>, 8> rows = {{
+      {d.tabs, T(u"Otwarte i przypięte karty"), T(u"Podpowiedzi po @")},
+      {d.pages, T(u"Czytanie bieżącej karty"), T(u"Treść strony trafia do rozmowy")},
+      {d.web, T(u"Szukanie w internecie"), T(u"Bez ciasteczek i logowania")},
+      {d.actions, T(u"Działania na stronach"), T(u"Klikanie i wypełnianie formularzy")},
+      {d.history, T(u"Historia przeglądania"), T(u"Tego profilu")},
+      {d.confirm_clicks, T(u"Pytaj przed kliknięciem"), T(u"Na widocznej karcie")},
+      {settings.background, T(u"Zadania w tle"), T(u"Niewidoczna karta tego profilu")},
+      {settings.confirm_background, T(u"Pytaj przed kliknięciem w tle"), T(u"Zadanie czeka w panelu")}}};
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const auto& [on, label, detail] = rows[i];
+    AssistantRow row; row.title = label; row.detail = detail; row.toggle = on;
+    body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::ToggleDefault, weak, static_cast<int>(i))), std::move(row)));
+  }
+  body->AddChildView(CreateAssistantNote(T(u"Dotyczy nowych rozmów. Węższy dostęp działa od razu.")))
+      ->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(6, 8, 6, 8));
+  auto* actions = body->AddChildView(std::make_unique<views::View>());
+  auto* spacer = actions->AddChildView(std::make_unique<views::View>());
+  actions->AddChildView(CreateAssistantLink(Later(base::BindRepeating(&AssistantPanel::OpenSettings, weak)), T(u"Połączenia AI i modele")));
+  SetSidebarPanelLayout(actions, false, gfx::Insets::TLBR(2, 4, 2, 0), 8, spacer, true);
+}
+void AssistantPanel::ToggleDefault(int index) {
+  auto settings = host_->assistant_settings();
+  auto& d = settings.defaults;
+  const std::array<bool*, 8> values = {&d.tabs, &d.pages, &d.web, &d.actions, &d.history, &d.confirm_clicks,
+                                       &settings.background, &settings.confirm_background};
+  if (index < 0 || index >= static_cast<int>(values.size())) return;
+  *values[index] = !*values[index];
+  host_->SetAssistantSettings(std::move(settings));
+  if (menu_ == Menu::kSettings) BuildMenu();
 }
 void AssistantPanel::TogglePermission(int index) {
   auto& session = selected();
@@ -1064,13 +1189,12 @@ void AssistantPanel::BuildMentionMenu(views::View* body) {
 
 // Composer: @ suggestions and chips --------------------------------------
 void AssistantPanel::MenuPressed() {
-  if (!menu_view_) return;
-  const auto point = display::Screen::Get()->GetCursorScreenPoint();
+  if (!menu_view_ || !menu_monitor_) return;
+  const auto point = menu_monitor_->GetLastMouseLocation();
   auto inside = [&](const views::View* view) { return view && view->GetVisible() && view->GetBoundsInScreen().Contains(point); };
   // The menu itself, its own toggle (which closes it) and, for @, the field it belongs to.
   if (inside(menu_view_)) return;
-  if (menu_ == Menu::kSessions && inside(sessions_action_)) return;
-  if (menu_ == Menu::kAccess && inside(access_action_)) return;
+  if (inside(header_)) return;
   if (menu_ == Menu::kModel && inside(model_chip_)) return;
   if (menu_ == Menu::kMention && inside(composer_)) return;
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<AssistantPanel> self) {
@@ -1198,26 +1322,107 @@ void AssistantPanel::Ask(std::u16string text) {
   Send(false);
 }
 std::u16string AssistantPanel::draft_for_testing() const { return std::u16string(prompt_->GetText()); }
-void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions,
-                                       bool needs_web, bool night_shift) {
+void AssistantPanel::PreparePageAction(std::u16string text, AssistantShortcut shortcut,
+                                      bool night_shift) {
+  if (shortcut_dialog_ && !shortcut_dialog_->IsClosed()) {
+    shortcut_dialog_->Activate();
+    return;
+  }
+  auto* current = host_->AssistantCurrentPage();
+  if (!current) return;
+  auto document = current->GetPrimaryMainFrame()->GetWeakDocumentPtr();
   // Keep the previous conversation and composer intact, including running work.
   const auto previous = selected().key;
   selected().composer_draft = prompt_->GetText();
   selected().composer_chips = chips_;
   CreateSession(true);
   if (selected().key == previous) return;
-  prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size()));
   selected().night_shift = night_shift;
-  if (!night_shift)
-    InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
-  PromptChanged();
-  const auto& access = selected().permissions;
-  if (access.pages && (!needs_web || access.web) && (!needs_actions || access.actions) && !selected().provider.empty()) {
-    Send(false);
-  } else {
-    ToggleMenu(Menu::kAccess);
-    prompt_->RequestFocus();
+  if (night_shift) {
+    const bool pages = selected().permissions.pages;
+    selected().permissions = {.pages = pages, .web = false};
   }
+  prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size()));
+  if (!night_shift) InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
+  PromptChanged();
+  auto& access = selected().permissions;
+  const auto& remembered = host_->assistant_settings().shortcut_access;
+  const std::string key = selected().profile + "/" + shortcut.id;
+  const auto grant = remembered.find(key);
+  const int granted = grant == remembered.end() ? 0 : grant->second;
+  int missing = 0;
+  int requested = 0;
+  std::vector<std::u16string> labels;
+  for (size_t i = 0; i < kShortcutAccess.size(); ++i) {
+    const auto [permission, label] = kShortcutAccess[i];
+    if (!(shortcut.required.*permission)) continue;
+    requested |= 1 << i;
+    if (granted & (1 << i)) access.*permission = true;
+    if (access.*permission) continue;
+    missing |= 1 << i;
+    labels.push_back(u"• " + T(label));
+  }
+  UpdateControls();
+  if (!missing) {
+    if (!selected().provider.empty()) Send(false);
+    return;
+  }
+  auto accept = base::BindRepeating(
+      [](base::WeakPtr<AssistantPanel> panel, std::string session_key, std::string grant_key,
+         content::WeakDocumentPtr document, int missing, int apply, bool remember) {
+        if (!panel || panel->selected().key != session_key ||
+            panel->selected().profile != panel->host_->AssistantProfileId() ||
+            !panel->host_->assistant_settings().enabled) return;
+        auto* page = panel->host_->AssistantCurrentPage();
+        auto* frame = document.AsRenderFrameHostIfValid();
+        if (!frame || !page || page->GetPrimaryMainFrame() != frame) return;
+        if (remember) {
+          auto settings = panel->host_->assistant_settings();
+          settings.shortcut_access[grant_key] |= missing;
+          panel->host_->SetAssistantSettings(std::move(settings));
+        }
+        for (size_t i = 0; i < kShortcutAccess.size(); ++i)
+          if (apply & (1 << i)) panel->selected().permissions.*kShortcutAccess[i].permission = true;
+        panel->UpdateControls();
+        if (!panel->selected().provider.empty()) panel->Send(false);
+      }, weak_factory_.GetWeakPtr(), selected().key, key, document, missing,
+      missing | (requested & granted));
+  auto cancel = base::BindRepeating([](base::WeakPtr<AssistantPanel> panel, const std::string& key) {
+    if (!panel || panel->selected().key != key) return;
+    panel->prompt_->SetText(u"");
+    panel->chips_.clear();
+    panel->RenderChips();
+    panel->PromptChanged();
+  }, weak_factory_.GetWeakPtr(), selected().key);
+  auto remember = std::make_shared<bool>(false);
+  auto dialog = ui::DialogModel::Builder()
+      .SetTitle(T(u"Zezwolić na dostęp?"))
+      .AddParagraph(ui::DialogModelLabel(base::JoinString(labels, u"\n")), shortcut.title)
+      .AddOkButton(base::BindOnce([](base::RepeatingCallback<void(bool)> accept,
+                                    std::shared_ptr<bool> remember) { accept.Run(*remember); },
+                                  accept, remember),
+                   ui::DialogModel::Button::Params().SetLabel(T(u"Zezwól")))
+      .AddCancelButton(base::BindOnce(cancel),
+                       ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")))
+      .SetCloseActionCallback(base::BindOnce(cancel))
+      .AddExtraButton(base::BindRepeating(
+          [](base::WeakPtr<AssistantPanel> panel, std::shared_ptr<bool> remember,
+             const ui::Event&) {
+            if (!panel || !panel->shortcut_dialog_ || panel->shortcut_dialog_->IsClosed()) return;
+            *remember = true;
+            panel->shortcut_dialog_->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+          }, weak_factory_.GetWeakPtr(), remember),
+          ui::DialogModel::Button::Params().SetLabel(T(u"Zawsze zezwalaj")))
+      .OverrideDefaultButton(ui::mojom::DialogButton::kCancel)
+      .Build();
+  auto* parent = GetWidget();
+  if (!parent) return;
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(
+      views::BubbleDialogModelHost::CreateModal(std::move(dialog), ui::mojom::ModalType::kWindow),
+      parent->GetNativeWindow(), parent->GetNativeView());
+  prompt->SetColorModeOverride(parent->color_mode_override());
+  shortcut_dialog_ = prompt->GetWeakPtr();
+  prompt->Show();
 }
 void AssistantPanel::SendForTesting(std::string text, bool background) {
   prompt_->SetText(base::UTF8ToUTF16(text)); Send(background);
@@ -1332,7 +1537,7 @@ void AssistantPanel::Send(bool background) {
   // References travel as text the model already knows: @current, @tab:, @pin:.
   std::string prompt = base::UTF16ToUTF8(text);
   std::string references;
-  for (const auto& chip : chips_) if (!session.night_shift && IsPage(chip)) references += (references.empty() ? "" : ", ") + chip.ref + " (" + base::UTF16ToUTF8(chip.title) + ")";
+  if (!session.night_shift) for (const auto& chip : chips_) if (IsPage(chip)) references += (references.empty() ? "" : ", ") + chip.ref + " (" + base::UTF16ToUTF8(chip.title) + ")";
   if (!references.empty()) prompt += (prompt.empty() ? "" : "\n\n") + std::string("Referenced pages: ") + references;
   if (prompt.empty()) prompt = research ? "Research this." : "Continue.";
   if (in_background && !host_->AssistantHasBackground(session.key) && !host_->AssistantStartBackground(session.key, {}, GURL())) {
@@ -1354,7 +1559,8 @@ void AssistantPanel::Send(bool background) {
       .Set("date", base::DictValue().Set("unix_ms", static_cast<double>(base::Time::Now().InMillisecondsSinceUnixEpoch()))
            .Set("utc_offset_minutes", TimelineUtcOffsetMinutes(base::Time::Now())))
       .Set("config", base::DictValue().Set("provider", session.provider).Set("model", session.model))
-      .Set("permissions", permissions.ToValue()).Set("context", host_->AssistantContext(permissions));
+      .Set("permissions", permissions.ToValue())
+      .Set("context", session.night_shift ? base::DictValue() : host_->AssistantContext(permissions));
   base::ListValue history;
   for (size_t i = 0; i + 1 < session.messages.size(); ++i) {
     const auto& m = session.messages[i];
@@ -1859,6 +2065,7 @@ bool AssistantPanel::HandleEscape() {
   if (session.confirmation && !session.background) { Consent(session, false); return true; }
   if (busy()) { Stop(); return true; }
   if (menu_ != Menu::kNone) { CloseMenu(); return true; }
+  if (GetVisible() && !pinned_) { Hide(); return true; }
   return false;
 }
 
@@ -1929,7 +2136,7 @@ void AssistantPanel::BuildTasksMenu(views::View* body) {
   }
   if (!shown) list->AddChildView(CreateAssistantNote(T(u"Nie ma zadań. Napisz w rozmowie na przykład „co piątek wpisz mi do OneNote nowe kody z loterii”.")))
       ->SetProperty(views::kMarginsKey, gfx::Insets::VH(8, 8));
-  body->AddChildView(CreateAssistantNote(T(u"Zadania działają w tle, gdy Zitter jest otwarty, z modelem i uprawnieniami wybranymi przy zadaniu. Uruchomienie przegapione przy zamkniętym Zitterze odpala się raz po starcie.")))
+  body->AddChildView(CreateAssistantNote(T(u"Zadania działają w tle, gdy Zitter jest otwarty, z modelem i uprawnieniami wybranymi przy zadaniu.")))
       ->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(4, 8, 4, 8));
   SetSidebarPanelLayout(body, true, gfx::Insets(6), 2, menu_scroll_);
 }
@@ -1968,8 +2175,12 @@ bool AssistantPanel::SaveDraft() {
     if (task.name.empty()) task.name = task.instruction.substr(0, 60);
   }
   if (task.id.empty()) task.id = base::Uuid::GenerateRandomV4().AsLowercaseString();
-  task.next_run = task.active ? AssistantTaskNextRun(task, base::Time::Now()) : base::Time();
-  if (auto* existing = FindTask(task.id)) *existing = std::move(task); else tasks_.push_back(std::move(task));
+  auto* existing = FindTask(task.id);
+  if (!existing || task.kind != existing->kind || task.days != existing->days || task.minute != existing->minute)
+    task.next_run = task.active ? AssistantTaskNextRun(task, base::Time::Now()) : base::Time();
+  else
+    task.next_run = existing->next_run;
+  if (existing) *existing = std::move(task); else tasks_.push_back(std::move(task));
   ScheduleSave(); NotifyBar();
   menu_ = Menu::kTasks; BuildMenu();
   return true;
@@ -2023,6 +2234,13 @@ void AssistantPanel::BuildTaskEditor(views::View* body) {
   }
   const auto next = AssistantTaskNextRun(d, base::Time::Now());
   list->AddChildView(CreateAssistantNote(AssistantTaskSchedule(d) + u" · " + (next.is_null() ? T(u"wybierz co najmniej jeden dzień") : TF(u"następne {}", {WhenText(next)}))));
+  AssistantRow catch_up;
+  catch_up.title = T(u"Nadrabiaj po uruchomieniu");
+  catch_up.detail = T(u"Uruchom raz, jeśli termin minął przy zamkniętym Zitterze.");
+  catch_up.toggle = d.catch_up;
+  list->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(rebuild, weak, base::BindRepeating([](AssistantTask& task) {
+    task.catch_up = !task.catch_up;
+  }))), std::move(catch_up)));
   list->AddChildView(CreateAssistantEyebrow(T(u"Model")));
   auto* model_row = list->AddChildView(CreateAssistantFlow(4));
   model_row->AddChildView(CreateAssistantChip(Later(base::BindRepeating(rebuild, weak, base::BindRepeating([](std::vector<AssistantModel> models, AssistantTask& t) {
@@ -2249,8 +2467,20 @@ void AssistantPanel::RenderConversation() {
         self->UpdateControls();self->prompt_->RequestFocus();
       },base::Unretained(this),std::move(prompt),std::move(tool)),glyph,std::move(title),std::move(detail)));
     };
-    suggestion(AssistantGlyph::kPage,T(u"Zrozum tę stronę"),T(u"Wstawia bieżącą kartę"),T(u"Podsumuj najważniejsze informacje z tej strony."),"current");
-    suggestion(AssistantGlyph::kSearch,T(u"Znajdź coś w internecie"),T(u"Odpowiedzi z konkretnych źródeł"),T(u"Pomóż mi znaleźć informacje o "),"");
+    // The page quick actions live here, where the conversation starts.
+    if(host_->AssistantPageActionsAvailable()){
+      auto action=[&](AssistantGlyph glyph,std::u16string title,std::u16string detail,int command){
+        conversation_->AddChildView(CreateAssistantSuggestion(Later(base::BindRepeating(
+            [](base::WeakPtr<AssistantPanel> self,int command){if(self)self->host_->RunAssistantPageAction(command);},
+            weak_factory_.GetWeakPtr(),command)),glyph,std::move(title),std::move(detail)));
+      };
+      action(AssistantGlyph::kPage,T(u"Podsumuj stronę"),T(u"Najważniejsze informacje"),0);
+      action(AssistantGlyph::kCheck,T(u"Sprawdź fakty"),T(u"Z odnośnikami do źródeł"),3);
+      action(AssistantGlyph::kLayers,T(u"Wyciągnij dane"),T(u"Tabela i porównanie"),4);
+      action(AssistantGlyph::kSearch,T(u"Dodaj wyszukiwarkę"),T(u"Szukaj na tej stronie z paska"),1);
+      action(AssistantGlyph::kShield,T(u"Zablokuj reklamy"),T(u"Reguła dla tej witryny"),2);
+    }
+    suggestion(AssistantGlyph::kGlobe,T(u"Znajdź coś w internecie"),T(u"Odpowiedzi z konkretnych źródeł"),T(u"Pomóż mi znaleźć informacje o "),"");
     suggestion(AssistantGlyph::kSpark,T(u"Zbadaj temat głębiej"),T(u"Wstawia narzędzie Deep research"),T(u"Zbadaj dokładnie i porównaj "),"research");
   } else for(size_t i=0;i<messages.size();++i) {
     const auto& message=messages[i];
@@ -2366,7 +2596,6 @@ void AssistantPanel::RenderConversation() {
       conversation_->AddChildView(CreateAssistantActivity(session.status,0));
     }
   }
-  if(subtitle_)scene_->SetText(subtitle_,session.title.empty()?T(u"Nowa sesja"):session.title);
   InvalidateLayout();scene_->Schedule();
 }
 void AssistantPanel::UpdateControls() {
@@ -2391,12 +2620,18 @@ void AssistantPanel::UpdateControls() {
   background_chip_->SetVisible(true);
   background_chip_->SetEnabled(settings.background && (idle || movable));
   background_chip_->SetTooltipText(!settings.background ? T(u"Włącz pracę w tle w Ustawieniach → Asystent AI") :
-      !session.permissions.actions ? T(u"Nadaj tej sesji dostęp do działań, aby uruchomić zadanie w tle") : T(u"W tle · Alt+Enter"));
+      !session.permissions.actions ? T(u"Nadaj tej sesji dostęp do działań, aby uruchomić zadanie w tle") :
+      movable ? T(u"Dokończ w tle") : T(u"W tle · Alt+Enter"));
   UpdateAssistantButton(model_chip_, session.model.empty() ? T(u"Wybierz model") : base::UTF8ToUTF16(session.model), menu_ == Menu::kModel);
-  model_chip_->SetTooltipText(T(u"Zmień model"));
-  model_chip_->GetViewAccessibility().SetName(TF(u"Model: {}. Zmień model", {base::UTF8ToUTF16(session.model)}));
-  const int shared = static_cast<int>(session.permissions.tabs) + session.permissions.pages + session.permissions.actions + session.permissions.history;
-  UpdateAssistantButton(access_action_, shared ? TF(u"Dostęp tej sesji · {}", {base::NumberToString16(shared)}) : T(u"Dostęp tej sesji"), menu_ == Menu::kAccess || shared > 0);
+  if (!session.model.empty()) {
+    const auto label = TF(u"Model: {}. Zmień model", {base::UTF8ToUTF16(session.model)});
+    model_chip_->SetTooltipText(label);
+    model_chip_->GetViewAccessibility().SetName(label);
+  }
+  const int shared = static_cast<int>(session.permissions.tabs) + session.permissions.pages + session.permissions.actions + session.permissions.history + session.permissions.web;
+  UpdateAssistantButton(access_action_, TF(u"Dostęp · {}", {base::NumberToString16(shared)}),
+                        menu_ == Menu::kAccess);
+  access_action_->GetViewAccessibility().SetName(T(u"Dostęp tej sesji"));
   InvalidateLayout();
 }
 
@@ -2406,7 +2641,7 @@ void AssistantPanel::Layout(PassKey) {
   if (!menu_view_) return;
   const int inner = std::max(0, width() - 32);
   int w = inner, x = 16, top = 0, bottom = 0;
-  if (menu_ == Menu::kSessions || menu_ == Menu::kTasks || menu_ == Menu::kTaskEditor) {
+  if (menu_ == Menu::kSessions || menu_ == Menu::kTasks || menu_ == Menu::kTaskEditor || menu_ == Menu::kSettings) {
     menu_view_->SetBounds(16, header_->bounds().bottom() + 6, inner, std::max(0, height() - header_->bounds().bottom() - 22));
     return;
   }

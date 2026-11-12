@@ -38,6 +38,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "base/base64.h"
 #include "base/check.h"
 #include "base/containers/adapters.h"
 #include "base/command_line.h"
@@ -110,6 +111,7 @@
 #include "components/favicon/core/favicon_service_impl.h"
 #include "components/favicon_base/favicon_types.h"
 #include "content/public/browser/host_zoom_map.h"
+#include "content/public/browser/keyboard_event_processing_result.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -141,12 +143,17 @@
 #include "extensions/common/permissions/permissions_data.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_status_flags.h"
+#include "net/base/load_flags.h"
 #include "net/ssl/ssl_info.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom.h"
+#include "third_party/re2/src/re2/re2.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/ime/text_input_client.h"
@@ -160,6 +167,7 @@
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/dom_key.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/content_accelerators/accelerator_util.h"
 #include "ui/menus/simple_menu_model.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -276,6 +284,9 @@ constexpr std::array<size_t, 2> kProbeSelection = {1, 0};
 constexpr std::array<std::u16string_view, 2> kProbeTitles = {
     u"Zitter workspace probe work", u"Zitter workspace probe personal"};
 constexpr char16_t kAddressProbeQuery[] = u"Zitter workspace probe";
+constexpr char kGitHubFolderProbe[] = "zitter-content-github-folder-probe";
+constexpr char kGitHubFixtureTokenFirst[] = "zitter_fixture_first";
+constexpr char kGitHubFixtureTokenSecond[] = "zitter_fixture_second";
 constexpr char kSitePermissionProbe[] = "zitter-content-workspace-site-permission-probe";
 constexpr char kClipboardReadProbePhase[] = "prompt-read";
 constexpr char kFingerprintProbe[] = "zitter-content-workspace-fingerprint-probe";
@@ -425,6 +436,39 @@ std::vector<PinNode> PinNodes(const std::vector<prototype::PinnedItem>& pins) {
 
 bool IsValidFolderTitle(std::string_view title) {
   return !title.empty() && title.size() <= 256 && base::IsStringUTF8(title);
+}
+
+bool IsGitHubFolder(const std::vector<prototype::PinnedItem>& pins,
+                    std::string_view id) {
+  const auto item = std::ranges::find(pins, id, &prototype::PinnedItem::id);
+  return item != pins.end() && item->github.has_value();
+}
+
+bool ValidGitHubScope(const prototype::GitHubLiveFolder& config) {
+  return (!config.login.empty() || !config.repository.empty()) &&
+         (config.login.empty() || RE2::FullMatch(config.login, "[a-zA-Z0-9-]{1,39}")) &&
+         (config.repository.empty() ||
+          RE2::FullMatch(config.repository, "[a-zA-Z0-9-]{1,39}/[a-zA-Z0-9_.-]{1,100}"));
+}
+
+bool ValidGitHubToken(std::string_view token) {
+  return RE2::FullMatch(token, "[a-zA-Z0-9_]{1,512}");
+}
+
+std::string GitHubCredentialPrefix(std::string_view profile,
+                                   std::string_view workspace,
+                                   std::string_view folder) {
+  return base::StrCat(
+      {"zitter-github-folder-v1\n", profile, "\n", workspace, "\n", folder, "\n"});
+}
+
+std::string GitHubPullKey(const GURL& url) {
+  if (!url.SchemeIs("https") || url.host() != "github.com" ||
+      url.has_username() || url.has_password() || url.has_port() ||
+      !RE2::FullMatch(url.path(), "/[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+/pull/[1-9][0-9]*")) {
+    return {};
+  }
+  return base::ToLowerASCII(url.path());
 }
 
 base::DictValue WriteProfileMetadata(const ContentProfileInfo& profile) {
@@ -589,6 +633,57 @@ class ProbePasswordAuthenticator final
   base::RepeatingCallback<void(AuthenticateCallback)> on_request_;
 };
 
+constexpr std::array kPageZoomSteps = {
+    25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500};
+#if BUILDFLAG(IS_MAC)
+constexpr int kPageZoomModifier = ui::EF_COMMAND_DOWN;
+constexpr int kPageZoomWebModifier = blink::WebInputEvent::kMetaKey;
+#else
+constexpr int kPageZoomModifier = ui::EF_CONTROL_DOWN;
+constexpr int kPageZoomWebModifier = blink::WebInputEvent::kControlKey;
+#endif
+
+std::optional<int> PageZoomStep(const ui::Accelerator& accelerator) {
+  if (accelerator.modifiers() != kPageZoomModifier)
+    return std::nullopt;
+  switch (accelerator.key_code()) {
+    case ui::VKEY_OEM_PLUS:
+    case ui::VKEY_ADD:
+      return 1;
+    case ui::VKEY_OEM_MINUS:
+    case ui::VKEY_SUBTRACT:
+      return -1;
+    case ui::VKEY_0:
+    case ui::VKEY_NUMPAD0:
+      return 0;
+    default:
+      return std::nullopt;
+  }
+}
+
+void ZoomWorkspacePage(content::WebContents& page, int step) {
+  auto* map = content::HostZoomMap::GetForWebContents(&page);
+  if (step == 0) {
+    content::HostZoomMap::SetZoomLevel(&page, map->GetDefaultZoomLevel());
+    page.SetPageScale(1.f);
+    return;
+  }
+  const int current = std::lround(
+      blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(&page)) * 100);
+  int next = current;
+  if (step > 0) {
+    if (const auto larger = std::ranges::upper_bound(kPageZoomSteps, current);
+        larger != kPageZoomSteps.end()) {
+      next = *larger;
+    }
+  } else if (const auto smaller = std::ranges::lower_bound(kPageZoomSteps, current);
+             smaller != kPageZoomSteps.begin()) {
+    next = *std::prev(smaller);
+  }
+  if (next != current)
+    content::HostZoomMap::SetZoomLevel(&page, blink::ZoomFactorToZoomLevel(next / 100.0));
+}
+
 class WorkspaceWebView final : public LabWebView {
  public:
   using ShowPageMenu = base::RepeatingCallback<bool(
@@ -623,6 +718,44 @@ class WorkspaceWebView final : public LabWebView {
 
  public:
   const GURL& hovered_link_for_testing() const { return hovered_link_; }
+
+  void SetPageZoomShortcutFilter(
+      base::RepeatingCallback<bool(const ui::Accelerator&)> filter) {
+    page_zoom_shortcut_filter_ = std::move(filter);
+  }
+
+  void ContentsZoomChange(bool zoom_in) override {
+    if (auto* page = web_contents(); page && GetVisible())
+      ZoomWorkspacePage(*page, zoom_in ? 1 : -1);
+  }
+
+  content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
+      content::WebContents* source,
+      const input::NativeWebKeyboardEvent& event) override {
+    using Result = content::KeyboardEventProcessingResult;
+    using Type = blink::WebInputEvent::Type;
+    const auto accelerator = ui::GetAcceleratorFromNativeWebKeyboardEvent(event);
+    const auto key = accelerator.key_code();
+    if (event.GetType() == Type::kKeyUp && page_zoom_keys_.erase(key)) {
+      suppress_page_zoom_char_ = false;
+      return Result::HANDLED;
+    }
+    if (event.GetType() == Type::kChar && suppress_page_zoom_char_)
+      return Result::HANDLED;
+    if (event.GetType() == Type::kRawKeyDown || event.GetType() == Type::kKeyDown) {
+      page_zoom_keys_.erase(key);
+      suppress_page_zoom_char_ = false;
+      const auto step = PageZoomStep(accelerator);
+      if (step && !event.skip_if_unhandled && source && source == web_contents() &&
+          GetVisible() && page_zoom_shortcut_filter_.Run(accelerator)) {
+        page_zoom_keys_.insert(key);
+        suppress_page_zoom_char_ = true;
+        ZoomWorkspacePage(*source, *step);
+        return Result::HANDLED;
+      }
+    }
+    return LabWebView::PreHandleKeyboardEvent(source, event);
+  }
 
   void SetNavigationChangedCallback(
       base::RepeatingCallback<void(content::WebContents*)> callback) {
@@ -972,6 +1105,9 @@ class WorkspaceWebView final : public LabWebView {
   std::unique_ptr<prototype::RssPanel> rss_;
   base::RepeatingCallback<void(content::WebContents*)> navigation_changed_;
   base::RepeatingClosure presentation_changed_;
+  base::RepeatingCallback<bool(const ui::Accelerator&)> page_zoom_shortcut_filter_;
+  std::set<ui::KeyboardCode> page_zoom_keys_;
+  bool suppress_page_zoom_char_ = false;
 };
 
 content::JavaScriptDialogManager* WorkspaceWebView::GetJavaScriptDialogManager(
@@ -1043,6 +1179,19 @@ struct WorkspaceLab::PrivateSession {
   std::unique_ptr<ProfileContext> profile;
   base::CallbackListSubscription filter_ready;
   std::vector<std::unique_ptr<WorkspaceLab>> windows;
+};
+
+struct WorkspaceLab::GitHubRefresh {
+  base::UnguessableToken id = base::UnguessableToken::Create();
+  std::string workspace;
+  std::string profile;
+  std::string folder;
+  prototype::GitHubLiveFolder config;
+  bool manual = false;
+  std::vector<std::string> queries;
+  std::map<std::string, size_t> result_indexes;
+  std::vector<prototype::PinnedItem> results;
+  std::unique_ptr<network::SimpleURLLoader> loader;
 };
 
 struct WorkspaceLab::PendingBrowserImport {
@@ -1139,7 +1288,9 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                            base::span<const std::unique_ptr<ProfileContext>> extra_profiles,
                            os_crypt_async::OSCryptAsync* os_crypt,
                            base::FilePath user_download_directory,
-                           std::string download_safe_browsing_key)
+                           std::string download_safe_browsing_key,
+                           bool offer_startup_import,
+                           std::string startup_import_probe)
     : devtools_path_(temporary_root.AppendASCII("devtools")),
       session_path_(std::move(session_path)),
       user_download_directory_(std::move(user_download_directory)),
@@ -1153,7 +1304,9 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       smoke_(smoke),
       private_owner_(private_owner),
       os_crypt_(os_crypt),
-      contexts_{&work} {
+      contexts_{&work},
+      startup_import_pending_(offer_startup_import),
+      startup_import_probe_(std::move(startup_import_probe)) {
   if (personal)
     contexts_.push_back(personal);
   for (const auto& profile : extra_profiles)
@@ -1259,7 +1412,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   callbacks.invalidate_import =
       base::BindRepeating(&WorkspaceLab::InvalidateBrowserImport, weak);
   callbacks.dismiss_import =
-      base::BindRepeating(&WorkspaceLab::InvalidateBrowserImport, weak);
+      base::BindRepeating(&WorkspaceLab::DismissBrowserImport, weak);
   callbacks.apply_import = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab) { return lab && lab->ApplyBrowserImport(); },
       weak);
@@ -1371,6 +1524,18 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
         return lab && lab->CreatePinnedFolder(std::move(workspace), std::move(parent),
                                                std::move(title));
       }, weak);
+  if (!private_owner_ && !smoke_ && !session_path_.empty()) {
+    callbacks.configure_github_folder = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, std::string workspace, std::string folder,
+           std::string title, prototype::GitHubLiveFolder config,
+           std::string token, bool remove_token) {
+          return lab && lab->ConfigureGitHubFolder(
+              std::move(workspace), std::move(folder), std::move(title),
+              std::move(config), std::move(token), remove_token);
+        }, weak);
+    callbacks.refresh_github_folder =
+        base::BindRepeating(&WorkspaceLab::RefreshGitHubFolder, weak);
+  }
   callbacks.rename_folder = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string workspace, std::string id,
          std::string title) {
@@ -2270,6 +2435,14 @@ void WorkspaceLab::InvalidateBrowserImport() {
   browser_import_preview_.reset();
 }
 
+void WorkspaceLab::DismissBrowserImport() {
+  InvalidateBrowserImport();
+  if (std::exchange(startup_import_pending_, false)) {
+    RefreshShell();
+    PersistWorkspaceChanges();
+  }
+}
+
 void WorkspaceLab::PreviewBrowserImport(prototype::BrowserImportOptions options) {
   using Report = prototype::WorkspaceShell::ImportStatusReport;
   if (!CanImportBrowser() || !CanEditWorkspace()) {
@@ -2284,8 +2457,9 @@ void WorkspaceLab::PreviewBrowserImport(prototype::BrowserImportOptions options)
   report.stage = Report::Stage::kReading;
   report.browser = prototype::ImportBrowserName(options.browser);
   shell_->SetImportStatus(report, false, true);
-  const bool fixture = session_probe_url_.is_valid() &&
-      base::CommandLine::ForCurrentProcess()->HasSwitch(kInteractiveImportProbe);
+  const bool fixture = !startup_import_probe_.empty() ||
+      (session_probe_url_.is_valid() &&
+       base::CommandLine::ForCurrentProcess()->HasSwitch(kInteractiveImportProbe));
   const auto source = fixture ? session_path_.DirName().AppendASCII("BrowserImportFixture")
                               : prototype::DefaultBrowserDirectory(options.browser);
   session_writer_->PostTaskAndReplyWithResult(
@@ -2316,6 +2490,7 @@ bool WorkspaceLab::ApplyBrowserImport() {
   auto source = *browser_import_preview_;
   auto job = std::make_unique<PendingBrowserImport>();
   job->session = CaptureSession();
+  job->session.Remove("startup_import_pending");
   std::erase_if(source.spaces, [&](const auto& space) {
     return std::ranges::any_of(imported_workspace_sources_, [&](const auto& item) {
       return item.second == space.id;
@@ -2341,6 +2516,22 @@ bool WorkspaceLab::ApplyBrowserImport() {
     new_sources.insert(info.id);
     job->session.EnsureList("extra_profiles")->Append(WriteProfileMetadata(profile));
     job->profiles.push_back(std::move(profile));
+  }
+  for (auto& [source_id, favorites] : source.profile_favorites) {
+    if (!new_sources.contains(source_id))
+      continue;
+    std::erase_if(favorites, [](const prototype::PinnedItem& pin) {
+      return pin.folder || !pin.parent_id.empty() ||
+             !CanRestoreWorkspaceURL(pin.url);
+    });
+    if (favorites.empty())
+      continue;
+    for (auto& pin : favorites) {
+      pin.id = "pin-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+      pin.profile_pin = true;
+    }
+    job->session.EnsureDict("profile_favorites")
+        ->Set(destinations.at(source_id), WriteWorkspacePins(favorites));
   }
   for (auto& space : source.spaces) {
     const auto target = destinations.find(space.profile_id);
@@ -2499,8 +2690,11 @@ void WorkspaceLab::FinishBrowserImport(bool ok, std::string error) {
   using Report = prototype::WorkspaceShell::ImportStatusReport;
   auto job = std::move(browser_import_);
   if (ok) {
+    startup_import_pending_ = false;
     for (size_t i = 0; i < job->profiles.size(); ++i)
       PublishProfile(std::move(job->profiles[i]), std::move(job->contexts[i]));
+    profile_favorites_ = ReadContentProfileFavorites(
+        job->session, ReadContentWorkspaces(job->session).value()).value();
     for (auto& space : job->spaces) {
       const auto id = space.workspace.id;
       AppendWorkspace(std::move(space.workspace), job->session.FindDict(id));
@@ -2877,6 +3071,22 @@ void WorkspaceLab::StartWorkspace() {
     OpenExternalUrl(std::move(url));
   if (restore_extensions)
     StartManagedExtensions(0);
+  if (startup_import_pending_ && CanImportBrowser())
+    shell_->OpenImport();
+  if (!startup_import_probe_.empty()) {
+    const bool expect_import = startup_import_probe_ != "reopen";
+    if (shell_->import_visible() != expect_import) {
+      LOG(ERROR) << "Unexpected Content startup import panel visibility";
+      Finish(false);
+      return;
+    }
+    if (startup_import_probe_ == "skip") {
+      DismissBrowserImport();
+      shell_->CloseOverlays();
+    }
+    std::puts("Zitter Content startup import probe passed");
+    RequestClose();
+  }
 }
 
 bool WorkspaceLab::Activate(std::string_view workspace_id,
@@ -2940,6 +3150,8 @@ bool WorkspaceLab::AcceleratorPressed(const ui::Accelerator& accelerator) {
       ClosePeek();
       return true;
     }
+    if (startup_import_pending_ && shell_->import_visible() && !saving_catalogue_)
+      DismissBrowserImport();
     return shell_->CloseOverlays();
   }
   return RunShortcut(shell_->ShortcutFor(accelerator));
@@ -7430,6 +7642,11 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View& host) {
                 return lab && lab->CanFullscreenPage(page);
               }, weak_factory_.GetWeakPtr()),
           base::BindRepeating(&WorkspaceLab::SetPageFullscreen, weak_factory_.GetWeakPtr())));
+  view->SetPageZoomShortcutFilter(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, const ui::Accelerator& accelerator) {
+        return lab && lab->CanEditWorkspace() &&
+               lab->shell_->ShortcutFor(accelerator).empty();
+      }, weak_factory_.GetWeakPtr()));
   view->SetPresentationChangedCallback(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab) {
         if (!lab || std::exchange(lab->tab_audio_refresh_pending_, true))
@@ -7504,7 +7721,8 @@ std::vector<prototype::PinnedItem>& WorkspaceLab::PinStorage(
 bool WorkspaceLab::PlacePin(std::vector<prototype::PinnedItem>& pins,
                             prototype::PinnedItem pin, std::string parent,
                             std::string before) {
-  if (pin.id == before || (pin.folder && parent == "@profile"))
+  if (pin.id == before || (pin.folder && parent == "@profile") ||
+      IsGitHubFolder(pins, parent))
     return false;
   pin.profile_pin = parent == "@profile" || pin.profile_pin;
   if (pin.profile_pin && !parent.empty() && parent != "@profile")
@@ -7559,6 +7777,339 @@ bool WorkspaceLab::CreatePinnedFolder(std::string workspace, std::string parent,
   return true;
 }
 
+bool WorkspaceLab::ConfigureGitHubFolder(std::string workspace, std::string folder,
+                                         std::string title,
+                                         prototype::GitHubLiveFolder config,
+                                         std::string token, bool remove_token) {
+  const auto* space = model_.active();
+  title = std::string(base::TrimWhitespaceASCII(title, base::TRIM_ALL));
+  if (!space || space->id != workspace || !CanEditWorkspace() || private_owner_ ||
+      smoke_ || session_path_.empty() || !IsValidFolderTitle(title) ||
+      !ValidGitHubScope(config) ||
+      (!token.empty() && (!os_crypt_ || !ValidGitHubToken(token)))) {
+    return false;
+  }
+
+  const auto& pins = pins_[active_index_];
+  std::optional<prototype::PinnedItem> previous;
+  config.encrypted_token.clear();
+  if (!folder.empty()) {
+    const auto item = std::ranges::find(pins, folder, &prototype::PinnedItem::id);
+    if (item == pins.end() || !item->github)
+      return false;
+    previous = *item;
+    if (!remove_token)
+      config.encrypted_token = item->github->encrypted_token;
+  } else {
+    if (pins.size() >= prototype::kMaxWorkspaceSessionTabs)
+      return false;
+    folder = "github-folder-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
+  }
+
+  prototype::PinnedItem updated = previous.value_or(
+      prototype::PinnedItem{std::move(folder), {}, {}, GURL(), true});
+  updated.title = std::move(title);
+  updated.github = std::move(config);
+  if (token.empty())
+    return SaveGitHubFolder(std::move(workspace), space->profile_id,
+                            std::move(previous), std::move(updated));
+
+  os_crypt_->GetInstance(base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab, std::string workspace, std::string profile,
+         std::optional<prototype::PinnedItem> previous, prototype::PinnedItem updated,
+         std::string token, scoped_refptr<os_crypt_async::Encryptor> encryptor) {
+        if (!lab)
+          return;
+        std::string ciphertext;
+        const auto credential =
+            base::StrCat({GitHubCredentialPrefix(profile, workspace, updated.id), token});
+        if (!encryptor || !encryptor->IsEncryptionAvailable() ||
+            !encryptor->EncryptString(credential, &ciphertext)) {
+          lab->shell_->ShowToast(
+              prototype::T(u"Nie udało się bezpiecznie zapisać tokena GitHub"), {}, {});
+          return;
+        }
+        updated.github->encrypted_token = base::Base64Encode(ciphertext);
+        if (!lab->SaveGitHubFolder(std::move(workspace), std::move(profile),
+                                   std::move(previous), std::move(updated))) {
+          lab->shell_->ShowFolderSaveError();
+        }
+      }, weak_factory_.GetWeakPtr(), std::move(workspace), space->profile_id,
+      std::move(previous), std::move(updated), std::move(token)));
+  return true;
+}
+
+bool WorkspaceLab::SaveGitHubFolder(std::string workspace, std::string profile,
+                                    std::optional<prototype::PinnedItem> previous,
+                                    prototype::PinnedItem folder) {
+  const auto* space = model_.active();
+  if (!space || space->id != workspace || space->profile_id != profile ||
+      !CanEditWorkspace()) {
+    return false;
+  }
+  auto& pins = pins_[active_index_];
+  const GitHubFolderKey key(workspace, folder.id);
+  if (previous) {
+    const auto item = std::ranges::find(pins, folder.id, &prototype::PinnedItem::id);
+    if (item == pins.end() || *item != *previous)
+      return false;
+    *item = std::move(folder);
+  } else {
+    if (pins.size() >= prototype::kMaxWorkspaceSessionTabs)
+      return false;
+    pins.push_back(std::move(folder));
+  }
+  github_next_refresh_.erase(key);
+  if (github_scheduled_folder_ == key)
+    github_timer_.Stop();
+  RefreshShell();
+  PersistWorkspaceChanges();
+  return true;
+}
+
+void WorkspaceLab::RefreshGitHubFolder(std::string workspace, std::string folder) {
+  if (!model_.active() || model_.active()->id != workspace)
+    return;
+  StartGitHubRefresh(std::move(folder), /*manual=*/true);
+}
+
+void WorkspaceLab::ScheduleGitHubRefresh() {
+  if (github_refresh_ && !GitHubRefreshIsCurrent())
+    github_refresh_.reset();
+  if (github_refresh_ || private_owner_ || smoke_ || session_path_.empty() ||
+      !model_.active() || !CanEditWorkspace()) {
+    github_timer_.Stop();
+    return;
+  }
+  const auto now = base::TimeTicks::Now();
+  auto next = base::TimeTicks::Max();
+  const auto& workspace = model_.active()->id;
+  GitHubFolderKey candidate;
+  for (const auto& pin : pins_[active_index_]) {
+    if (!pin.github || !ValidGitHubScope(*pin.github))
+      continue;
+    const GitHubFolderKey key(workspace, pin.id);
+    const auto previous = github_next_refresh_.find(key);
+    const auto due = previous == github_next_refresh_.end() ? now : previous->second;
+    if (due < next) {
+      next = due;
+      candidate = key;
+    }
+  }
+  if (github_timer_.IsRunning() && candidate == github_scheduled_folder_)
+    return;
+  github_timer_.Stop();
+  if (!candidate.second.empty()) {
+    github_scheduled_folder_ = candidate;
+    github_timer_.Start(FROM_HERE, std::max(base::Seconds(1), next - now),
+                       base::BindOnce(&WorkspaceLab::StartGitHubRefresh,
+                                      weak_factory_.GetWeakPtr(), std::move(candidate.second),
+                                      /*manual=*/false));
+  }
+}
+
+void WorkspaceLab::StartGitHubRefresh(std::string folder, bool manual) {
+  const auto* space = model_.active();
+  if (!space || private_owner_ || smoke_ || session_path_.empty() || !CanEditWorkspace())
+    return;
+  const auto& pins = pins_[active_index_];
+  const auto target = std::ranges::find(pins, folder, &prototype::PinnedItem::id);
+  if (target == pins.end() || !target->github || !ValidGitHubScope(*target->github))
+    return;
+  github_timer_.Stop();
+  github_refresh_ = std::make_unique<GitHubRefresh>();
+  auto& job = *github_refresh_;
+  job.workspace = space->id;
+  job.profile = space->profile_id;
+  job.folder = std::move(folder);
+  job.config = *target->github;
+  job.manual = manual;
+  github_next_refresh_[{job.workspace, job.folder}] = base::TimeTicks::Now() + base::Minutes(5);
+
+  const auto& [login, repository, ciphertext] = job.config;
+  const auto scope = repository.empty() ? "" : " repo:" + repository;
+  if (login.empty()) {
+    job.queries.push_back(scope);
+  } else {
+    job.queries.push_back(scope + " review-requested:" + login);
+    job.queries.push_back(scope + " author:" + login);
+  }
+
+  if (ciphertext.empty()) {
+    FetchGitHubResults({});
+    return;
+  }
+  if (!os_crypt_) {
+    FinishGitHubRefresh(false);
+    return;
+  }
+  os_crypt_->GetInstance(base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab, base::UnguessableToken id,
+         scoped_refptr<os_crypt_async::Encryptor> encryptor) {
+        if (!lab || !lab->github_refresh_ || lab->github_refresh_->id != id)
+          return;
+        const auto& job = *lab->github_refresh_;
+        std::string ciphertext, credential;
+        const auto prefix = GitHubCredentialPrefix(job.profile, job.workspace, job.folder);
+        if (!lab->GitHubRefreshIsCurrent() || !encryptor ||
+            !base::Base64Decode(job.config.encrypted_token, &ciphertext) ||
+            !encryptor->DecryptString(ciphertext, &credential) ||
+            !credential.starts_with(prefix) ||
+            !ValidGitHubToken(std::string_view(credential).substr(prefix.size()))) {
+          lab->FinishGitHubRefresh(false);
+          return;
+        }
+        lab->FetchGitHubResults(credential.substr(prefix.size()));
+      }, weak_factory_.GetWeakPtr(), job.id));
+}
+
+bool WorkspaceLab::GitHubRefreshIsCurrent() const {
+  const auto* space = model_.active();
+  if (!github_refresh_ || !space || space->id != github_refresh_->workspace ||
+      space->profile_id != github_refresh_->profile || !CanEditWorkspace()) {
+    return false;
+  }
+  const auto& pins = pins_[active_index_];
+  const auto folder = std::ranges::find(pins, github_refresh_->folder,
+                                       &prototype::PinnedItem::id);
+  return folder != pins.end() && folder->github == github_refresh_->config;
+}
+
+void WorkspaceLab::FetchGitHubResults(std::string token) {
+  if (!GitHubRefreshIsCurrent()) {
+    FinishGitHubRefresh(false);
+    return;
+  }
+  auto& job = *github_refresh_;
+  auto endpoint = GURL("https://api.github.com/");
+  if (session_probe_url_.is_valid() &&
+      base::CommandLine::ForCurrentProcess()->HasSwitch(kGitHubFolderProbe)) {
+    if (session_probe_url_.host() != "127.0.0.1" ||
+        (!token.empty() && token != kGitHubFixtureTokenFirst &&
+         token != kGitHubFixtureTokenSecond)) {
+      FinishGitHubRefresh(false);
+      return;
+    }
+    endpoint = session_probe_url_;
+  }
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = endpoint.Resolve("/search/issues?sort=updated&per_page=100&q=" +
+      base::EscapeQueryParamValue("is:open is:pr" + job.queries.back(), true));
+  job.queries.pop_back();
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  request->redirect_mode = network::mojom::RedirectMode::kError;
+  request->load_flags = net::LOAD_DISABLE_CACHE;
+  request->headers.SetHeader("Accept", "application/vnd.github+json");
+  if (!token.empty())
+    request->headers.SetHeader("Authorization", "Bearer " + token);
+
+  constexpr auto annotation = net::DefineNetworkTrafficAnnotation(
+      "zitter_content_github_live_folder", R"(
+        semantics {
+          sender: "Zitter GitHub Live Folders"
+          description: "Fetches open pull requests for a configured GitHub folder."
+          trigger: "The folder is in the active workspace, or the user requests a refresh."
+          data: "GitHub login or repository filters and an optional user-provided API token."
+          destination: OTHER
+          destination_other: "api.github.com"
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "The user can remove the folder to stop requests."
+          policy_exception_justification: "Requires explicit user configuration."
+        })");
+  job.loader = network::SimpleURLLoader::Create(std::move(request), annotation);
+  job.loader->SetTimeoutDuration(base::Seconds(20));
+  job.loader->DownloadToString(
+      WorkspaceProfile(active_index_)->GetDefaultStoragePartition()
+          ->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WorkspaceLab::GitHubResultsReceived, weak_factory_.GetWeakPtr(),
+                     std::move(token)),
+      4 * 1024 * 1024);
+}
+
+void WorkspaceLab::GitHubResultsReceived(std::string token, std::optional<std::string> body) {
+  github_refresh_->loader.reset();
+  if (!GitHubRefreshIsCurrent() || !body) {
+    FinishGitHubRefresh(false);
+    return;
+  }
+  auto result = base::JSONReader::ReadDict(*body, base::JSON_PARSE_RFC);
+  const auto* items = result ? result->FindList("items") : nullptr;
+  if (!items || items->size() > 100 || result->FindBool("incomplete_results").value_or(true)) {
+    FinishGitHubRefresh(false);
+    return;
+  }
+  auto& job = *github_refresh_;
+  for (const auto& item : *items) {
+    const auto* dict = item.GetIfDict();
+    const auto* link = dict ? dict->FindString("html_url") : nullptr;
+    const auto* title = dict ? dict->FindString("title") : nullptr;
+    if (!link || link->size() > 32768 || !title || title->size() > 32768)
+      continue;
+    GURL url(*link);
+    auto key = GitHubPullKey(url);
+    if (!key.empty() && job.result_indexes.try_emplace(key, job.results.size()).second) {
+      job.results.push_back({"pin-" + base::Uuid::GenerateRandomV4().AsLowercaseString(),
+                             job.folder, *title, std::move(url)});
+    }
+  }
+  if (job.queries.empty())
+    FinishGitHubRefresh(true);
+  else
+    FetchGitHubResults(std::move(token));
+}
+
+void WorkspaceLab::FinishGitHubRefresh(bool ok) {
+  const bool current = GitHubRefreshIsCurrent();
+  auto job = std::move(github_refresh_);
+  if (!current) {
+    ScheduleGitHubRefresh();
+    return;
+  }
+  auto& pins = pins_[active_index_];
+  std::set<std::string> removed;
+  if (ok) {
+    for (const auto& pin : pins) {
+      if (pin.folder || pin.parent_id != job->folder)
+        continue;
+      const auto key = GitHubPullKey(pin.url);
+      if (key.empty())
+        continue;
+      if (const auto found = job->result_indexes.find(key); found != job->result_indexes.end()) {
+        auto& replacement = job->results[found->second];
+        if (!removed.contains(replacement.id))
+          replacement.id = pin.id;
+      }
+      removed.insert(pin.id);
+    }
+    ok = pins.size() - removed.size() + job->results.size() <=
+         prototype::kMaxWorkspaceSessionTabs;
+  }
+  if (ok) {
+    auto updated = pins;
+    std::erase_if(updated, [&](const auto& pin) { return removed.contains(pin.id); });
+    const auto folder = std::ranges::find(updated, job->folder, &prototype::PinnedItem::id);
+    for (const auto& result : job->results)
+      removed.erase(result.id);
+    updated.insert(folder + 1, std::make_move_iterator(job->results.begin()),
+                   std::make_move_iterator(job->results.end()));
+    if (updated != pins) {
+      for (auto& tab : tabs_[active_index_]) {
+        if (removed.contains(tab.pin))
+          tab.pin.clear();
+      }
+      pins = std::move(updated);
+      RefreshShell();
+      PersistWorkspaceChanges();
+      return;
+    }
+  } else if (job->manual) {
+    shell_->ShowToast(prototype::T(u"Nie udało się odświeżyć folderu GitHub"), {}, {});
+  }
+  ScheduleGitHubRefresh();
+}
+
 bool WorkspaceLab::RenamePinnedFolder(std::string workspace, std::string id,
                                       std::string title) {
   const auto position = WorkspaceIndex(workspace);
@@ -7585,7 +8136,7 @@ bool WorkspaceLab::RemovePinnedFolder(std::string workspace, std::string id,
   const auto folder = std::ranges::find(pins, id, &prototype::PinnedItem::id);
   if (folder == pins.end() || !folder->folder)
     return false;
-  if (contents) {
+  if (contents || folder->github) {
     std::vector<size_t> subtree;
     {
       const auto nodes = PinNodes(pins);
@@ -7594,6 +8145,7 @@ bool WorkspaceLab::RemovePinnedFolder(std::string workspace, std::string id,
     if (subtree.empty())
       return false;
     for (size_t member : subtree) {
+      github_next_refresh_.erase({workspace, pins[member].id});
       for (auto& tab : tabs_[index]) {
         if (tab.pin == pins[member].id)
           tab.pin.clear();
@@ -7645,7 +8197,8 @@ bool WorkspaceLab::Unpin(std::string id, size_t before) {
   auto& tabs = tabs_[active_index_];
   auto& pins = PinStorage(active_index_, id);
   const auto pin = std::ranges::find(pins, id, &prototype::PinnedItem::id);
-  if (!CanEditWorkspace() || before > tabs.size() || pin == pins.end() || pin->folder)
+  if (!CanEditWorkspace() || before > tabs.size() || pin == pins.end() ||
+      pin->folder || IsGitHubFolder(pins, pin->parent_id))
     return false;
   const auto opened = std::ranges::find(tabs, id, &Tab::pin);
   size_t index = opened - tabs.begin();
@@ -7722,7 +8275,7 @@ bool WorkspaceLab::MovePin(std::string id, std::string parent, std::string befor
     return false;
   auto& pins = PinStorage(active_index_, id);
   const auto pin = std::ranges::find(pins, id, &prototype::PinnedItem::id);
-  if (pin == pins.end())
+  if (pin == pins.end() || IsGitHubFolder(pins, pin->parent_id))
     return false;
   if (parent == "@profile" && !pin->profile_pin) {
     auto& favorites = profile_favorites_[model_.active()->profile_id];
@@ -7755,7 +8308,7 @@ bool WorkspaceLab::UpdatePinnedUrl(std::string workspace, std::string id, GURL u
   }
   auto& pins = PinStorage(*position, id);
   const auto pin = std::ranges::find(pins, id, &prototype::PinnedItem::id);
-  if (pin == pins.end() || pin->folder)
+  if (pin == pins.end() || pin->folder || IsGitHubFolder(pins, pin->parent_id))
     return false;
   pin->url = std::move(url);
   RefreshShell();
@@ -9063,6 +9616,7 @@ void WorkspaceLab::RefreshExtensionActionAppearance() {
 void WorkspaceLab::RefreshShell() {
   if (!web_contents() || !model_.active())
     return;
+  ScheduleGitHubRefresh();
   if (assistant_ && assistant_profile_ != AssistantProfileId()) {
     if (assistant_->SwitchProfile()) {
       assistant_profile_ = AssistantProfileId();
@@ -9110,6 +9664,7 @@ void WorkspaceLab::RefreshShell() {
                               "", ""});
   }
   state.configuration_ready = true;
+  state.onboarding_complete = !startup_import_pending_;
   state.profiles_busy = saving_catalogue_;
   state.url = web_contents()->GetVisibleURL();
   state.can_go_back = web_contents()->GetController().CanGoBack();
@@ -9308,8 +9863,9 @@ void WorkspaceLab::LoadFingerprintProbeStep() {
   SelectWorkspace(std::string(kWorkspaceIds[step.profile]));
   if (active_index_ != step.profile ||
       (switching_profile && fingerprint_toolbar_->widget() &&
-       !fingerprint_toolbar_->widget()->IsClosed())) {
-    LOG(ERROR) << "Fingerprint toolbar did not follow the active profile";
+       fingerprint_toolbar_->widget()->IsVisible())) {
+    LOG(ERROR) << "Fingerprint toolbar did not follow the active profile at step "
+               << index << " (active workspace " << active_index_ << ")";
     Finish(false);
     return;
   }
@@ -10047,6 +10603,8 @@ void WorkspaceLab::OnDownloadShutdownAnswered(bool close) {
 base::DictValue WorkspaceLab::CaptureSession() const {
   base::DictValue session;
   session.Set("active_workspace", model_.active()->id);
+  if (startup_import_pending_)
+    session.Set("startup_import_pending", true);
   if (!removed_workspaces_.empty())
     session.Set("removed_workspaces", removed_workspaces_.Clone());
   if (!timeline_epochs_.empty())
@@ -10231,7 +10789,7 @@ bool WorkspaceLab::CheckSessionProbeSetup() const {
       (command->HasSwitch(kAdditionalProfileProbe) &&
        command->GetSwitchValueASCII(kAdditionalProfileProbe) != "create");
   const size_t imported_workspaces =
-      command->GetSwitchValueASCII(kInteractiveImportProbe) == "repeat" ? 2 : 0;
+      command->GetSwitchValueASCII(kInteractiveImportProbe).ends_with("repeat") ? 2 : 0;
   const bool extension_observer = command->HasSwitch(kExtensionInstallUiProbe);
   const size_t assistant_workspaces = command->HasSwitch(kAssistantCredentialProbe) ? 2 : 0;
   if (session_path_.empty() || restored_workspace_ != 1 ||
@@ -10375,9 +10933,75 @@ bool WorkspaceLab::RunProbePaletteCommand(std::u16string_view query,
   return true;
 }
 
+void WorkspaceLab::RunGitHubFolderProbe(std::string phase) {
+  auto& pins = pins_[active_index_];
+  const std::string workspace = model_.active()->id;
+  prototype::GitHubLiveFolder config{"", "example/project", ""};
+  if (phase == "create") {
+    if (!pins.empty() ||
+        !ConfigureGitHubFolder(workspace, "", "Pull requests", config,
+                               kGitHubFixtureTokenFirst, false)) {
+      Finish(false);
+      return;
+    }
+  } else {
+    if (pins.empty() || !pins.front().github) {
+      Finish(false);
+      return;
+    }
+    const auto id = pins.front().id;
+    if (phase == "replace" || phase == "remove") {
+      const bool remove = phase == "remove";
+      if (!ConfigureGitHubFolder(workspace, id, "Pull requests", config,
+                                 remove ? "" : kGitHubFixtureTokenSecond, remove)) {
+        Finish(false);
+        return;
+      }
+    } else if (phase == "restart" || phase == "wrong-profile") {
+      RefreshGitHubFolder(workspace, id);
+    } else {
+      Finish(false);
+      return;
+    }
+  }
+  CheckGitHubFolderProbe(std::move(phase), base::TimeTicks::Now() + base::Seconds(15));
+}
+
+void WorkspaceLab::CheckGitHubFolderProbe(std::string phase, base::TimeTicks deadline) {
+  const auto& pins = pins_[active_index_];
+  const bool wrong_profile = phase == "wrong-profile";
+  if (base::TimeTicks::Now() >= deadline) {
+    LOG(ERROR) << "GitHub folder fixture did not complete";
+    Finish(false);
+    return;
+  }
+  const bool complete = !github_refresh_ && !pins.empty() && pins.front().github &&
+      github_next_refresh_.contains({model_.active()->id, pins.front().id}) &&
+      (wrong_profile ? pins.size() == 1
+                     : pins.size() == 2 && pins[1].parent_id == pins[0].id &&
+                           pins[1].title == phase);
+  if (complete) {
+    std::puts("Zitter Content GitHub folder probe passed");
+    RequestClose();
+    return;
+  }
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, base::BindOnce(&WorkspaceLab::CheckGitHubFolderProbe,
+                                weak_factory_.GetWeakPtr(), std::move(phase), deadline),
+      base::Milliseconds(50));
+}
+
 void WorkspaceLab::AdvanceSessionProbe() {
   session_probe_advancing_ = false;
   const auto* command = base::CommandLine::ForCurrentProcess();
+  if (command->HasSwitch(kGitHubFolderProbe)) {
+    const auto phase = command->GetSwitchValueASCII(kGitHubFolderProbe);
+    if (active_index_ == 0 || phase == "wrong-profile") {
+      session_probe_advancing_ = true;
+      RunGitHubFolderProbe(phase);
+      return;
+    }
+  }
   const bool sleep_probe = command->HasSwitch(kWorkspaceSleepProbe);
   if (active_index_ == 1) {
     if ((command->HasSwitch(kTimelineProbe) ||
@@ -10440,7 +11064,7 @@ void WorkspaceLab::AdvanceSessionProbe() {
       if (!picker || !picker->IsDrawn() ||
           shell_->preference_choice_selection_for_testing("zoom") !=
               (reopening ? 5u : 4u) ||
-          !has_zoom(web_contents(), reopening ? 1.5 : 1.25) ||
+          !has_zoom(web_contents(), reopening ? 1.75 : 1.25) ||
           !has_zoom(personal, 0.9)) {
         LOG(ERROR) << "Page zoom did not match the profile and settings picker";
         Finish(false);
@@ -10449,9 +11073,44 @@ void WorkspaceLab::AdvanceSessionProbe() {
       if (!reopening)
         shell_->ActivatePreferenceChoiceForTesting("zoom", 5);
       shell_->CloseOverlays(true);
-      auto* work_map = content::HostZoomMap::GetForWebContents(web_contents());
+      auto* page = web_contents();
+      auto* delegate = page->GetDelegate();
+      auto zoom_key = [&](ui::KeyboardCode key) {
+        for (auto type : {blink::WebInputEvent::Type::kRawKeyDown,
+                          blink::WebInputEvent::Type::kKeyUp}) {
+          input::NativeWebKeyboardEvent event(type, kPageZoomWebModifier,
+                                              base::TimeTicks::Now());
+          event.windows_key_code = key;
+          if (delegate->PreHandleKeyboardEvent(page, event) !=
+              content::KeyboardEventProcessingResult::HANDLED) {
+            return false;
+          }
+        }
+        return true;
+      };
+      if (reopening) {
+        if (!zoom_key(ui::VKEY_0) || !has_zoom(page, 1.5)) {
+          LOG(ERROR) << "Page zoom reset did not restore Work's default";
+          Finish(false);
+          return;
+        }
+      } else {
+        if (!zoom_key(ui::VKEY_OEM_PLUS) || !has_zoom(page, 1.75) ||
+            !zoom_key(ui::VKEY_OEM_MINUS) || !has_zoom(page, 1.5)) {
+          LOG(ERROR) << "Page zoom shortcuts did not change the active Work page";
+          Finish(false);
+          return;
+        }
+        delegate->ContentsZoomChange(true);
+        if (!has_zoom(page, 1.75)) {
+          LOG(ERROR) << "Page zoom gesture did not change the active Work page";
+          Finish(false);
+          return;
+        }
+      }
+      auto* work_map = content::HostZoomMap::GetForWebContents(page);
       auto* personal_map = content::HostZoomMap::GetForWebContents(personal);
-      if (!has_zoom(web_contents(), 1.5) || !has_zoom(personal, 0.9) ||
+      if (!has_zoom(page, reopening ? 1.5 : 1.75) || !has_zoom(personal, 0.9) ||
           !blink::ZoomValuesEqual(work_map->GetZoomLevelForHostAndScheme(
               "http", "localhost"), blink::ZoomFactorToZoomLevel(1.75)) ||
           !blink::ZoomValuesEqual(personal_map->GetZoomLevelForHostAndScheme(
@@ -10898,21 +11557,10 @@ void WorkspaceLab::AdvanceSessionProbe() {
   }
   if (command->HasSwitch(kInteractiveImportProbe)) {
     session_probe_advancing_ = true;
+    widget_->Show();
     widget_->Activate();
-    if (!(native_menu_probe_ ? native_menu_probe_.Run("import") : RunShortcut("import"))) {
-      LOG(ERROR) << "Could not open the browser import menu";
-      Finish(false);
-      return;
-    }
-    shell_->OpenImport(prototype::ImportBrowser::kChrome);
-    shell_->SetImportOptionCheckedForTesting(2, true);
-#if BUILDFLAG(IS_MAC)
-    shell_->SetImportOptionCheckedForTesting(3, true);
-#endif
-    shell_->OpenImport(prototype::ImportBrowser::kChrome);
-    CheckInteractiveImportProbe(false,
-        command->GetSwitchValueASCII(kInteractiveImportProbe) == "repeat",
-        base::TimeTicks::Now() + base::Seconds(12));
+    StartInteractiveImportProbe(command->GetSwitchValueASCII(kInteractiveImportProbe),
+                                base::TimeTicks::Now() + base::Seconds(4));
     return;
   }
   if (command->HasSwitch(kRssProbe)) {
@@ -11421,12 +12069,13 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
       break;
     case 4:
       if ((ready = loaded(first, kPaths[2]))) {
-        if (native_menu_probe_) {
+        if (native_menu_probe_ && !zoom_probe) {
           first->widget_->Activate();
           if (!native_menu_probe_.Run("about") ||
               !first->shell_->about_widget_for_testing() ||
               !first->shell_->about_widget_for_testing()->IsVisible() ||
               shell_->about_widget_for_testing()) {
+            LOG(ERROR) << "Native About did not target the private window";
             fail();
             return;
           }
@@ -11434,6 +12083,7 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
           first->widget_->Activate();
           if (!native_menu_probe_.Run("dock_new_tab") ||
               !first->shell_->address_visible() || shell_->address_visible()) {
+            LOG(ERROR) << "Native Dock new-tab did not target the private window";
             fail();
             return;
           }
@@ -11443,6 +12093,7 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
               !first->shell_->general_widget() ||
               !first->shell_->general_widget()->IsVisible() ||
               (shell_->general_widget() && shell_->general_widget()->IsVisible())) {
+            LOG(ERROR) << "Native history or settings ignored the private window";
             fail();
             return;
           }
@@ -11458,7 +12109,7 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
       break;
     case 5:
       if ((ready = !session)) {
-        if (native_menu_probe_) {
+        if (native_menu_probe_ && !zoom_probe) {
           widget_->Hide();
           if (!native_menu_probe_.Run("dock_reopen") || !widget_->IsVisible()) {
             fail();
@@ -13327,12 +13978,43 @@ void WorkspaceLab::FinishExtraWorkspaceProbe() {
   RequestClose();
 }
 
+void WorkspaceLab::StartInteractiveImportProbe(std::string mode,
+                                               base::TimeTicks deadline) {
+  const bool arc = mode.starts_with("arc-");
+  const bool native = native_menu_probe_ && !arc;
+  if (!(native ? native_menu_probe_.Run("import") : RunShortcut("import"))) {
+    if (native && base::TimeTicks::Now() < deadline) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE, base::BindOnce(&WorkspaceLab::StartInteractiveImportProbe,
+                                    weak_factory_.GetWeakPtr(), std::move(mode), deadline),
+          base::Milliseconds(100));
+      return;
+    }
+    LOG(ERROR) << "Could not open the browser import menu";
+    Finish(false);
+    return;
+  }
+  const auto browser = arc ? prototype::ImportBrowser::kArc
+                           : prototype::ImportBrowser::kChrome;
+  shell_->OpenImport(browser);
+  shell_->SetImportOptionCheckedForTesting(2, true);
+#if BUILDFLAG(IS_MAC)
+  shell_->SetImportOptionCheckedForTesting(3, true);
+#endif
+  shell_->OpenImport(browser);
+  CheckInteractiveImportProbe(false, mode.ends_with("repeat"),
+                              base::TimeTicks::Now() + base::Seconds(12));
+}
+
 void WorkspaceLab::CheckInteractiveImportProbe(bool apply, bool repeat,
                                                 base::TimeTicks deadline) {
   if (!apply && browser_import_preview_ && !browser_import_) {
     const auto& preview = *browser_import_preview_;
-    if (preview.spaces.size() != 2 || preview.tab_count != 2 ||
-        !preview.options.history ||
+    const bool arc = base::CommandLine::ForCurrentProcess()
+                         ->GetSwitchValueASCII(kInteractiveImportProbe)
+                         .starts_with("arc-");
+    if (preview.spaces.size() != 2 || preview.tab_count != (arc ? 3u : 2u) ||
+        (arc && preview.folder_count != 1) || !preview.options.history ||
         (BUILDFLAG(IS_MAC) && !preview.options.cookies) ||
         contexts_.size() != (repeat ? 4u : 2u) ||
         tabs_.size() != (repeat ? 4u : 2u)) {

@@ -345,6 +345,8 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
     return ![self.delegate applicationShouldHandleReopen:self
                                          hasVisibleWindows:NO];
   }
+  if (!self.isActive)
+    [NSRunningApplication.currentApplication activateWithOptions:0];
   NSString* id = base::SysUTF8ToNSString(command);
   NSMutableArray<NSMenu*>* menus = [NSMutableArray array];
   if (command == "dock_new_tab") {
@@ -1065,6 +1067,10 @@ class LabMainParts final : public content::BrowserMainParts,
       user_download_directory = install_file_keychain_fixture_
           ? root : base::GetHomeDir().AppendASCII("Downloads");
     }
+    const bool offer_startup_import = ordinary_prepared_startup_ && durable &&
+        (!install_file_keychain_fixture_ || !startup_import_probe_.empty()) &&
+        (workspace_session_.empty() ||
+         workspace_session_.FindBool("startup_import_pending").value_or(false));
     workspace_ = std::make_unique<WorkspaceLab>(
         WorkspaceSettingsPath(root), directory_.GetPath(),
         durable ? WorkspaceSessionPath(root) : base::FilePath(),
@@ -1075,7 +1081,8 @@ class LabMainParts final : public content::BrowserMainParts,
             "dark",
         command_line.GetSwitchValueASCII("zitter-rust-raster") == "metal",
         workspace_smoke_, nullptr, additional_profiles_, os_crypt_,
-        std::move(user_download_directory), std::move(download_safe_browsing_key));
+        std::move(user_download_directory), std::move(download_safe_browsing_key),
+        offer_startup_import, startup_import_probe_);
   }
 
   void StartWorkspaceWithDownloadPolicy(std::string download_safe_browsing_key) {
@@ -1165,6 +1172,13 @@ class LabMainParts final : public content::BrowserMainParts,
       install_file_keychain_fixture_ = FindFileKeychainFixtureInstaller();
       if (!IsProbeRoot(root) || !install_file_keychain_fixture_) {
         LOG(ERROR) << "Invalid isolated Content startup trial";
+        return false;
+      }
+      startup_import_probe_ = base::Environment::Create()
+          ->GetVar("ZITTER_CONTENT_STARTUP_IMPORT_PROBE").value_or("");
+      if (!startup_import_probe_.empty() && startup_import_probe_ != "keep" &&
+          startup_import_probe_ != "skip" && startup_import_probe_ != "reopen") {
+        LOG(ERROR) << "Invalid isolated Content startup import phase";
         return false;
       }
     } else {
@@ -1857,6 +1871,7 @@ class LabMainParts final : public content::BrowserMainParts,
   std::unique_ptr<prototype::TimelineStore> workspace_timeline_;
   const bool ordinary_prepared_startup_;
   bool fresh_startup_ = false;
+  std::string startup_import_probe_;
   GURL workspace_probe_url_;
   GURL probe_url_;
   GURL console_replacement_url_;

@@ -58,6 +58,8 @@ def seed_extensions_logo(checkout):
     # The Windows icon resource rides along with the other branding patches.
     icon = checkout / overlay.WINDOW_ICON_FILE
     icon.parent.mkdir(parents=True, exist_ok=True)
+    (checkout / overlay.WINDOW_ICON_BUILD_FILE).write_text(
+        overlay.WINDOW_ICON_BUILD_ANCHOR, newline="\n")
     registry = checkout / overlay.REGISTRY_EXTENSIONS_FILE
     registry.parent.mkdir(parents=True, exist_ok=True)
     registry.write_text(overlay.REGISTRY_EXTENSIONS_OLD, newline="\n")
@@ -219,8 +221,18 @@ class OverlayTests(unittest.TestCase):
         patched = overlay.patch_window_icon("before\n" + original + "after\n")
         self.assertNotIn("chromium.ico", patched)
         self.assertIn('"../../zitter/chromium/app/zitter.ico"', patched)
+        self.assertIn('#if defined(ZITTER_DEV_BUILD)\nIDR_MAINFRAME', patched)
+        self.assertIn('"../../zitter/chromium/app/zitter-dev.ico"', patched)
         self.assertTrue((overlay.ROOT / "chromium/app/zitter.ico").is_file())
+        self.assertTrue((overlay.ROOT / "chromium/app/zitter-dev.ico").is_file())
         self.assertEqual(patched, overlay.patch_window_icon(patched))
+        previous = ('#else\n// Zitter: zitter.exe\'s icon (chromium/app/zitter.ico).\n'
+                    'IDR_MAINFRAME       ICON                        "../../zitter/chromium/app/zitter.ico"\n'
+                    '#endif\n')
+        self.assertEqual(patched, overlay.patch_window_icon("before\n" + previous + "after\n"))
+        build = overlay.patch_window_icon_build(overlay.WINDOW_ICON_BUILD_ANCHOR)
+        self.assertIn('if (zitter_dev_build) {\n      defines = [ "ZITTER_DEV_BUILD" ]', build)
+        self.assertEqual(build, overlay.patch_window_icon_build(build))
         with self.assertRaises(ValueError):
             overlay.patch_window_icon("unknown upstream layout")
     def test_history_page_logo_is_zitter_mark(self):
@@ -286,6 +298,10 @@ class OverlayTests(unittest.TestCase):
             content_blocking_fixture.seed(checkout)
             seed_extension_tabs(checkout)
             seed_extensions_logo(checkout)
+            allowlist = checkout / "chrome/browser/extensions/component_extensions_allowlist/allowlist.cc"
+            allowlist.parent.mkdir(parents=True)
+            allowlist_source = "      extension_misc::kPdfExtensionId,\n"
+            allowlist.write_text(allowlist_source, newline="\n")
             build = checkout / "chrome/test/BUILD.gn"
             build.parent.mkdir(parents=True)
             original = ('# Existing local build configuration\n'
@@ -324,8 +340,10 @@ class OverlayTests(unittest.TestCase):
                 overlay.install(checkout, dry_run=True)
                 self.assertFalse((checkout / "zitter").exists())
                 self.assertEqual(build.read_text(), original)
+                self.assertEqual(allowlist.read_text(), allowlist_source)
                 overlay.install(checkout)
                 overlay.install(checkout)
+                self.assertEqual(allowlist.read_text().count("kdpnmnbnedpcomicojommdikkdepclio"), 1)
                 self.assertIn("if (needs_uia_disconnect &&", renderer.read_text())
                 self.assertEqual(build.read_text().replace(overlay.DEPENDENCY, ""), original)
                 source = checkout / "zitter/zitter/core/workspace_model.cc"

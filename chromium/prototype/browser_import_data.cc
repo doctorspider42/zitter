@@ -7,10 +7,12 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "build/build_config.h"
 #include "chromium/prototype/i18n.h"
+#include "chromium/prototype/import_database_snapshot.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
@@ -23,43 +25,22 @@
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "sql/database.h"
 #include "sql/statement.h"
+#include "ui/gfx/codec/png_codec.h"
 
 namespace zitter::prototype {
 namespace {
-// SQLite may write recovery/WAL bookkeeping only in this disposable snapshot.
-// Check both files before/after copying so a browser writing concurrently is
-// retried, rather than reading a torn database. No plaintext cookies go to disk.
-bool Snapshot(const base::FilePath& path, base::ScopedTempDir& temp,
-              sql::Database& db) {
-  if (!temp.CreateUniqueTempDir()) return false;
-  const auto wal = base::FilePath(path.value() + FILE_PATH_LITERAL("-wal"));
-  const auto copy = temp.GetPath().AppendASCII("source.sqlite");
-  for (int attempt = 0; attempt < 3; ++attempt) {
-    base::File::Info before, after, wal_before, wal_after;
-    if (!base::GetFileInfo(path, &before)) return false;
-    const bool had_wal = base::GetFileInfo(wal, &wal_before);
-    if (!base::CopyFile(path, copy)) return false;
-    if (had_wal && !base::CopyFile(wal, base::FilePath(copy.value() + FILE_PATH_LITERAL("-wal")))) continue;
-    if (!had_wal) base::DeleteFile(base::FilePath(copy.value() + FILE_PATH_LITERAL("-wal")));
-    if (!base::GetFileInfo(path, &after)) continue;
-    const bool has_wal = base::GetFileInfo(wal, &wal_after);
-    if (before.size != after.size || before.last_modified != after.last_modified ||
-        had_wal != has_wal || (has_wal && (wal_before.size != wal_after.size ||
-          wal_before.last_modified != wal_after.last_modified))) continue;
-    return db.Open(copy);
-  }
-  return false;
-}
 base::Time Timestamp(int64_t time) {
   return base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(time));
 }
-bool ReadHistory(const base::FilePath& path, ImportedProfileData& data) {
+bool ReadHistory(const base::FilePath& directory, ImportedProfileData& data, bool firefox) {
+  const auto path = directory.AppendASCII(firefox ? "places.sqlite" : "History");
   if (!base::PathExists(path)) return true;
   base::ScopedTempDir temp;
   sql::Database db("History");
-  if (!Snapshot(path, temp, db)) return false;
-  sql::Statement query(db.GetUniqueStatement(
-      "SELECT url,title,visit_count,typed_count,last_visit_time,hidden FROM urls"));
+  if (!SnapshotImportDatabase(path, temp, db)) return false;
+  sql::Statement query(firefox ? db.GetUniqueStatement(
+      "SELECT url,title,visit_count,typed,last_visit_date,hidden FROM moz_places WHERE visit_count>0")
+      : db.GetUniqueStatement("SELECT url,title,visit_count,typed_count,last_visit_time,hidden FROM urls"));
   if (!query.is_valid()) return false;
   while (query.Step()) {
     if (data.history.size() >= 250000) return false;
@@ -69,7 +50,9 @@ bool ReadHistory(const base::FilePath& path, ImportedProfileData& data) {
     row.set_title(query.ColumnString16(1));
     row.set_visit_count(std::max(0, query.ColumnInt(2)));
     row.set_typed_count(std::max(0, query.ColumnInt(3)));
-    row.set_last_visit(Timestamp(query.ColumnInt64(4)));
+    const auto last_visit = query.ColumnInt64(4);
+    row.set_last_visit(firefox ? base::Time::UnixEpoch() + base::Microseconds(last_visit)
+                               : Timestamp(last_visit));
     row.set_hidden(query.ColumnBool(5));
     data.history.push_back(std::move(row));
   }
@@ -87,7 +70,7 @@ bool ReadCookies(const base::FilePath& profile, ImportedProfileData& data,
   if (!base::PathExists(path)) return true;
   base::ScopedTempDir temp;
   sql::Database db("Cookie");
-  if (!Snapshot(path, temp, db)) return false;
+  if (!SnapshotImportDatabase(path, temp, db)) return false;
   int version = 0;
   if (db.DoesTableExist("meta")) {
     sql::Statement meta(db.GetUniqueStatement("SELECT value FROM meta WHERE key='version'"));
@@ -261,6 +244,53 @@ struct Writer : public std::enable_shared_from_this<Writer> {
 #if !BUILDFLAG(IS_MAC)
 std::optional<ImportedCookieKey> ReadImportedCookieKey(ImportBrowser) { return std::nullopt; }
 #endif
+std::vector<ImportedFavicon> ReadImportedFavicons(
+    const std::vector<ImportSourceProfile>& sources,
+    const ImportedFaviconTargets& targets,
+    ImportBrowser browser) {
+  const bool firefox = browser == ImportBrowser::kFirefox;
+  std::vector<ImportedFavicon> result;
+  std::set<std::pair<std::string, GURL>> seen;
+  for (const auto& source : sources) {
+    const auto pages = targets.find(source.destination_id);
+    if (pages == targets.end()) continue;
+    base::ScopedTempDir temp;
+    sql::Database db("Thumbnail");
+    if (!SnapshotImportDatabase(source.directory.AppendASCII(firefox ? "favicons.sqlite" : "Favicons"),
+                                temp, db)) continue;
+    sql::Statement query(firefox ? db.GetUniqueStatement(
+        "SELECT i.icon_url,i.data FROM moz_pages_w_icons p "
+        "JOIN moz_icons_to_pages m ON m.page_id=p.id JOIN moz_icons i ON i.id=m.icon_id "
+        "WHERE p.page_url=? AND length(i.data)<=524288 "
+        "ORDER BY abs(i.width-32), i.id LIMIT 4") : db.GetUniqueStatement(
+        "SELECT f.url, b.image_data FROM icon_mapping m "
+        "JOIN favicons f ON f.id=m.icon_id JOIN favicon_bitmaps b ON b.icon_id=f.id "
+        "WHERE m.page_url=? AND f.icon_type=1 AND length(b.image_data)<=524288 "
+        "ORDER BY b.width=0, abs(b.width-32), b.last_updated DESC LIMIT 4"));
+    if (!query.is_valid()) continue;
+    for (const auto& page : pages->second) {
+      if (seen.contains({source.destination_id, page})) continue;
+      query.Reset(/*clear_bound_vars=*/true);
+      query.BindString(0, page.spec());
+      while (query.Step()) {
+        GURL icon(query.ColumnString(0));
+        const auto bytes = query.ColumnBlob(1);
+        // Arc can record zero dimensions for valid PNGs. Bound the actual
+        // IHDR dimensions before decoding rather than trusting the SQLite row.
+        if (!icon.SchemeIsHTTPOrHTTPS() || icon.has_username() || icon.has_password() ||
+            bytes.size() < 24 || base::U32FromBigEndian(bytes.subspan<16, 4>()) > 256 ||
+            base::U32FromBigEndian(bytes.subspan<20, 4>()) > 256) continue;
+        auto bitmap = gfx::PNGCodec::Decode(bytes);
+        if (bitmap.drawsNothing()) continue;
+        seen.emplace(source.destination_id, page);
+        result.push_back({source.destination_id, page, std::move(icon), std::move(bitmap)});
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 std::shared_ptr<BrowsingImportData> ReadBrowsingImportData(const ArcImport& source, ImportCookieKeyReader key_reader) {
   auto result = std::make_shared<BrowsingImportData>();
   std::optional<ImportedCookieKey> key;
@@ -269,7 +299,8 @@ std::shared_ptr<BrowsingImportData> ReadBrowsingImportData(const ArcImport& sour
     const auto [it, inserted] = destinations.emplace(profile.destination_id, result->profiles.size());
     if (inserted) result->profiles.push_back({profile.destination_id, {}, {}});
     auto& data = result->profiles[it->second];
-    if ((source.options.history && !ReadHistory(profile.directory.AppendASCII("History"), data)) ||
+    if ((source.options.history && !ReadHistory(profile.directory, data,
+                                                source.options.browser == ImportBrowser::kFirefox)) ||
         (source.options.cookies && !ReadCookies(profile.directory, data, *result, source.options.browser, key_reader, key))) {
       if (result->error.empty()) result->error = base::UTF16ToUTF8(T(u"Nie udało się odczytać danych. Zamknij przeglądarkę źródłową i spróbuj ponownie."));
       result->profiles.clear();

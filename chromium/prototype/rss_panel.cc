@@ -24,6 +24,7 @@
 #include "chromium/prototype/sidebar_metal.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "components/vector_icons/vector_icons.h"
+#include "chromium/prototype/settings_icon.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/events/event.h"
 #include "ui/views/accessibility/view_accessibility.h"
@@ -226,7 +227,7 @@ void RssPanel::Show(RssReader& reader, views::View* parent, base::RepeatingCallb
   add_button_ = Action(add_actions, T(u"Dodaj źródło"), base::BindRepeating([](base::WeakPtr<RssPanel> p) { if (p) { p->adding_ = !p->adding_; p->ScheduleUpdate(); } },weak));
   auto* back_actions = tools->AddChildView(scene_->MakeActions(0));
   back_button_ = Action(back_actions, T(u"Wróć do czytnika"), base::BindRepeating(&RssPanel::BackToReader, weak));
-  settings_button_ = scene_->AddIconAction(tools, base::BindRepeating(&RssPanel::OpenSettings, weak, false), T(u"Ustawienia RSS"), &vector_icons::kSettingsIcon);
+  settings_button_ = scene_->AddIconAction(tools, base::BindRepeating(&RssPanel::OpenSettings, weak, false), T(u"Ustawienia RSS"), &kSettingsGearIcon);
   settings_button_->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
   refresh_button_ = scene_->AddIconAction(tools,base::BindRepeating([](base::WeakPtr<RssPanel> p){if(p)p->reader_->Refresh();},weak),T(u"Odśwież źródła"),&vector_icons::kRefreshIcon);
   refresh_button_->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);

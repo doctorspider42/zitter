@@ -412,9 +412,26 @@ becomes available when that read completes; stale scan replies are ignored.
 
 Arc reads local `~/Library/Application Support/Arc/StorableSidebar.json` and
 profile names from `User Data/Local State`. It retains Space names, nested pins,
-Favorites and emoji, including composite emoji and legacy code points.
-Chrome, Edge and Brave read their local Chromium `Local State` and each regular
-profile's `Bookmarks` file. Profile display names become workspace names; folder
+and emoji, including composite emoji and legacy code points. Arc Favorites
+become profile favorites shared by the imported Spaces on that profile.
+GitHub Live Folders keep their names, positions and cached pull requests.
+Configure the imported folder's GitHub username or repository from its context
+menu to begin refreshing it. Reimporting Arc upgrades existing folders with
+matching Arc IDs.
+
+The sidebar's add menu creates a GitHub Live Folder. A username shows open
+pull requests authored by that user and open requests for their review. An
+optional repository narrows both searches, and a repository alone shows all
+its open pull requests. Each search shows up to 100 results. The active
+workspace refreshes every five minutes, and the context menu can request an
+immediate refresh. The optional API token is stored using the operating
+system's credential encryption. A failed refresh keeps the previous results.
+Chrome, Edge, Brave, Opera, and Vivaldi read their local Chromium `Local State`
+and each regular profile's `Bookmarks` file. Opera also reads its custom
+bookmark folders and supports its older single-profile layout. Firefox reads
+profiles from `profiles.ini`, bookmarks and history from `places.sqlite`, and
+cached icons from `favicons.sqlite`. Firefox, Opera, and Vivaldi support bookmark,
+favicon, and history import. Profile display names become workspace names; folder
 hierarchies become workspace pins. Sources are read only. Invalid/non-HTTP(S)
 links and unsupported items are counted as skipped. Arc Split View becomes a
 folder of supported child tabs; unpinned Today tabs are excluded. Passwords are
@@ -447,6 +464,8 @@ A fresh installation starts with one **Moja przestrzeń** workspace and one
 profile. Skipping import keeps that workspace. A successful first-run import
 replaces the untouched starter workspace and its profile, so only imported
 spaces remain. A failed import preserves the starter and can be retried.
+The Windows wizard stays on the import step after each successful source so
+additional browsers can be imported before continuing.
 Existing installations and customized workspaces remain intact; later imports
 add spaces and skip previously imported ones, retaining local icon changes.
 Pins load on demand and retain their hierarchy across restarts.
@@ -904,9 +923,8 @@ ignored `.chromium` directory):
 mkdir -p .chromium
 cd .chromium
 fetch --nohooks chromium
-cd src
-git checkout --detach 1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35
-gclient sync -D
+revision=$(python3 -c 'import json; print(json.load(open("../chromium/revision.json"))["revision"])')
+gclient sync -D --revision "src@$revision"
 ```
 
 `gclient sync -D` is intended for this dedicated checkout; it can remove obsolete

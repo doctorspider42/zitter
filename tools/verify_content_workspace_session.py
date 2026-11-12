@@ -2617,6 +2617,7 @@ def main():
     probe.add_argument("--rss", action="store_true")
     probe.add_argument("--browser-import", action="store_true")
     probe.add_argument("--interactive-import", action="store_true")
+    probe.add_argument("--arc-import", action="store_true")
     probe.add_argument("--encrypted-import", action="store_true")
     probe.add_argument("--extra-workspace", action="store_true")
     probe.add_argument("--reassign-workspace", action="store_true")
@@ -4410,6 +4411,91 @@ if (location.pathname === '/extension-content/live-install') {
                     raise SystemExit(f"Split closure saved unexpected workspace layouts: {saved}")
                 print("Split pane edits preserved pages and batch close honored both beforeunload responses")
                 return
+            if options.arc_import:
+                source = seed_browser_import(root)
+                user_data = source / "User Data"
+                user_data.mkdir()
+                default = {"default": True}
+                secondary = {"custom": {"_0": {"directoryBasename": "Profile 1"}}}
+                for name in ("Default", "Profile 1"):
+                    (source / name).rename(user_data / name)
+                (user_data / "Local State").write_text(json.dumps({"profile": {"info_cache": {
+                    "Default": {"name": "Arc work"}, "Profile 1": {"name": "Arc personal"},
+                }}}))
+                (source / "StorableSidebar.json").write_text(json.dumps({
+                    "sidebar": {"containers": [{"global": {}}, {
+                        "spaces": {
+                            "s1": {"profile": default, "containerIDs": ["pinned", "work-pins"]},
+                            "s2": {"profile": secondary, "containerIDs": ["pinned", "pins"]},
+                        },
+                        "items": {
+                            "pins": {"data": {"itemContainer": {}}},
+                            "work-pins": {"data": {"itemContainer": {}}, "childrenIds": ["review"]},
+                            "review": {
+                                "title": "Review",
+                                "data": {"list": {"automaticLiveFolderData": {
+                                    "dataSource": {"github": {}},
+                                }}},
+                                "childrenIds": ["pull"],
+                            },
+                            "pull": {"data": {"tab": {
+                                "savedURL": "https://github.com/example/project/pull/17",
+                            }}},
+                            "r1": {"data": {"itemContainer": {}}, "childrenIds": ["a"]},
+                            "r2": {"data": {"itemContainer": {}}, "childrenIds": ["b"]},
+                            "a": {"data": {"tab": {"savedURL": "https://example.test/arc-work"}}},
+                            "b": {"data": {"tab": {"savedURL": "https://example.test/arc-personal"}}},
+                        },
+                        "topAppsContainerIDs": [default, "r1", secondary, "r2"],
+                    }]},
+                }))
+                source_snapshot = {path: path.read_bytes() for path in source.rglob("*") if path.is_file()}
+                previous = None
+                for phase in ("arc-import", "arc-repeat"):
+                    server.reopening = phase == "arc-repeat"
+                    result = launch(executable, root, origin, [
+                        *extra_flags, f"--zitter-content-interactive-import-probe={phase}",
+                    ])
+                    markers = result.stdout.splitlines()
+                    if result.returncode or INTERACTIVE_IMPORT_MARKER not in markers or MARKER not in markers:
+                        raise SystemExit(f"Arc import {phase} failed.\n{result.stdout}\n{result.stderr}")
+                    saved = json.loads(session_file.read_text(encoding="utf-8"))
+                    profiles = {entry["import_source"]: entry["id"]
+                                for entry in saved["extra_profiles"]}
+                    expected = {
+                        profiles["arc-profile-Default"]: "https://example.test/arc-work",
+                        profiles["arc-profile-Profile 1"]: "https://example.test/arc-personal",
+                    }
+                    favorites = saved["profile_favorites"]
+                    if set(favorites) != set(expected) or any(
+                            len(pins) != 1 or pins[0]["url"] != expected[profile]
+                            or not pins[0]["profile_pin"] for profile, pins in favorites.items()):
+                        raise SystemExit("Arc favorites were not stored in their corresponding profiles")
+                    workspace_pins = {
+                        entry["import_source"]: saved[entry["id"]].get("pins", [])
+                        for entry in saved["extra_workspaces"]
+                    }
+                    work_pins = workspace_pins.get("arc-space-s1", [])
+                    if set(workspace_pins) != {"arc-space-s1", "arc-space-s2"} or workspace_pins["arc-space-s2"]:
+                        raise SystemExit("Arc favorites were copied into individual spaces")
+                    if len(work_pins) != 2:
+                        raise SystemExit("Arc GitHub folder or its cached pull request was lost")
+                    folder, pull = work_pins
+                    if (folder["title"] != "Review" or not folder["folder"]
+                            or folder.get("github") != {
+                                "login": "", "repository": "", "encrypted_token": "",
+                            } or pull["parent_id"] != folder["id"]
+                            or pull["url"] != "https://github.com/example/project/pull/17"
+                            or pull["profile_pin"]):
+                        raise SystemExit("Arc GitHub folder or its cached pull request was altered")
+                    current = (favorites, workspace_pins)
+                    if previous is not None and previous != current:
+                        raise SystemExit("Arc import retry changed existing favorites or folders")
+                    previous = current
+                    if {path: path.read_bytes() for path in source.rglob("*") if path.is_file()} != source_snapshot:
+                        raise SystemExit("Arc import changed its source files")
+                print("Arc import retained each profile's favorites across restart and repeat import")
+                return
             if options.interactive_import or options.encrypted_import:
                 encrypted = options.encrypted_import
                 source = seed_browser_import(root, encrypted=encrypted)
@@ -5174,11 +5260,11 @@ for index in 0..<document.pageCount {
                         if (not math.isclose(1.2 ** zoom["default_zoom_level"], factor)
                                 or not math.isclose(1.2 ** host["zoom_level"],
                                                     1.75 if profile == work else 1.1)
-                                or "reset.example" in zoom["per_host_zoom_levels"]
+                                or {"reset.example", "127.0.0.1"}.intersection(zoom["per_host_zoom_levels"])
                                 or (profile == work and
                                     host["last_modified"] != "13370000000000000")):
                             raise SystemExit("The saved profile or site zoom changed unexpectedly")
-                    print("Content changed Work page zoom, reopened it, and inherited it privately")
+                    print("Content persisted, reopened and reset Work site zoom while isolating Personal")
                 for profile in (work, personal):
                     db = profile / "Network/Cookies"
                     with closing(sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)) as connection:

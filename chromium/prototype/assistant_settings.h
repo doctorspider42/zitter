@@ -3,6 +3,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_ASSISTANT_SETTINGS_H_
 
 #include <array>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,6 +26,13 @@ struct AssistantPermissions {
   base::DictValue ToValue() const;
   bool operator==(const AssistantPermissions&) const = default;
 };
+struct AssistantShortcut {
+  std::string id;
+  std::u16string title;
+  AssistantPermissions required;
+};
+// The serialized mask uses pages, web, actions, tabs and history in that order.
+inline constexpr int kAssistantShortcutAccessMask = (1 << 5) - 1;
 struct AssistantModel { std::string provider, id; bool visible = true; };
 // App-wide assistant settings (Settings → Asystent AI). Sessions copy the
 // permission defaults when they start; narrowing applies to running sessions.
@@ -42,6 +50,7 @@ struct AssistantSettings {
   std::string encrypted_api_key;  // OS-encrypted, base64 encoded; never sent to the UI.
   std::string default_model;  // "<provider>/<id>"
   AssistantPermissions defaults;
+  std::map<std::string, int> shortcut_access;
   bool background = true, confirm_background = true;
   int concurrency = 12;
   bool BackendEnabled(std::string_view provider) const;

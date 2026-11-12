@@ -78,16 +78,133 @@ content conflicts in the GN configuration, Assistant panel and host,
 browser data, extensions bar, and Workspace shell. The preview left
 both worktrees and their branches untouched.
 
+A later read of the remote branch confirmed the same main revision.
+A fresh snapshot of the migration, including the completed Night Shift
+review trial, produced 14 conflicting files. The integration rehearsal
+opened that snapshot in a detached worktree and resolved 12 of those
+files. The resolutions preserve the Content Night Shift assets, combine
+the browser data declarations and menu dispatch, and keep the shared
+fingerprint toolbar alongside main's Night Shift and Assistant entries.
+The last two conflicts were resolved by keeping the panel on
+AssistantHost and adding host methods for the active document, settings
+and page actions. The shared settings codec now persists the per-profile
+shortcut grant masks and Content handles the existing command to clear
+them. The combined sources built on the earlier Chromium pin in the
+isolated migration output. GN header checking passed and the graph had
+13,757 dependency labels with zero under `//chrome`. The combined app
+passed the ordinary-startup Night Shift Work, Personal and restart
+trial. The Assistant consent rehearsal also passed on the earlier pin:
+with the default page grant disabled, the Night Shift shortcut asked for
+access, remembered the explicit grant for Work, and submitted the
+restricted request to the local fixture provider. On restart the grant
+was used without a new dialog and the default remained off. Provider
+availability refreshes now preserve explicit session grants while
+changes that narrow a default still revoke access. The activation hook
+was confined to Chromium staging. The integration worktree still needs
+a build and regression run on the new pin before a merge commit is used
+for cutover.
+
+The integrated import now commits Arc favorites to the destination
+profile's shared favorites list and publishes them only after the
+catalogue write succeeds. A durable `--arc-import` fixture exercised
+preview, approval, restart and repeat import on macOS with two
+disposable Arc profiles. Each profile kept one distinct favorite.
+The favorites were not duplicated into individual spaces and the
+fixture source remained byte-for-byte unchanged. The existing
+Chromium import trial also passed its checks for source immutability,
+profile mapping, encryption, and preservation of existing rows.
+These trials used the earlier Chromium pin. The password CSV action
+in main is part of the Windows welcome wizard and belongs to the
+separate Windows port.
+
+The Content session store now retains GitHub live-folder metadata and
+its cached Arc pull-request children. Existing session files without the
+optional metadata are accepted. The Arc fixture now checks that the
+folder and cached child survive restart and repeat import while profile
+favorites remain separate. The expanded fixture passed on the earlier
+Chromium pin after updating the preview expectations to include one
+GitHub folder and its cached pull request. The trial on Chromium 157
+is pending. The Content Workspace now wires folder creation
+and editing for persistent profiles. Token writes use OSCrypt with the
+destination profile, workspace, and folder IDs inside the encrypted
+payload. Pending writes check that the profile and original folder still
+match before applying changes. The Content host implements manual and
+five-minute refresh for the active workspace. It verifies the encrypted
+scope before adding an authorization header, uses the owning profile's
+network partition, omits cookies, rejects redirects, and cancels stale
+work on workspace or configuration changes. Cached pull requests retain
+their pin IDs when possible. The local `verify_content_github_folders.py`
+fixture exercises the real request path using disposable profiles and a
+loopback API. Only synthetic fixture credentials can be sent to that
+endpoint. The trial checks creation, a manual refresh after restart,
+stable pin IDs, token replacement and removal, and rejection of a
+ciphertext copied from Work into Personal.
+The complete loopback trial passed with the locally linked macOS app on
+the earlier Chromium pin. It verified that Personal emitted no API
+request with the copied ciphertext.
+
+The first Chromium 157 macOS arm64 build completed all 43,877 Ninja
+actions locally. On the same Chromium revision, the initial merged
+snapshot `7a55a20` passed GN header checking and its transitive graph
+contained 13,756 dependencies with zero targets under `//chrome`.
+The only files read under `chrome/` were `chrome/VERSION` and
+`chrome/app/theme/chromium/BRANDING`. The merged runtime regression
+uses a later snapshot and must repeat the audit for that snapshot.
+
+The first Chromium 157 runtime pass verified persistent profiles and
+OSCrypt password storage, form autofill, docked DevTools, and Workspace
+downloads. The private-window probe failed at native menu dispatch
+after both private windows shared the expected storage. The encrypted
+import probe reported that the native menu had neither a key nor a main
+window. The fingerprint probe reported that the Work popover had not
+closed during a profile switch. The test menu now activates the app,
+and the fingerprint toolbar hides its client-owned bubble before
+requesting asynchronous destruction. The first repair build stopped at
+the macOS 13 deployment check because the probe used an AppKit activation
+method introduced in macOS 14. The probe now uses
+`NSRunningApplication.activateWithOptions:`. The replacement snapshot
+passed GN header checking and the graph again had 13,756 labels and zero
+`//chrome` targets.
+A host restart interrupted the first run during the adblock migration
+check, before it returned a result.
+On the next Chromium 157 build the private-window, cross-process
+fingerprint, and adblock timing and migration probes passed. The
+encrypted import probe still reached the native menu before AppKit
+reported a key or main window. It now retries the native menu command
+for up to four seconds before reporting failure.
+
+On first ordinary macOS launch, Content now opens the shared browser
+import panel. A cancelled process can reopen the pending offer, and a
+dismissal or successful catalogue commit clears it. Existing sessions
+without the pending marker continue directly into the Workspace.
+Imported spaces are added alongside the two built-in Work and Personal
+spaces. The argument-free startup fixture passed on the earlier pin.
+It reopened a pending offer, dismissed it, and checked that a third
+launch bypassed the panel while keeping both built-in profiles. It used
+an isolated file Keychain and an import path inside the temporary root.
+The first merged Chromium 157 snapshot also completed its 48-action
+incremental build.
+
+Content now handles the page zoom keys and Chromium's zoom gesture
+callback with main's zoom steps. Configured Workspace shortcuts retain
+priority. The macOS `--page-zoom` trial verified zoom in and out, the
+gesture callback, persistence for one Work site, reset to Work's
+default, and separate Personal and private settings. It sent keyboard
+events to the WebContents delegate and called the gesture callback
+directly. The first run passed the zoom checks and stopped in the
+private native-menu focus exercise. The zoom trial now uses its
+existing direct private-window path, while the separate private-window
+trial still exercises native menu dispatch. The final zoom trial and
+GN header check passed on the earlier pin with zero `//chrome` labels.
+
 Main also pins Chromium `9a31f0acec1854d44e49a73fbf8017598151a583`
 (157.0.8103.39); the migration trials used
 `1a732fcc23b20dd0bcf38f35d72c1fe1ec799d35`. The integrated candidate
 needs a local build against the new pin and a fresh dependency audit.
-Night Shift needs a Content host adapter for the component extension
-lifecycle and per-profile settings. Main's implementation currently
-uses Chrome's Profile and ComponentLoader. Preserve its private-window
-policy and verify per-site settings, page zoom, contrast repair consent,
-the Assistant and extension popup, and the browser import paths on the
-merged build. Re-run packaging and update checks with a version newer
+The integration retains the Content component extension and profile
+settings code. Verify its private-window policy, per-site settings,
+page zoom, contrast repair consent, the Assistant and extension popup,
+and the browser import paths on the merged build. Re-run packaging and update checks with a version newer
 than the published release at cutover.
 
 The Chromium 157 staging rehearsal fetched the exact new pin in a

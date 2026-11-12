@@ -5,6 +5,7 @@
 #include <cstddef>
 
 #include "base/functional/callback.h"
+#include "ui/gfx/native_ui_types.h"
 
 namespace content {
 class WebContents;
@@ -21,7 +22,8 @@ struct PasswordCsvOutcome {
   size_t count = 0;
 };
 // Asks for the file, imports it and reports once; owns itself until then.
-void ImportPasswordsFromCsv(content::WebContents* contents, base::OnceCallback<void(PasswordCsvOutcome)> done);
+void ImportPasswordsFromCsv(content::WebContents* contents, gfx::NativeWindow owner,
+                            base::OnceCallback<void(PasswordCsvOutcome)> done);
 }  // namespace zitter::prototype
 
 #endif

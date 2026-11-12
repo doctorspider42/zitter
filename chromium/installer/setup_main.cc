@@ -7,8 +7,8 @@
 //   zitter_setup.exe --uninstall [--system]          Apps & features' remove
 //   zitter_setup.exe --install-now --dir D [--system] [--no-desktop] [--no-launch]
 //                                        the elevated half of an install for everyone
-//   --quiet with either: no questions, no Zitter launched afterwards, and the
-//   exit code says whether it worked (for scripts and package managers)
+//   --quiet with either: no questions; only browser-initiated updates relaunch
+//   Zitter. The exit code says whether it worked.
 #include <windows.h>
 
 #include <d2d1_1.h>
@@ -186,7 +186,23 @@ class Window : public AccessibilityHost {
     preserve_shortcuts_ = has(L"--preserve-shortcuts");
     update_only_ = has(L"--update-only");
     quiet_ = has(L"--quiet");
-    launch_browser_ = !quiet_ && !has(L"--no-launch");
+    // Older browser versions already identify their update handoff with these
+    // flags. Relaunch after the upgrade from those versions as well.
+    const bool browser_handoff = quiet_ && preserve_shortcuts_ && has(L"--wait-for-process");
+    const bool restart = update_only_ && has(L"--install-now") &&
+        (has(L"--relaunch-browser") || browser_handoff);
+    launch_browser_ = (!quiet_ || restart) && !has(L"--no-launch");
+    if (restart) {
+      auto dir = std::find(args.begin(), args.end(), L"--relaunch-user-data-dir");
+      if (dir != args.end() && std::next(dir) != args.end()) {
+        const auto& path = *std::next(dir);
+        if (!path.empty() && path.find(L'"') == std::wstring::npos) {
+          const auto last = path.find_last_not_of(L'\\');
+          const auto trailing_slashes = last == std::wstring::npos ? path.size() : path.size() - last - 1;
+          browser_arguments_ = L"--user-data-dir=\"" + path + std::wstring(trailing_slashes, L'\\') + L"\"";
+        }
+      }
+    }
     existing_ = FindExisting();
     if (has(L"--uninstall")) {
       if (existing_) placement_ = existing_->placement;
@@ -200,8 +216,19 @@ class Window : public AccessibilityHost {
     if (placement_.directory.empty()) placement_.directory = DefaultDirectory(placement_.system);
     // An installation for everyone changes Program Files and HKLM.
     if (placement_.system && (install_now_ || uninstall_only_) && !IsElevated()) {
-      Relaunch(GetCommandLineArguments());
-      ExitProcess(0);
+      if (restart && launch_browser_) {
+        // Only the installation needs elevation. Wait in the original user
+        // session and launch the new executable with that user's own token.
+        HANDLE elevated = nullptr;
+        if (!Relaunch(GetCommandLineArguments() + L" --no-launch", &elevated) || !elevated)
+          ExitProcess(1);
+        DWORD result = 1;
+        const bool installed = WaitForSingleObject(elevated, INFINITE) == WAIT_OBJECT_0 &&
+            GetExitCodeProcess(elevated, &result) && result == 0;
+        CloseHandle(elevated);
+        ExitProcess(installed && LaunchBrowser() ? 0 : 1);
+      }
+      ExitProcess(Relaunch(GetCommandLineArguments()) ? 0 : 1);
     }
   }
 
@@ -214,7 +241,7 @@ class Window : public AccessibilityHost {
     return at == std::wstring::npos || at >= line.size() ? std::wstring() : line.substr(at);
   }
 
-  bool Relaunch(const std::wstring& arguments) {
+  bool Relaunch(const std::wstring& arguments, HANDLE* process = nullptr) {
     std::wstring self(MAX_PATH, L'\0');
     self.resize(GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size())));
     SHELLEXECUTEINFOW info{};
@@ -223,7 +250,10 @@ class Window : public AccessibilityHost {
     info.lpFile = self.c_str();
     info.lpParameters = arguments.c_str();
     info.nShow = SW_SHOWNORMAL;
-    return ShellExecuteExW(&info);
+    if (process) info.fMask |= SEE_MASK_NOCLOSEPROCESS;
+    if (!ShellExecuteExW(&info)) return false;
+    if (process) *process = info.hProcess;
+    return true;
   }
 
   bool CreateResources() {
@@ -861,9 +891,9 @@ class Window : public AccessibilityHost {
   bool LaunchBrowser() {
     const std::wstring exe = placement_.directory + L"\\zitter.exe";
     if (!IsElevated())
-      return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr,
+      return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", exe.c_str(), browser_arguments_.c_str(),
                                                     placement_.directory.c_str(), SW_SHOWNORMAL)) > 32;
-    return SUCCEEDED(LaunchFromExplorer(exe, placement_.directory));
+    return SUCCEEDED(LaunchFromExplorer(exe, placement_.directory, browser_arguments_));
   }
 
   void Finished() {
@@ -881,12 +911,13 @@ class Window : public AccessibilityHost {
              MB_ICONWARNING);
       return;
     }
+    exit_code_ = 0;
     if (removing_) {
       DeleteSelfLater(placement_.directory);
-    } else if (launch_browser_ && !quiet_ && !LaunchBrowser()) {
-      MessageBoxW(hwnd_, text_.launch_failed, windows::kProductName, MB_OK | MB_ICONINFORMATION);
+    } else if (launch_browser_ && !LaunchBrowser()) {
+      if (quiet_) exit_code_ = 1;
+      else MessageBoxW(hwnd_, text_.launch_failed, windows::kProductName, MB_OK | MB_ICONINFORMATION);
     }
-    exit_code_ = 0;
     page_ = Page::kFresh;  // Lets WM_CLOSE through.
     DestroyWindow(hwnd_);
   }
@@ -912,6 +943,7 @@ class Window : public AccessibilityHost {
   bool preserve_shortcuts_ = false;
   bool update_only_ = false;
   bool launch_browser_ = true;
+  std::wstring browser_arguments_;
   bool install_now_ = false, uninstall_only_ = false, quiet_ = false;
   int exit_code_ = 0;
   double progress_ = 0;

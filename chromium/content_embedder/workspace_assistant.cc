@@ -361,6 +361,7 @@ base::DictValue WorkspaceLab::ReadAssistantSettings() const {
       .Set("backends", std::move(backends)).Set("status", std::move(statuses))
       .Set("models", std::move(models))
       .Set("has_saved_key", assistant_settings_ && !assistant_settings_->encrypted_api_key.empty())
+      .Set("has_shortcut_access", assistant_settings_ && !assistant_settings_->shortcut_access.empty())
       .Set("codex_path", assistant_settings_ ? assistant_settings_->codex_path : "")
       .Set("claude_path", assistant_settings_ ? assistant_settings_->claude_path : "")
       .Set("default_model", assistant_settings_ ? assistant_settings_->default_model : "");
@@ -375,6 +376,11 @@ void WorkspaceLab::WriteAssistantSettings(base::DictValue command) {
   if (!action)
     return;
   auto settings = *assistant_settings_;
+  if (*action == "clear_shortcut_access") {
+    settings.shortcut_access.clear();
+    StoreAssistantSettings(std::move(settings));
+    return;
+  }
   if (*action == "save_key") {
     if (const auto* key = command.FindString("key"))
       SaveAssistantApiKey(std::string(base::TrimWhitespaceASCII(*key, base::TRIM_ALL)));
@@ -584,6 +590,47 @@ const prototype::AssistantSettings& WorkspaceLab::assistant_settings() const {
   return assistant_host_settings_;
 }
 
+void WorkspaceLab::SetAssistantSettings(prototype::AssistantSettings settings) {
+  if (CanConfigureAssistant() && CanEditWorkspace())
+    StoreAssistantSettings(std::move(settings));
+}
+
+content::WebContents* WorkspaceLab::AssistantCurrentPage() {
+  auto* page = web_contents();
+  return page && !PeekPage() &&
+                 page->GetBrowserContext() == AssistantBrowserContext()
+             ? page
+             : nullptr;
+}
+
+bool WorkspaceLab::AssistantPageActionsAvailable() {
+  return CanActOnAssistantPage(AssistantCurrentPage());
+}
+
+void WorkspaceLab::RunAssistantPageAction(int command) {
+  using prototype::AssistantShortcut;
+  using prototype::T;
+  if (command == 6) { shell_->OpenAssistantSettings(); return; }
+  const std::array<std::u16string, 5> prompts = {
+    T(u"Podsumuj tę stronę: główne tezy, liczby, wnioski i to, co warto zrobić dalej. Oddziel treść strony od własnej interpretacji."),
+    T(u"Dodaj wyszukiwarkę tej strony. Odczytaj formularz wyszukiwania, ustal poprawny URL z parametrem zapytania i zaproponuj krótki keyword. Użyj add_search_engine."),
+    T(u"Zablokuj reklamy na tej stronie, których nie blokują listy. Sprawdź istniejące reguły, przetestuj nowe i pokaż ich podgląd przed zapisaniem. Nie ukrywaj właściwej treści."),
+    T(u"Najpierw odczytaj bieżącą stronę, potem sprawdź jej najważniejsze twierdzenia w niezależnych i pierwotnych źródłach. Pokaż co potwierdzono, co jest sporne, daty i linki. Nie traktuj samej strony jako dowodu."),
+    T(u"Wyciągnij użyteczne dane z tej strony do czytelnej tabeli. Wskaż ceny, warunki, różnice i braki danych, jeśli występują. Nie dopowiadaj wartości, których nie znaleziono.")};
+  if (command < 0 || command >= static_cast<int>(prompts.size()) || !assistant_host_settings_.enabled ||
+      !AssistantPageActionsAvailable()) return;
+  if (ShowAssistant(false)) {
+    const std::array<AssistantShortcut, 5> shortcuts = {{
+      {"summarize", T(u"Podsumuj stronę"), {.tabs = true, .pages = true, .web = false}},
+      {"add_search_engine", T(u"Dodaj wyszukiwarkę"), {.tabs = true, .pages = true, .actions = true, .web = false}},
+      {"block_ads", T(u"Zablokuj reklamy"), {.tabs = true, .pages = true, .actions = true, .web = false}},
+      {"check_facts", T(u"Sprawdź fakty"), {.tabs = true, .pages = true, .web = true}},
+      {"extract_data", T(u"Wyciągnij dane"), {.tabs = true, .pages = true, .web = false}},
+    }};
+    assistant_->PreparePageAction(prompts[command], shortcuts[command]);
+  }
+}
+
 bool WorkspaceLab::ShowAssistant(bool hover) {
   if (!assistant_host_settings_.enabled || AssistantProfileId().empty())
     return false;
@@ -669,9 +716,10 @@ void WorkspaceLab::PrepareNightShiftRepair(content::RenderFrameHost& document) {
   const auto* prompt = prototype::UiLanguageIsEnglish()
       ? u"Fix Night Shift colors for this site. Request ID: "
       : u"Popraw kolory Night Shift dla tej witryny. Identyfikator zlecenia: ";
-  assistant_->PreparePageAction(prompt + base::UTF8ToUTF16(request),
-                                /*needs_actions=*/false, /*needs_web=*/false,
-                                /*night_shift=*/true);
+  assistant_->PreparePageAction(
+      prompt + base::UTF8ToUTF16(request),
+      {"night_shift_repair", prototype::T(u"Popraw dla tej strony"),
+       {.pages = true, .web = false}}, /*night_shift=*/true);
 }
 
 void WorkspaceLab::RunNightShiftAssistantTool(

@@ -9,15 +9,20 @@
 #include "base/base_paths.h"
 #include "base/files/file_util.h"
 #include "base/files/file_enumerator.h"
+#include "base/hash/sha1.h"
 #include "base/json/json_reader.h"
 #include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "base/uuid.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chromium/prototype/i18n.h"
+#include "chromium/prototype/import_database_snapshot.h"
+#include "sql/statement.h"
 
 namespace zitter::prototype {
 namespace {
@@ -50,8 +55,8 @@ std::string Text(const base::DictValue& dict, std::string_view key, std::string 
   return value && !value->empty() ? *value : std::move(fallback);
 }
 void VisitItem(const std::string& id, const std::string& parent, const Dictionary& items,
-               ImportedSpace& space, ArcImport& result, std::set<std::string>& visited,
-               size_t depth) {
+               std::vector<PinnedItem>& pins, ArcImport& result,
+               std::set<std::string>& visited, size_t depth, bool favorite = false) {
   if (depth > 64 || visited.size() > 20000 || !visited.insert(id).second) {
     ++result.skipped_count;
     return;
@@ -63,13 +68,19 @@ void VisitItem(const std::string& id, const std::string& parent, const Dictionar
   if (!data) { ++result.skipped_count; return; }
   std::string child_parent = parent;
   if (data->contains("list") || data->contains("splitView")) {
-    space.pins.push_back({id, parent, Text(item, "title", data->contains("splitView") ? "Split View" : "Folder"), GURL(), true});
-    child_parent = id;
-    ++result.folder_count;
+    if (!favorite) {
+      pins.push_back({id, parent, Text(item, "title", data->contains("splitView") ? "Split View" : "Folder"), GURL(), true});
+      if (data->FindDictByDottedPath("list.automaticLiveFolderData.dataSource.github"))
+        pins.back().github.emplace();
+      child_parent = id;
+      ++result.folder_count;
+    }
   } else if (const auto* tab = data->FindDict("tab")) {
     GURL url(Text(*tab, "savedURL", ""));
     if (url.is_valid() && url.SchemeIsHTTPOrHTTPS()) {
-      space.pins.push_back({id, parent, Text(item, "title", Text(*tab, "savedTitle", std::string(url.host()))), url, false});
+      pins.push_back({favorite ? "arc-favorite-" + id : id, parent,
+                      Text(item, "title", Text(*tab, "savedTitle", std::string(url.host()))),
+                      url, false, favorite});
       ++result.tab_count;
     } else { ++result.skipped_count; }
     return;
@@ -79,7 +90,7 @@ void VisitItem(const std::string& id, const std::string& parent, const Dictionar
   }
   if (const auto* children = item.FindList("childrenIds")) {
     for (const auto& child : *children) {
-      if (child.is_string()) VisitItem(child.GetString(), child_parent, items, space, result, visited, depth + 1);
+      if (child.is_string()) VisitItem(child.GetString(), child_parent, items, pins, result, visited, depth + 1, favorite);
       else ++result.skipped_count;
     }
   }
@@ -142,6 +153,14 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
         if (!directory.empty() && (*list)[i + 1].is_string()) favorites[directory] = (*list)[i + 1].GetString();
       }
     }
+    for (const auto& [directory, root] : favorites) {
+      if (!items.contains(root)) continue;
+      const auto profile_id = add_profile(directory);
+      auto [entry, inserted] = result.profile_favorites.try_emplace(profile_id);
+      if (!inserted) continue;
+      std::set<std::string> visited;
+      VisitItem(root, "", items, entry->second, result, visited, 0, true);
+    }
     for (const auto& id : order) {
       if (!seen_spaces.insert(id).second || !spaces.contains(id)) continue;
       const auto& space = *spaces.at(id);
@@ -161,17 +180,6 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
         }
       }
       std::set<std::string> visited;
-      if (auto it = favorites.find(directory); it != favorites.end()) {
-        if (auto root = items.find(it->second); root != items.end()) {
-          const auto* children = root->second->FindList("childrenIds");
-          if (children && !children->empty()) {
-            const auto folder_id = "arc-favorites-" + id;
-            imported.pins.push_back({folder_id, "", base::UTF16ToUTF8(T(u"Ulubione Arc")), GURL(), true});
-            ++result.folder_count;
-            VisitItem(it->second, folder_id, items, imported, result, visited, 0);
-          }
-        }
-      }
       bool pinned_found = false;
       if (const auto* list = space.FindList("newContainerIDs")) {
         for (size_t i = 0; i + 1 < list->size(); i += 2) {
@@ -181,7 +189,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
               result.error = base::UTF16ToUTF8(T(u"Dane Arc są niekompletne. Zamknij Arc i ponów import."));
               return result;
             }
-            VisitItem((*list)[i + 1].GetString(), "", items, imported, result, visited, 0);
+            VisitItem((*list)[i + 1].GetString(), "", items, imported.pins, result, visited, 0);
             pinned_found = true;
           }
         }
@@ -195,7 +203,7 @@ ArcImport ParseArcImport(std::string_view sidebar, std::string_view local_state)
               result.error = base::UTF16ToUTF8(T(u"Dane Arc są niekompletne. Zamknij Arc i ponów import."));
               return result;
             }
-            VisitItem((*list)[i + 1].GetString(), "", items, imported, result, visited, 0);
+            VisitItem((*list)[i + 1].GetString(), "", items, imported.pins, result, visited, 0);
               pinned_found = true;
             }
           }
@@ -252,8 +260,30 @@ std::u16string ImportBrowserName(ImportBrowser browser) {
     case ImportBrowser::kChrome: return u"Google Chrome";
     case ImportBrowser::kEdge: return u"Microsoft Edge";
     case ImportBrowser::kBrave: return u"Brave";
+    case ImportBrowser::kFirefox: return u"Firefox";
+    case ImportBrowser::kOpera: return u"Opera";
+    case ImportBrowser::kVivaldi: return u"Vivaldi";
   }
 }
+
+bool BrowserSupportsCookieImport(ImportBrowser browser) {
+  return browser == ImportBrowser::kArc || browser == ImportBrowser::kChrome ||
+         browser == ImportBrowser::kEdge || browser == ImportBrowser::kBrave;
+}
+
+namespace {
+std::string BrowserImportPrefix(ImportBrowser browser) {
+  switch (browser) {
+    case ImportBrowser::kArc: return "arc";
+    case ImportBrowser::kChrome: return "chrome";
+    case ImportBrowser::kEdge: return "edge";
+    case ImportBrowser::kBrave: return "brave";
+    case ImportBrowser::kFirefox: return "firefox";
+    case ImportBrowser::kOpera: return "opera";
+    case ImportBrowser::kVivaldi: return "vivaldi";
+  }
+}
+}  // namespace
 
 base::FilePath DefaultBrowserDirectory(ImportBrowser browser) {
   if (browser == ImportBrowser::kArc) return DefaultArcDirectory();
@@ -264,15 +294,26 @@ base::FilePath DefaultBrowserDirectory(ImportBrowser browser) {
     case ImportBrowser::kChrome: return path.AppendASCII("Google/Chrome");
     case ImportBrowser::kEdge: return path.AppendASCII("Microsoft Edge");
     case ImportBrowser::kBrave: return path.AppendASCII("BraveSoftware/Brave-Browser");
+    case ImportBrowser::kFirefox: return path.AppendASCII("Firefox");
+    case ImportBrowser::kOpera: return path.AppendASCII("com.operasoftware.Opera");
+    case ImportBrowser::kVivaldi: return path.AppendASCII("Vivaldi");
     case ImportBrowser::kArc: break;
   }
 #elif BUILDFLAG(IS_WIN)
+  if (browser == ImportBrowser::kFirefox || browser == ImportBrowser::kOpera) {
+    if (!base::PathService::Get(base::DIR_ROAMING_APP_DATA, &path)) return {};
+    return browser == ImportBrowser::kFirefox ? path.AppendASCII("Mozilla/Firefox")
+                                              : path.AppendASCII("Opera Software/Opera Stable");
+  }
   if (!base::PathService::Get(base::DIR_LOCAL_APP_DATA, &path)) return {};
   switch (browser) {
     case ImportBrowser::kChrome: return path.AppendASCII("Google").AppendASCII("Chrome").AppendASCII("User Data");
     case ImportBrowser::kEdge: return path.AppendASCII("Microsoft").AppendASCII("Edge").AppendASCII("User Data");
     case ImportBrowser::kBrave:
       return path.AppendASCII("BraveSoftware").AppendASCII("Brave-Browser").AppendASCII("User Data");
+    case ImportBrowser::kVivaldi: return path.AppendASCII("Vivaldi/User Data");
+    case ImportBrowser::kFirefox:
+    case ImportBrowser::kOpera:
     case ImportBrowser::kArc: break;
   }
 #endif
@@ -280,20 +321,34 @@ base::FilePath DefaultBrowserDirectory(ImportBrowser browser) {
 }
 
 ArcImport ApplyImportOptions(ArcImport result, BrowserImportOptions options) {
+  options.cookies &= BrowserSupportsCookieImport(options.browser);
   result.options = options;
   if (!result.error.empty()) return result;
   if (!options.bookmarks) {
     for (auto& space : result.spaces) space.pins.clear();
+    result.profile_favorites.clear();
     result.tab_count = result.folder_count = 0;
   }
   if (!options.separate_profiles && !result.profiles.empty()) {
     // A separate destination per browser prevents cross-browser identity clashes.
     auto profile = result.profiles.front();
-    profile.id = options.browser == ImportBrowser::kArc ? "arc-profile-merged" :
-        options.browser == ImportBrowser::kChrome ? "chrome-profile-merged" :
-        options.browser == ImportBrowser::kEdge ? "edge-profile-merged" : "brave-profile-merged";
+    profile.id = BrowserImportPrefix(options.browser) + "-profile-merged";
     profile.name = base::UTF16ToUTF8(TF(u"Import z {}", {ImportBrowserName(options.browser)}));
     profile.source_id = "import:" + profile.id;
+    if (!result.profile_favorites.empty()) {
+      std::vector<PinnedItem> favorites;
+      std::set<std::string> seen;
+      for (const auto& source : result.profiles) {
+        const auto entry = result.profile_favorites.find(source.id);
+        if (entry == result.profile_favorites.end()) continue;
+        for (auto& favorite : entry->second) {
+          if (seen.insert(favorite.id).second) favorites.push_back(std::move(favorite));
+          else --result.tab_count;
+        }
+      }
+      result.profile_favorites.clear();
+      result.profile_favorites.emplace(profile.id, std::move(favorites));
+    }
     result.profiles = {profile};
     for (auto& space : result.spaces) space.profile_id = profile.id;
     for (auto& source : result.sources) source.destination_id = profile.id;
@@ -302,6 +357,118 @@ ArcImport ApplyImportOptions(ArcImport result, BrowserImportOptions options) {
 }
 
 namespace {
+std::map<base::FilePath, std::string> FirefoxProfiles(const base::FilePath& directory) {
+  std::map<base::FilePath, std::string> profiles;
+  std::string ini;
+  if (!base::ReadFileToStringWithMaxSize(directory.AppendASCII("profiles.ini"), &ini, 1024 * 1024)) {
+    if (base::PathExists(directory.AppendASCII("places.sqlite")))
+      profiles.emplace(directory, directory.BaseName().AsUTF8Unsafe());
+    return profiles;
+  }
+  std::string name, path;
+  bool relative = true;
+  bool profile = false;
+  auto save = [&] {
+    if (!profile || path.empty() || !base::IsStringUTF8(path)) return;
+    const auto entry = base::FilePath::FromUTF8Unsafe(path);
+    if (relative == entry.IsAbsolute() || (relative && entry.ReferencesParent())) return;
+    const auto resolved = relative ? directory.Append(entry) : entry;
+    if (base::PathExists(resolved.AppendASCII("places.sqlite")))
+      profiles.emplace(resolved, name.empty() ? resolved.BaseName().AsUTF8Unsafe() : name);
+  };
+  for (auto line : base::SplitStringPiece(ini, "\n", base::TRIM_WHITESPACE,
+                                          base::SPLIT_WANT_NONEMPTY)) {
+    if (line.starts_with("[")) {
+      save();
+      profile = line.starts_with("[Profile") && line.ends_with("]");
+      name.clear();
+      path.clear();
+      relative = true;
+    } else if (line.starts_with("Name=")) {
+      name = line.substr(5);
+    } else if (line.starts_with("Path=")) {
+      path = line.substr(5);
+    } else if (line.starts_with("IsRelative=")) {
+      relative = line.substr(11) != "0";
+    }
+  }
+  save();
+  return profiles;
+}
+
+bool ReadFirefoxBookmarks(const base::FilePath& directory, ImportedSpace& space,
+                          ArcImport& result) {
+  base::ScopedTempDir temp;
+  sql::Database db("History");
+  if (!SnapshotImportDatabase(directory.AppendASCII("places.sqlite"), temp, db)) return false;
+  sql::Statement query(db.GetUniqueStatement(
+      "SELECT b.id,b.parent,b.type,b.title,p.url,b.guid FROM moz_bookmarks b "
+      "LEFT JOIN moz_places p ON p.id=b.fk ORDER BY b.parent,b.position,b.id LIMIT 20001"));
+  if (!query.is_valid()) return false;
+  struct Bookmark { int64_t id; int type; std::string title; GURL url; };
+  std::map<int64_t, std::vector<Bookmark>> children;
+  std::map<std::string, Bookmark> roots;
+  size_t count = 0;
+  while (query.Step()) {
+    if (++count > 20000) return false;
+    Bookmark bookmark{query.ColumnInt64(0), query.ColumnInt(2), query.ColumnString(3),
+                      GURL(query.ColumnString(4))};
+    if (bookmark.type == 2) roots.emplace(query.ColumnString(5), bookmark);
+    children[query.ColumnInt64(1)].push_back(std::move(bookmark));
+  }
+  if (!query.Succeeded()) return false;
+  std::set<int64_t> visited;
+  auto visit = [&](auto&& self, const Bookmark& item, const std::string& parent,
+                   size_t depth) -> void {
+    if (depth > 64 || !visited.insert(item.id).second) { ++result.skipped_count; return; }
+    const auto id = "firefox-bookmark-" + std::to_string(item.id);
+    if (item.type == 2) {
+      space.pins.push_back({id, parent, item.title, {}, true});
+      ++result.folder_count;
+      if (auto it = children.find(item.id); it != children.end())
+        for (const auto& child : it->second) self(self, child, id, depth + 1);
+    } else if (item.type == 1 && item.url.is_valid() && item.url.SchemeIsHTTPOrHTTPS()) {
+      space.pins.push_back({id, parent, item.title.empty() ? std::string(item.url.host()) : item.title,
+                            item.url, false});
+      ++result.tab_count;
+    } else {
+      ++result.skipped_count;
+    }
+  };
+  for (const auto& [guid, label] : std::initializer_list<std::pair<const char*, const char*>>{
+           {"toolbar_____", "Bookmarks Toolbar"}, {"menu________", "Bookmarks Menu"},
+           {"unfiled_____", "Other Bookmarks"}, {"mobile______", "Mobile Bookmarks"}}) {
+    auto root = roots.find(guid);
+    if (root == roots.end() || !children.contains(root->second.id)) continue;
+    if (root->second.title.empty()) root->second.title = label;
+    visit(visit, root->second, "", 0);
+  }
+  return true;
+}
+
+ArcImport ReadFirefoxImport(BrowserImportOptions options, const base::FilePath& directory) {
+  ArcImport result;
+  for (const auto& [path, name] : FirefoxProfiles(directory)) {
+    const auto identity = base::HexEncode(base::SHA1HashString(path.AsUTF8Unsafe()));
+    const auto profile_id = "firefox-profile-" + identity;
+    ImportedSpace space;
+    space.id = "firefox-space-" + identity;
+    space.name = name;
+    space.profile_id = profile_id;
+    if (options.bookmarks && !ReadFirefoxBookmarks(path, space, result)) {
+      result.error = base::UTF16ToUTF8(T(u"Nie udało się odczytać zakładek. Zamknij przeglądarkę i spróbuj ponownie."));
+      return result;
+    }
+    result.profiles.push_back({profile_id, name + " (Firefox)",
+        "ZitterProfile-" + base::Uuid::GenerateRandomV4().AsLowercaseString(), "firefox:" + identity});
+    result.sources.push_back({path, profile_id});
+    result.spaces.push_back(std::move(space));
+  }
+  if (result.spaces.empty())
+    result.error = base::UTF16ToUTF8(T(u"Nie znaleziono profili do importu."));
+  return ApplyImportOptions(std::move(result), options);
+}
+
 void VisitBookmark(const base::DictValue& node, const std::string& parent,
                    ImportedSpace& space, ArcImport& result, size_t depth,
                    size_t& visited) {
@@ -341,8 +508,9 @@ ArcImport ReadBrowserImport(BrowserImportOptions options, const base::FilePath& 
     result.error = base::UTF16ToUTF8(TF(u"Nie znaleziono danych przeglądarki {}.", {ImportBrowserName(options.browser)}));
     return result;
   }
-  const char* prefix = options.browser == ImportBrowser::kChrome ? "chrome" :
-      options.browser == ImportBrowser::kEdge ? "edge" : "brave";
+  if (options.browser == ImportBrowser::kFirefox)
+    return ReadFirefoxImport(options, directory);
+  const auto prefix = BrowserImportPrefix(options.browser);
   constexpr size_t kMaxSize = 32 * 1024 * 1024;
   std::string state_json;
   base::ReadFileToStringWithMaxSize(directory.AppendASCII("Local State"), &state_json, kMaxSize);
@@ -360,8 +528,12 @@ ArcImport ReadBrowserImport(BrowserImportOptions options, const base::FilePath& 
     const auto name = path.BaseName().AsUTF8Unsafe();
     if (valid_directory(name)) directories.insert(name);
   }
+  const bool legacy_opera = options.browser == ImportBrowser::kOpera && directories.empty() &&
+      (base::PathExists(directory.AppendASCII("Bookmarks")) ||
+       base::PathExists(directory.AppendASCII("History")));
+  if (legacy_opera) directories.insert("Default");
   for (const auto& name : directories) {
-    const auto profile_dir = directory.AppendASCII(name);
+    const auto profile_dir = legacy_opera ? directory : directory.AppendASCII(name);
     if (!base::DirectoryExists(profile_dir)) continue;
     const auto* entry = cache ? cache->FindDict(name) : nullptr;
     const auto title = entry ? Text(*entry, "name", name) : name;
@@ -386,6 +558,12 @@ ArcImport ReadBrowserImport(BrowserImportOptions options, const base::FilePath& 
       size_t visited = 0;
       for (const auto key : {"bookmark_bar", "other", "synced"})
         if (const auto* root = roots->FindDict(key)) VisitBookmark(*root, "", space, result, 0, visited);
+      if (options.browser == ImportBrowser::kOpera) {
+        if (const auto* custom = roots->FindDict("custom_root"))
+          for (const auto key : {"userRoot", "speedDial", "unsorted"})
+            if (const auto* root = custom->FindDict(key))
+              VisitBookmark(*root, "", space, result, 0, visited);
+      }
     }
     result.sources.push_back({profile_dir, profile.id});
     result.profiles.push_back(std::move(profile));

@@ -136,7 +136,6 @@
         .sort((a, b) => a.contrastRatio - b.contrastRatio).map(candidate => candidate.target),
     };
   }
-
   const visible = e => {
     const r = e.getBoundingClientRect(), s = style(e);
     if (r.width <= 0 || r.height <= 0 || s.visibility === 'hidden' || s.display === 'none') return false;

@@ -53,7 +53,18 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
     base::RepeatingClosure block_with_assistant;
     base::RepeatingClosure diagnose_blocking_with_assistant;
     base::RepeatingCallback<bool()> assistant_available;
-    // Opens the conversation from the quick-action menu.
+    base::RepeatingCallback<void(content::WebContents*)> fix_night_shift;
+    // Whether the moon shows in the bar for `profile`; the person may hide it
+    // from the extensions menu, as an unpinned action.
+    base::RepeatingCallback<bool(Profile*)> night_shift_shown;
+    base::RepeatingCallback<void(Profile*, bool)> set_night_shift_shown;
+    // JSON for the Night Shift settings page: the profiles and the app-wide
+    // configuration (absent until it was saved once).
+    base::RepeatingCallback<std::string()> night_shift_state;
+    base::RepeatingCallback<void(Profile*, bool, base::OnceClosure)> set_night_shift_enabled;
+    // The assistant button shows or hides the panel.
+    base::RepeatingClosure toggle_assistant_panel;
+    // Starts a new conversation.
     base::RepeatingClosure toggle_assistant;
     base::RepeatingCallback<void(int)> assistant_action;
   };
@@ -81,9 +92,12 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void ToggleFingerprintPanel();
   // The ad blocking panel under the shield (shown while the profile blocks ads).
   void ToggleShieldPanel();
+  // Night Shift under its moon (design: Night Shift): the site's dark mode,
+  // its tuning, a staged assistant repair and the app-wide settings.
+  void ToggleNightShiftPanel();
+  void RefreshNightShift();
   void ToggleAssistantPanel();
   void RunAssistantCommandForTesting(int command) { RunAssistantCommand(command); }
-  views::Widget* assistant_menu_for_testing() const { return assistant_widget_.get(); }
 
   Profile* profile() const { return profile_; }
   content::WebContents* page() const { return page_.get(); }
@@ -115,6 +129,8 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   views::Widget* menu_for_testing() const;
   views::Widget* popup_for_testing() const;
   content::WebContents* popup_contents_for_testing() const;
+  // The popup card shows a spinner until its page first paints.
+  bool popup_loading_for_testing() const;
   bool tremor_for_testing() const { return tremor_count_ > 0; }
   views::View* fingerprint_button_for_testing() const { return fingerprint_button_; }
   void SetAssistantState(AssistantState state);
@@ -130,24 +146,36 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   int shield_count_for_testing() const;
   // Runs a shield panel row: 0 the site switch, 1 the assistant, 2 settings.
   void RunShieldCommandForTesting(int command);
-
+  views::View* night_shift_button_for_testing() const { return night_shift_button_; }
+  views::Widget* night_shift_panel_for_testing() const { return night_shift_widget_.get(); }
+  // The panel read its site; false until then and without a panel.
+  bool night_shift_ready_for_testing() const;
+  // Runs a Night Shift panel control as a click would: 0 the site switch,
+  // 1 the own-dark-theme switch, 2 reset, 3 before, 4 with the fix, 5 save,
+  // 6 discard, 7 undo, 8 the assistant, 9 settings.
+  void RunNightShiftCommandForTesting(int command);
+  // What the panel shows: the site's mode, or "draft"/"repaired"/"" extras.
+  std::string night_shift_state_for_testing() const;
+  void SetNightShiftBrightnessForTesting(int value);
   class ActionButton;
   class Menu;
   class Popup;
   class ShieldPanel;
-  class AssistantActions;
+  class NightShiftPanel;
 
  private:
   friend class ActionButton;
   friend class Menu;
   friend class Popup;
   friend class ShieldPanel;
-  friend class AssistantActions;
+  friend class NightShiftPanel;
   friend class ExtensionsContextMenu;
   sidebar::DesignPalette palette() const;
   void DestroyMenu();
   void ScheduleMenuRebuild();
   void ClosePopup();
+  // The popup's card appeared: its button stops spinning.
+  void PopupRevealed();
   void DestroyPopup();
   void Rebuild();
   void RefreshButtons();
@@ -166,7 +194,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void ObservePageCount();
   void RefreshShield();
   void DestroyShieldPanel();
-  void DestroyAssistantPanel();
   void RunAssistantCommand(int command);
   void ToggleSiteBlocking();
   void BlockWithAssistant();
@@ -174,6 +201,12 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   void OpenAdBlockingSettings();
   // -1 when blocking is off for the page's site.
   int ShieldCount() const;
+  bool NightShiftShown() const;
+  void DestroyNightShiftPanel();
+  // Reads the page's site for the moon: crossed out where it stays light.
+  void SetNightShiftOn(bool on);
+  void FixNightShift();
+  void OpenNightShiftSettings();
 
   Callbacks callbacks_;
   raw_ptr<Profile> profile_ = nullptr;
@@ -193,16 +226,21 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   base::CallbackListSubscription page_count_;
   // Compared only, never used: the page the count subscription is for.
   uintptr_t counted_page_ = 0;
-  std::unique_ptr<AssistantActions> assistant_panel_;
-  std::unique_ptr<views::Widget> assistant_widget_;
   std::unique_ptr<ShieldPanel> shield_panel_;
   std::unique_ptr<views::Widget> shield_widget_;
+  raw_ptr<views::View> night_shift_button_ = nullptr;
+  bool night_shift_on_ = false;
+  std::string night_shift_site_key_;
+  uint64_t night_shift_read_ = 0;
+  std::unique_ptr<NightShiftPanel> night_shift_panel_;
+  std::unique_ptr<views::Widget> night_shift_widget_;
   // Bubble delegates and their CLIENT_OWNS_WIDGET widgets; the widget goes first.
   std::unique_ptr<Menu> menu_;
   std::unique_ptr<views::Widget> menu_widget_;
   std::unique_ptr<Popup> popup_;
   std::unique_ptr<views::Widget> popup_widget_;
   std::string popup_id_;
+  uint64_t popup_generation_ = 0;
   std::unique_ptr<ExtensionsContextMenu> context_menu_;
   std::unique_ptr<ExtensionsUninstall> uninstall_;
   bool menu_rebuild_pending_ = false;

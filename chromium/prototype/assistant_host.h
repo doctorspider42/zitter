@@ -11,7 +11,7 @@
 #include "ui/gfx/geometry/rect.h"
 
 class GURL;
-namespace content { class BrowserContext; }
+namespace content { class BrowserContext; class WebContents; }
 
 namespace zitter::prototype {
 
@@ -23,6 +23,10 @@ class AssistantHost {
  public:
   virtual WorkspaceShell* shell() const = 0;
   virtual const AssistantSettings& assistant_settings() const = 0;
+  virtual void SetAssistantSettings(AssistantSettings settings) = 0;
+  virtual content::WebContents* AssistantCurrentPage() = 0;
+  virtual bool AssistantPageActionsAvailable() = 0;
+  virtual void RunAssistantPageAction(int command) = 0;
   virtual content::BrowserContext* AssistantBrowserContext() const = 0;
   virtual std::string AssistantProfileId() const = 0;
   virtual base::DictValue AssistantContext(const AssistantPermissions&) = 0;

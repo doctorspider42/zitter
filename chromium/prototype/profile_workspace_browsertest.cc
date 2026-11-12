@@ -65,6 +65,7 @@
 #include "ui/views/paint_info.h"
 #include "crypto/aes_cbc.h"
 #include "crypto/hash.h"
+#include "net/base/url_util.h"
 #include "net/cookies/cookie_options.h"
 #include "sql/database.h"
 #include "sql/statement.h"
@@ -75,6 +76,10 @@
 #include "chromium/prototype/image_link_preview.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
+#include "chromium/prototype/night_shift.h"
+#include "extensions/browser/api/storage/storage_area_namespace.h"
+#include "extensions/browser/api/storage/storage_frontend.h"
+#include "chrome/common/chrome_paths.h"
 #include "components/download/public/common/download_item_impl.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -114,6 +119,7 @@
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/accessibility/platform/ax_platform.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
+#include "ui/views/win/hwnd_util.h"
 #endif
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/test/combobox_test_api.h"
@@ -184,6 +190,7 @@
 #include "ui/views/controls/webview/webview.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "content/public/browser/host_zoom_map.h"
 #include "base/process/process_metrics.h"
 #include "base/scoped_observation.h"
 #include "chrome/browser/profiles/profile_manager_observer.h"
@@ -1017,6 +1024,30 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantCodexDefaultsMigrateW
   EXPECT_EQ(again.models.size(),settings.models.size());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantClaudeDefaultsPreserveSavedModelChoices) {
+  const AssistantSettings defaults;
+  for (const char* id : {"fable", "haiku"}) {
+    EXPECT_TRUE(std::ranges::any_of(defaults.models, [&](const auto& model) {
+      return model.provider == "claude" && model.id == id && model.visible;
+    }));
+  }
+  auto previous = base::DictValue().Set("catalog_version", 3)
+      .Set("models", base::ListValue()
+          .Append(base::DictValue().Set("provider", "claude").Set("id", "fable").Set("visible", false))
+          .Append(base::DictValue().Set("provider", "claude").Set("id", "custom")))
+      .Set("default_model", "claude/custom");
+  const auto settings = AssistantSettings::FromValue(&previous);
+  ASSERT_EQ(settings.models.size(), 3u);
+  EXPECT_EQ(settings.default_model, "claude/custom");
+  EXPECT_EQ(settings.models[0].id, "fable");
+  EXPECT_FALSE(settings.models[0].visible);
+  EXPECT_EQ(settings.models[1].id, "custom");
+  EXPECT_EQ(settings.models[2].id, "haiku");
+  EXPECT_TRUE(settings.models[2].visible);
+  const auto saved = settings.ToValue();
+  EXPECT_EQ(AssistantSettings::FromValue(&saved).models.size(), 3u);
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRoundTrip) {
   base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL", embedded_test_server()->base_url().spec());
   window_->ShowAssistant();
@@ -1028,45 +1059,57 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRuntimeBrowserToolRou
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantQuickActionsKeepDraftsAndAccess) {
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html")));
+  auto disabled_backends = window_->assistant_settings();
+  disabled_backends.backends.fill(false);
+  window_->SetAssistantSettings(std::move(disabled_backends));
   window_->ShowAssistant();auto* panel=window_->assistant();ASSERT_TRUE(panel);
   ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
   panel->TypeForTesting(u"Keep my draft");
   const auto before=panel->sessions_for_testing();
   auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
-  bar->ToggleAssistantPanel();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
-  const auto output=base::CommandLine::ForCurrentProcess()->GetSwitchValuePath("zitter-test-assistant-render-dir");
-  if(!output.empty()) {
-    base::ScopedAllowBlockingForTesting allow;ASSERT_TRUE(base::CreateDirectory(output));
-    auto* widget=bar->assistant_menu_for_testing();
-    widget->LayoutRootViewIfNecessary();
-    auto* menu=widget->widget_delegate()->GetContentsView();ASSERT_EQ(menu->children().size(),9u);
-    const bool had_layer=menu->layer()!=nullptr;
-    if(!had_layer){menu->SetPaintToLayer();menu->layer()->SetFillsBoundsOpaquely(false);}
-    const auto saved=menu->bounds();menu->SetBoundsRect(gfx::Rect(menu->size()));
-    const auto png=gfx::PNGCodec::EncodeBGRASkBitmap(views::test::PaintViewToBitmap(menu),false);
-    menu->SetBoundsRect(saved);if(!had_layer)menu->DestroyLayer();ASSERT_TRUE(png);
-    ASSERT_TRUE(base::WriteFile(output.AppendASCII("assistant-toolbar-actions.png"),*png));
-  }
   bar->RunAssistantCommandForTesting(0);
   EXPECT_EQ(panel->sessions_for_testing(),before+1);
   EXPECT_FALSE(panel->busy());
   EXPECT_NE(panel->draft_for_testing(),u"Keep my draft");
   EXPECT_FALSE(panel->permissions_for_testing().pages);
-  EXPECT_EQ(panel->open_menu_for_testing(),AssistantPanel::Menu::kAccess);
+  ASSERT_TRUE(panel->shortcut_dialog_for_testing());
   ASSERT_FALSE(panel->chips_for_testing().empty());
   EXPECT_EQ(panel->chips_for_testing().front().ref,"@current");
+  panel->shortcut_dialog_for_testing()->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+  EXPECT_TRUE(panel->permissions_for_testing().pages);
+  EXPECT_TRUE(panel->permissions_for_testing().tabs);
+  EXPECT_TRUE(window_->assistant_settings().shortcut_access.empty());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->shortcut_dialog_for_testing(); }));
   panel->SelectSessionForTesting(before-1);
   EXPECT_EQ(panel->draft_for_testing(),u"Keep my draft");
-  bar->ToggleAssistantPanel();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
+  bar->RunAssistantCommandForTesting(0);
+  ASSERT_TRUE(panel->shortcut_dialog_for_testing());
+  auto* consent = panel->shortcut_dialog_for_testing()->widget_delegate()->AsDialogDelegate();
+  consent->ResetViewShownTimeStampForTesting();
+  ClickControl(consent->GetExtraView());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->shortcut_dialog_for_testing(); }));
+  EXPECT_TRUE(panel->permissions_for_testing().pages);
+  const auto stored = window_->assistant_settings().ToValue();
+  EXPECT_EQ(AssistantSettings::FromValue(&stored).shortcut_access,
+            window_->assistant_settings().shortcut_access);
+  ASSERT_EQ(window_->assistant_settings().shortcut_access.size(), 1u);
+  bar->RunAssistantCommandForTesting(0);
+  EXPECT_FALSE(panel->shortcut_dialog_for_testing());
+  EXPECT_TRUE(panel->permissions_for_testing().pages);
+  window_->WriteAssistantSettings(base::DictValue().Set("command", "clear_shortcut_access"));
+  EXPECT_TRUE(window_->assistant_settings().shortcut_access.empty());
+  bar->RunAssistantCommandForTesting(0);
+  ASSERT_TRUE(panel->shortcut_dialog_for_testing());
+  panel->shortcut_dialog_for_testing()->widget_delegate()->AsDialogDelegate()->CancelDialog();
+  EXPECT_TRUE(panel->draft_for_testing().empty());
+  EXPECT_FALSE(panel->permissions_for_testing().pages);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !panel->shortcut_dialog_for_testing(); }));
   bar->RunAssistantCommandForTesting(6);
   ASSERT_TRUE(window_->shell()->general_widget());
   EXPECT_TRUE(window_->shell()->general_widget()->IsVisible());
   EXPECT_EQ(window_->shell()->preference_category_for_testing(),10u);
   auto settings=window_->assistant_settings();settings.enabled=false;window_->SetAssistantSettings(settings);
   EXPECT_FALSE(bar->assistant_button_for_testing());
-  EXPECT_FALSE(bar->assistant_menu_for_testing());
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantPanelIsOptionalAndPinnable) {
@@ -1095,6 +1138,29 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMenusAnchorAndAccessC
   window_->widget()->LayoutRootViewIfNecessary();
   ASSERT_TRUE(content::NavigateToURL(window_->contents("work"),embedded_test_server()->GetURL("/storage_probe.html")));
   panel->ConfigureForTesting("ollama","test-local",{true,true,true,false,true});
+  auto* history = FindButton(panel, T(u"Historia"));
+  auto* calendar = FindButton(panel, T(u"Zadania zaplanowane"));
+  auto* new_session = FindButton(panel, T(u"Nowa sesja"));
+  auto* access = FindButton(panel, T(u"Dostęp tej sesji"));
+  ASSERT_TRUE(history && calendar && new_session && access);
+  ASSERT_EQ(history->parent(), calendar->parent());
+  ASSERT_EQ(new_session->parent(), access->parent());
+  EXPECT_EQ(history->parent()->GetIndexOf(history).value() + 1,
+            calendar->parent()->GetIndexOf(calendar).value());
+  EXPECT_EQ(new_session->parent()->GetIndexOf(new_session).value() + 1,
+            access->parent()->GetIndexOf(access).value());
+  EXPECT_EQ(history->GetPreferredSize(), calendar->GetPreferredSize());
+  EXPECT_EQ(new_session->GetPreferredSize(), access->GetPreferredSize());
+  EXPECT_EQ(history->GetPreferredSize(), new_session->GetPreferredSize());
+  panel->TypeForTesting(u"Keep this draft");
+  const auto session_count = panel->sessions_for_testing();
+  ClickControl(history);
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->open_menu_for_testing() == Menu::kSessions; }));
+  ClickControl(history);
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->open_menu_for_testing() == Menu::kNone; }));
+  EXPECT_EQ(panel->draft_for_testing(), u"Keep this draft");
+  EXPECT_EQ(panel->sessions_for_testing(), session_count);
+  panel->TypeForTesting(u"");
   window_->widget()->LayoutRootViewIfNecessary();
   const auto composer=panel->composer_bounds_for_testing();
   const std::array<std::pair<Menu,const char*>,4> menus={{{Menu::kModel,"model"},{Menu::kSessions,"sessions"},{Menu::kAccess,"access"},{Menu::kMention,"mention"}}};
@@ -1146,6 +1212,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantMenusAnchorAndAccessC
   const auto permissions=panel->permissions_for_testing();
   EXPECT_FALSE(permissions.tabs || permissions.pages || permissions.actions || permissions.history || permissions.web);
   EXPECT_TRUE(permissions.confirm_clicks);
+  panel->StartNewConversation();
+  EXPECT_EQ(panel->permissions_for_testing(), settings.defaults);
   window_->widget()->SetBounds(gfx::Rect(0,0,850,700));
   window_->widget()->LayoutRootViewIfNecessary();
   const int overlay_width=window_->shell()->content_host()->width();
@@ -1292,6 +1360,42 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAsksWithOneClickAnswe
   EXPECT_TRUE(read.Get().GetDict().FindString("image"));
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantRestoresMissedSchedulesAccordingToCatchUp) {
+  const auto now = base::Time::Now();
+  AssistantTask task;
+  task.id = "catch-up";
+  task.instruction = "Summarize the day";
+  task.profile = window_->AssistantProfileId();
+  task.next_run = now - base::Days(2);
+  auto legacy = task.ToValue();
+  legacy.Remove("catch_up");
+  task.id = "skip-recurring";
+  task.catch_up = false;
+  auto recurring = task.ToValue();
+  task.id = "skip-once";
+  task.kind = 3;
+  window_->SaveAssistantSessions(base::DictValue().Set("tasks", base::ListValue()
+      .Append(std::move(legacy)).Append(std::move(recurring)).Append(task.ToValue())));
+
+  window_->EnsureAssistant();
+  auto* panel = window_->assistant();
+  ASSERT_TRUE(panel);
+  ASSERT_TRUE(base::test::RunUntil([&] { return panel->sessions_loaded_for_testing(); }));
+  ASSERT_EQ(3u, panel->tasks().size());
+  EXPECT_TRUE(panel->tasks()[0].catch_up);
+  EXPECT_LT(panel->tasks()[0].next_run, now);
+  EXPECT_FALSE(panel->tasks()[1].catch_up);
+  EXPECT_GT(panel->tasks()[1].next_run, now);
+  EXPECT_TRUE(panel->tasks()[2].next_run.is_null());
+  panel->CheckTasksForTesting(now);
+  EXPECT_FALSE(panel->tasks()[0].last_run.is_null());
+  EXPECT_TRUE(panel->tasks()[1].last_run.is_null());
+  EXPECT_TRUE(panel->tasks()[2].last_run.is_null());
+  const auto sessions = panel->sessions_for_testing();
+  panel->CheckTasksForTesting(now);
+  EXPECT_EQ(sessions, panel->sessions_for_testing());
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSchedulesTasksAddsSearchAndShowsInToolbar) {
   // Schedules: the next run after a moment.
   AssistantTask daily; daily.kind=0; daily.minute=8*60;
@@ -1307,12 +1411,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantSchedulesTasksAddsSea
   EXPECT_EQ(next.hour,9);EXPECT_EQ(next.minute,15);
   AssistantTask none; none.kind=1; none.days=0;
   EXPECT_TRUE(AssistantTaskNextRun(none,thursday_nine).is_null());
-  // The toolbar opens local quick actions without creating an assistant session.
   auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
   window_->AssistantStateChanged();
   ASSERT_TRUE(base::test::RunUntil([&]{return bar->assistant_button_for_testing()!=nullptr;}));
-  static_cast<views::Button*>(bar->assistant_button_for_testing())->button_controller()->NotifyClick();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
   EXPECT_FALSE(window_->assistant());
   bar->RunAssistantCommandForTesting(5);
   ASSERT_TRUE(window_->assistant());EXPECT_TRUE(window_->assistant()->GetVisible());
@@ -1432,7 +1533,36 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantBackgroundPageSharesP
   EXPECT_FALSE(window_->assistant_background_for_testing("moved"));
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
+// Ctrl+Tab walks tabs in the order they were used, not their sidebar order;
+// the tab shown when Ctrl goes up becomes the most recent one.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, NextTabFollowsRecentUse) {
+  ASSERT_TRUE(window_->Select("work"));
+  std::vector<content::WebContents*> pages{window_->contents("work")};
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+    pages.push_back(window_->contents("work"));
+  }
+  ASSERT_EQ(4u, window_->tab_count("work"));
+  // Use order: 0, then 3, then 1 (sidebar order stays 0 1 2 3).
+  for (size_t index : {0u, 3u, 1u}) { window_->SelectTab(index); EXPECT_EQ(pages[index], window_->contents("work")); }
+  auto settle = [] {
+    base::RunLoop loop;  // Ctrl is up in tests: the cycle ends on its next check.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, loop.QuitClosure(), base::Milliseconds(200));
+    loop.Run();
+  };
+  ASSERT_TRUE(window_->RunShortcut("next_tab"));
+  EXPECT_EQ(pages[3], window_->contents("work"));
+  settle();
+  // 3 is now the most recent, so the next press goes back to 1.
+  ASSERT_TRUE(window_->RunShortcut("next_tab"));
+  EXPECT_EQ(pages[1], window_->contents("work"));
+  settle();
+  ASSERT_TRUE(window_->RunShortcut("previous_tab"));
+  // Backwards from 1: the least recently used tab, never shown in this run.
+  EXPECT_EQ(pages[2], window_->contents("work"));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantHideAndResize) {
   window_->ShowAssistant();auto* panel=window_->assistant();
   panel->Collapse();EXPECT_FALSE(panel->GetVisible());
   panel->Show();panel->SetPinned(true);panel->Collapse();EXPECT_TRUE(panel->GetVisible());
@@ -1451,45 +1581,52 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideAndResize) {
   panel->ConfigureForTesting("ollama","test-local",{true,true,true,false,false});
   // A running task keeps working while the unpinned panel hides.
   panel->SendForTesting("Read page");ASSERT_TRUE(panel->busy());
+  panel->OnResize(1000, true);
+  for (auto theme : {ThemeMode::kLight, ThemeMode::kDark}) {
+    window_->shell()->SetThemeMode(theme);
+    window_->widget()->LayoutRootViewIfNecessary();
+    auto* model = FindButton(panel, TF(u"Model: {}. Zmień model", {u"test-local"}));
+    auto* background = FindButton(panel, T(u"Dokończ w tle"));
+    ASSERT_TRUE(model);
+    ASSERT_TRUE(background);
+    EXPECT_EQ(background->width(), 28);
+    EXPECT_GE(model->width(), model->GetPreferredSize().width());
+  }
   panel->Collapse();EXPECT_FALSE(panel->GetVisible());EXPECT_TRUE(panel->busy());
   panel->Show();panel->RevokeAccess();EXPECT_FALSE(panel->busy());
 }
 
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantEdgeOpensBeforeFirstConversation) {
-  base::test::ScopedRunLoopTimeout timeout(FROM_HERE,base::Seconds(8));
-  EnableNativeUIControls();
-  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantOpensOnlyFromItsButton) {
   ASSERT_FALSE(window_->assistant());
   window_->widget()->LayoutRootViewIfNecessary();
-  auto* shell=window_->shell();EXPECT_TRUE(shell->assistant_edge_visible_for_testing());
+  auto* shell=window_->shell();
+  // The right edge is the page's scrollbar, not a trigger: no strip sits there.
+  EXPECT_FALSE(shell->assistant_edge_visible_for_testing());
   const auto bounds=shell->content_host()->parent()->GetBoundsInScreen();
-  const auto middle=bounds.CenterPoint();
-  auto edge=[&]{const auto current=shell->content_host()->parent()->GetBoundsInScreen();return gfx::Point(current.right()-4,current.CenterPoint().y());};
-  const auto native=window_->widget()->GetNativeWindow();
-  auto move=[&](gfx::Point point){base::test::TestFuture<void> moved;return ui_controls::SendMouseMoveNotifyWhenDone(point.x(),point.y(),moved.GetCallback(),native)&&moved.Wait();};
-  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));
-  ASSERT_TRUE(base::test::RunUntil([&]{return window_->assistant()&&window_->assistant()->GetVisible();}));
-  auto* panel=window_->assistant();panel->TypeForTesting(u"Keep the edge draft");
-  ASSERT_TRUE(move(middle));panel->Collapse();window_->widget()->LayoutRootViewIfNecessary();
-  EXPECT_TRUE(shell->assistant_edge_visible_for_testing());
-  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));
-  EXPECT_EQ(display::Screen::Get()->GetCursorScreenPoint(),edge());
-  EXPECT_TRUE(window_->widget()->IsActive());
-  ASSERT_TRUE(base::test::RunUntil([&]{return panel->GetVisible();}));
-  EXPECT_EQ(panel->draft_for_testing(),u"Keep the edge draft");
-  auto settings=window_->assistant_settings();settings.enabled=false;window_->SetAssistantSettings(settings);
-  window_->widget()->LayoutRootViewIfNecessary();EXPECT_FALSE(shell->assistant_edge_visible_for_testing());
-  ASSERT_TRUE(move(middle));ASSERT_TRUE(move(edge()));EXPECT_FALSE(panel->GetVisible());
-  ASSERT_TRUE(move(middle));
+  auto* root=shell->content_host()->parent();
+  gfx::Point edge(bounds.width()-4,bounds.height()/2);
+  auto* hit=root->GetEventHandlerForPoint(edge);
+  EXPECT_FALSE(hit&&std::string_view(hit->GetClassName())=="EdgeView");
+  auto* bar=window_->extensions_bar();ASSERT_TRUE(bar);
+  window_->AssistantStateChanged();
+  ASSERT_TRUE(base::test::RunUntil([&]{return bar->assistant_button_for_testing()!=nullptr;}));
+  auto click=[&]{static_cast<views::Button*>(bar->assistant_button_for_testing())->button_controller()->NotifyClick();};
+  click();
+  ASSERT_TRUE(window_->assistant());auto* panel=window_->assistant();EXPECT_TRUE(panel->GetVisible());
+  panel->TypeForTesting(u"Keep the draft");
+  // The button closes and reopens it; Esc closes it.
+  click();EXPECT_FALSE(panel->GetVisible());
+  click();EXPECT_TRUE(panel->GetVisible());EXPECT_EQ(panel->draft_for_testing(),u"Keep the draft");
+  EXPECT_TRUE(panel->HandleEscape());EXPECT_FALSE(panel->GetVisible());
+  // A pinned panel also goes away from the button.
+  click();panel->SetPinned(true);click();EXPECT_FALSE(panel->GetVisible());
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantToolbarStartsFreshConversationAndPreservesDraft) {
   window_->ShowAssistant();auto* panel=window_->assistant();
   ASSERT_TRUE(base::test::RunUntil([&]{return panel->sessions_loaded_for_testing();}));
   panel->SeedExchangeForTesting("Earlier conversation","Earlier answer");
   panel->TypeForTesting(u"Unsent message");const auto initial=panel->sessions_for_testing();
-  auto* bar=window_->extensions_bar();bar->ToggleAssistantPanel();
-  ASSERT_TRUE(bar->assistant_menu_for_testing());
-  EXPECT_TRUE(FindButton(bar->assistant_menu_for_testing()->widget_delegate()->GetContentsView(),u"Nowa rozmowa"));
+  auto* bar=window_->extensions_bar();
   bar->RunAssistantCommandForTesting(5);
   EXPECT_TRUE(panel->GetVisible());EXPECT_EQ(panel->sessions_for_testing(),initial+1);
   EXPECT_TRUE(panel->draft_for_testing().empty());EXPECT_TRUE(panel->chips_for_testing().empty());EXPECT_FALSE(panel->busy());
@@ -1525,7 +1662,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, AssistantAutoHideTracksPointer
   panel->OnResize(20,true);
   ASSERT_TRUE(base::test::RunUntil([&]{return !panel->GetVisible();}));
   panel->Show();EXPECT_EQ(panel->draft_for_testing(),u"Keep this draft after pointer departure");
-  // Opening by a command must also watch the pointer, even before entry.
+  // Opening from the button or a command also watches the pointer once it moves.
   const auto farther=gfx::Point(outside.x()-20,outside.y());ASSERT_TRUE(move(farther));
   ASSERT_TRUE(base::test::RunUntil([&]{return !panel->GetVisible();}));
 }
@@ -2510,6 +2647,27 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DeveloperModeDetectionAndPersi
   EXPECT_EQ("off", BrowserTools::FromValue(*dict).developer_mode);
 }
 
+// Ctrl+scroll reaches the page's delegate as a zoom step; the spelling menu's
+// "Language settings" opens Zitter's own spelling preferences.
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageZoomAndSpellingSettings) {
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(page, embedded_test_server()->GetURL("/storage_probe.html")));
+  const double start = content::HostZoomMap::GetZoomLevel(page);
+  page->GetDelegate()->ContentsZoomChange(true);
+  EXPECT_GT(content::HostZoomMap::GetZoomLevel(page), start);
+  page->GetDelegate()->ContentsZoomChange(false);
+  page->GetDelegate()->ContentsZoomChange(false);
+  EXPECT_LT(content::HostZoomMap::GetZoomLevel(page), start);
+  page->GetDelegate()->OpenURLFromTab(page, content::OpenURLParams(GURL("chrome://settings/languages"), content::Referrer(),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_LINK, false), {});
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->general_widget() && shell->general_widget()->IsVisible(); }));
+  EXPECT_EQ(u"Sprawdzaj pisownię", shell->preferences_search()->GetText());
+  EXPECT_TRUE(shell->preference_toggle("spellcheck")->IsDrawn());
+}
+
 // Build the exact upstream editable menu without its platform popup. The
 // production WebView deliberately falls through to that menu for edit fields.
 class DeveloperEditableMenuForTest : public RenderViewContextMenu {
@@ -3374,6 +3532,49 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, InputConfigurationFiltersRecor
   shell->OpenTools(2); window_.reset();  // Detach after the filter's view was destroyed.
 }
 
+#if BUILDFLAG(IS_WIN)
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ControlArrowsMoveByWordOnWindows) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] { return shell->tools_ready(); }));
+  EXPECT_TRUE(shell->ShortcutFor(ui::Accelerator(ui::VKEY_LEFT, ui::EF_CONTROL_DOWN)).empty());
+  EXPECT_TRUE(shell->ShortcutFor(ui::Accelerator(ui::VKEY_RIGHT, ui::EF_CONTROL_DOWN)).empty());
+  EXPECT_EQ("back", shell->ShortcutFor(ui::Accelerator(ui::VKEY_LEFT, ui::EF_ALT_DOWN)));
+  EXPECT_EQ("forward", shell->ShortcutFor(ui::Accelerator(ui::VKEY_RIGHT, ui::EF_ALT_DOWN)));
+
+  base::ListValue shortcuts;
+  shortcuts.Append(base::DictValue().Set("id", "back").Set("chord", "Ctrl+Left"));
+  shortcuts.Append(base::DictValue().Set("id", "forward").Set("chord", "Ctrl+Right"));
+  shortcuts.Append(base::DictValue().Set("id", "sidebar").Set("chord", "F6"));
+  const auto tools = BrowserTools::FromValue(base::DictValue().Set("shortcuts", std::move(shortcuts)));
+  for (const auto& shortcut : tools.shortcuts) {
+    if (shortcut.id == "back") EXPECT_EQ("Alt+Left", FormatShortcut(shortcut.accelerator));
+    if (shortcut.id == "forward") EXPECT_EQ("Alt+Right", FormatShortcut(shortcut.accelerator));
+    if (shortcut.id == "sidebar") EXPECT_EQ("F6", FormatShortcut(shortcut.accelerator));
+  }
+
+  const auto url = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(window_->NavigateFromBar(url, false));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, R"(
+    const input = document.body.appendChild(document.createElement('input'));
+    input.id = 'word-test';
+    input.value = 'alpha beta';
+    input.focus();
+    input.setSelectionRange(10, 10);
+  )"));
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_LEFT, true, false, false, false));
+  EXPECT_EQ(6, content::EvalJs(page, "document.querySelector('#word-test').selectionStart"));
+  ASSERT_TRUE(ui_test_utils::SendKeyPressToWindowSync(window_->widget()->GetNativeWindow(),
+      ui::VKEY_RIGHT, true, false, false, false));
+  EXPECT_EQ(10, content::EvalJs(page, "document.querySelector('#word-test').selectionStart"));
+  EXPECT_EQ(url, page->GetLastCommittedURL());
+}
+#endif
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ConfigurableNativeKeyboardShortcuts) {
   base::DictValue older;
   base::ListValue bindings;
@@ -3705,7 +3906,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ContextMenusMarkDestructiveAct
   EXPECT_EQ(ui::MenuModel::TYPE_SEPARATOR,menu->GetTypeAt(last-1));
   EXPECT_EQ(std::optional<ui::ColorId>(ui::kColorAlertHighSeverity),menu->GetForegroundColorId(last));
   EXPECT_EQ(std::nullopt,menu->GetForegroundColorId(last-2));
-  EXPECT_EQ(shell->workspace_menu()->GetLabelAt(last-2),u"Nazwa i ustawienia…");
+  EXPECT_EQ(shell->workspace_menu()->GetLabelAt(last-2),u"Ustawienia przestrzeni");
 }
 
 // Space panel (design: space settings): the name saves itself, a profile row
@@ -8420,6 +8621,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceSwitchCostWithImporte
   ASSERT_TRUE(window_->Select("personal"));
   const auto cold_time = cold.Elapsed();
   ASSERT_EQ(300u, window_->pinned_items("personal").size());
+  // A warmed list keeps the line between pinned rows and open tabs.
+  EXPECT_TRUE(window_->shell()->pinned_divider_last_for_testing());
   const auto builds = window_->shell()->pinned_list_build_count();
   // Warm switches must not revisit the native pin trees, even for menus or
   // visibility bookkeeping. This also covers metadata-only shell updates.
@@ -8471,6 +8674,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WorkspaceSwitchCostWithTwoLarg
   ASSERT_TRUE(window_->Select("personal"));
   const auto cold_time = cold.Elapsed();
   ASSERT_EQ(300u, window_->pinned_items("personal").size());
+  // A warmed list keeps the line between pinned rows and open tabs.
+  EXPECT_TRUE(window_->shell()->pinned_divider_last_for_testing());
   const auto builds = window_->shell()->pinned_list_build_count();
   // Warm switches must not revisit the native pin trees, even for menus or
   // visibility bookkeeping. This also covers metadata-only shell updates.
@@ -8977,6 +9182,118 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SiteFaviconsReachTabsAndProfil
   EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
   ASSERT_TRUE(window_->AddWorkspace("Favorite icons","work-profile"));ASSERT_TRUE(base::test::RunUntil([&]{return !window_->profiles_busy();}));
   EXPECT_TRUE(shell->row_has_favicon_for_testing(shell->pin_button(pin)));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BrowserImportsCopyCachedFaviconsWithoutFetchingPages) {
+  base::ScopedAllowBlockingForTesting files;
+  base::ScopedTempDir source;
+  ASSERT_TRUE(source.CreateUniqueTempDir());
+  const auto url = embedded_test_server()->GetURL("favicon.test", "/favicon-placeholder");
+  const auto sidebar = base::StringPrintf(R"({"sidebar":{"containers":[
+    {"global":{}},{"spaces":{
+      "s1":{"profile":{"default":true},"containerIDs":["pinned","pins"]}
+    },"items":{
+      "pins":{"data":{"itemContainer":{}},"childrenIds":["pin"]},
+      "top":{"data":{"itemContainer":{}},"childrenIds":["favorite"]},
+      "pin":{"data":{"tab":{"savedURL":"%s"}}},
+      "favorite":{"data":{"tab":{"savedURL":"%s"}}}
+    },"topAppsContainerIDs":[{"default":true},"top"]}
+  ]}})", url.spec().c_str(), url.spec().c_str());
+  ASSERT_TRUE(base::WriteFile(source.GetPath().AppendASCII("StorableSidebar.json"), sidebar));
+  const auto profile = source.GetPath().AppendASCII("User Data").AppendASCII("Default");
+  ASSERT_TRUE(base::CreateDirectory(profile));
+  ASSERT_TRUE(base::WriteFile(profile.AppendASCII("Bookmarks"), base::StringPrintf(
+      R"({"roots":{"bookmark_bar":{"type":"folder","name":"Bookmarks","children":[
+        {"type":"url","name":"Imported page","url":"%s"}]}}})", url.spec().c_str())));
+  const auto firefox = source.GetPath().AppendASCII("Profiles").AppendASCII("test.default");
+  ASSERT_TRUE(base::CreateDirectory(firefox));
+  ASSERT_TRUE(base::WriteFile(source.GetPath().AppendASCII("profiles.ini"),
+      "[Profile0]\nName=Test Firefox\nIsRelative=1\nPath=Profiles/test.default\n"));
+  {
+    sql::Database places("History");
+    ASSERT_TRUE(places.Open(firefox.AppendASCII("places.sqlite")));
+    ASSERT_TRUE(places.Execute("CREATE TABLE moz_bookmarks(id INTEGER, parent INTEGER, "
+                               "type INTEGER, title TEXT, fk INTEGER, guid TEXT, position INTEGER)"));
+    ASSERT_TRUE(places.Execute("CREATE TABLE moz_places(id INTEGER, url TEXT, title TEXT, "
+                               "visit_count INTEGER, typed INTEGER, last_visit_date INTEGER, hidden INTEGER)"));
+    ASSERT_TRUE(places.Execute("INSERT INTO moz_bookmarks VALUES "
+                               "(1,0,2,'Toolbar',NULL,'toolbar_____',0),"
+                               "(2,1,1,'Imported page',1,'bookmark____',0)"));
+    sql::Statement page_row(places.GetUniqueStatement(
+        "INSERT INTO moz_places VALUES(1,?,'Imported page',2,1,?,0)"));
+    page_row.BindString(0, url.spec());
+    page_row.BindInt64(1, (base::Time::Now() - base::Time::UnixEpoch()).InMicroseconds());
+    ASSERT_TRUE(page_row.Run());
+  }
+  {
+    sql::Database db("Thumbnail");
+    ASSERT_TRUE(db.Open(profile.AppendASCII("Favicons")));
+    ASSERT_TRUE(db.Execute("CREATE TABLE icon_mapping(page_url TEXT, icon_id INTEGER)"));
+    ASSERT_TRUE(db.Execute("CREATE TABLE favicons(id INTEGER, url TEXT, icon_type INTEGER)"));
+    ASSERT_TRUE(db.Execute("CREATE TABLE favicon_bitmaps(icon_id INTEGER, width INTEGER, "
+                           "height INTEGER, image_data BLOB, last_updated INTEGER)"));
+    sql::Statement mapping(db.GetUniqueStatement("INSERT INTO icon_mapping VALUES (?,1)"));
+    mapping.BindString(0, url.spec());
+    ASSERT_TRUE(mapping.Run());
+    ASSERT_TRUE(db.Execute("INSERT INTO favicons VALUES (1,'https://favicon.test/test.png',1)"));
+    SkBitmap bitmap;
+    bitmap.allocN32Pixels(32, 32);
+    bitmap.eraseColor(SK_ColorGREEN);
+    auto png = gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false);
+    ASSERT_TRUE(png);
+    sql::Statement image(db.GetUniqueStatement("INSERT INTO favicon_bitmaps VALUES (1,0,0,?,1)"));
+    image.BindBlob(0, base::span(*png));
+    ASSERT_TRUE(image.Run());
+    sql::Database firefox_icons("Thumbnail");
+    ASSERT_TRUE(firefox_icons.Open(firefox.AppendASCII("favicons.sqlite")));
+    ASSERT_TRUE(firefox_icons.Execute("CREATE TABLE moz_pages_w_icons(id INTEGER, page_url TEXT)"));
+    ASSERT_TRUE(firefox_icons.Execute("CREATE TABLE moz_icons_to_pages(page_id INTEGER, icon_id INTEGER)"));
+    ASSERT_TRUE(firefox_icons.Execute("CREATE TABLE moz_icons(id INTEGER, icon_url TEXT, width INTEGER, data BLOB)"));
+    ASSERT_TRUE(firefox_icons.Execute("INSERT INTO moz_icons_to_pages VALUES(1,1)"));
+    sql::Statement firefox_page(firefox_icons.GetUniqueStatement("INSERT INTO moz_pages_w_icons VALUES(1,?)"));
+    firefox_page.BindString(0, url.spec());
+    ASSERT_TRUE(firefox_page.Run());
+    sql::Statement firefox_icon(firefox_icons.GetUniqueStatement(
+        "INSERT INTO moz_icons VALUES(1,'https://favicon.test/test.png',32,?)"));
+    firefox_icon.BindBlob(0, std::move(*png));
+    ASSERT_TRUE(firefox_icon.Run());
+  }
+  const std::string active = window_->active_id();
+  auto* page = window_->contents(active);
+  for (auto browser : {ImportBrowser::kArc, ImportBrowser::kChrome,
+                       ImportBrowser::kEdge, ImportBrowser::kBrave, ImportBrowser::kFirefox,
+                       ImportBrowser::kOpera, ImportBrowser::kVivaldi}) {
+    SCOPED_TRACE(base::UTF16ToUTF8(ImportBrowserName(browser)));
+    ASSERT_TRUE(window_->Select(active));
+    BrowserImportOptions options;
+    options.browser = browser;
+    options.history = browser == ImportBrowser::kFirefox;
+    window_->PreviewBrowserImport(options, browser == ImportBrowser::kArc || browser == ImportBrowser::kFirefox
+        ? source.GetPath() : profile.DirName());
+    ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
+    const auto preview = *window_->import_preview();
+    ASSERT_EQ(1u, preview.spaces.size());
+    ASSERT_TRUE(window_->ApplyArcImport());
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return !window_->profiles_busy() && !window_->workspace_favicons_pending_for_testing();
+    }));
+    EXPECT_EQ(0, favicon_placeholder_requests_.load());
+    EXPECT_EQ(0, favicon_reload_requests_.load());
+    EXPECT_EQ(active, window_->active_id());
+    EXPECT_EQ(page, window_->contents(active));
+    ASSERT_TRUE(window_->Select(preview.spaces[0].id));
+    EXPECT_EQ(1u, window_->tab_count(preview.spaces[0].id));
+    auto* shell = window_->shell();
+    size_t icons = 0;
+    for (const auto& pin : window_->pinned_items(preview.spaces[0].id)) {
+      if (pin.folder) continue;
+      auto* row = shell->pin_button(pin.id);
+      ASSERT_TRUE(row);
+      EXPECT_TRUE(shell->row_has_favicon_for_testing(row));
+      ++icons;
+    }
+    EXPECT_EQ(browser == ImportBrowser::kArc ? 2u : 1u, icons);
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PageContextMenuNavigatesAndCopiesPageAndLink) {
@@ -9512,6 +9829,51 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, SidebarRowDragWithRealMouseSho
   }
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FavoriteDragInsertsBetweenTiles) {
+  std::vector<std::string> order;
+  for (int i = 0; i < 4; ++i) {
+    const auto url = embedded_test_server()->GetURL("/storage_probe.html?favorite=" + std::to_string(i));
+    ASSERT_TRUE(window_->NavigateFromBar(url, i != 0));
+    ASSERT_TRUE(content::WaitForLoadStop(window_->contents("work")));
+    ASSERT_TRUE(window_->PinTab(window_->tab_count("work") - 1, "@profile", ""));
+    ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy(); }));
+    order.push_back(window_->pinned_items("work").back().id);
+  }
+  auto* shell = window_->shell();
+  shell->SetPinned(true);
+  shell->ShowSidebar();
+  EnableNativeUIControls();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
+  base::RunLoop().RunUntilIdle();
+  shell->sidebar_widget()->LayoutRootViewIfNecessary();
+  const auto native = shell->sidebar_widget()->GetNativeWindow();
+  auto move = [&](gfx::Point point) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseMoveNotifyWhenDone(point.x(), point.y(), done.GetCallback(), native));
+    ASSERT_TRUE(done.Wait());
+  };
+  auto button = [&](int state) {
+    base::test::TestFuture<void> done;
+    ASSERT_TRUE(ui_controls::SendMouseEventsNotifyWhenDone(ui_controls::LEFT, state, done.GetCallback(), ui_controls::kNoAccelerator, native));
+    ASSERT_TRUE(done.Wait());
+  };
+  const auto start = shell->pin_button(order[0])->GetBoundsInScreen().CenterPoint();
+  move(start);
+  button(ui_controls::DOWN);
+  move(start + gfx::Vector2d(14, 0));
+  const auto bounds = shell->pin_button(order[2])->GetBoundsInScreen();
+  move(gfx::Point(bounds.right() - 4, bounds.CenterPoint().y()));
+  EXPECT_TRUE(shell->sidebar_drop_target_for_testing());
+  button(ui_controls::UP);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->pinned_items("work")[2].id == order[0] && !window_->profiles_busy();
+  }));
+  const auto& pins = window_->pinned_items("work");
+  EXPECT_EQ(order[1], pins[0].id);
+  EXPECT_EQ(order[2], pins[1].id);
+  EXPECT_EQ(order[3], pins[3].id);
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FolderRemovalKeepsOpenedPinsAsTabs) {
   base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
@@ -9655,6 +10017,51 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DynamicProfiles) {
   for (const auto& workspace : window_->workspaces()) EXPECT_EQ("work-profile", workspace.profile_id);
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GitHubLiveFolderRefreshesAndPersists) {
+  std::atomic<int> requests = 0;
+  std::atomic<bool> close_pr = false;
+  content::URLLoaderInterceptor github(base::BindRepeating(
+      [](std::atomic<int>* requests, std::atomic<bool>* close_pr,
+         content::URLLoaderInterceptor::RequestParams* params) {
+        const auto& request = params->url_request;
+        if (request.url.host() != "api.github.com") return false;
+        EXPECT_EQ(request.url.path(), "/search/issues");
+        EXPECT_NE(request.url.query().find("repo%3Aowner%2Frepo"), std::string::npos);
+        EXPECT_EQ(request.credentials_mode, network::mojom::CredentialsMode::kOmit);
+        EXPECT_FALSE(request.headers.HasHeader("Authorization"));
+        ++*requests;
+        content::URLLoaderInterceptor::WriteResponse(
+            "HTTP/1.1 200 OK\nContent-Type: application/json\n\n",
+            close_pr->load() ? R"({"incomplete_results":false,"items":[]})" :
+                R"({"incomplete_results":false,"items":[{"html_url":"https://github.com/owner/repo/pull/17","title":"Fix layout"}]})",
+            params->client.get());
+        return true;
+      }, &requests, &close_pr));
+
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->ConfigureGitHubFolder("work", "", "Pull Requests", {"octocat", "owner/repo", ""}, "", false));
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->pinned_items("work").size() == 2; }));
+  const auto saved = window_->pinned_items("work");
+  ASSERT_TRUE(saved[0].github);
+  auto* shell = window_->shell();
+  auto* folder = shell->pin_button(saved[0].id);
+  ASSERT_TRUE(folder);
+  EXPECT_TRUE(shell->row_has_favicon_for_testing(folder));  // Starred folder scene icon.
+  EXPECT_EQ(saved[1].url, GURL("https://github.com/owner/repo/pull/17"));
+  EXPECT_EQ(saved[1].parent_id, saved[0].id);
+  EXPECT_EQ(requests.load(), 2);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->profiles_busy() && window_->configuration_saved(); }));
+  window_.reset();
+  window_ = std::make_unique<WorkspaceWindow>(work_, personal_);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
+  EXPECT_EQ(window_->pinned_items("work"), saved);
+  close_pr = true;
+  ASSERT_TRUE(window_->Select("work"));
+  window_->RefreshGitHubFolder("work", saved[0].id);
+  ASSERT_TRUE(base::test::RunUntil([&] { return window_->pinned_items("work").size() == 1; }));
+  EXPECT_EQ(window_->pinned_items("work").front(), saved[0]);
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersistence) {
   base::FilePath root;
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
@@ -9667,8 +10074,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   ASSERT_TRUE(preview.error.empty()) << preview.error;
   EXPECT_EQ(3u, preview.profiles.size());
   ASSERT_EQ(3u, preview.spaces.size());
-  EXPECT_EQ(7u, preview.tab_count);
-  EXPECT_EQ(5u, preview.folder_count);
+  EXPECT_EQ(6u, preview.tab_count);
+  EXPECT_EQ(3u, preview.folder_count);
   EXPECT_EQ(1u, preview.skipped_count);
   EXPECT_EQ("arc-space-space-b", preview.spaces[0].id);
   EXPECT_EQ(u"🚀", preview.spaces[0].emoji);
@@ -9686,6 +10093,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   EXPECT_EQ(u"🚀", shell->workspace_emoji("arc-space-space-b"));
   const auto& pins = window_->pinned_items("arc-space-space-a");
   ASSERT_FALSE(pins.empty());
+  const auto favorite = pins.front();
+  EXPECT_TRUE(favorite.profile_pin);
+  EXPECT_EQ(GURL("https://example.test/favorite"), favorite.url);
+  EXPECT_EQ("Ulubiona", favorite.title);
+  ASSERT_FALSE(window_->pinned_items("arc-space-space-b").empty());
+  EXPECT_EQ(favorite, window_->pinned_items("arc-space-space-b").front());
+  EXPECT_TRUE(window_->pinned_items("arc-space-space-c").empty());
   bool nested = false;
   for (const auto& pin : pins) {
     if (pin.id == "tab-b") nested = pin.parent_id == "nested";
@@ -9698,6 +10112,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   ASSERT_TRUE(window_->Select("arc-space-space-a"));
   shell->ShowSidebar();
   base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(shell->pin_button(favorite.id));
   EXPECT_TRUE(window_->widget()->GetWindowBoundsInScreen().Contains(
       shell->workspace_button(window_->active_id())->GetBoundsInScreen()));
   // Opening a pin lazily uses its imported profile, and reuses the same tab.
@@ -9731,7 +10146,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ArcImportStructureAndPersisten
   window_->shell()->SetWorkspaceEmoji("arc-space-space-b", u"🎮");
   EXPECT_EQ(5u, window_->profiles().size());
   EXPECT_EQ(5u, window_->workspaces().size());
-  EXPECT_EQ(preview.spaces[1].pins.size(), window_->pinned_items("arc-space-space-a").size());
+  const auto& restored = window_->pinned_items("arc-space-space-a");
+  ASSERT_EQ(preview.spaces[1].pins.size() + 1, restored.size());
+  EXPECT_EQ(favorite, restored.front());
   EXPECT_EQ(2u, window_->tab_count("arc-space-space-a"));
   window_->PreviewArcImport(source);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_ready(); }));
@@ -10167,13 +10584,23 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportReplacesStarterA
 }
 
 #if BUILDFLAG(IS_WIN)
-IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetriesInPlace) {
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsMultipleBrowsersAndRetriesInPlace) {
   base::ScopedAllowBlockingForTesting files;
   base::ScopedTempDir source;
   ASSERT_TRUE(source.CreateUniqueTempDir());
   base::ScopedPathOverride app_data(kImportAppData, source.GetPath());
   ASSERT_TRUE(base::CreateDirectory(ArcData(source.GetPath())));
   ASSERT_TRUE(base::WriteFile(ArcData(source.GetPath()).AppendASCII("StorableSidebar.json"), "{}"));
+  const auto chrome_profile = ChromeData(source.GetPath()).AppendASCII("Default");
+  ASSERT_TRUE(base::CreateDirectory(chrome_profile));
+  ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Microsoft/Edge/User Data")));
+  ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("BraveSoftware/Brave-Browser/User Data")));
+  ASSERT_TRUE(base::CreateDirectory(source.GetPath().AppendASCII("Vivaldi/User Data")));
+  ASSERT_TRUE(base::WriteFile(chrome_profile.AppendASCII("Bookmarks"), R"json(
+    {"roots":{"bookmark_bar":{"type":"folder","name":"Bookmarks bar","children":[
+      {"type":"url","id":"1","name":"Excluded bookmark","url":"https://example.test/excluded"}
+    ]}}}
+  )json"));
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
   const auto directory = g_browser_process->profile_manager()->user_data_dir();
@@ -10216,7 +10643,21 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetrie
   ASSERT_TRUE(window_->assistant_settings().enabled);
   EXPECT_TRUE(FindButton(welcome, u"Dodaj klucz API"));
   ClickControl(FindButton(welcome, u"Ollama"));
-  EXPECT_TRUE(FindButton(welcome, u"Wykryj modele"));
+  shell->welcome_widget_for_testing()->LayoutRootViewIfNecessary();
+  render("assistant-ollama.png");
+  auto* check = FindButton(welcome, u"Sprawdź połączenie z Ollama");
+  ASSERT_TRUE(check);
+  std::string geometry;
+  for (auto* view = check; view; view = view->parent()) {
+    geometry += std::string(view->GetClassName()) + ": " + view->bounds().ToString() +
+        " preferred " + view->GetPreferredSize().ToString() + "\n";
+  }
+  ASSERT_FALSE(check->GetVisibleBounds().IsEmpty()) << geometry;
+  ClickControl(check);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return find_control(find_control, welcome, ax::mojom::Role::kStaticText,
+                        u"Dodaj lub wykryj model i spróbuj ponownie.");
+  }));
   ClickControl(FindButton(welcome, u"Codex"));
   auto* configure_codex = FindButton(welcome, u"Pomoc i konfiguracja");
   ASSERT_TRUE(configure_codex);
@@ -10246,17 +10687,71 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetrie
     ClickControl(find_step(u"Asystent AI"));
     render(mode == ThemeMode::kLight ? "assistant-light.png" : "assistant-dark.png");
   }
+  shell->welcome_widget_for_testing()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kLight);
   ClickControl(import_step);
-  render("import.png");
+  render("import-light.png");
   auto* first_space = find_step(u"Pierwsza przestrzeń");
   ASSERT_TRUE(first_space);
-  EXPECT_FALSE(first_space->GetVisible());
-  auto* apply = FindButton(welcome, u"Importuj");
-  ASSERT_TRUE(apply);
-  ClickControl(apply);
+  EXPECT_TRUE(first_space->GetVisible());
+  auto* csv = FindButton(welcome, u"Importuj hasła z CSV…");
+  ASSERT_TRUE(csv);
+  EXPECT_GE(csv->height(), 40);
+  auto* chrome_toggle = FindButton(welcome, u"Opcje importu z Google Chrome");
+  ASSERT_TRUE(chrome_toggle);
+  auto* chrome_import = FindButton(welcome, u"Importuj dane z Google Chrome");
+  ASSERT_TRUE(chrome_import);
+  views::ScrollView* import_scroll = nullptr;
+  for (auto* ancestor = chrome_toggle->parent(); ancestor; ancestor = ancestor->parent()) {
+    import_scroll = views::AsViewClass<views::ScrollView>(ancestor);
+    if (import_scroll) break;
+  }
+  ASSERT_TRUE(import_scroll);
+  if (work_area.height() >= 862)
+    EXPECT_LE(import_scroll->contents()->height(), import_scroll->GetVisibleRect().height());
+  auto compact_bounds = welcome_widget->GetWindowBoundsInScreen();
+  compact_bounds.set_height(std::min(compact_bounds.height(), 620));
+  welcome_widget->SetBounds(compact_bounds);
+  welcome_widget->LayoutRootViewIfNecessary();
+  const auto import_bounds = chrome_import->GetBoundsInScreen();
+  const auto toggle_bounds = chrome_toggle->GetBoundsInScreen();
+  ClickControl(chrome_toggle);
+  EXPECT_EQ(chrome_import, FindButton(welcome, u"Importuj dane z Google Chrome"));
+  EXPECT_EQ(import_bounds, chrome_import->GetBoundsInScreen());
+  auto* history_option = find_control(find_control, welcome, ax::mojom::Role::kCheckBox,
+                                      u"Historia przeglądania");
+  ASSERT_TRUE(history_option);
+  EXPECT_TRUE(import_scroll->vertical_scroll_bar()->GetVisible());
+  EXPECT_FALSE(import_scroll->GetDrawOverflowIndicator());
+  auto* viewport_layer = import_scroll->contents()->parent()->layer();
+  ASSERT_TRUE(viewport_layer);
+  EXPECT_TRUE(viewport_layer->GetMasksToBounds());
+  ASSERT_TRUE(import_scroll->contents()->layer());
+  history_option->RequestFocus();
+  import_scroll->ScrollByOffset(gfx::PointF(0, 1000));
+  EXPECT_GT(import_scroll->GetVisibleRect().y(), 0);
+  EXPECT_EQ(viewport_layer, import_scroll->contents()->parent()->layer());
+  EXPECT_TRUE(viewport_layer->GetMasksToBounds());
+  import_scroll->ScrollToOffset(gfx::PointF());
+  ASSERT_EQ(chrome_toggle, FindButton(welcome, u"Opcje importu z Google Chrome"));
+  EXPECT_EQ(toggle_bounds, chrome_toggle->GetBoundsInScreen());
+  auto click_point = toggle_bounds.CenterPoint();
+  views::View::ConvertPointFromScreen(welcome, &click_point);
+  auto* hit = welcome->GetEventHandlerForPoint(click_point);
+  ASSERT_EQ(chrome_toggle, hit);
+  ClickControl(hit);
+  EXPECT_FALSE(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Historia przeglądania"));
+  EXPECT_EQ(1u, window_->workspaces().size());
+  ClickControl(FindButton(welcome, u"Opcje importu z Arc"));
+  EXPECT_EQ(1u, window_->workspaces().size());
+  EXPECT_FALSE(window_->profiles_busy());
+  render("import-options-light.png");
+  ClickControl(FindButton(welcome, u"Opcje importu z Arc"));
+  EXPECT_FALSE(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Historia przeglądania"));
+  EXPECT_EQ(1u, window_->workspaces().size());
+  ClickControl(FindButton(welcome, u"Importuj dane z Arc"));
   // Missing source data leaves the same wizard available for retry.
   ASSERT_TRUE(base::test::RunUntil([&] {
-    auto* retry = FindButton(welcome, u"Importuj");
+    auto* retry = FindButton(welcome, u"Opcje importu z Arc");
     return retry && retry->GetEnabledInViewsSubtree();
   }));
   EXPECT_EQ(1u, window_->workspaces().size());
@@ -10265,19 +10760,43 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, WelcomeImportsArcOnceAndRetrie
   ASSERT_TRUE(base::PathService::Get(base::DIR_SRC_TEST_DATA_ROOT, &root));
   ASSERT_TRUE(base::DeletePathRecursively(ArcData(source.GetPath())));
   ASSERT_TRUE(base::CopyDirectory(root.AppendASCII("zitter/testdata/arc"), ArcData(source.GetPath()), true));
-  ClickControl(FindButton(welcome, u"Importuj"));
-  ASSERT_TRUE(base::test::RunUntil([&] { return FindButton(welcome, u"Otwórz Zitter") != nullptr; }));
+  ClickControl(FindButton(welcome, u"Importuj dane z Arc"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->workspaces().size() == 3 && !window_->profiles_busy() &&
+           find_control(find_control, welcome, ax::mojom::Role::kStaticText, u"Arc · Zaimportowano");
+  }));
   EXPECT_EQ(3u, window_->workspaces().size());
   for (const auto& space : window_->workspaces()) EXPECT_TRUE(space.id.starts_with("arc-space-"));
   EXPECT_FALSE(shell->import_visible());
-  EXPECT_FALSE(FindButton(welcome, u"Importuj"));
+  ASSERT_TRUE(find_control(find_control, welcome, ax::mojom::Role::kStaticText, u"Arc · Zaimportowano"));
+  ClickControl(FindButton(welcome, u"Opcje importu z Google Chrome"));
+  auto* confirm = FindButton(welcome, u"Importuj dane z Google Chrome");
+  ASSERT_TRUE(confirm);
+  ClickControl(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Zakładki i foldery"));
+  EXPECT_FALSE(confirm->GetEnabledInViewsSubtree());
+  ClickControl(find_control(find_control, welcome, ax::mojom::Role::kCheckBox, u"Historia przeglądania"));
+  EXPECT_TRUE(confirm->GetEnabledInViewsSubtree());
+  shell->welcome_widget_for_testing()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark);
+  ClickControl(import_step);
+  render("import-options-dark.png");
+  ClickControl(FindButton(welcome, u"Importuj dane z Google Chrome"));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->workspaces().size() == 4 && !window_->profiles_busy() &&
+           find_control(find_control, welcome, ax::mojom::Role::kStaticText,
+                        u"Google Chrome · Zaimportowano");
+  }));
+  EXPECT_EQ(4u, window_->workspaces().size());
+  EXPECT_TRUE(window_->pinned_items("chrome-space-Default").empty());
+  EXPECT_EQ(welcome_widget, shell->welcome_widget_for_testing());
+  shell->welcome_widget_for_testing()->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark);
+  ClickControl(import_step);
   render("import-finished.png");
-  ClickControl(FindButton(welcome, u"Otwórz Zitter"));
+  ClickControl(FindButton(welcome, u"Kontynuuj"));
   ASSERT_TRUE(base::test::RunUntil([&] { return !shell->welcome_widget_for_testing() && window_->configuration_saved(); }));
   window_.reset();
   window_ = std::make_unique<WorkspaceWindow>(directory);
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
-  EXPECT_EQ(3u, window_->workspaces().size());
+  EXPECT_EQ(4u, window_->workspaces().size());
   EXPECT_FALSE(window_->shell()->import_visible());
   EXPECT_FALSE(window_->shell()->welcome_widget_for_testing());
   EXPECT_TRUE(window_->assistant_settings().enabled);
@@ -10288,6 +10807,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_saved(); }));
   window_.reset();
   const auto directory = g_browser_process->profile_manager()->user_data_dir();
+#if BUILDFLAG(IS_WIN)
+  base::ScopedTempDir source;
+  {
+    base::ScopedAllowBlockingForTesting allow;
+    ASSERT_TRUE(source.CreateUniqueTempDir());
+    ASSERT_TRUE(base::CreateDirectory(ArcData(source.GetPath())));
+    ASSERT_TRUE(base::WriteFile(ArcData(source.GetPath()).AppendASCII("StorableSidebar.json"), "{}"));
+  }
+  base::ScopedPathOverride app_data(kImportAppData, source.GetPath());
+#endif
   {
     base::ScopedAllowBlockingForTesting allow;
     ASSERT_TRUE(base::DeleteFile(directory.AppendASCII("ZitterWorkspaces.json")));
@@ -10299,11 +10828,36 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
   EXPECT_EQ("Moja przestrzeń", window_->workspaces()[0].name);
   EXPECT_EQ(1u, window_->profiles().size());
 #if BUILDFLAG(IS_WIN)
-  // Windows offers the import inside its first-run wizard; closing the wizard
-  // without choosing a browser ends the first run, as Skip does.
   EXPECT_FALSE(window_->shell()->import_visible());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->shell()->welcome_widget_for_testing() != nullptr; }));
-  window_->shell()->welcome_widget_for_testing()->CloseNow();
+  auto* welcome = window_->shell()->welcome_widget_for_testing()->GetContentsView();
+  const HWND browser = views::HWNDForWidget(window_->widget());
+  ASSERT_TRUE(browser);
+  EXPECT_FALSE(::IsWindowEnabled(browser));
+  ClickControl(FindButton(welcome, u"Zaczynamy"));
+  auto* next = FindButton(welcome, u"Nie teraz");
+  ClickControl(next ? next : FindButton(welcome, u"Kontynuuj"));
+  ClickControl(FindButton(welcome, u"Kontynuuj"));
+  ClickControl(FindButton(welcome, u"Kontynuuj"));
+  auto find_field = [](auto&& self, views::View* view) -> views::Textfield* {
+    if (auto* field = views::AsViewClass<views::Textfield>(view)) return field;
+    for (const auto& child : view->children())
+      if (auto* field = self(self, child.get())) return field;
+    return nullptr;
+  };
+  auto* name = find_field(find_field, welcome);
+  ASSERT_TRUE(name);
+  EXPECT_EQ(u"Moja przestrzeń", name->GetText());
+  name->SetText(u"Start");
+  auto* wizard = window_->shell()->welcome_widget_for_testing();
+  ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(wizard->GetNativeWindow()));
+  ASSERT_EQ(views::HWNDForWidget(wizard), ::GetForegroundWindow());
+  ClickControl(FindButton(welcome, u"Otwórz Zitter"));
+  EXPECT_FALSE(window_->shell()->welcome_widget_for_testing());
+  EXPECT_TRUE(::IsWindowEnabled(browser));
+  EXPECT_EQ(browser, ::GetForegroundWindow());
+  EXPECT_EQ("Start", window_->workspaces().front().name);
+  EXPECT_TRUE(window_->RunShortcut("new_tab"));
 #else
   EXPECT_TRUE(window_->shell()->import_visible());
   auto* skip = window_->shell()->import_close();
@@ -10318,12 +10872,25 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, FirstRunImportOffer) {
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->configuration_ready(); }));
   EXPECT_FALSE(window_->shell()->import_visible());
   EXPECT_EQ(1u, window_->workspaces().size());
+#if BUILDFLAG(IS_WIN)
+  EXPECT_FALSE(window_->shell()->welcome_widget_for_testing());
+  EXPECT_EQ("Start", window_->workspaces().front().name);
+#endif
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LiveArcImport) {
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-test-arc-import")) {
     GTEST_SKIP() << "Explicit local Arc import test only";
   }
+  // Exercise the real sidebar snapshot without sending its URLs over the network.
+  content::URLLoaderInterceptor no_external_requests(base::BindRepeating(
+      [](content::URLLoaderInterceptor::RequestParams* params) {
+        if (!params->url_request.url.SchemeIsHTTPOrHTTPS() ||
+            net::IsLocalhost(params->url_request.url)) return false;
+        content::URLLoaderInterceptor::WriteResponse("HTTP/1.1 404 Not Found\n\n", "",
+                                                     params->client.get());
+        return true;
+      }));
   window_->PreviewArcImport(DefaultArcDirectory());
   ASSERT_TRUE(base::test::RunUntil([&] { return window_->import_preview() != nullptr; }));
   const auto preview = *window_->import_preview();
@@ -10361,11 +10928,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, LiveArcImport) {
   EXPECT_EQ(2u + preview.profiles.size(), window_->profiles().size());
   for (const auto& space : preview.spaces) {
     const auto& restored = window_->pinned_items(space.id);
-    ASSERT_EQ(space.pins.size(), restored.size());
-    for (size_t i = 0; i < restored.size(); ++i) {
-      EXPECT_TRUE(restored[i].id == space.pins[i].id && restored[i].parent_id == space.pins[i].parent_id &&
-          restored[i].title == space.pins[i].title && restored[i].url == space.pins[i].url);
-    }
+    std::vector<PinnedItem> expected;
+    if (const auto favorites = preview.profile_favorites.find(space.profile_id);
+        favorites != preview.profile_favorites.end()) expected = favorites->second;
+    expected.insert(expected.end(), space.pins.begin(), space.pins.end());
+    EXPECT_EQ(expected, restored);
   }
   LOG(INFO) << "Arc import verified: " << preview.profiles.size() << " profiles, " << preview.spaces.size()
             << " spaces, " << preview.folder_count << " folders, " << preview.tab_count
@@ -12816,9 +13383,18 @@ scoped_refptr<const extensions::Extension> LoadTestExtension(Profile* profile, c
   extensions::ChromeTestExtensionLoader loader(profile);
   return loader.LoadExtension(path);
 }
+// Chromium appends a second entry when an already pinned action is pinned
+// again; tests state the wanted pin, whatever the extension started with.
+void PinAction(Profile* profile, const std::string& id, bool pinned) {
+  auto* model = ToolbarActionsModel::Get(profile);
+  if (model->IsActionPinned(id) != pinned) model->SetActionVisibility(id, pinned);
+}
+// Installed extensions on the bar. Night Shift, built in, pins itself once in
+// every profile and is checked on its own.
 std::vector<std::string> ShownActions(ExtensionsBar* bar) {
   std::vector<std::string> ids;
-  for (const auto& action : bar->visible_actions_for_testing()) ids.push_back(action.id);
+  for (const auto& action : bar->visible_actions_for_testing())
+    if (action.id != kNightShiftId) ids.push_back(action.id);
   return ids;
 }
 std::optional<ExtensionsBar::ActionSnapshot> Shown(ExtensionsBar* bar, const std::string& id) {
@@ -12843,10 +13419,10 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTh
   // Registries are per profile: neither sees the other's extension.
   EXPECT_FALSE(extensions::ExtensionRegistry::Get(work_)->enabled_extensions().Contains(personal_extension->id()));
   EXPECT_FALSE(extensions::ExtensionRegistry::Get(personal_)->enabled_extensions().Contains(work_extension->id()));
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(work_extension->id(), true);
-  ToolbarActionsModel::Get(personal_)->SetActionVisibility(personal_extension->id(), true);
+  PinAction(work_, work_extension->id(), true);
+  PinAction(personal_, personal_extension->id(), true);
   // New extensions start pinned; this one lives only in the menu.
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(unpinned->id(), false);
+  PinAction(work_, unpinned->id(), false);
 
   auto* bar = window_->extensions_bar();
   ASSERT_TRUE(bar);
@@ -12866,7 +13442,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTh
   ASSERT_TRUE(bar->menu_for_testing());
   auto menu = bar->menu_ids_for_testing();
   std::ranges::sort(menu);
-  std::vector<std::string> expected{work_extension->id(), unpinned->id()};
+  std::vector<std::string> expected{work_extension->id(), unpinned->id(), kNightShiftId};
   std::ranges::sort(expected);
   EXPECT_EQ(expected, menu);
   bar->CloseMenus();
@@ -12879,14 +13455,16 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionsFollowTheProfileOfTh
   ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == personal_.get(); }));
   ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar) == std::vector<std::string>{personal_extension->id()}; }));
   bar->ToggleMenu();
-  EXPECT_EQ(std::vector<std::string>{personal_extension->id()}, bar->menu_ids_for_testing());
+  EXPECT_TRUE(std::ranges::is_permutation(
+      std::vector<std::string>{personal_extension->id(), kNightShiftId},
+      bar->menu_ids_for_testing()));
   bar->CloseMenus();
   ASSERT_TRUE(base::test::RunUntil([&] { return !bar->menu_for_testing(); }));
   EXPECT_EQ("here", content::EvalJs(window_->contents("personal"), "document.documentElement.dataset.HomeTool || ''"));
   EXPECT_EQ("", content::EvalJs(window_->contents("personal"), "document.documentElement.dataset.WorkTool || ''"));
 
   // Pinning from the menu changes only this profile.
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(unpinned->id(), true);
+  PinAction(work_, unpinned->id(), true);
   EXPECT_EQ(std::vector<std::string>{personal_extension->id()}, ShownActions(bar));
   ASSERT_TRUE(window_->Select("work"));
   ASSERT_TRUE(base::test::RunUntil([&] { return ShownActions(bar).size() == 2; }));
@@ -12904,7 +13482,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionIconsFollowTheE
   }
   const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Vault", SK_ColorBLUE, false));
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  PinAction(work_, extension->id(), true);
   auto* bar = window_->extensions_bar();
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
@@ -12957,8 +13535,8 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
   const auto clicker = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Clicker", SK_ColorRED, false,
       "chrome.action.onClicked.addListener(tab => chrome.action.setBadgeText({text: tab && tab.id > 0 ? 'ok' : 'no'}));"));
   ASSERT_TRUE(popup && clicker);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(popup->id(), true);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(clicker->id(), true);
+  PinAction(work_, popup->id(), true);
+  PinAction(work_, clicker->id(), true);
   auto* bar = window_->extensions_bar();
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
@@ -12969,6 +13547,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
   auto* contents = bar->popup_contents_for_testing();
   ASSERT_TRUE(contents);
   ASSERT_TRUE(content::WaitForLoadStop(contents));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_loading_for_testing(); }));
   EXPECT_EQ(popup->GetResourceURL("popup.html"), contents->GetLastCommittedURL());
   EXPECT_TRUE(Shown(bar, popup->id())->popup_open);
   // Anchored under its icon, right edges together.
@@ -12982,13 +13561,418 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionActionsOpenPopupsAndD
   ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
   EXPECT_FALSE(Shown(bar, popup->id())->popup_open);
 
+  bar->RunAction(popup->id());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return bar->popup_for_testing() && bar->popup_for_testing()->IsVisible();
+  }));
+  bar->RunAction(popup->id());
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->popup_for_testing(); }));
+  EXPECT_FALSE(Shown(bar, popup->id())->popup_open);
+
   bar->RunAction(clicker->id());
   ASSERT_TRUE(base::test::RunUntil([&] { return Shown(bar, clicker->id())->badge == "ok"; }));
   EXPECT_FALSE(bar->popup_for_testing());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ToolbarPanelsFadeBeforeClosing) {
+  gfx::ScopedAnimationDurationScaleMode animations(gfx::ScopedAnimationDurationScaleMode::NORMAL_DURATION);
+  NavigateBoth();
+  ASSERT_TRUE(window_->Select("work"));
+  ASSERT_TRUE(window_->WritePreference("ad_blocking", 1));
+  auto* bar = window_->extensions_bar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->shield_button_for_testing() != nullptr; }));
+  const auto check_fade = [&](auto toggle, auto get) {
+    (bar->*toggle)();
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      auto* panel = (bar->*get)();
+      return panel && panel->IsVisible() && panel->GetLayer() &&
+             panel->GetLayer()->opacity() == 1.0f;
+    }));
+    auto* panel = (bar->*get)();
+    (bar->*toggle)();
+    EXPECT_EQ(panel, (bar->*get)());
+    EXPECT_TRUE(panel->IsVisible());
+    EXPECT_FLOAT_EQ(0.0f, panel->GetLayer()->GetTargetOpacity());
+    (bar->*toggle)();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !(bar->*get)(); }));
+  };
+  for (auto mode : {ui::ColorProviderKey::ColorMode::kLight,
+                    ui::ColorProviderKey::ColorMode::kDark}) {
+    window_->widget()->SetColorModeOverride(mode);
+    ASSERT_NO_FATAL_FAILURE(check_fade(&ExtensionsBar::ToggleShieldPanel,
+                                       &ExtensionsBar::shield_panel_for_testing));
+    ASSERT_NO_FATAL_FAILURE(check_fade(&ExtensionsBar::ToggleNightShiftPanel,
+                                       &ExtensionsBar::night_shift_panel_for_testing));
+    ASSERT_NO_FATAL_FAILURE(check_fade(&ExtensionsBar::ToggleMenu, &ExtensionsBar::menu_for_testing));
+  }
+}
+
 // Extension pages (options, chrome://extensions, links from popups) open as
 // tabs of a space that uses the extension's profile.
+class NightShiftBrowserTest : public ZitterProfilesBrowserTest {
+ public:
+  void SetUpOnMainThread() override {
+#if BUILDFLAG(IS_MAC)
+    // The unbundled browser test stages these files next to the executable.
+    // Resolve the component's absolute path before restoring the normal path.
+    base::FilePath executable_dir;
+    ASSERT_TRUE(base::PathService::Get(base::DIR_EXE, &executable_dir));
+    base::ScopedPathOverride resources(
+        chrome::DIR_RESOURCES, executable_dir.AppendASCII("resources"));
+#endif
+    ZitterProfilesBrowserTest::SetUpOnMainThread();
+  }
+};
+
+// Design: Night Shift · ustawienia. One switch for the app reaches every
+// profile, and the default look lands in each profile's extension storage.
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, SettingsReachEveryProfile) {
+  ASSERT_TRUE(window_->Select("work"));
+  const auto* extension = extensions::ExtensionRegistry::Get(work_)
+                              ->enabled_extensions().GetByID(kNightShiftId);
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(window_->OpenExtensionPage(work_, extension->GetResourceURL("settings.html")));
+  auto* settings = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(settings));
+  auto stored = [&](Profile* profile) {
+    base::test::TestFuture<extensions::StorageFrontend::GetResult> result;
+    const auto* own = extensions::ExtensionRegistry::Get(profile)->enabled_extensions().GetByID(kNightShiftId);
+    if (!own) return std::string("missing");
+    extensions::StorageFrontend::Get(profile)->GetValues(base::WrapRefCounted(own),
+        extensions::StorageAreaNamespace::kLocal, std::vector<std::string>{"enabled", "defaults"}, result.GetCallback());
+    if (!result.Get().data) return std::string("unreadable");
+    std::string json;
+    base::JSONWriter::Write(*result.Get().data, &json);
+    return json;
+  };
+  ASSERT_TRUE(window_->Select("personal"));
+  ASSERT_TRUE(window_->Select("work"));
+  // The page reports a change through its fragment, as its controls do.
+  ASSERT_TRUE(content::ExecJs(settings, R"(
+      history.replaceState(null, '', '#apply=' + encodeURIComponent(JSON.stringify(
+          {enabled: true, all_profiles: true, profiles: [], brightness: 90, contrast: 110, sepia: 20,
+           grayscale: 0, force: false, revision: 1})));
+  )"));
+  for (auto* profile : {work_.get(), personal_.get()}) {
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      const auto json = stored(profile);
+      return json.find("\"enabled\":true") != std::string::npos && json.find("\"sepia\":20") != std::string::npos;
+    })) << stored(profile);
+  }
+  // Selected profiles: the others switch off.
+  ASSERT_TRUE(content::ExecJs(settings, R"(
+      history.replaceState(null, '', '#apply=' + encodeURIComponent(JSON.stringify(
+          {enabled: true, all_profiles: false, profiles: ['work-profile'], revision: 2})));
+  )"));
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored(personal_).find("\"enabled\":false") != std::string::npos; }));
+  EXPECT_NE(stored(work_).find("\"enabled\":true"), std::string::npos);
+  // An ordinary page cannot reach the setting through its own fragment.
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/storage_probe.html"), true));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(content::ExecJs(page, R"(
+      history.replaceState(null, '', '#apply=' + encodeURIComponent(JSON.stringify({enabled: false})));
+  )"));
+  base::RunLoop settle;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(300));
+  settle.Run();
+  EXPECT_NE(stored(work_).find("\"enabled\":true"), std::string::npos);
+}
+
+// Design: Night Shift. The moon opens a native panel straight away: the
+// site's switch and tuning write the extension's storage, and the page follows.
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativePanelSwitchesAndTunesTheSite) {
+  ASSERT_TRUE(window_->Select("work"));
+  const auto* extension = extensions::ExtensionRegistry::Get(work_)
+                              ->enabled_extensions().GetByID(kNightShiftId);
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(window_->OpenExtensionPage(work_, extension->GetResourceURL("settings.html")));
+  auto* settings = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(settings));
+  ASSERT_EQ(true, content::EvalJs(settings, R"(
+      chrome.runtime.sendMessage({type:'set-global', enabled:true}).then(response => response.ok)
+  )"));
+  ASSERT_TRUE(window_->NavigateFromBar(embedded_test_server()->GetURL("/tab_favicon_probe.html"), true));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  auto* bar = window_->extensions_bar();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->profile() == work_.get() && bar->night_shift_button_for_testing(); }));
+  // Night Shift is no toolbar action any more: the moon stands for it.
+  EXPECT_FALSE(Shown(bar, kNightShiftId).has_value());
+  auto moon_name = [&] {
+    ui::AXNodeData node;
+    bar->night_shift_button_for_testing()->GetViewAccessibility().GetAccessibleNodeData(&node);
+    return node.GetString16Attribute(ax::mojom::StringAttribute::kName);
+  };
+  ASSERT_TRUE(base::test::RunUntil([&] { return moon_name() == T(u"Night Shift: włączony"); }));
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return bar->night_shift_ready_for_testing() && bar->night_shift_panel_for_testing()->IsVisible();
+  }));
+  EXPECT_EQ("auto", bar->night_shift_state_for_testing());
+  const auto size = bar->night_shift_panel_for_testing()->GetClientAreaBoundsInScreen().size();
+  EXPECT_GE(size.width(), 280);
+  EXPECT_GE(size.height(), 200);
+  auto stored = [&] {
+    base::test::TestFuture<extensions::StorageFrontend::GetResult> result;
+    extensions::StorageFrontend::Get(work_)->GetValues(base::WrapRefCounted(extension),
+        extensions::StorageAreaNamespace::kLocal, std::nullopt, result.GetCallback());
+    std::string json;
+    if (result.Get().data) base::JSONWriter::Write(*result.Get().data, &json);
+    return json;
+  };
+  // Off for this site, then on again over the site's own dark theme.
+  bar->RunNightShiftCommandForTesting(0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "off"; })) << stored();
+  ASSERT_TRUE(base::test::RunUntil([&] { return moon_name() == T(u"Night Shift: wyłączony dla tej witryny"); }));
+  EXPECT_NE(std::string::npos, stored().find("\"mode\":\"off\""));
+  bar->RunNightShiftCommandForTesting(0);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "dark"; }));
+  bar->RunNightShiftCommandForTesting(1);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "on"; }));
+  bar->SetNightShiftBrightnessForTesting(110);
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored().find("\"brightness\":110") != std::string::npos; })) << stored();
+  // The header changes the profile default while the explicit site stays dark.
+  bar->RunNightShiftCommandForTesting(13);
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored().find("\"enabled\":false") != std::string::npos; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "on"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, "Boolean(document.querySelector('.darkreader--user-agent'))").ExtractBool();
+  }));
+  bar->RunNightShiftCommandForTesting(10);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "off"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !content::EvalJs(page, "Boolean(document.querySelector('.darkreader--user-agent'))").ExtractBool();
+  }));
+  bar->RunNightShiftCommandForTesting(11);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "dark"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, "Boolean(document.querySelector('.darkreader--user-agent'))").ExtractBool();
+  }));
+  EXPECT_NE(std::string::npos, stored().find("\"brightness\":110"));
+  bar->RunNightShiftCommandForTesting(13);
+  ASSERT_TRUE(base::test::RunUntil([&] { return stored().find("\"enabled\":true") != std::string::npos; }));
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_ready_for_testing(); }));
+  // Reset: the app-wide look again.
+  bar->RunNightShiftCommandForTesting(2);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return bar->night_shift_state_for_testing() == "auto" && stored().find("\"brightness\"") == std::string::npos;
+  })) << stored();
+  // Unpinned in the menu, the moon leaves the bar and the panel closes.
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_panel_for_testing(); }));
+  bar->ToggleMenu();
+  ASSERT_TRUE(bar->menu_for_testing());
+  views::View* unpin = nullptr;
+  std::function<void(views::View*)> find = [&](views::View* view) {
+    if (views::AsViewClass<views::Button>(view) && view->GetViewAccessibility().GetCachedName() == u"Odepnij" &&
+        view->parent() && view->parent()->GetViewAccessibility().GetCachedName().starts_with(u"Night Shift"))
+      unpin = view;
+    for (const auto& child : view->children()) find(child.get());
+  };
+  find(bar->menu_for_testing()->GetRootView());
+  ClickControl(unpin);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_button_for_testing(); }));
+  // Still reachable from the menu row.
+  bar->CloseMenus();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->menu_for_testing(); }));
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_ready_for_testing(); }));
+}
+
+IN_PROC_BROWSER_TEST_F(NightShiftBrowserTest, NativeActionReviewsScopedRepair) {
+  ASSERT_TRUE(window_->Select("work"));
+  auto* shell = window_->shell();
+  if (MetalPresents()) {
+    shell->SetPinned(true);
+    shell->SetThemeMode(ThemeMode::kDark);
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return shell->metal_sidebar_visible() && shell->metal_header_visible();
+    }));
+  }
+  const auto* extension = extensions::ExtensionRegistry::Get(work_)
+                              ->enabled_extensions().GetByID(kNightShiftId);
+  ASSERT_TRUE(extension);
+  ASSERT_TRUE(window_->OpenExtensionPage(work_,
+                                        extension->GetResourceURL("settings.html")));
+  auto* settings = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(settings));
+  ASSERT_EQ(true, content::EvalJs(settings, R"(
+      chrome.runtime.sendMessage({type:'set-global', enabled:true})
+          .then(response => response.ok)
+  )"));
+  // The probe page has its own dark theme, which Night Shift's automatic mode
+  // leaves alone: the site applies it anyway, as "also over a dark theme".
+  const auto probe = embedded_test_server()->GetURL("/storage_probe.html");
+  ASSERT_TRUE(content::ExecJs(settings, content::JsReplace(
+      "chrome.storage.local.set({[$1]: {mode: 'on', force: true}})", NightShiftSiteKey(probe))));
+  ASSERT_TRUE(window_->NavigateFromBar(probe, true));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, "!!document.querySelector('.darkreader--override')") == true;
+  }));
+  ASSERT_TRUE(content::ExecJs(page, R"(
+      const caption = document.createElement('figcaption');
+      caption.id = 'night-shift-caption';
+      caption.textContent = 'Private fixture text';
+      document.body.prepend(caption);
+      const fixture = document.createElement('style');
+      fixture.className = 'darkreader';
+      fixture.textContent = '#night-shift-caption {background:#181a1b;color:#343434!important}';
+      document.querySelector('.darkreader--override').before(fixture);
+  )"));
+  constexpr char kCaptionColor[] =
+      "getComputedStyle(document.getElementById('night-shift-caption')).color";
+  ASSERT_EQ("rgb(52, 52, 52)", content::EvalJs(page, kCaptionColor));
+
+  auto* bar = window_->extensions_bar();
+  for (const auto theme : {ThemeMode::kLight, ThemeMode::kDark}) {
+    const bool dark = theme == ThemeMode::kDark;
+    const auto sidebar_frames = shell->metal_sidebar_frame_count();
+    const auto header_frames = shell->metal_header_frame_count();
+    shell->SetThemeMode(theme);
+    bar->ToggleNightShiftPanel();
+    ASSERT_TRUE(base::test::RunUntil([&] {
+      return bar->night_shift_ready_for_testing() && bar->night_shift_panel_for_testing()->IsVisible();
+    }));
+    EXPECT_EQ(dark, bar->night_shift_panel_for_testing()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark);
+    if (MetalPresents()) {
+      ASSERT_TRUE(base::test::RunUntil([&] {
+        return shell->metal_sidebar_visible() && shell->metal_header_visible() &&
+               shell->metal_sidebar_frame_count() > sidebar_frames &&
+               shell->metal_header_frame_count() > header_frames;
+      }));
+    } else {
+      EXPECT_FALSE(shell->metal_sidebar_visible());
+      EXPECT_FALSE(shell->metal_header_visible());
+    }
+    if (!dark) {
+      bar->ToggleNightShiftPanel();
+      ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_panel_for_testing(); }));
+    }
+  }
+  // The panel's assistant row starts a scoped repair request.
+  bar->RunNightShiftCommandForTesting(8);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return window_->assistant() && !window_->assistant()->draft_for_testing().empty() &&
+           !bar->night_shift_panel_for_testing();
+  }));
+  auto* assistant = window_->assistant();
+  if (auto* consent = assistant->shortcut_dialog_for_testing()) {
+    assistant->ConfigureForTesting("", "", assistant->permissions_for_testing());
+    consent->widget_delegate()->AsDialogDelegate()->AcceptDialog();
+    ASSERT_TRUE(base::test::RunUntil([&] { return !assistant->shortcut_dialog_for_testing(); }));
+  }
+  const auto prompt = base::UTF16ToUTF8(assistant->draft_for_testing());
+  ASSERT_GE(prompt.size(), 36u);
+  const auto request_id = prompt.substr(prompt.size() - 36);
+  ASSERT_TRUE(base::Uuid::ParseLowercase(request_id).is_valid());
+
+  net::EmbeddedTestServer model;
+  model.RegisterRequestHandler(base::BindRepeating(
+      [](const std::string& request_id, const net::test_server::HttpRequest& request)
+          -> std::unique_ptr<net::test_server::HttpResponse> {
+        if (request.relative_url != "/api/chat") return nullptr;
+        base::ListValue actions;
+        std::string answer;
+        auto envelope = base::JSONReader::ReadDict(request.content, base::JSON_PARSE_RFC);
+        const auto* messages = envelope ? envelope->FindList("messages") : nullptr;
+        const auto* last = messages && !messages->empty() ? messages->back().GetIfDict() : nullptr;
+        const auto* content = last ? last->FindString("content") : nullptr;
+        auto turn = content ? base::JSONReader::ReadDict(*content, base::JSON_PARSE_RFC) : std::nullopt;
+        const auto* results = turn ? turn->FindList("untrusted_tool_results") : nullptr;
+        auto add = [&](const char* tool, base::DictValue args) {
+          actions.Append(base::DictValue().Set("tool", tool)
+                             .Set("args", base::WriteJson(args).value_or("{}")));
+        };
+        if (!results) {
+          add("list_tabs", base::DictValue());
+          add("night_shift_inspect", base::DictValue().Set("request", request_id));
+        } else {
+          int target = -1;
+          bool unrelated_tool_refused = false;
+          for (const auto& result : *results) {
+            const auto* entry = result.GetIfDict();
+            const auto* tool = entry ? entry->FindString("tool") : nullptr;
+            const auto* value = entry ? entry->FindDict("result") : nullptr;
+            if (!tool || !value) continue;
+            if (*tool == "list_tabs") unrelated_tool_refused = value->contains("error");
+            const auto* low = value->FindList("lowContrastTargets");
+            const auto* candidates = value->FindList("candidates");
+            if (*tool == "night_shift_inspect" && low && candidates) {
+              for (const auto& item : *low) {
+                if (!item.is_int() || item.GetInt() < 0 ||
+                    static_cast<size_t>(item.GetInt()) >= candidates->size()) {
+                  continue;
+                }
+                const auto& candidate = (*candidates)[item.GetInt()].GetDict();
+                const auto* path = candidate.FindList("path");
+                if (path && !path->empty()) {
+                  const auto* id = (*path)[0].GetDict().FindString("id");
+                  if (id && *id == "night-shift-caption") target = item.GetInt();
+                }
+              }
+            }
+            if (*tool == "night_shift_propose" && !value->contains("error")) {
+              answer = "Night Shift native repair ready";
+            }
+          }
+          if (unrelated_tool_refused && target >= 0 &&
+              content->find("Private fixture text") == std::string::npos) {
+            add("night_shift_propose",
+                base::DictValue().Set("request", request_id).Set("label", "Caption contrast")
+                    .Set("rules", base::ListValue().Append(base::DictValue()
+                        .Set("target", target).Set("property", "color").Set("color", "#e0e0e0"))));
+          }
+        }
+        auto response = std::make_unique<net::test_server::BasicHttpResponse>();
+        response->set_content_type("application/json");
+        auto message = base::WriteJson(base::DictValue().Set("answer", answer)
+                                          .Set("actions", std::move(actions)));
+        response->set_content(base::WriteJson(base::DictValue().Set(
+            "message", base::DictValue().Set("content", message.value_or("{}")))).value_or("{}"));
+        return response;
+      }, request_id));
+  ASSERT_TRUE(model.Start());
+  base::ScopedEnvironmentVariableOverride endpoint("ZITTER_OLLAMA_URL", model.base_url().spec());
+  assistant->ConfigureForTesting("ollama", "test-local", {false, true, false, false, false});
+  assistant->SendForTesting(prompt);
+  ASSERT_TRUE(base::test::RunUntil([&] { return !assistant->busy(); }));
+  ASSERT_TRUE(assistant->ContainsForTesting("Night Shift native repair ready"));
+  EXPECT_EQ("rgb(52, 52, 52)", content::EvalJs(page, kCaptionColor));
+
+  // Reopened, the panel shows the staged repair on the page at once. The
+  // assistant panel may still take focus after its answer, which closes a
+  // bar panel as any click elsewhere would: open it again then.
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    if (!bar->night_shift_panel_for_testing()) bar->ToggleNightShiftPanel();
+    return bar->night_shift_state_for_testing() == "draft";
+  })) << bar->night_shift_state_for_testing();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, kCaptionColor) == "rgb(224, 224, 224)";
+  }));
+  bar->RunNightShiftCommandForTesting(3);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, kCaptionColor) == "rgb(52, 52, 52)";
+  }));
+  bar->RunNightShiftCommandForTesting(5);
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "repaired"; }));
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, kCaptionColor) == "rgb(224, 224, 224)";
+  }));
+  // Closing keeps the saved repair; Reset removes it.
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return !bar->night_shift_panel_for_testing(); }));
+  EXPECT_EQ("rgb(224, 224, 224)", content::EvalJs(page, kCaptionColor));
+  bar->ToggleNightShiftPanel();
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->night_shift_state_for_testing() == "repaired"; }));
+  bar->RunNightShiftCommandForTesting(14);
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return content::EvalJs(page, kCaptionColor) == "rgb(52, 52, 52)";
+  }));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPopupVisibleBeforeSlowResourcesFinish) {
   base::ScopedTempDir dir;
   net::EmbeddedTestServer server;
@@ -13005,12 +13989,13 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPopupVisibleBeforeSlo
   }
   const auto extension = LoadTestExtension(work_, source);
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  PinAction(work_, extension->id(), true);
   auto* bar = window_->extensions_bar();
   bar->RunAction(extension->id());
   slow_image.WaitForRequest();
   ASSERT_TRUE(bar->popup_for_testing());
-  EXPECT_TRUE(bar->popup_for_testing()->IsVisible());
+  // The card appears once the page has its size, not after the slow image.
+  ASSERT_TRUE(base::test::RunUntil([&] { return bar->popup_for_testing()->IsVisible(); }));
   EXPECT_TRUE(bar->popup_contents_for_testing()->IsLoading());
   EXPECT_TRUE(base::test::RunUntil([&] {
     const auto bounds = bar->popup_for_testing()->GetWindowBoundsInScreen();
@@ -13044,7 +14029,9 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionPagesOpenInTheirProfi
   // ⌘⇧E opens the extensions menu of the shown profile.
   ASSERT_TRUE(window_->RunShortcut("extensions"));
   ASSERT_TRUE(window_->extensions_bar()->menu_for_testing());
-  EXPECT_EQ(std::vector<std::string>{extension->id()}, window_->extensions_bar()->menu_ids_for_testing());
+  EXPECT_TRUE(std::ranges::is_permutation(
+      std::vector<std::string>{extension->id(), kNightShiftId},
+      window_->extensions_bar()->menu_ids_for_testing()));
   window_->extensions_bar()->CloseMenus();
 }
 
@@ -13059,6 +14046,18 @@ views::Button* FindNamedButton(views::View* root, std::u16string_view name) {
     if (auto* found = FindNamedButton(child.get(), name)) return found;
   return nullptr;
 }
+// The named button in the menu row that shows `row`: Night Shift has its own.
+views::Button* FindRowButton(views::View* root, std::u16string_view row, std::u16string_view name) {
+  std::function<views::View*(views::View*)> label = [&](views::View* view) -> views::View* {
+    if (auto* text = views::AsViewClass<views::Label>(view); text && text->GetText() == row) return view;
+    if (view->GetViewAccessibility().GetCachedName() == row) return view;
+    for (const auto& child : view->children()) if (auto* found = label(child.get())) return found;
+    return nullptr;
+  };
+  for (auto* view = label(root); view; view = view->parent())
+    if (auto* button = FindNamedButton(view, name)) return button;
+  return nullptr;
+}
 }  // namespace
 
 #if BUILDFLAG(IS_WIN)
@@ -13070,7 +14069,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionContextMenuStaysBelow
   }
   const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Anchor", SK_ColorBLUE, false));
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), true);
+  PinAction(work_, extension->id(), true);
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
   auto* bar = window_->extensions_bar();
@@ -13138,7 +14137,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
   }
   const auto extension = LoadTestExtension(work_, WriteTestExtension(dir.GetPath(), "Pinboard", SK_ColorBLUE, false));
   ASSERT_TRUE(extension);
-  ToolbarActionsModel::Get(work_)->SetActionVisibility(extension->id(), false);
+  PinAction(work_, extension->id(), false);
   auto* bar = window_->extensions_bar();
   NavigateBoth();
   ASSERT_TRUE(window_->Select("work"));
@@ -13155,7 +14154,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
   // An unpinned pin shows on hover; the row is hovered when the pointer is on it.
   views::Button* pin = nullptr;
   ASSERT_TRUE(base::test::RunUntil([&] {
-    pin = FindNamedButton(menu, u"Przypnij");
+    pin = FindRowButton(menu, u"Pinboard", u"Przypnij");
     if (!pin) {
       // Reveal it as hovering would.
       std::function<void(views::View*)> reveal = [&](views::View* view) {
@@ -13163,7 +14162,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
         for (const auto& child : view->children()) reveal(child.get());
       };
       reveal(menu);
-      pin = FindNamedButton(menu, u"Przypnij");
+      pin = FindRowButton(menu, u"Pinboard", u"Przypnij");
     }
     return pin != nullptr;
   }));
@@ -13173,7 +14172,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ExtensionMenuPinsAndUnpinsPerP
   // The menu rebuilds after the click; its pin is now "Odepnij" and stays shown.
   views::Button* unpin = nullptr;
   ASSERT_TRUE(base::test::RunUntil([&] {
-    unpin = bar->menu_for_testing() ? FindNamedButton(bar->menu_for_testing()->GetRootView(), u"Odepnij") : nullptr;
+    unpin = bar->menu_for_testing() ? FindRowButton(bar->menu_for_testing()->GetRootView(), u"Pinboard", u"Odepnij") : nullptr;
     return unpin != nullptr;
   }));
   click(unpin);

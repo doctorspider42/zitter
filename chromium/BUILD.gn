@@ -8,10 +8,7 @@ zitter_workspace_presentation("workspace_presentation") {
 }
 
 if (is_win) {
-  declare_args() {
-    # Build an isolated, per-user installation for local testing.
-    zitter_dev_build = false
-  }
+  import("chromium/app/windows_channel.gni")
 }
 
 zitter_assistant_runtime("zitter_assistant") {
@@ -69,11 +66,12 @@ test("zitter_prototype") {
   if (is_mac) {
     data_deps = [
       ":assistant_runtime",
+      ":night_shift_runtime",
       "//chrome",
       "//chrome:chrome_framework",
     ]
   } else {
-    data_deps = [ "//chrome:packed_resources", ":assistant_runtime" ]
+    data_deps = [ "//chrome:packed_resources", ":assistant_runtime", ":night_shift_runtime" ]
   }
 }
 
@@ -104,6 +102,8 @@ source_set("shell") {
     "chromium/prototype/extension_tab_events.h",
     "chromium/prototype/extensions_bar.cc",
     "chromium/prototype/extensions_bar.h",
+    "chromium/prototype/night_shift.cc",
+    "chromium/prototype/night_shift.h",
     "chromium/prototype/rss_chrome.cc",
     "chromium/prototype/site_data.cc",
     "chromium/prototype/site_data.h",
@@ -130,6 +130,7 @@ source_set("shell") {
     ":core",
     ":devtools_console",
     ":fingerprint_session",
+    ":night_shift_manifest",
     ":print_options",
     ":rss_reader",
     ":sidebar_scene",
@@ -151,6 +152,7 @@ source_set("shell") {
     "//chrome/browser/ui/toolbar",
     "//chrome/browser/ui/views/extensions:extension_view_views",
     "//extensions/browser",
+    "//extensions/browser/api/storage",
     "//extensions/common",
     "//chrome/browser/media/webrtc",
     "//chrome/browser/enterprise",
@@ -251,6 +253,48 @@ group("assistant_runtime") {
   data_deps = [ ":zitter_assistant" ]
 }
 
+copy("night_shift_files") {
+  sources = [
+    "chromium/night_shift/manifest.json",
+    "chromium/night_shift/moon.png",
+    "chromium/night_shift/settings.css",
+    "chromium/night_shift/settings.html",
+    "chromium/night_shift/settings.js",
+    "chromium/night_shift/site_policy.js",
+    "chromium/night_shift/theme.js",
+    "chromium/night_shift/worker.js",
+  ]
+  outputs = [ "$root_out_dir/resources/night_shift/{{source_file_part}}" ]
+}
+
+copy("night_shift_vendor") {
+  sources = [
+    "chromium/night_shift/vendor/LICENSE",
+    "chromium/night_shift/vendor/compatibility.js",
+    "chromium/night_shift/vendor/dark-sites.config",
+    "chromium/night_shift/vendor/darkreader.js",
+    "chromium/night_shift/vendor/detector.js",
+    "chromium/night_shift/vendor/dynamic-theme-fixes.config",
+    "chromium/night_shift/vendor/proxy.js",
+  ]
+  outputs = [ "$root_out_dir/resources/night_shift/vendor/{{source_file_part}}" ]
+}
+
+group("night_shift_runtime") {
+  data_deps = [ ":night_shift_files", ":night_shift_vendor" ]
+}
+
+action("night_shift_manifest") {
+  script = "chromium/assistant/embed.py"
+  sources = [ "chromium/night_shift/manifest.json" ]
+  outputs = [ "$target_gen_dir/night_shift_manifest.h" ]
+  args = [
+    rebase_path(sources[0], root_build_dir),
+    rebase_path(outputs[0], root_build_dir),
+    "kNightShiftManifest",
+  ]
+}
+
 source_set("profile_workspace_browser_tests") {
   testonly = true
   defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
@@ -332,7 +376,7 @@ test("arc_importer_unittests") {
     "chromium/prototype/browser_data.h",
   ]
   include_dirs = [ "." ]
-  deps = [ ":core", "//base", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest", "//url" ]
+  deps = [ ":core", "//base", "//base/test:run_all_unittests", "//base/test:test_support", "//testing/gtest", "//sql", "//url" ]
 }
 if (!is_mac) {
   # macOS keeps the CoreText harness: tools/check_editor_text_layout.py.
@@ -453,7 +497,7 @@ if (is_mac || is_linux || is_win) {
       "//services/network/public/mojom",
       "//ui/lottie",
     ]
-    data_deps = [ "//chrome:packed_resources", ":assistant_runtime" ]
+    data_deps = [ "//chrome:packed_resources", ":assistant_runtime", ":night_shift_runtime" ]
     if (is_posix) {
       # On Windows, chrome_elf holds the crash reporter client.
       sources += [

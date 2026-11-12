@@ -281,13 +281,15 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   base::test::ScopedRunLoopTimeout timeout(FROM_HERE,base::Seconds(30),base::BindLambdaForTesting([&]{return "Scene media stage: "+stage;}));
   Start();ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_prompt()!=nullptr;}));
   auto* widget=access()->permission_prompt();auto* delegate=widget->widget_delegate()->AsDialogDelegate();
-  const auto origin=url::Origin::Create(page()->GetLastCommittedURL()).Serialize();
   // Design: Prośba o dostęp — a card that leaves the page its focus and input.
   EXPECT_EQ(ui::mojom::ModalType::kNone,delegate->GetModalType());EXPECT_FALSE(widget->IsActive());EXPECT_EQ(0,delegate->buttons());
   EXPECT_TRUE(access()->prompt_offer().pending);EXPECT_FALSE(access()->prompt_offer().folded);EXPECT_EQ(3,access()->prompt_offer().kind);
   {
     if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_scene_contains_for_testing("Użyć kamery?")&&access()->permission_scene_contains_for_testing("Tym razem")&&access()->permission_scene_contains_for_testing("Zawsze tutaj");}));
-    auto check=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)EXPECT_FALSE(views::AsViewClass<views::Label>(view));for(const auto& child:view->children())self(self,child.get());};check(check,delegate->GetContentsView());
+    auto check=[&](auto&& self,views::View* view)->void{ui::AXNodeData node;view->GetViewAccessibility().GetAccessibleNodeData(&node);if(node.role==ax::mojom::Role::kStaticText)EXPECT_FALSE(views::AsViewClass<views::Label>(view));
+      // Every decision shows its whole label.
+      if(node.role==ax::mojom::Role::kButton&&view->GetVisible())EXPECT_GE(view->width(),view->GetPreferredSize().width())<<base::UTF16ToUTF8(view->GetViewAccessibility().GetCachedName());
+      for(const auto& child:view->children())self(self,child.get());};widget->LayoutRootViewIfNecessary();check(check,delegate->GetContentsView());
   }
   // The camera card waits for an answer; folding hides it and keeps the request.
   stage="fold and reopen";access()->FoldPromptForTesting();EXPECT_FALSE(widget->IsVisible());EXPECT_TRUE(access()->prompt_offer().folded);EXPECT_FALSE(PageMediaAccess::IsCapturing(page()));
@@ -295,16 +297,25 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, ScenePermissionCocoaDefaultAndFor
   // Closing the card dismisses the request.
   stage="close dismisses";widget->Close();ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("NotAllowedError");}));EXPECT_FALSE(access()->permission_prompt());EXPECT_FALSE(access()->prompt_offer().pending);if(MetalPresents())EXPECT_FALSE(access()->permission_scene_contains_for_testing("Użyć kamery?"));
   stage="allow and wait for page track listeners";SetCamera(work_,CONTENT_SETTING_ASK);Load("?scene-allow");Start();ASSERT_TRUE(base::test::RunUntil([&]{return access()->permission_prompt()!=nullptr;}));
-  access()->DecidePromptForTesting(0);ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));
-  widget=access()->capture_prompt();delegate=widget->widget_delegate()->AsDialogDelegate();EXPECT_EQ(ui::mojom::ModalType::kNone,delegate->GetModalType());EXPECT_TRUE(delegate->ShouldShowCloseButton());
-  auto* stop=DialogActionButton(widget,false);ASSERT_TRUE(stop);EXPECT_FALSE(DialogActionButton(widget,true));
-  {EXPECT_TRUE(stop->children().empty());if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->capture_scene_contains_for_testing(origin);}));EXPECT_FALSE(views::AsViewClass<views::MdTextButton>(stop));}
-  stage="forced close and page ended event";views::ViewTracker old(widget->GetContentsView());widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !PageMediaAccess::IsCapturing(page())&&!access()->capture_prompt()&&!old.view();}));
-  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page(),"captureResult === 'ended' && captureStream.getTracks().every(t => t.readyState === 'ended')").ExtractBool();}));if(MetalPresents())EXPECT_FALSE(access()->capture_scene_contains_for_testing(origin));
-  // A live same-origin one-time grant can start another stream. Stale close
-  // callbacks from the old widget must not stop that new capture generation.
-  stage="fresh capture";Start();ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_prompt();}));
-  stage="keyboard stop";ASSERT_NO_FATAL_FAILURE(Press(access()->capture_prompt(),false));ASSERT_TRUE(base::test::RunUntil([&]{return !PageMediaAccess::IsCapturing(page())&&!access()->capture_prompt();}));
+  access()->DecidePromptForTesting(0);ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page())&&access()->capture_state().active;}));
+  // Design: Kamera i mikrofon. Nothing pops up while the page captures.
+  EXPECT_FALSE(access()->capture_prompt());EXPECT_TRUE(access()->capture_state().camera);
+  stage="indicator opens the card";access()->ToggleCaptureControls();ASSERT_TRUE(access()->capture_prompt());
+  widget=access()->capture_prompt();delegate=widget->widget_delegate()->AsDialogDelegate();EXPECT_EQ(ui::mojom::ModalType::kNone,delegate->GetModalType());EXPECT_FALSE(delegate->ShouldShowCloseButton());
+  EXPECT_FALSE(DialogActionButton(widget,false));EXPECT_FALSE(DialogActionButton(widget,true));
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return access()->capture_scene_contains_for_testing("Zatrzymaj wszystko");}));
+  stage="closing the card keeps the capture";views::ViewTracker old(widget->GetContentsView());widget->CloseNow();ASSERT_TRUE(base::test::RunUntil([&]{return !access()->capture_prompt()&&!old.view();}));
+  EXPECT_TRUE(PageMediaAccess::IsCapturing(page()));EXPECT_TRUE(ResultIs("running"));
+  stage="stop from the card";access()->ToggleCaptureControls();ASSERT_TRUE(access()->capture_prompt());access()->StopCapture();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !PageMediaAccess::IsCapturing(page())&&!access()->capture_prompt();}));
+  ASSERT_TRUE(base::test::RunUntil([&]{return content::EvalJs(page(),"captureResult === 'ended' && captureStream.getTracks().every(t => t.readyState === 'ended')").ExtractBool();}));
+  EXPECT_FALSE(access()->capture_state().active);
+  // A live same-origin one-time grant can start another stream. A card closed
+  // for the old capture must not stop that new capture generation.
+  stage="fresh capture";Start();ASSERT_TRUE(base::test::RunUntil([&]{return ResultIs("running")&&PageMediaAccess::IsCapturing(page());}));
+  EXPECT_FALSE(access()->capture_prompt());
+  stage="stop again";access()->ToggleCaptureControls();ASSERT_TRUE(access()->capture_prompt());access()->StopCapture();
+  ASSERT_TRUE(base::test::RunUntil([&]{return !PageMediaAccess::IsCapturing(page())&&!access()->capture_prompt();}));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolationAndStop) {
@@ -376,8 +387,7 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolation
   }));
   stage = "capture indicator registration";
   ASSERT_TRUE(base::test::RunUntil([&] { return PageMediaAccess::IsCapturing(page()); }));
-  stage = "capture controls visible";
-  ASSERT_TRUE(base::test::RunUntil([&] { return access()->capture_prompt(); }));
+  EXPECT_FALSE(access()->capture_prompt());
   EXPECT_TRUE(PageMediaAccess::IsCapturing(page()));
   LOG(ERROR) << "ZITTER_MEDIA_TEST: fake capture started";
   EXPECT_FALSE(window_->SleepWorkspace(work));
@@ -385,9 +395,10 @@ IN_PROC_BROWSER_TEST_F(ZitterMediaBrowserTest, PermissionConsentProfileIsolation
   auto* source = page();
   auto* source_access = access();
   ASSERT_TRUE(window_->Select(spaces[1].id));
-  EXPECT_TRUE(source_access->capture_prompt());
-  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return source_access->capture_scene_contains_for_testing("Zamknięcie tego okna zatrzyma przechwytywanie.");}));
-  ASSERT_NO_FATAL_FAILURE(Press(source_access->capture_prompt(),false));
+  EXPECT_TRUE(source_access->capture_state().active);
+  source_access->ToggleCaptureControls();ASSERT_TRUE(source_access->capture_prompt());
+  if(MetalPresents())ASSERT_TRUE(base::test::RunUntil([&]{return source_access->capture_scene_contains_for_testing("Zamknięcie tej karty nie przerywa połączenia.");}));
+  source_access->StopCapture();
   stage = "capture stops from background controls";
   ASSERT_TRUE(base::test::RunUntil([&] { return !PageMediaAccess::IsCapturing(source); }));
   stage = "browser stop ends both JavaScript tracks";

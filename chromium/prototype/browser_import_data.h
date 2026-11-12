@@ -5,17 +5,31 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 #include "base/functional/callback.h"
 #include "chromium/prototype/browser_data.h"
 #include "components/history/core/browser/history_types.h"
 #include "net/cookies/canonical_cookie.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 class Profile;
 namespace history { class HistoryService; }
 namespace network::mojom { class CookieManager; }
 namespace zitter::prototype {
+struct ImportedFavicon {
+  std::string profile_id;
+  GURL page_url;
+  GURL icon_url;
+  SkBitmap bitmap;
+};
+using ImportedFaviconTargets = std::map<std::string, std::set<GURL>>;
+std::vector<ImportedFavicon> ReadImportedFavicons(
+    const std::vector<ImportSourceProfile>& sources,
+    const ImportedFaviconTargets& targets,
+    ImportBrowser browser);
+
 struct ImportedProfileData {
   std::string profile_id;
   history::URLRows history;

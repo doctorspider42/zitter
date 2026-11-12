@@ -3,6 +3,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_ASSISTANT_PANEL_H_
 #include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -59,6 +60,7 @@ struct AssistantTask {
   int minute = 8 * 60;  // local time of day (kind 2: minutes past the hour)
   bool active = true;
   base::Time last_run, next_run;
+  bool catch_up = true;
   int last_state = 0;   // 0 never ran, 1 done, 2 needed the user, 3 failed
   base::DictValue ToValue() const;
   static std::optional<AssistantTask> FromValue(const base::DictValue& value);
@@ -69,12 +71,14 @@ base::Time AssistantTaskNextRun(const AssistantTask& task, base::Time after);
 std::u16string AssistantTaskSchedule(const AssistantTask& task);
 class AssistantPanel final : public views::View, public views::ResizeAreaDelegate, public views::TextfieldController {
  public:
-  enum class Menu { kNone, kSessions, kAccess, kModel, kMention, kTasks, kTaskEditor };
+  enum class Menu { kNone, kSessions, kAccess, kModel, kMention, kTasks, kTaskEditor, kSettings };
   explicit AssistantPanel(AssistantHost* host);
   ~AssistantPanel() override;
-  // An unpinned panel follows pointer departure regardless of how it opens.
-  // Keyboard opening stays visible until the mouse moves; edge opening arms immediately.
+  // An unpinned panel hides when the pointer leaves it. Opened from its
+  // button or a shortcut, it stays until the mouse moves.
   void Show(bool from_edge = false);
+  // Hides the panel; the conversation and running work stay.
+  void Hide();
   void StartNewConversation();
   bool SwitchProfile();
   // Stops the selected conversation; background tasks keep running.
@@ -102,8 +106,8 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // Sends `text` as the user would, in the selected session; a session that
   // is busy or waiting for an answer keeps its work and only shows.
   void Ask(std::u16string text);
-  // Prepares a fresh page-scoped draft without changing permission grants.
-  void PreparePageAction(std::u16string text, bool needs_actions, bool needs_web,
+  // Starts a fresh page-scoped chat and requests any missing shortcut access.
+  void PreparePageAction(std::u16string text, AssistantShortcut shortcut,
                          bool night_shift = false);
   void SendForTesting(std::string text, bool background = false);
   void ConfigureForTesting(std::string provider, std::string model, AssistantPermissions permissions);
@@ -111,6 +115,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   bool SelectedConversationContainsForTesting(std::string_view text) const;
   bool HasLiveAnswerForTesting() const { return live_answer_ != nullptr; }
   AssistantPermissions permissions_for_testing() const;
+  views::Widget* shortcut_dialog_for_testing() const { return shortcut_dialog_.get(); }
   void ToggleMenuForTesting(Menu menu) { ToggleMenu(menu); }
   Menu open_menu_for_testing() const { return menu_; }
   gfx::Rect menu_bounds_for_testing() const;
@@ -218,6 +223,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   views::View* ScrollList(views::View* body, int max_height);
   void BuildSessionsMenu(views::View* body);
   void BuildAccessMenu(views::View* body);
+  // The gear: app-wide defaults in the panel (design: Asystent · ustawienia).
+  void BuildSettingsMenu(views::View* body);
+  void ToggleDefault(int index);
   // Access of the selected session: narrowing applies at once; widening only
   // before its first message.
   void TogglePermission(int index);
@@ -274,10 +282,11 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void UpdatePageControl();
   void OpenSettings();
   raw_ptr<AssistantHost> host_;
+  AssistantPermissions observed_default_permissions_;
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<PanelViewport> viewport_ = nullptr;
   raw_ptr<views::View> header_ = nullptr, conversation_ = nullptr, background_ = nullptr;
-  raw_ptr<views::View> subtitle_ = nullptr, sessions_action_ = nullptr, tasks_action_ = nullptr, access_action_ = nullptr, pin_action_ = nullptr;
+  raw_ptr<views::View> sessions_action_ = nullptr, tasks_action_ = nullptr, access_action_ = nullptr;
   raw_ptr<views::View> composer_ = nullptr, chips_view_ = nullptr, tools_ = nullptr;
   raw_ptr<views::View> research_chip_ = nullptr, background_chip_ = nullptr, model_chip_ = nullptr, send_ = nullptr, stop_ = nullptr;
   raw_ptr<views::Textarea> prompt_ = nullptr;
@@ -304,7 +313,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   base::RepeatingTimer hover_check_;
   gfx::Point last_pointer_position_;
   bool pointer_exit_armed_ = false;
-  // The panel plus the edge strip beside it: leaving it hides an unpinned panel.
+  // The panel plus the window edge beside it: leaving it hides an unpinned panel.
   gfx::Rect HoverBounds() const;
   void WatchPointer();
   std::vector<std::unique_ptr<Session>> sessions_;
@@ -319,6 +328,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   raw_ptr<views::Textarea> draft_instruction_ = nullptr;
   raw_ptr<views::Textfield> draft_time_ = nullptr;
   base::RepeatingTimer task_timer_;
+  const base::Time scheduler_started_ = base::Time::Now();
   int unread_ = 0;
   std::unique_ptr<network::SimpleURLLoader> progress_loader_;
   raw_ptr<views::View> live_answer_ = nullptr;
@@ -329,6 +339,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
 #if BUILDFLAG(IS_WIN)
   base::win::ScopedHandle process_job_;
 #endif
+  base::WeakPtr<views::Widget> shortcut_dialog_;
   base::WeakPtrFactory<AssistantPanel> weak_factory_{this};
 };
 }

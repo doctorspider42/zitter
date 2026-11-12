@@ -54,7 +54,11 @@ base::DictValue AssistantSettings::ToValue() const {
   base::ListValue list, enabled_backends;
   for (const auto& model : models) list.Append(base::DictValue().Set("provider", model.provider).Set("id", model.id).Set("visible", model.visible));
   for (bool backend : backends) enabled_backends.Append(backend);
-  return base::DictValue().Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
+  base::DictValue remembered;
+  for (const auto& [key, permissions] : shortcut_access)
+    remembered.Set(key, permissions);
+  return base::DictValue().Set("shortcut_access", std::move(remembered))
+      .Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
       .Set("catalog_version", 3).Set("codex_path", codex_path).Set("claude_path", claude_path)
       .Set("ollama_configured", ollama_configured)
       .Set("encrypted_api_key", encrypted_api_key).Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
@@ -68,6 +72,14 @@ AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
   if (const auto* path = value->FindString("claude_path")) result.claude_path = *path;
   result.ollama_configured = value->FindBool("ollama_configured").value_or(false);
   result.enabled = value->FindBool("enabled").value_or(true);
+  if (const auto* remembered = value->FindDict("shortcut_access")) {
+    for (const auto [key, mask] : *remembered) {
+      if (mask.is_int() && mask.GetInt() > 0 &&
+          mask.GetInt() <= kAssistantShortcutAccessMask) {
+        result.shortcut_access.emplace(key, mask.GetInt());
+      }
+    }
+  }
   if (const auto* list = value->FindList("backends"); list && list->size() == result.backends.size())
     for (size_t i = 0; i < list->size(); ++i) result.backends[i] = (*list)[i].GetIfBool().value_or(true);
   if (const auto* list = value->FindList("models")) {

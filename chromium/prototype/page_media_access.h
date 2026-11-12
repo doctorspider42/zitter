@@ -5,6 +5,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include "base/time/time.h"
 #include "ui/gfx/geometry/rect.h"
 #include "base/functional/callback.h"
 
@@ -30,6 +31,13 @@ struct PermissionOffer {
   // 0 other, 1 notifications, 2 location, 3 camera, 4 microphone, 5 both,
   // 6 local network, 7 clipboard, 8 several downloads, 9 MIDI.
   int kind = 0;
+  std::u16string site;
+};
+
+// What a page is capturing right now, for the address pill's live indicator.
+struct CaptureState {
+  bool active = false;
+  bool camera = false, microphone = false, screen = false;
   std::u16string site;
 };
 
@@ -60,6 +68,15 @@ class PageMediaAccess : public content::WebContentsObserver,
   void SetPromptCallback(base::RepeatingCallback<void(const PermissionOffer&)> report) { prompt_report_ = std::move(report); }
   gfx::Rect PromptAnchor() const { return prompt_anchor_ ? prompt_anchor_.Run() : gfx::Rect(); }
   void ReportPrompt(const PermissionOffer& offer);
+  // The live capture indicator: the pill shows capture_state(), reported on
+  // every change; its click toggles a small card with the stop control.
+  // Closing that card never stops capture.
+  void SetCaptureCallback(base::RepeatingClosure changed) { capture_changed_ = std::move(changed); }
+  CaptureState capture_state() const;
+  void ToggleCaptureControls();
+  // The card's "Zatrzymaj wszystko": ends every capture of the page.
+  void StopCapture();
+  bool capture_controls_visible_for_testing() const;
   void ReopenPrompt() { if (prompt_reopen_) prompt_reopen_.Run(); }
   const PermissionOffer& prompt_offer() const { return prompt_offer_; }
   void FoldPromptForTesting() { if (prompt_fold_) prompt_fold_.Run(); }
@@ -74,6 +91,7 @@ class PageMediaAccess : public content::WebContentsObserver,
   explicit PageMediaAccess(content::WebContents* contents);
   void QueueCaptureUpdate(content::WebContents* contents);
   void UpdateCaptureIndicator();
+  void ShowCaptureControls();
   void CloseCaptureIndicator();
   void TrackCapture(size_t id, std::string origin, bool started);
   void CancelPendingDisplayRequests(content::RenderFrameHost* frame);
@@ -90,7 +108,8 @@ class PageMediaAccess : public content::WebContentsObserver,
 
   bool observing_capture_ = true;
   bool update_pending_ = false;
-  std::shared_ptr<bool> capture_dialog_active_;
+  base::RepeatingClosure capture_changed_;
+  base::Time capture_since_;  // When the current capture began.
   std::unique_ptr<MediaSceneDialog> capture_scene_;
   base::RepeatingCallback<bool(std::string_view)> permission_scene_query_;
   base::WeakPtr<views::Widget> capture_prompt_;

@@ -252,7 +252,12 @@ void FingerprintToolbar::Toggle() {
 }
 
 void FingerprintToolbar::Close() {
-  if (widget_ && !widget_->IsClosed())
+  if (!widget_ || widget_->IsClosed())
+    return;
+  // The client-owned bubble is destroyed on a later task. Hide it now
+  // so it cannot show the previous profile while the Workspace switches.
+  widget_->Hide();
+  if (!widget_->IsClosed())
     widget_->Close();
 }
 

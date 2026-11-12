@@ -3,6 +3,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <optional>
 #include <vector>
@@ -73,6 +74,13 @@ using ::zitter::LinkRule;
 
 using ::zitter::ProfileInfo;
 
+struct GitHubLiveFolder {
+  std::string login;
+  std::string repository;
+  std::string encrypted_token;
+  bool operator==(const GitHubLiveFolder&) const = default;
+};
+
 struct PinnedItem {
   std::string id;
   std::string parent_id;
@@ -80,6 +88,7 @@ struct PinnedItem {
   GURL url;
   bool folder = false;
   bool profile_pin = false;
+  std::optional<GitHubLiveFolder> github = std::nullopt;
   bool operator==(const PinnedItem&) const = default;
 };
 
@@ -103,6 +112,7 @@ struct ArcImport {
   std::vector<ImportSourceProfile> sources;
   std::vector<ProfileInfo> profiles;
   std::vector<ImportedSpace> spaces;
+  std::map<std::string, std::vector<PinnedItem>> profile_favorites;
   size_t tab_count = 0;
   size_t folder_count = 0;
   size_t skipped_count = 0;
