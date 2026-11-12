@@ -794,11 +794,12 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void OpenExtensionPackage();
   void OpenExtensionOptions(std::string id);
   void OpenExtensionPopup(std::string id);
+  void OpenExtensionPopupAt(std::string id, gfx::Rect anchor);
   void ShowExtensionsToolbarMenu();
   bool SetExtensionToolbarPinned(std::string id, bool pinned);
   void CloseExtensionsToolbarMenu();
-  content::WebContents* ShowExtensionDialog(ProfileContext& profile, const GURL& url,
-                                             std::u16string title, gfx::Size size);
+  content::WebContents* ShowExtensionBubble(ProfileContext& profile, const GURL& url,
+                                             std::u16string title, gfx::Rect anchor);
   void CloseExtensionPopup();
   void CloseNightShiftSettings();
   void CheckActiveTabActionProbe(GURL target, GURL popup, base::TimeTicks deadline);
@@ -1025,7 +1026,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::unique_ptr<prototype::DownloadPanel> downloads_;
   std::unique_ptr<prototype::PasswordsPanel> passwords_panel_;
   std::unique_ptr<WorkspaceMediaAccess> media_access_;
-  std::unique_ptr<views::DialogDelegate> extension_popup_delegate_;
+  std::unique_ptr<views::BubbleDialogDelegate> extension_popup_delegate_;
   std::unique_ptr<views::Widget> extension_popup_widget_;
   raw_ptr<views::WebView> extension_popup_view_ = nullptr;
   bool extension_side_panel_probe_open_requested_ = false;

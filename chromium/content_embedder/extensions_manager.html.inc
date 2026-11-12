@@ -20,25 +20,23 @@ R"MANAGER(<!doctype html>
         <div class="hero-content">
           <p id="profile" class="muted"></p>
           <h1><span id="heading"></span><span class="hero-dot" aria-hidden="true">.</span></h1>
-          <form id="store-install" hidden>
-            <label class="search"><input id="store-link" type="text" autocomplete="off" required></label>
-            <button type="submit" id="store-add" class="primary"></button>
-          </form>
         </div>
         <span class="hero-mark" aria-hidden="true">|z⟩</span>
       </div>
       <div class="library-heading">
         <h2 id="installed-title"></h2>
-        <label class="switch-label"><input id="developer" type="checkbox" role="switch"><span></span></label>
       </div>
       <div id="tools" class="tools" hidden>
         <button type="button" id="install"></button>
       </div>
       <div class="filters">
         <label class="search"><input id="search" type="search"></label>
+        <div class="library-switches">
+        <label class="switch-label"><input id="developer" type="checkbox" role="switch"><span></span></label>
         <label id="auto-pin-label" class="switch-label" hidden>
           <input id="auto-pin" type="checkbox" role="switch"><span></span>
         </label>
+        </div>
       </div>
       <div id="items"></div>
     </section>

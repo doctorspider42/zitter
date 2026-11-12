@@ -9903,12 +9903,17 @@ void WorkspaceLab::RefreshExtensionActionAppearance() {
           continue;
         auto button = std::make_unique<ContentToolbarButton>(
             kExtensionsPuzzle, base::UTF8ToUTF16((*extension)->name()),
-            base::BindRepeating(&WorkspaceLab::OpenExtensionPopup, weak_factory_.GetWeakPtr(), id),
+            views::Button::PressedCallback(),
             base::BindRepeating([](WorkspaceLab* lab) {
               return sidebar::design_palette(
                   lab->widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
                   lab->shell_->active_workspace_color());
             }, base::Unretained(this)));
+        button->SetCallback(base::BindRepeating(
+            [](base::WeakPtr<WorkspaceLab> lab, std::string id, views::View* button) {
+              if (lab)
+                lab->OpenExtensionPopupAt(id, button->GetBoundsInScreen());
+            }, weak_factory_.GetWeakPtr(), id, base::Unretained(button.get())));
         button->SetExtensionAction(**extension, *action, tab_id);
         pinned_extension_toolbar_->AddChildView(std::move(button));
       }
@@ -16050,9 +16055,6 @@ base::DictValue WorkspaceLab::DispatchExtensionsManager(
       SetExtensionManagerStatus({});
       OpenExtensionPackage();
       ok = true;
-    } else if (*op == "installStore" && can_install) {
-      const auto* listing = request.FindString("listing");
-      ok = listing && InstallFromWebStore(*listing);
     } else if (*op == "autoPin" && checked && profile_prefs) {
       profile_prefs->SetBoolean(kManagerAutoPinPref, *checked);
       ok = true;
@@ -16181,7 +16183,6 @@ base::DictValue WorkspaceLab::DispatchExtensionsManager(
       .Set("colors", std::move(colors))
       .Set("profile", WorkspaceProfileName(active_index_))
       .Set("canInstall", can_install)
-      .Set("installBusy", extension_install_ || web_store_update_)
       .Set("autoPin", profile_prefs && profile_prefs->GetBoolean(kManagerAutoPinPref))
       .Set("dark", dark)
       .Set("english", prototype::UiLanguageIsEnglish())
@@ -16371,8 +16372,17 @@ bool WorkspaceLab::SetExtensionToolbarPinned(std::string id, bool pinned) {
 }
 
 void WorkspaceLab::OpenExtensionPopup(std::string id) {
+  if (extensions_toolbar_button_)
+    OpenExtensionPopupAt(std::move(id), extensions_toolbar_button_->GetBoundsInScreen());
+}
+
+void WorkspaceLab::OpenExtensionPopupAt(std::string id, gfx::Rect anchor) {
+  if (extension_popup_widget_ && !extension_popup_widget_->IsClosed()) {
+    CloseExtensionPopup();
+    return;
+  }
   if (!widget_ || !widget_->IsVisible() || !CanEditWorkspace() ||
-      private_owner_ || extension_popup_widget_) {
+      private_owner_) {
     return;
   }
   if (auto* page = web_contents(); page && ToggleWorkspaceSidePanelOnAction(*page, id))
@@ -16388,27 +16398,41 @@ void WorkspaceLab::OpenExtensionPopup(std::string id) {
   auto name = base::UTF8ToUTF16(manager->name());
   std::ranges::replace_if(name, [](char16_t c) { return c < 0x20; }, u' ');
   base::i18n::SanitizeUserSuppliedString(&name);
-  ShowExtensionDialog(profile, url, std::move(name), gfx::Size(380, 420));
+  ShowExtensionBubble(profile, url, std::move(name), anchor);
 }
 
-content::WebContents* WorkspaceLab::ShowExtensionDialog(
+content::WebContents* WorkspaceLab::ShowExtensionBubble(
     ProfileContext& profile, const GURL& url, std::u16string title,
-    gfx::Size size) {
+    gfx::Rect anchor) {
   if (extension_popup_widget_)
     return nullptr;
   auto view = std::make_unique<LabWebView>(&profile);
-  view->SetPreferredSize(size);
+  view->SetPreferredSize(gfx::Size(380, 420));
   auto* contents = view->GetWebContents(url);
   extensions::SetViewType(contents, extensions::mojom::ViewType::kExtensionPopup);
   extension_popup_view_ = view.get();
-  extension_popup_delegate_ = prototype::CreateSceneModalDialog(std::move(view), false);
-  extension_popup_delegate_->SetTitle(std::move(title));
-  extension_popup_delegate_->SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));
-  extension_popup_delegate_->SetButtonLabel(
-      ui::mojom::DialogButton::kCancel, prototype::T(u"Zamknij"));
+  CloseNightShiftSettings();
+  CloseAdblockShield();
+  fingerprint_toolbar_->Close();
   shell_->CloseOverlays(true);
-  extension_popup_widget_.reset(views::DialogDelegate::CreateDialogWidget(
-      extension_popup_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView()));
+  extension_popup_delegate_ = std::make_unique<views::BubbleDialogDelegate>(
+      extensions_toolbar_button_, views::BubbleBorder::TOP_RIGHT);
+  auto& bubble = *extension_popup_delegate_;
+  // Pinned buttons can be recreated while the extension updates its icon.
+  // Use a screen rect and parent the bubble to the stable browser window.
+  bubble.SetAnchorView(nullptr);
+  bubble.SetAnchorRect(anchor);
+  bubble.set_parent_window(widget_->GetNativeView());
+  bubble.SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  bubble.SetTitle(std::move(title));
+  bubble.SetShowTitle(false);
+  bubble.SetShowCloseButton(false);
+  bubble.SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  bubble.set_margins(gfx::Insets());
+  bubble.set_corner_radius(12);
+  bubble.set_close_on_deactivate(true);
+  bubble.SetContentsView(std::move(view));
+  extension_popup_widget_ = views::BubbleDialogDelegate::CreateBubble(&bubble);
   extension_popup_widget_->MakeCloseSynchronous(base::BindOnce(
       [](base::WeakPtr<WorkspaceLab> lab, views::Widget::ClosedReason) {
         if (!lab)

@@ -51,8 +51,6 @@ button {
 button:hover:not(:disabled), .card-top [aria-pressed=true] {
   background: var(--hover); color: var(--accent-ink);
 }
-button.primary { background: var(--accent); color: var(--on-accent); }
-button.primary:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); filter: brightness(.94); }
 button:disabled, input:disabled { opacity: .6; cursor: default; }
 button.outline, input:not([type=checkbox]), select {
   border: 1px solid var(--edge); border-radius: 8px; background: var(--surface);
@@ -90,25 +88,24 @@ svg { flex: 0 0 16px; width: 16px; height: 16px; stroke: currentColor; fill: non
 .hero {
   display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr);
   align-items: center; overflow: hidden; isolation: isolate;
-  min-height: 188px; padding: clamp(18px, 3vw, 32px);
+  min-height: 126px; padding: clamp(18px, 3vw, 32px);
   border-radius: 14px; background: var(--sidebar);
 }
 .hero-content { min-width: 0; z-index: 1; }
 .hero h1 {
-  margin: 5px 0 19px;
+  margin: 5px 0 0;
   font: italic 500 clamp(34px, 7vw, 76px)/1 Georgia, serif;
   letter-spacing: -.067em;
 }
 .hero-dot, .hero-mark { color: var(--accent-ink); }
 .hero-mark {
   place-self: center; pointer-events: none; white-space: nowrap;
-  font: italic 400 clamp(78px, 15vw, 178px)/.85 Georgia, serif;
+  font: italic 400 clamp(56px, 9vw, 100px)/.85 Georgia, serif;
   letter-spacing: -.12em; opacity: .52;
 }
-#store-install { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-#store-add { --accent: #d7ff3f; --on-accent: #202900; }
 .library-heading { margin-top: 24px; }
 .library-heading h2 { margin: 0; font-size: 18px; }
+.library-switches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
 .filters { border: 0; margin: 3px 0 8px; }
 #items {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 205px), 1fr));

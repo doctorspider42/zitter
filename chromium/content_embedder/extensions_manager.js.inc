@@ -3,7 +3,6 @@ R"MANAGER(
 
 const $ = id => document.getElementById(id);
 const glyphs = {
-  link: 'M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2m2 6a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2',
   puzzle: 'M4 5h5a3 3 0 1 1 6 0h5v5a3 3 0 1 0 0 6v4H4v-5a3 3 0 1 0 0-6z',
   keyboard: 'M3 5h18v14H3zM7 9h.1m4 0h.1m4 0h.1m3 0h.1M7 13h.1m4 0h.1m4 0h.1m3 0h.1M8 16h8',
   store: 'M4 8h16l-1 12H5zM8 8V7a4 4 0 0 1 8 0v1',
@@ -60,10 +59,7 @@ window.zitterExtensionsReply = (id, reply) => {
   pending = null;
   if (!reply.colors) return;
   if (op !== 'read') {
-    localError = reply.ok ? '' : op === 'installStore'
-        ? t('Sprawdź link z Chrome Web Store lub spróbuj za chwilę.',
-            'Check the Chrome Web Store link or try again in a moment.')
-        : t('Nie udało się zapisać zmiany lub skrót jest zajęty.',
+    localError = reply.ok ? '' : t('Nie udało się zapisać zmiany lub skrót jest zajęty.',
                                    'The change could not be saved or the shortcut is already in use.');
   }
   delete reply.ok;
@@ -293,11 +289,6 @@ function render() {
   labelButton($('install'), t('Zainstaluj lub zaktualizuj z CRX', 'Install or update from CRX'), 'package');
   $('developer').nextElementSibling.textContent = t('Tryb deweloperski', 'Developer mode');
   $('tools').hidden = !$('developer').checked || !state.canInstall;
-  $('store-install').hidden = !state.canInstall;
-  $('store-add').disabled = !!state.installBusy;
-  $('store-link').placeholder = t('Wklej link z Chrome Web Store', 'Paste a Chrome Web Store link');
-  $('store-link').setAttribute('aria-label', $('store-link').placeholder);
-  labelButton($('store-add'), t('Dodaj ze sklepu', 'Add from Web Store'), 'store');
   $('auto-pin-label').hidden = typeof state.autoPin !== 'boolean';
   $('auto-pin').checked = !!state.autoPin;
   $('auto-pin').nextElementSibling.textContent = t('Przypinaj nowe do paska', 'Pin new extensions to toolbar');
@@ -329,14 +320,9 @@ for (const button of document.querySelectorAll('nav [data-view]'))
   button.addEventListener('click', () => navigate(button.dataset.view));
 $('back').addEventListener('click', () => navigate('list'));
 $('search').parentElement.prepend(icon('search'));
-$('store-link').parentElement.prepend(icon('link'));
 $('search').addEventListener('input', renderList);
 $('developer').addEventListener('change', render);
 $('install').addEventListener('click', () => request('install'));
-$('store-install').addEventListener('submit', event => {
-  event.preventDefault();
-  request('installStore', {listing: $('store-link').value});
-});
 $('store').addEventListener('click', () => request('store'));
 $('auto-pin').addEventListener('change', () => request('autoPin', {value: $('auto-pin').checked}));
 request('read');
