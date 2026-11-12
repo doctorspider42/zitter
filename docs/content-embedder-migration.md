@@ -236,6 +236,9 @@ extension utility, and private-window probes. Its replacement trial
 with the file Keychain preserved both encrypted profiles and Shared
 Dictionary stores. The system Keychain and full-display trials used
 `1333e04`.
+The update metadata probe selected the rebuilt DMG for Content 0.1.6
+from a local GitHub-format catalogue and rejected the earlier image's
+digest and size when checking the rebuilt artifact.
 
 The updater metadata probe selected the exact notarized 0.4.11 image
 for Content 0.1.6 on arm64 using a local GitHub-format catalogue.
