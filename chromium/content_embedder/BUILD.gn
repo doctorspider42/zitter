@@ -97,6 +97,8 @@ lab_sources = [
   "download_url_reputation.h",
   "extension_archive_service.cc",
   "extension_archive_service.h",
+  "extensions_manager.cc",
+  "extensions_manager.h",
   "extension_manifest.cc",
   "extension_manifest.h",
   "extension_registry_probe.cc",

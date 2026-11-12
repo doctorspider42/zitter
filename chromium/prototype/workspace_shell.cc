@@ -5200,7 +5200,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   std::optional<sidebar::PreferenceCatalogue> preference_catalogue;
   {
     preference_catalogue=sidebar::preference_catalogue(true);
-    if (callbacks_.install_extension || callbacks_.show_extension_enablement ||
+    if (callbacks_.open_extensions_manager || callbacks_.install_extension ||
+        callbacks_.show_extension_enablement ||
         !callbacks_.extension_preferences.empty()) {
       CHECK_EQ(preference_catalogue->categories.size(), kExtensionsPreferenceCategory);
       preference_catalogue->categories.push_back(base::UTF16ToUTF8(T(u"Rozszerzenia")));
@@ -5230,7 +5231,16 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   preferences_category_picker_=ChoicePicker(main,T(u"Kategoria preferencji"),categories);
   preferences_category_picker_->SetVisible(false);
   SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if(shell)shell->SelectPreferenceCategory(PickerIndex(shell->preferences_category_picker_).value_or(0));
+    if (!shell)
+      return;
+    const auto category = PickerIndex(shell->preferences_category_picker_).value_or(0);
+    if (category == kExtensionsPreferenceCategory && shell->callbacks_.open_extensions_manager) {
+      SyncPickerIndex(shell->preferences_category_picker_,
+                      shell->preferences_form_->form->preference_current());
+      shell->callbacks_.open_extensions_manager.Run();
+    } else {
+      shell->SelectPreferenceCategory(category);
+    }
   },weak));
   // This UI-only controller retains category selection across view rebuilds.
   if(!preferences_form_)preferences_form_=std::make_unique<PreferencesFormState>(categories.size());
@@ -10563,6 +10573,8 @@ void WorkspaceShell::AddExtensionPreference(const std::string& key,
   if (!general_widget_ || preference_toggles_.contains(key))
     return;
   sidebar::PreferenceCatalogue catalogue = sidebar::preference_catalogue(true);
+  CHECK_EQ(catalogue.categories.size(), kExtensionsPreferenceCategory);
+  catalogue.categories.push_back(base::UTF16ToUTF8(T(u"Rozszerzenia")));
   catalogue.rows.clear();
   catalogue.rows.push_back(ExtensionPreference(key, title));
   BuildRustPreferenceRows(catalogue);
@@ -15421,7 +15433,12 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
   }
   if(!source||!panel||!panel->IsVisible()||!SceneIsVisible(source)||!source->GetEnabledInViewsSubtree()||source->GetWidget()!=panel||!panel->GetContentsView()||!panel->GetContentsView()->Contains(source))return;
   switch(command){
-    case C::PreferenceCategory:SelectPreferenceCategory(binding.index);break;
+    case C::PreferenceCategory:
+      if (binding.index == kExtensionsPreferenceCategory && callbacks_.open_extensions_manager)
+        callbacks_.open_extensions_manager.Run();
+      else
+        SelectPreferenceCategory(binding.index);
+      break;
     case C::PreferenceMore:{
       // Rebuilding the list destroys this adapter. The Rust ticket holds only
       // a weak record and rejects cancellation, retirement or a new input lease.

@@ -7,10 +7,12 @@
 
 namespace zitter::prototype {
 
+inline constexpr char kExtensionsTabUrl[] = "chrome://extensions/";
 inline constexpr char kRssTabUrl[] = "zitter://rss/";
 inline bool IsRssTabUrl(const GURL& url) { return url == GURL(kRssTabUrl); }
 inline bool IsWorkspaceTabUrl(const GURL& url) {
-  return url.SchemeIsHTTPOrHTTPS() || IsRssTabUrl(url);
+  return url.SchemeIsHTTPOrHTTPS() || IsRssTabUrl(url) ||
+         url == GURL(kExtensionsTabUrl);
 }
 
 }  // namespace zitter::prototype

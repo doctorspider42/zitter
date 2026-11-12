@@ -3006,6 +3006,27 @@ fn preference_control_scene(i:&ffi::Item)->Vec<ffi::Primitive>{
             11=>{rect(cx-6.0,cy-7.0,12.0,1.5,0.75,i.ink,0.0);rect(cx-6.0,cy-7.0,1.5,7.0,0.75,i.ink,0.0);rect(cx+4.5,cy-7.0,1.5,7.0,0.75,i.ink,0.0);
                  for d in 0..7{let d=d as f32*0.85;rect(cx-6.0+d,cy-0.5+d,1.6,1.6,0.8,i.ink,0.0);rect(cx+4.4-d,cy-0.5+d,1.6,1.6,0.8,i.ink,0.0);}
                  rect(cx-1.25,cy-3.5,2.5,2.5,1.25,i.ink,0.0);},
+            12=>{
+                // Puzzle piece: an outward tab above and an inward notch on the right.
+                let outline: [(f32,f32);15] = [(-6.,-4.),(-2.,-4.),(-2.,-6.),(0.,-7.),(2.,-6.),
+                    (2.,-4.),(6.,-4.),(6.,0.),(4.,0.),(3.,2.),(4.,4.),
+                    (6.,4.),(6.,7.),(-6.,7.),(-6.,-4.)];
+                for edge in outline.windows(2) {
+                    let (x,y)=edge[0]; let (end_x,end_y)=edge[1];
+                    let steps=((end_x-x).abs().max((end_y-y).abs()) as usize).max(1);
+                    for step in 0..=steps {
+                        let t=step as f32/steps as f32;
+                        rect(cx+x+(end_x-x)*t-0.75,cy+y+(end_y-y)*t-0.75,1.5,1.5,0.75,i.ink,0.0);
+                    }
+                }
+                let arrow=if i.tile{i.x+12.0}else{i.x+i.width-12.0};
+                for n in 0..6 {
+                    let d=n as f32;
+                    rect(arrow-3.0+d,cy+2.0-d,1.3,1.3,0.65,i.ink,0.0);
+                    rect(arrow-3.0+d,cy-3.0,1.3,1.3,0.65,i.ink,0.0);
+                    rect(arrow+2.0,cy-3.0+d,1.3,1.3,0.65,i.ink,0.0);
+                }
+            },
             _=>{}
         }
     }
@@ -4350,7 +4371,7 @@ mod tests {
         item.active=false;let ops=layout(std::slice::from_ref(&item));assert_eq!(ops.len(),2);assert_eq!(ops[1].stroke,1.0);assert_eq!(ops[0].radius,12.0);
     }
     #[test] fn preference_category_and_dismiss_share_clipped_cpu_gpu_recipe() {
-        for glyph in 0..12{let mut i=row(180.0);i.kind=22;i.glyph=glyph;i.title="Uprawnienia stron".into();i.active=true;i.focused=true;let ops=layout(std::slice::from_ref(&i));assert!(ops.iter().any(|p|p.text=="Uprawnienia stron"&&p.bold));assert!(ops.iter().any(|p|p.stroke>0.0));assert!(ops.iter().all(|p|p.shape==0&&p.clip.width==180.0&&p.width>0.0&&p.height>0.0));i.tile=true;assert_eq!(layout(std::slice::from_ref(&i)).iter().find(|p|!p.text.is_empty()).unwrap().x,i.x+10.0);}
+        for glyph in 0..13{let mut i=row(180.0);i.kind=22;i.glyph=glyph;i.title="Uprawnienia stron".into();i.active=true;i.focused=true;let ops=layout(std::slice::from_ref(&i));assert!(ops.iter().any(|p|p.text=="Uprawnienia stron"&&p.bold));assert!(ops.iter().any(|p|p.stroke>0.0));assert!(ops.iter().all(|p|p.shape==0&&p.clip.width==180.0&&p.width>0.0&&p.height>0.0));i.tile=true;assert_eq!(layout(std::slice::from_ref(&i)).iter().find(|p|!p.text.is_empty()).unwrap().x,i.x+10.0);}
         let mut close=row(32.0);close.kind=23;close.height=32.0;close.fill=0;close.title.clear();let ops=layout(std::slice::from_ref(&close));assert_eq!(ops.len(),22);assert!(ops.iter().all(|p|p.text.is_empty()&&p.shape==0));close.width=f32::NAN;assert!(layout(std::slice::from_ref(&close)).is_empty());
     }
     #[test] fn toggle_transition_reverses_and_programmatic_refresh_snaps() {

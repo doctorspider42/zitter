@@ -2,6 +2,8 @@
 
 #include "extension_manifest.h"
 
+#include "extensions_manager.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -2108,6 +2110,7 @@ bool RemoveDisabledExtensionInstallation(const base::FilePath& profile,
 }
 
 std::optional<int> ConfigureExtensionProbes() {
+  RegisterExtensionsManagerWebUI();
   const auto& command_line = *base::CommandLine::ForCurrentProcess();
   if (!command_line.HasSwitch(kExtensionManifestProbe))
     return std::nullopt;

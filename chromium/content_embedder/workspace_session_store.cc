@@ -461,6 +461,7 @@ base::ListValue WriteWorkspacePins(const std::vector<prototype::PinnedItem>& pin
 
 bool CanRestoreWorkspaceURL(const GURL& url) {
   return url.is_empty() || prototype::IsRssTabUrl(url) ||
+         url == GURL(prototype::kExtensionsTabUrl) ||
          (url.is_valid() && url.SchemeIsHTTPOrHTTPS() &&
           !url.has_username() && !url.has_password());
 }

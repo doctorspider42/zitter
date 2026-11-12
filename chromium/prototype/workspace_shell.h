@@ -163,6 +163,7 @@ class WorkspaceShell final : public ui::EventHandler,
     bool can_preview_pdf = false;
     bool show_extension_enablement = false;
     base::RepeatingClosure install_extension;
+    base::RepeatingClosure open_extensions_manager;
     base::RepeatingCallback<void(std::string)> uninstall_extension;
     base::RepeatingCallback<void(std::string)> open_extension_options;
     base::RepeatingCallback<void(std::string)> open_extension_popup;

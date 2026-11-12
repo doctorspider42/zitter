@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
 #include "extension_registry_probe.h"
+#include "extensions_manager.h"
 
 #include "base/supports_user_data.h"
 #include "chromium/prototype/night_shift_config.h"
@@ -3078,6 +3079,8 @@ class ExtensionRuntimePreferences final
       if (const auto* entry = stored->FindDict(extension->id()))
         trusted.Set(extension->id(), entry->Clone());
     }
+    prefs.SetBoolean(kManagerAutoPinPref,
+                     stored->FindBool(kManagerAutoPinPref).value_or(false));
     auto initial = Project(trusted);
     prefs.SetDict(extensions::pref_names::kExtensions, initial.Clone());
     return base::WrapUnique(new ExtensionRuntimePreferences(path, prefs, std::move(initial)));
@@ -3103,6 +3106,9 @@ class ExtensionRuntimePreferences final
         extensions::pref_names::kExtensions,
         base::BindRepeating(&ExtensionRuntimePreferences::OnChanged,
                             base::Unretained(this)));
+    registrar_.Add(kManagerAutoPinPref,
+                   base::BindRepeating(&ExtensionRuntimePreferences::OnAutoPinChanged,
+                                       base::Unretained(this)));
   }
 
   static base::DictValue Project(const base::DictValue& settings) {
@@ -3116,7 +3122,8 @@ class ExtensionRuntimePreferences final
                              kDnrDynamicRulesetPref,
                              extensions::kUserScriptsWorldsConfiguration.name,
                              kWorkspacePrivacyPref.name,
-                             kWorkspaceSidePanelPref.name}) {
+                             kWorkspaceSidePanelPref.name,
+                             kManagerShortcutPref}) {
         if (const auto* dict = entry.FindDict(key))
           selected.Set(key, dict->Clone());
       }
@@ -3126,6 +3133,7 @@ class ExtensionRuntimePreferences final
       }
       for (const auto key : {kDnrKeepAllocationPref, kDnrBadgePref,
                              kDnrRecoveryMarkerPref,
+                             kManagerPinPref,
                              extensions::UserScriptManager::kUserScriptsAllowedPref.name}) {
         if (const auto enabled = entry.FindBool(key))
           selected.Set(key, *enabled);
@@ -3141,6 +3149,8 @@ class ExtensionRuntimePreferences final
     return result;
   }
 
+  void OnAutoPinChanged() { writer_.ScheduleWrite(this); }
+
   void OnChanged() {
     auto updated = Project(prefs_->GetDict(extensions::pref_names::kExtensions));
     if (updated == values_)
@@ -3151,7 +3161,9 @@ class ExtensionRuntimePreferences final
 
   std::optional<std::string> SerializeData() override {
     base::DictValue saved;
-    saved.SetByDottedPath(extensions::pref_names::kExtensions, values_.Clone());
+    auto values = values_.Clone();
+    values.Set(kManagerAutoPinPref, prefs_->GetBoolean(kManagerAutoPinPref));
+    saved.SetByDottedPath(extensions::pref_names::kExtensions, std::move(values));
     auto bytes = base::WriteJson(saved);
     if (!bytes || bytes->size() > kMaxExtensionPreferencesBytes) {
       LOG(WARNING) << "Could not serialize Content extension runtime preferences";
@@ -3209,6 +3221,7 @@ void LabExtensionsBrowserClient::SetFixtureContext(BrowserContext& context) {
   auto registry = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
   extensions::ExtensionPrefs::RegisterProfilePrefs(registry.get());
   extensions::PermissionsManager::RegisterProfilePrefs(registry.get());
+  registry->RegisterBooleanPref(kManagerAutoPinPref, false);
   PrefServiceFactory factory;
   factory.set_user_prefs(base::MakeRefCounted<InMemoryPrefStore>());
   auto preferences = factory.Create(registry);

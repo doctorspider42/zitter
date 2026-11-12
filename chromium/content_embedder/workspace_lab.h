@@ -11,6 +11,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -213,7 +214,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool NavigateExtensionTabHistory(WorkspaceExtensionTab& target, bool forward);
   void RefreshExtensionActionAppearance();
   base::ListValue GetExtensionCommands(content::BrowserContext& profile,
-                                      const extensions::Extension& extension) const;
+                                      const extensions::Extension& extension,
+                                      bool manager_details = false) const;
   bool OpenExtensionOptionsTab(content::BrowserContext& profile,
                                const std::string& id);
   bool SetExtensionSidePanel(WorkspaceExtensionTab& tab,
@@ -774,6 +776,15 @@ class WorkspaceLab final : private WorkspaceRuntime,
                                           ProfileContext& peer);
   void CheckManagedExtensionsForProbe(ManagedProbePhase phase,
                                       base::TimeTicks deadline);
+  bool OpenExtensionsManager();
+  base::DictValue DispatchExtensionsManager(content::WebContents& page,
+                                            const base::DictValue& request);
+  views::Widget* ExtensionDialogOwner() const;
+  void SetExtensionManagerStatus(std::u16string message, bool error = false);
+  using ExtensionManagerIconKey = std::tuple<std::string, std::string, std::string>;
+  std::map<ExtensionManagerIconKey, std::string> extension_manager_icons_;
+  std::u16string extension_manager_status_;
+  bool extension_manager_error_ = false;
   void OpenExtensionPackage();
   void OpenExtensionOptions(std::string id);
   void OpenExtensionPopup(std::string id);

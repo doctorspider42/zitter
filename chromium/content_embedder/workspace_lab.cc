@@ -13,6 +13,7 @@
 
 #include "extension_manifest.h"
 #include "extension_registry_probe.h"
+#include "extensions_manager.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_user_script_loader.h"
@@ -57,6 +58,7 @@
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -99,6 +101,7 @@
 #include "components/input/native_web_keyboard_event.h"
 #include "components/os_crypt/async/browser/os_crypt_async.h"
 #include "components/prefs/pref_service.h"
+#include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/context_menu_params.h"
@@ -142,10 +145,12 @@
 #include "chromium/prototype/assistant_visuals.h"
 #include "ui/gfx/canvas.h"
 #include "extensions/browser/extension_action_manager.h"
+#include "extensions/browser/image_loader.h"
 #include "extensions/common/api/commands/commands_handler.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handlers/description_info.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "net/base/net_errors.h"
@@ -163,6 +168,7 @@
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/base/accelerators/command.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/models/simple_combobox_model.h"
 #include "ui/color/color_provider_key.h"
@@ -1509,6 +1515,13 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
         base::BindRepeating(&WorkspaceLab::OpenExtensionOptions, weak);
     callbacks.open_extension_popup =
         base::BindRepeating(&WorkspaceLab::OpenExtensionPopup, weak);
+  }
+  if (!private_owner_ && !session_path_.empty() && IsManagedExtensionSession()) {
+    callbacks.open_extensions_manager = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab)
+            lab->OpenExtensionsManager();
+        }, weak);
   }
   callbacks.select_workspace =
       base::BindRepeating(&WorkspaceLab::SelectWorkspace, weak);
@@ -3354,6 +3367,29 @@ bool WorkspaceLab::CanHandleAccelerators() const {
 
 namespace {
 
+
+ui::Accelerator ExtensionCommandKey(content::BrowserContext& profile,
+                                    const extensions::Extension& extension,
+                                    const ui::Command& command) {
+  if (auto* prefs = extensions::ExtensionPrefs::Get(&profile)) {
+    if (const auto* keys = prefs->ReadPrefAsDict(extension.id(), kManagerShortcutPref)) {
+      if (const auto* override = keys->FindString(command.command_name()))
+        return ui::Command::StringToAccelerator(*override);
+    }
+  }
+  return command.accelerator();
+}
+
+void SetManagerToolbarPin(extensions::ExtensionPrefs& prefs,
+                          const std::string& id, bool pinned) {
+  auto ids = prefs.GetPinnedExtensions();
+  std::erase(ids, id);
+  if (pinned)
+    ids.push_back(id);
+  prefs.UpdateExtensionPref(id, kManagerPinPref, base::Value(pinned));
+  prefs.SetPinnedExtensions(ids);
+}
+
 struct ExtensionCommandBinding {
   scoped_refptr<const extensions::Extension> extension;
   std::string command;
@@ -3376,7 +3412,7 @@ std::map<ui::Accelerator, ExtensionCommandBinding> ExtensionCommandBindings(
     if (!CanLoadExtensionProbeResources(profile, extension->id()))
       continue;
     ForEachExtensionCommand(*extension, [&](const ui::Command& command) {
-      const auto& key = command.accelerator();
+      const auto key = ExtensionCommandKey(profile, *extension, command);
       if (command.global() || key.key_code() == ui::VKEY_UNKNOWN) {
         return;
       }
@@ -3392,19 +3428,23 @@ std::map<ui::Accelerator, ExtensionCommandBinding> ExtensionCommandBindings(
 }  // namespace
 
 base::ListValue WorkspaceLab::GetExtensionCommands(
-    content::BrowserContext& profile, const extensions::Extension& extension) const {
+    content::BrowserContext& profile, const extensions::Extension& extension,
+    bool manager_details) const {
   const auto bindings = ExtensionCommandBindings(profile);
   base::ListValue result;
   ForEachExtensionCommand(extension, [&](const ui::Command& command) {
-    const auto binding = bindings.find(command.accelerator());
-    const bool active = shell_->ShortcutFor(command.accelerator()).empty() &&
+    const auto key = ExtensionCommandKey(profile, extension, command);
+    const auto binding = bindings.find(key);
+    const bool active = shell_->ShortcutFor(key).empty() &&
         binding != bindings.end() && binding->second.extension == &extension &&
         binding->second.command == command.command_name();
-    result.Append(base::DictValue()
-                      .Set("name", command.command_name())
-                      .Set("description", command.description())
-                      .Set("shortcut", active ? command.accelerator().GetShortcutText()
-                                              : std::u16string()));
+    auto entry = base::DictValue()
+                     .Set("name", command.command_name())
+                     .Set("description", command.description())
+                     .Set("shortcut", active ? key.GetShortcutText() : std::u16string());
+    if (manager_details)
+      entry.Set("global", command.global());
+    result.Append(std::move(entry));
   });
   return result;
 }
@@ -8548,6 +8588,14 @@ bool WorkspaceLab::ResetPinnedUrl(std::string id) {
 
 void WorkspaceLab::AttachPageServices(content::WebContents& page,
                                       size_t workspace) {
+  if (!private_owner_ && IsManagedExtensionSession()) {
+    AttachExtensionsManager(page, base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, content::WebContents& page,
+           const base::DictValue& request) {
+          return lab ? lab->DispatchExtensionsManager(page, request)
+                     : base::DictValue();
+        }, weak_factory_.GetWeakPtr()));
+  }
   prototype::LinkNavigation::Attach(&page, base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, content::NavigationHandle& navigation) {
         return lab && lab->RouteNavigation(navigation);
@@ -15164,6 +15212,15 @@ void WorkspaceLab::StartManagedExtensions(size_t owner) {
   }
   for (size_t offset = 0; offset < contexts_.size(); ++offset) {
     auto& context = *contexts_[(owner + offset) % contexts_.size()];
+    if (auto* prefs = extensions::ExtensionPrefs::Get(&context)) {
+      extensions::ExtensionIdList pinned;
+      for (const auto& extension : GetConfiguredExtensions(context)) {
+        bool value = false;
+        if (prefs->ReadPrefAsBoolean(extension->id(), kManagerPinPref, &value) && value)
+          pinned.push_back(extension->id());
+      }
+      prefs->SetPinnedExtensions(pinned);
+    }
     for (const auto& extension : GetConfiguredExtensions(context)) {
       managed_extensions_.push_back(std::make_unique<ManagedExtension>(
           context, extension->id(),
@@ -15788,8 +15845,208 @@ void WorkspaceLab::CheckManagedExtensionsForProbe(ManagedProbePhase phase,
       base::Milliseconds(50));
 }
 
-void WorkspaceLab::OpenExtensionPackage() {
+bool WorkspaceLab::OpenExtensionsManager() {
+  if (private_owner_ || !CanEditWorkspace() || !model_.active() ||
+      !IsManagedExtensionSession()) {
+    return false;
+  }
+  const GURL url(prototype::kExtensionsTabUrl);
+  auto& tabs = tabs_[active_index_];
+  const auto existing = std::ranges::find_if(tabs, [&](const Tab& tab) {
+    auto* page = tab.view->web_contents();
+    return page ? page->GetVisibleURL() == url : tab.deferred_url == url;
+  });
+  shell_->CloseOverlays(true);
+  if (existing != tabs.end()) {
+    SelectTab(existing - tabs.begin());
+  } else if (!CreateExtensionTab(*WorkspaceProfile(active_index_), url, true)) {
+    return false;
+  }
+  widget_->Activate();
+  return true;
+}
+
+views::Widget* WorkspaceLab::ExtensionDialogOwner() const {
   auto* settings = shell_->general_widget();
+  if (settings && settings->IsVisible())
+    return settings;
+  if (web_contents() &&
+      web_contents()->GetLastCommittedURL() == GURL(prototype::kExtensionsTabUrl)) {
+    return widget_.get();
+  }
+  return nullptr;
+}
+
+void WorkspaceLab::SetExtensionManagerStatus(std::u16string message, bool error) {
+  extension_manager_status_ = message;
+  extension_manager_error_ = error;
+  shell_->SetPreferencesStatus(std::move(message), error);
+}
+
+base::DictValue WorkspaceLab::DispatchExtensionsManager(
+    content::WebContents& page, const base::DictValue& request) {
+  base::DictValue result;
+  if (private_owner_ || !IsManagedExtensionSession() || !model_.active() ||
+      page.GetLastCommittedURL() != GURL(prototype::kExtensionsTabUrl) ||
+      &page != web_contents()) {
+    return result;
+  }
+  auto& profile = *WorkspaceProfile(active_index_);
+  if (page.GetBrowserContext() != &profile)
+    return result;
+  const auto* op = request.FindString("op");
+  if (!op)
+    return result;
+
+  auto* prefs = extensions::ExtensionPrefs::Get(&profile);
+  auto* profile_prefs = user_prefs::UserPrefs::Get(&profile);
+  const bool can_install = base::CommandLine::ForCurrentProcess()->HasSwitch(
+      kRestoreWorkspaceExtensions);
+  bool ok = *op == "read";
+  if (!ok && CanEditWorkspace()) {
+    const auto* id = request.FindString("id");
+    auto* manager = id ? ManagedExtensionForProfile(profile, *id) : nullptr;
+    const auto checked = request.FindBool("value");
+    if (*op == "install" && can_install) {
+      SetExtensionManagerStatus({});
+      OpenExtensionPackage();
+      ok = true;
+    } else if (*op == "autoPin" && checked && profile_prefs) {
+      profile_prefs->SetBoolean(kManagerAutoPinPref, *checked);
+      ok = true;
+    } else if (*op == "store") {
+      OpenExternalUrl(GURL("https://chromewebstore.google.com/category/extensions"));
+      ok = true;
+    } else if (manager && manager->editable()) {
+      SetExtensionManagerStatus({});
+      if (*op == "enable" && checked) {
+        ok = manager->SetEnabled(*checked);
+      } else if (*op == "pin" && checked) {
+        ok = SetExtensionToolbarPinned(*id, *checked);
+      } else if (*op == "scripts" && checked) {
+        ok = manager->SetUserScriptsAllowed(*checked);
+      } else if (*op == "remove") {
+        ConfirmUninstallExtension(*id);
+        ok = true;
+      } else if (*op == "options") {
+        ok = OpenExtensionOptionsTab(profile, *id);
+      } else if (*op == "shortcut" && prefs) {
+        const auto* name = request.FindString("command");
+        const auto* key = request.FindString("key");
+        for (const auto& extension : GetConfiguredExtensions(profile)) {
+          if (extension->id() != *id || !name || !key || key->size() > 64)
+            continue;
+          ForEachExtensionCommand(*extension, [&](const ui::Command& command) {
+            if (command.global() || command.command_name() != *name)
+              return;
+            const auto shortcut = ui::Command::StringToAccelerator(*key);
+            if (!key->empty()) {
+              const auto bindings = ExtensionCommandBindings(profile);
+              const auto existing = bindings.find(shortcut);
+              if (shortcut.key_code() == ui::VKEY_UNKNOWN ||
+                  !shell_->ShortcutFor(shortcut).empty() ||
+                  (existing != bindings.end() &&
+                   (existing->second.extension != extension ||
+                    existing->second.command != *name))) {
+                return;
+              }
+            }
+            const auto* saved = prefs->ReadPrefAsDict(*id, kManagerShortcutPref);
+            auto overrides = saved ? saved->Clone() : base::DictValue();
+            overrides.Set(*name, *key);
+            prefs->UpdateExtensionPref(*id, kManagerShortcutPref,
+                                       base::Value(std::move(overrides)));
+            RefreshExtensionShortcuts();
+            ok = true;
+          });
+        }
+      }
+    }
+  }
+
+  base::ListValue items;
+  const auto pinned = prefs ? prefs->GetPinnedExtensions()
+                            : extensions::ExtensionIdList();
+  for (const auto& extension : GetConfiguredExtensions(profile)) {
+    const auto* manager = ManagedExtensionForProfile(profile, extension->id());
+    if (!manager)
+      continue;
+    const auto& permissions = extension->permissions_data()->active_permissions();
+    base::ListValue api_permissions;
+    for (const auto& api : permissions.GetAPIsAsStrings())
+      api_permissions.Append(api);
+    base::ListValue hosts;
+    for (const auto& host : permissions.effective_hosts().ToStringVector())
+      hosts.Append(host);
+    auto item = base::DictValue().Set("id", extension->id())
+        .Set("name", extension->name())
+        .Set("description", extensions::DescriptionInfo::GetDescription(*extension))
+        .Set("version", extension->version().GetString())
+        .Set("enabled", manager->enabled())
+        .Set("requestedEnabled", manager->selection())
+        .Set("editable", manager->editable() && CanEditWorkspace())
+        .Set("canPin", manager->action_popup().is_valid())
+        .Set("pinned", std::ranges::contains(pinned, extension->id()))
+        .Set("options", manager->enabled() && manager->options_page().is_valid())
+        .Set("commands", GetExtensionCommands(profile, *extension, true))
+        .Set("permissions", std::move(api_permissions))
+        .Set("hosts", std::move(hosts));
+    if (const auto scripts = manager->UserScriptsAllowed())
+      item.Set("scripts", *scripts);
+    if (auto* loader = extensions::ImageLoader::Get(&profile)) {
+      const auto key = std::make_tuple(profiles_[WorkspaceProfileIndex(active_index_)].id,
+                                       extension->id(), extension->version().GetString());
+      auto [icon, inserted] = extension_manager_icons_.try_emplace(key);
+      if (inserted) {
+        loader->LoadImageAtEveryScaleFactorAsync(
+            extension.get(), gfx::Size(24, 24),
+            base::BindOnce([](base::WeakPtr<WorkspaceLab> lab,
+                              ExtensionManagerIconKey key, const gfx::Image& image) {
+              if (!lab || image.IsEmpty())
+                return;
+              auto bytes = image.As1xPNGBytes();
+              if (bytes && bytes->size() <= 16 * 1024) {
+                lab->extension_manager_icons_[key] =
+                    "data:image/png;base64," + base::Base64Encode(*bytes);
+              }
+            }, weak_factory_.GetWeakPtr(), key));
+      }
+      if (!icon->second.empty())
+        item.Set("icon", icon->second);
+    }
+    items.Append(std::move(item));
+  }
+  const bool dark = widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
+  const auto palette = sidebar::design_palette(dark, shell_->active_workspace_color());
+  const auto css_color = [](SkColor color) {
+    return base::StringPrintf("#%06x", color & 0xffffffu);
+  };
+  auto colors = base::DictValue().Set("frame", css_color(palette.bg_void))
+      .Set("sidebar", css_color(palette.bg_base))
+      .Set("surface", css_color(palette.bg_raised))
+      .Set("hover", css_color(palette.bg_hover))
+      .Set("line", css_color(palette.line))
+      .Set("edge", css_color(palette.line_strong))
+      .Set("ink", css_color(palette.ink))
+      .Set("muted", css_color(palette.ink_muted))
+      .Set("accent", css_color(palette.accent))
+      .Set("on-accent", css_color(palette.on_accent))
+      .Set("accent-ink", css_color(palette.accent_ink))
+      .Set("danger", css_color(palette.danger));
+  return base::DictValue().Set("ok", ok)
+      .Set("items", std::move(items))
+      .Set("colors", std::move(colors))
+      .Set("profile", WorkspaceProfileName(active_index_))
+      .Set("canInstall", can_install)
+      .Set("autoPin", profile_prefs && profile_prefs->GetBoolean(kManagerAutoPinPref))
+      .Set("dark", dark)
+      .Set("english", prototype::UiLanguageIsEnglish())
+      .Set("status", extension_manager_status_)
+      .Set("error", extension_manager_error_);
+}
+
+void WorkspaceLab::OpenExtensionPackage() {
+  auto* settings = ExtensionDialogOwner();
   if (!settings || !settings->IsVisible() || !CanEditWorkspace() ||
       extension_install_ ||
       (extension_picker_ && extension_picker_->IsRunning(settings->GetNativeWindow()))) {
@@ -15918,7 +16175,7 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
             if (!lab)
               return;
             lab->CloseExtensionsToolbarMenu();
-            lab->shell_->OpenExtensionsSettings();
+            lab->OpenExtensionsManager();
           }, weak))->SetRing(true);
   constexpr char kStore[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
   add_row(kStore, u"Chrome Web Store", prototype::kFooterHeight,
@@ -15948,11 +16205,7 @@ bool WorkspaceLab::SetExtensionToolbarPinned(std::string id, bool pinned) {
   auto* prefs = extensions::ExtensionPrefs::Get(&profile);
   if (!prefs)
     return false;
-  auto ids = prefs->GetPinnedExtensions();
-  std::erase(ids, id);
-  if (pinned)
-    ids.push_back(std::move(id));
-  prefs->SetPinnedExtensions(ids);
+  SetManagerToolbarPin(*prefs, id, pinned);
   RefreshExtensionActionAppearance();
   return true;
 }
@@ -16223,9 +16476,7 @@ void WorkspaceLab::RefreshNightShiftButton(bool force) {
 }
 
 void WorkspaceLab::OpenExtensionOptions(std::string id) {
-  auto* settings = shell_->general_widget();
-  if (settings && settings->IsVisible())
-    OpenExtensionOptionsTab(*WorkspaceProfile(active_index_), id);
+  OpenExtensionOptionsTab(*WorkspaceProfile(active_index_), id);
 }
 
 bool WorkspaceLab::SetExtensionSidePanel(WorkspaceExtensionTab& target,
@@ -16291,7 +16542,7 @@ bool WorkspaceLab::OpenExtensionOptionsTab(content::BrowserContext& context,
 }
 
 void WorkspaceLab::ConfirmUninstallExtension(std::string id) {
-  auto* settings = shell_->general_widget();
+  auto* settings = ExtensionDialogOwner();
   if (!settings || !settings->IsVisible() || !CanEditWorkspace())
     return;
   const size_t profile = WorkspaceProfileIndex(active_index_);
@@ -16336,7 +16587,7 @@ void WorkspaceLab::ConfirmUninstallExtension(std::string id) {
                   }
                   lab->RefreshShell();
                   if (lab->WorkspaceProfileIndex(lab->active_index_) == profile)
-                    lab->shell_->SetPreferencesStatus(
+                    lab->SetExtensionManagerStatus(
                         success ? prototype::T(u"Rozszerzenie zostało usunięte.")
                                 : prototype::T(u"Nie udało się usunąć rozszerzenia."),
                         !success);
@@ -16368,7 +16619,7 @@ void WorkspaceLab::FileSelected(const ui::SelectedFileInfo& file, int index) {
       WorkspaceProfileIndex(active_index_) != extension_install_profile_) {
     return;
   }
-  shell_->SetPreferencesStatus(prototype::T(u"Sprawdzam podpis rozszerzenia…"));
+  SetExtensionManagerStatus(prototype::T(u"Sprawdzam podpis rozszerzenia…"));
   extension_install_ = WorkspaceExtensionInstall::Start(
       file.path(), contexts_[extension_install_profile_]->GetPath(),
       GetConfiguredExtensions(*contexts_[extension_install_profile_]),
@@ -16381,14 +16632,14 @@ void WorkspaceLab::FileSelectionCanceled() {}
 void WorkspaceLab::OnExtensionReview(size_t profile,
                                     std::optional<base::DictValue> review) {
   auto install = std::move(extension_install_);
-  auto* settings = shell_->general_widget();
+  auto* settings = ExtensionDialogOwner();
   if (!settings || !settings->IsVisible() || !CanEditWorkspace() ||
       WorkspaceProfileIndex(active_index_) != profile) {
-    shell_->SetPreferencesStatus({});
+    SetExtensionManagerStatus({});
     return;
   }
   if (!review) {
-    shell_->SetPreferencesStatus(
+    SetExtensionManagerStatus(
         prototype::T(u"Nie udało się zweryfikować tego rozszerzenia."), true);
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(kExtensionInstallUiProbe)) {
       LOG(ERROR) << "The Settings package review failed";
@@ -16509,7 +16760,7 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
   // without truncating the permissions the user is asked to approve.
   constexpr size_t kMaxExtensionReviewCharacters = 16 * 1024;
   if (detail.size() > kMaxExtensionReviewCharacters) {
-    shell_->SetPreferencesStatus(
+    SetExtensionManagerStatus(
         prototype::T(u"Zakres dostępu jest za długi, aby wyświetlić go w całości."),
         true);
     return;
@@ -16519,7 +16770,7 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
       review->FindBool("scope_expanded") == true) {
     std::puts("Zitter Content disclosed expanded extension access in Settings");
   }
-  shell_->SetPreferencesStatus({});
+  SetExtensionManagerStatus({});
   shell_->ConfirmDanger(
       settings, prototype::TF(is_update ? u"Zaktualizować {}?" : u"Zainstalować {}?",
                              {text(*review->FindString("name"))}),
@@ -16545,7 +16796,7 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
             }
             auto* manager = lab->ManagedExtensionForProfile(*lab->contexts_[profile], id);
             if (manager && manager->uninstalling()) {
-              lab->shell_->SetPreferencesStatus(
+              lab->SetExtensionManagerStatus(
                   prototype::T(u"Trwa usuwanie tego rozszerzenia."), true);
               return;
             }
@@ -16577,7 +16828,7 @@ void WorkspaceLab::InstallReviewedExtension(
   const bool probe = base::CommandLine::ForCurrentProcess()->HasSwitch(
       kExtensionInstallUiProbe);
   if (!extension) {
-    shell_->SetPreferencesStatus(
+    SetExtensionManagerStatus(
         prototype::T(u"Nie udało się zainstalować rozszerzenia w tym profilu."),
         true);
     if (probe)
@@ -16586,7 +16837,7 @@ void WorkspaceLab::InstallReviewedExtension(
   }
 
   if (is_update) {
-    shell_->SetPreferencesStatus(
+    SetExtensionManagerStatus(
         prototype::T(u"Aktualizacja rozszerzenia będzie aktywna po ponownym uruchomieniu Zittera."));
     if (probe) {
       std::puts("Zitter Content approved an extension update from Settings");
@@ -16621,8 +16872,15 @@ void WorkspaceLab::InstallReviewedExtension(
 
 void WorkspaceLab::OnInstalledExtension(size_t profile, std::string id,
                                          bool active) {
+  auto& context = *contexts_[profile];
+  auto* manager = ManagedExtensionForProfile(context, id);
+  if (active && manager && manager->action_popup().is_valid() &&
+      user_prefs::UserPrefs::Get(&context)->GetBoolean(kManagerAutoPinPref)) {
+    SetManagerToolbarPin(*extensions::ExtensionPrefs::Get(&context), id, true);
+    RefreshExtensionActionAppearance();
+  }
   if (WorkspaceProfileIndex(active_index_) == profile) {
-    shell_->SetPreferencesStatus(
+    SetExtensionManagerStatus(
         active
             ? prototype::T(u"Rozszerzenie jest zainstalowane i włączone.")
             : prototype::T(u"Rozszerzenie zapisano, ale nie udało się go uruchomić."),
