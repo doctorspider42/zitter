@@ -95,6 +95,7 @@ struct ShellTab {
   bool audible = false;  // Playing sound: the row shows a speaker.
   // Capturing (design: Kamera i mikrofon): 0 none, 1 microphone, 2 camera, 3 screen.
   int capture = 0;
+  bool custom_title = false;
   bool operator==(const ShellTab&) const = default;
 };
 
@@ -110,6 +111,8 @@ struct ShellState {
   std::set<std::string> sleeping_workspaces;
   std::vector<PinnedItem> pins;
   std::string active_pin;
+  std::set<std::string> departed_pins;
+  std::map<std::string, std::u16string> pin_page_titles;
   std::u16string workspace_name;
   std::u16string profile_name;
   GURL url;
@@ -171,8 +174,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingClosure downloads;
     base::RepeatingCallback<bool(std::string, std::string, std::string)> create_folder, rename_folder;
     base::RepeatingCallback<bool(std::string, std::string, std::string,
-                                 GitHubLiveFolder, std::string, bool)> configure_github_folder;
-    base::RepeatingCallback<void(std::string, std::string)> refresh_github_folder;
+                                 LiveFolderConfig, std::string, bool, bool)> configure_live_folder;
+    base::RepeatingCallback<void(std::string, std::string)> refresh_live_folder;
     base::RepeatingCallback<bool(std::string, std::string, bool)> delete_folder;
     base::RepeatingCallback<bool(std::string, std::vector<PinnedItem>)> restore_pins;
     base::RepeatingCallback<bool(std::string)> restore_workspace;
@@ -233,6 +236,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, size_t)> unpin;
     base::RepeatingCallback<bool(std::string, std::string, GURL)> update_pinned_url;
     base::RepeatingCallback<bool(std::string)> reset_pinned_url;
+    base::RepeatingCallback<bool(std::optional<size_t>, std::string,
+                                 std::u16string)> rename_sidebar_tab;
     base::RepeatingCallback<bool(std::string, std::string, std::string)> move_pin;
   };
 
@@ -776,9 +781,13 @@ class WorkspaceShell final : public ui::EventHandler,
   ui::SimpleMenuModel* page_context_menu_for_testing() const { return link_menu_.get(); }
   ui::SimpleMenuModel* tab_context_menu_for_testing() const {return workspace_menu_.get();}
   void RequestNewFolder(std::string workspace, std::string parent = {});
-  void RequestGitHubFolder(std::string workspace, std::string folder);
+  void RequestLiveFolder(std::string workspace, std::string folder, LiveFolderProvider provider);
+  void ConfigureWorkspaceLiveFolder(std::string workspace, LiveFolderProvider provider);
   void RequestRenameFolder(std::string workspace, std::string folder);
   void RequestEditPinnedUrl(std::string workspace, std::string pin);
+  EditorControl* sidebar_rename_editor_for_testing() const {
+    return sidebar_rename_editor_;
+  }
   views::Widget* pin_url_dialog() const { return pin_url_dialog_.get(); }
   EditorControl* pin_url_editor_for_testing() const { return pin_url_editor_; }
   void RequestDeleteFolder(std::string workspace, std::string folder);
@@ -1019,6 +1028,14 @@ class WorkspaceShell final : public ui::EventHandler,
   void HandlePaneDrag(size_t pane, std::optional<gfx::Point> point, bool drop);
   void CreateSplitDrop();
   struct ResolvedRowTarget { bool valid; std::optional<size_t> tab; std::string pin; };
+  std::u16string SidebarRenameTitle(const ResolvedRowTarget& target) const;
+  bool SidebarHasCustomTitle(const ResolvedRowTarget& target) const;
+  void BeginSidebarRename(std::string workspace,
+                          std::array<uint64_t, 2> identity, std::string pin);
+  void FinishSidebarRename(bool save);
+  void PositionSidebarRename();
+  void ConfigureSidebarTabActions(views::View* row, const std::string& pin,
+                                  bool favorite);
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;
   void HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
   // Where a row dragged within the sidebar would land, in screen coordinates.
@@ -1369,6 +1386,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<ProfileInfo> menu_profiles_;
   std::unique_ptr<ui::SimpleMenuModel> workspace_menu_;
   std::unique_ptr<ui::SimpleMenuModel> profile_menu_;
+  std::unique_ptr<ui::SimpleMenuModel> live_folders_menu_;
   std::unique_ptr<ui::SimpleMenuModel> color_menu_;
   std::unique_ptr<ui::SimpleMenuModel> emoji_menu_;
   std::unique_ptr<views::MenuRunner> workspace_menu_runner_;
@@ -1486,6 +1504,14 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::Widget> import_widget_;
   std::unique_ptr<views::WidgetDelegate> profiles_delegate_;
   std::unique_ptr<views::Widget> profiles_widget_;
+  bool sidebar_rename_position_pending_ = false;
+  views::ViewTracker sidebar_rename_row_;
+  std::string sidebar_rename_workspace_;
+  std::string sidebar_rename_pin_;
+  std::array<uint64_t, 2> sidebar_rename_identity_{};
+  std::unique_ptr<views::WidgetDelegate> sidebar_rename_delegate_;
+  std::unique_ptr<views::Widget> sidebar_rename_widget_;
+  raw_ptr<EditorControl> sidebar_rename_editor_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> sidebar_delegate_;
   std::unique_ptr<views::WidgetDelegate> address_delegate_;
   std::unique_ptr<views::WidgetDelegate> settings_delegate_;

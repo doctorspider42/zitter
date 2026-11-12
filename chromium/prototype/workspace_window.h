@@ -106,9 +106,11 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   const std::vector<PinnedItem>& pinned_items(std::string_view workspace_id) const;
   void OpenPinnedItem(std::string id);
   bool CreatePinnedFolder(std::string workspace, std::string parent, std::string name);
-  bool ConfigureGitHubFolder(std::string workspace, std::string folder, std::string name,
-                             GitHubLiveFolder config, std::string token, bool remove_token);
-  void RefreshGitHubFolder(std::string workspace, std::string folder);
+  bool ConfigureLiveFolder(std::string workspace, std::string folder, std::string name,
+                             LiveFolderConfig config, std::string token, bool remove_token,
+                             bool enabled = true);
+  bool LiveFoldersEnabled(std::string_view workspace, LiveFolderProvider provider) const;
+  void RefreshLiveFolder(std::string workspace, std::string folder);
   bool RenamePinnedFolder(std::string workspace, std::string id, std::string name);
   bool RemovePinnedFolder(std::string workspace, std::string id, bool contents);
   // Undo of a folder removal: puts the workspace's earlier pins back.
@@ -377,7 +379,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ImportNextProfile(size_t index);
   void CommitArcImport();
   void CompleteArcImport(bool ok);
-  void SaveFolderEdit(std::string workspace, std::vector<PinnedItem> previous, std::set<std::string> removed = {});
+  void SaveFolderEdit(std::string workspace, std::vector<PinnedItem> previous,
+                      std::set<std::string> removed = {}, base::OnceClosure rollback = {});
   void FinishArcImport(const WorkspaceShell::ImportStatusReport& status);
   bool CanRemoveProfile(std::string_view id) const;
   void ScheduleProfileDeletion(const std::string& directory);
@@ -420,6 +423,10 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void AssociateReaderPin(Host& host, views::WebView* view);
   static GURL TabUrl(const Host& host, views::WebView* view);
   static std::u16string TabTitle(const Host& host, views::WebView* view);
+  static const std::u16string& CustomTabTitle(views::WebView* view);
+  static void SetCustomTabTitle(views::WebView* view, std::u16string title);
+  bool RenameSidebarTab(std::optional<size_t> index, std::string pin_id,
+                        std::u16string title);
   // The split group persists; it is on screen only while one of its members
   // is the selected page.
   static bool SplitShown(const Host& host);
@@ -430,12 +437,13 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   static views::WebView* LeaveSplit(Host& host, views::WebView* view);
   void ApplyPanes(const Host& host);
   bool InsertPin(std::string workspace, PinnedItem item, std::string before);
-  void SaveGitHubFolder(std::string workspace, std::string folder, std::string name,
-                        GitHubLiveFolder config);
-  void ScheduleGitHubRefresh();
-  void StartGitHubRefresh();
-  void FetchGitHubResults(std::string token);
-  void FinishGitHubRefresh(bool ok);
+  void SaveLiveFolder(std::string workspace, std::string folder, std::string name,
+                      LiveFolderConfig config, bool enabled);
+  void ApplyLiveFoldersEnabled(std::string_view workspace, LiveFolderProvider provider, bool enabled);
+  void ScheduleLiveFolderRefresh();
+  void StartLiveFolderRefresh();
+  void FetchLiveFolderResults(std::string token);
+  void FinishLiveFolderRefresh(bool ok);
   base::DictValue CaptureHost(const Host& host) const;
   bool RestoreHost(Host& host, const base::DictValue& entry);
   void ReleaseHost(Host& host);
@@ -561,20 +569,22 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool import_replaces_starter_ = false;
   size_t import_preview_generation_ = 0;
   std::map<std::string, std::vector<PinnedItem>> pins_;
-  using GitHubFolderKey = std::pair<std::string, std::string>;
-  struct GitHubRefresh {
-    GitHubFolderKey key;
+  using LiveFolderKey = std::pair<std::string, std::string>;
+  struct LiveFolderRefresh {
+    LiveFolderKey key;
     std::string profile_id;
-    GitHubLiveFolder config;
+    LiveFolderConfig config;
+    bool cancelled = false;
     std::vector<std::string> queries;
+    std::set<std::string> result_keys;
     std::vector<PinnedItem> results;
     bool manual = false;
   };
-  base::OneShotTimer github_timer_;
-  std::map<GitHubFolderKey, base::TimeTicks> github_next_refresh_;
-  std::optional<GitHubFolderKey> github_manual_refresh_;
-  std::optional<GitHubRefresh> github_refresh_;
-  std::unique_ptr<network::SimpleURLLoader> github_loader_;
+  base::OneShotTimer live_folder_timer_;
+  std::map<LiveFolderKey, base::TimeTicks> live_folder_next_refresh_;
+  std::optional<LiveFolderKey> live_folder_manual_refresh_;
+  std::optional<LiveFolderRefresh> live_folder_refresh_;
+  std::unique_ptr<network::SimpleURLLoader> live_folder_loader_;
   mutable std::map<std::string, std::vector<PinnedItem>> combined_pins_;
   std::map<std::pair<std::string, std::string>, std::vector<uint32_t>> favicon_cache_;
   using FaviconKey = std::pair<std::string,std::string>;
@@ -611,7 +621,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool import_loading_ = false;
   std::vector<std::string> import_new_profile_ids_;
   std::vector<std::string> import_new_workspace_ids_;
-  std::vector<GitHubFolderKey> import_upgraded_github_folders_;
+  std::vector<LiveFolderKey> import_upgraded_github_folders_;
   base::FilePath configuration_path_;
   scoped_refptr<base::SequencedTaskRunner> config_runner_;
   gfx::Rect windowed_bounds_;

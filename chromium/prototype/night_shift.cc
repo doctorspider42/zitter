@@ -22,6 +22,7 @@
 #include "extensions/browser/api/storage/storage_frontend.h"
 #include "extensions/browser/extension_api_frame_id_map.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/extension_system.h"
 #include "extensions/browser/script_executor.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -140,10 +141,18 @@ void EnsureNightShift(Profile* profile) {
     return;
   }
   auto* loader = extensions::ComponentLoader::Get(profile);
-  if (!loader || loader->Exists(kNightShiftId)) {
+  if (!loader) return;
+  if (!loader->Exists(kNightShiftId)) {
+    loader->Add(kNightShiftManifest, base::FilePath(FILE_PATH_LITERAL("night_shift")));
     return;
   }
-  loader->Add(kNightShiftManifest, base::FilePath(FILE_PATH_LITERAL("night_shift")));
+  auto* registry = extensions::ExtensionRegistry::Get(profile);
+  const auto* system = extensions::ExtensionSystem::Get(profile);
+  if (system && system->is_ready() && registry &&
+      (!registry->GetInstalledExtension(kNightShiftId) ||
+       registry->terminated_extensions().Contains(kNightShiftId))) {
+    loader->Reload(kNightShiftId);
+  }
 }
 
 bool NightShiftConfig::EnabledFor(const std::string& profile_id) const {

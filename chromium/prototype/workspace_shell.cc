@@ -246,10 +246,13 @@ class SceneParentNodes final {
 
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFolderNameField);
-DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kGitHubLoginField);
-DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kGitHubRepositoryField);
-DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kGitHubTokenField);
-DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kGitHubRemoveTokenField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderSiteField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderConfigError);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderEnabledField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderAccountField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderFilterField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderTokenField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderRemoveTokenField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantApiKeyField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantSetupField);
 // Color roles. The values only name a role: Tone() resolves each one from the
@@ -680,7 +683,7 @@ std::u16string TabMonogram(const GURL& url, std::u16string_view title) {
 }
 
 
-enum class ControlGlyph { kVector, kSidebar, kDot, kSwatch, kMore, kDownloads };
+enum class ControlGlyph { kVector, kSidebar, kDot, kSwatch, kMore, kDownloads, kReturnToPin, kConfirmTabName };
 void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIcon* icon,SkColor color,bool on,const std::u16string& label,views::Button::ButtonState state,gfx::Canvas* canvas){
     const auto bounds = view->GetLocalBounds();
     if (glyph != ControlGlyph::kDot && glyph != ControlGlyph::kSwatch && view->GetEnabled() &&
@@ -731,6 +734,8 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
       case ControlGlyph::kMore:
         for (int dx : {-5, 0, 5}) FillRound(canvas, gfx::Rect(center.x() + dx - 1, center.y() - 1, 3, 3), 2, ink);
         break;
+      case ControlGlyph::kReturnToPin:
+      case ControlGlyph::kConfirmTabName:
       case ControlGlyph::kDownloads:  // The Rust recipe paints it (RustActionView::OnPaint).
         break;
       case ControlGlyph::kSwatch: {
@@ -823,7 +828,7 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   sidebar::Item item{}; item.kind=7;
   item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-  item.glyph=glyph==GlyphButton::Glyph::kDownloads ? 11 : glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
+  item.glyph=glyph==ControlGlyph::kReturnToPin ? 12 : glyph==ControlGlyph::kConfirmTabName ? 13 : glyph==GlyphButton::Glyph::kDownloads ? 11 : glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
       : icon==&vector_icons::kReloadCustomIcon ? 5 : (icon==&vector_icons::kCloseSmallIcon || icon==&vector_icons::kCloseIcon) ? 7 : icon==&vector_icons::kSearchIcon ? 8
        : icon==&vector_icons::kAdd2Icon ? 9 : icon==&vector_icons::kLinkIcon ? 10 : 2;
@@ -845,7 +850,9 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : item.hovered ? kInk : kSubtle);
   item.monogram=base::UTF16ToUTF8(label); item.font_size=item.glyph==1&&rect.height()>=36?18:Font(3).GetFontSize();
   item.fill=item.glyph==1 ? SK_ColorTRANSPARENT : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
-  if(item.glyph==1){
+  if(item.glyph==12){
+    const auto p=Palette(view);item.fill=item.hovered?p.bg_hover:p.accent_soft;item.ink=p.accent_ink;
+  } else if(item.glyph==1){
     // Each dot keeps its own workspace's accent; the active one is a raised pill.
     const auto own=sidebar::design_palette(IsDark(view),color==kSubtle?kDefaultWorkspaceColor:color);const auto p=Palette(view);
     item.badge=own.accent;item.detail_ink=p.ink;
@@ -989,7 +996,7 @@ class RustActionView : public views::View {
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;
     // Workspace dots paint the Rust recipe (own accent, active pill); vector icons stay native.
-    if(glyph_==ControlGlyph::kDot||glyph_==ControlGlyph::kDownloads){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
+    if(glyph_==ControlGlyph::kDot||glyph_==ControlGlyph::kDownloads||glyph_==ControlGlyph::kReturnToPin||glyph_==ControlGlyph::kConfirmTabName){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
     PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
  protected:
   sidebar::ActionControl& NodeControl(){return *state_;}
@@ -2128,7 +2135,7 @@ constexpr gfx::VectorIcon kLiveFolderIcon(kLiveFolderRep, 1, "zitter_live_folder
 
 const gfx::VectorIcon* PinFolderIcon(const PinnedItem& pin) {
   if (!pin.folder) return nullptr;
-  return pin.github ? &kLiveFolderIcon : &vector_icons::kFolderFilledIcon;
+  return pin.live_folder ? &kLiveFolderIcon : &vector_icons::kFolderFilledIcon;
 }
 
 void SetLiveFolderSceneIcon(sidebar::Item& item) {
@@ -2345,6 +2352,8 @@ class RustRowView final : public views::View {
     auto& item = scene.item;
     if (spec_.icon == &kLiveFolderIcon) SetLiveFolderSceneIcon(item);
     item.favorite = spec_.favorite;
+    item.title_width = SidebarActionInset();
+    if (renaming_) item.title = rust::String();
     if (item.favorite) {
       item.tile = true;
       item.fill = item.hovered ? Mix(palette.ink, Tone(this,kCard), 16)
@@ -2352,6 +2361,52 @@ class RustRowView final : public views::View {
       if (item.hovered) item.edge = palette.line_strong;
     }
     return scene;
+  }
+  bool HasTabMenuAction() const { return more_ != nullptr; }
+  void SetTabMenuAction(views::Button::PressedCallback callback) {
+    more_ = AddChildView(CreateSceneAction(std::move(callback),
+        T(u"Opcje karty"), ControlGlyph::kMore, nullptr, {},
+        base::BindRepeating(&RustRowView::ChildChanged, weak_factory_.GetWeakPtr())));
+    InvalidateLayout();
+  }
+  void SetPinReturnAction(std::string pin, views::Button::PressedCallback callback,
+                          std::u16string tooltip) {
+    if (return_pin_ == pin && return_to_pin_ &&
+        return_to_pin_->GetTooltipText() == tooltip) return;
+    const bool target_changed = return_pin_ != pin;
+    return_pin_ = std::move(pin);
+    if (!return_to_pin_ && !callback) return;
+    if (!return_to_pin_) {
+      return_to_pin_ = AddChildView(CreateSceneAction(std::move(callback),
+          T(u"Wróć do przypiętego adresu"), ControlGlyph::kReturnToPin, nullptr,
+          {}, base::BindRepeating(&RustRowView::ChildChanged, weak_factory_.GetWeakPtr())));
+    } else if (target_changed && callback) {
+      SetActionCallback(return_to_pin_, std::move(callback));
+    }
+    return_to_pin_->SetVisible(!tooltip.empty() && !renaming_);
+    return_to_pin_->SetTooltipText(std::move(tooltip));
+    return_to_pin_->GetViewAccessibility().SetName(T(u"Wróć do przypiętego adresu"));
+    InvalidateLayout();
+    SchedulePaint();
+  }
+  void SetRenaming(bool editing) {
+    if (renaming_ == editing) return;
+    renaming_ = editing;
+    if (more_) more_->SetVisible(!editing);
+    if (return_to_pin_)
+      return_to_pin_->SetVisible(!editing && !return_to_pin_->GetTooltipText().empty());
+    UpdateClose();
+    InvalidateLayout();
+    SchedulePaint();
+  }
+  void AppendSidebarActions(std::vector<sidebar::Item>& items, gfx::RectF row,
+                            gfx::RectF clip) const {
+    for (auto* action : {return_to_pin_.get(), more_.get()}) {
+      if (!action || !action->GetVisible()) continue;
+      gfx::RectF bounds(action->GetMirroredBounds());
+      bounds.Offset(row.OffsetFromOrigin());
+      items.push_back(ActionSceneItem(action, bounds, clip));
+    }
   }
   void SetFavicon(const std::vector<uint32_t>& pixels,bool favorite){if(spec_.favicon==pixels&&spec_.favorite==favorite)return;spec_.favicon=pixels;spec_.favorite=favorite;SchedulePaint();}
   void SetFolderIcon(const gfx::VectorIcon* icon) {
@@ -2385,7 +2440,18 @@ class RustRowView final : public views::View {
   bool has_close_button() const{return close_!=nullptr;}
   bool close_button_visible() const{return close_&&close_->GetVisible();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{const auto tab=state_->sidebar_visual();return gfx::Size(200,tab.valid?tab.height:spec_.height);}
-  void Layout(PassKey) override{const auto r=Geometry().close;if(close_)close_->SetBounds(r.x,r.y,r.width,r.height);}
+  void Layout(PassKey) override {
+    const auto r = Geometry().close;
+    if (close_) close_->SetBounds(r.x, r.y, r.width, r.height);
+    int right = close_ ? r.x : width() - 6;
+    for (auto* action : {more_.get(), return_to_pin_.get()}) {
+      if (!action || !action->GetVisible()) continue;
+      const int size = spec_.favorite ? 18 : 24;
+      right -= size + 2;
+      action->SetBounds(std::max(0, right), spec_.favorite ? 0 : (height() - size) / 2,
+                        size, size);
+    }
+  }
   bool HandleAccessibleAction(const ui::AXActionData& action) override{if(action.action==ax::mojom::Action::kDoDefault&&SceneIsVisible(this)&&GetEnabledInViewsSubtree())ScrollViewToVisible();return views::View::HandleAccessibleAction(action);}
   bool OnMousePressed(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Press,event);}
   bool OnMouseDragged(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Drag,event);}
@@ -2420,8 +2486,8 @@ class RustRowView final : public views::View {
         if(!scene.item.tile||spec_.favorite){PaintSceneRecipe(canvas,scene.item,Font(0),true);if(folder&&spec_.icon!=&kLiveFolderIcon)PaintIcon(canvas,vector_icons::kFolderFilledIcon,gfx::Rect(12,(height()-16)/2,16,16),16,scene.item.ink);
           // The close button takes this place on hover.
           // Capture wins over sound: it is what a person must be able to find.
-          if(spec_.capture&&!(close_&&close_->GetVisible()))PaintIcon(canvas,spec_.capture==2?vector_icons::kVideocamIcon:spec_.capture==1?vector_icons::kMicIcon:vector_icons::kScreenShareIcon,gfx::Rect(width()-30,(height()-14)/2,14,14),14,Palette(this).danger);
-          else if(spec_.audible&&!(close_&&close_->GetVisible()))PaintIcon(canvas,vector_icons::kVolumeUpIcon,gfx::Rect(width()-30,(height()-14)/2,14,14),14,Palette(this).accent_ink);}else{const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
+          if(spec_.capture&&!(close_&&close_->GetVisible()))PaintIcon(canvas,spec_.capture==2?vector_icons::kVideocamIcon:spec_.capture==1?vector_icons::kMicIcon:vector_icons::kScreenShareIcon,gfx::Rect(width()-30-SidebarActionInset(),(height()-14)/2,14,14),14,Palette(this).danger);
+          else if(spec_.audible&&!(close_&&close_->GetVisible()))PaintIcon(canvas,vector_icons::kVolumeUpIcon,gfx::Rect(width()-30-SidebarActionInset(),(height()-14)/2,14,14),14,Palette(this).accent_ink);}else if(!renaming_){const auto geometry=Geometry();const auto& title=geometry.title;canvas->DrawStringRectWithFlags(SidebarSnapshot().title,DesignFont(2,13,scene.item.active?600:400,false),scene.item.ink,gfx::Rect(title.x,title.y,title.width,title.height),gfx::Canvas::TEXT_ALIGN_LEFT);}}
       return;}
     if(spec_.chip&&!spec_.address){const auto bounds=gfx::RectF(GetLocalBounds());const auto v=state_->action_snapshot();
       if(!spec_.header.empty())PaintSceneRecipe(canvas,PaletteHeaderItem(this,spec_,bounds,bounds),Font(0),true);
@@ -2439,7 +2505,12 @@ class RustRowView final : public views::View {
   int tremor_dx_=0,tremor_step_=0;base::RepeatingTimer tremor_timer_;
   static void ClearSidebarVisuals(Spec& spec){std::u16string{}.swap(spec.title);std::u16string{}.swap(spec.monogram);spec.monogram_color=SK_ColorTRANSPARENT;spec.icon=nullptr;spec.active=false;spec.tile=false;spec.height=0;}
   void SyncSidebarAX(){const auto title=state_->sidebar_title();const std::u16string text(title.begin(),title.end());SetTooltipText(text);GetViewAccessibility().SetName(text);}
-  sidebar::RowLayout Geometry() const{if(spec_.stacked){auto g=sidebar::row_layout(width(),height(),0,false,false,close_!=nullptr);const int lead=50,half=height()/2;const int w=std::max(0,g.title.width+g.title.x-lead);g.title={lead,2,w,half-2};g.detail={lead,half,w,half-4};return g;}if(spec_.address)return sidebar::address_layout(width(),height(),scene_title_width());return sidebar::row_layout(width(),height(),scene_title_width(),!spec_.detail.empty(),spec_.chip,close_!=nullptr);}
+  int SidebarActionInset() const {
+    if (spec_.favorite) return 0;
+    return 26 * ((more_ && more_->GetVisible() ? 1 : 0) +
+                 (return_to_pin_ && return_to_pin_->GetVisible() ? 1 : 0));
+  }
+  sidebar::RowLayout Geometry() const{if(spec_.stacked){auto g=sidebar::row_layout(width(),height(),0,false,false,close_!=nullptr);const int lead=50,half=height()/2;const int w=std::max(0,g.title.width+g.title.x-lead);g.title={lead,2,w,half-2};g.detail={lead,half,w,half-4};return g;}if(spec_.address)return sidebar::address_layout(width(),height(),scene_title_width());auto geometry=sidebar::row_layout(width(),height(),scene_title_width(),!spec_.detail.empty(),spec_.chip,close_!=nullptr);geometry.title.width=std::max(0,geometry.title.width-SidebarActionInset());return geometry;}
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
   // Opening the profile slot can move the captured row below the viewport.
   bool PointerInputVisible() const {
@@ -2448,7 +2519,7 @@ class RustRowView final : public views::View {
   void SyncEnabled(){if(!state_->action_enabled(GetEnabledInViewsSubtree()))return;auto& ax=GetViewAccessibility();if(GetEnabledInViewsSubtree())ax.SetDefaultActionVerb(ax::mojom::DefaultActionVerb::kPress);else ax.RemoveDefaultActionVerb();UpdateClose();UpdateWatch();SchedulePaint();}
   void EnabledChanged(){SyncEnabled();}
   void WindowChanged(){CancelInput();state_->action_focus(HasFocus());SchedulePaint();}
-  void UpdateClose(){if(close_){const auto v=state_->action_snapshot();const auto tab=state_->sidebar_visual();close_->SetVisible(sidebar::close_visible(v.on,tab.valid?tab.tile:spec_.tile,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed));}}
+  void UpdateClose(){if(close_){const auto v=state_->action_snapshot();const auto tab=state_->sidebar_visual();close_->SetVisible(!renaming_&&sidebar::close_visible(v.on,tab.valid?tab.tile:spec_.tile,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed));}}
   void ChildChanged(){UpdateWatch();if(changed_)changed_.Run();}
   void UpdateWatch(){if(!watch_)return;bool pending=state_->action_pending();if(close_)if(auto* action=views::AsViewClass<RustActionView>(close_.get()))pending=pending||action->Pending();watch_.Run(this,pending?base::BindRepeating(&RustRowView::SyncViewport,weak_factory_.GetWeakPtr()):base::RepeatingClosure());}
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){
@@ -2464,6 +2535,10 @@ class RustRowView final : public views::View {
   bool PointerInput(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_row_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),PointerInputVisible(),!spec_.drop.is_null()),event,before);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_key(pressed,event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true,Interactive()),event,before);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before){UpdateClose();UpdateWatch();if(result.visual!=before)SchedulePaint();const bool handled=result.handled;if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}if(result.action==sidebar::RowAction::Drop&&spec_.drop){auto drop=spec_.drop;drop.Run(display::Screen::Get()->GetCursorScreenPoint());return handled;}return handled;}
+  raw_ptr<views::View> more_ = nullptr;
+  raw_ptr<views::View> return_to_pin_ = nullptr;
+  std::string return_pin_;
+  bool renaming_ = false;
   Spec spec_;views::Button::PressedCallback callback_;base::RepeatingClosure changed_;Watch watch_;raw_ptr<views::View> close_=nullptr;mutable std::optional<int> measured_;rust::Box<sidebar::ActionControl> state_;SceneWindowObserver window_{base::BindRepeating(&RustRowView::WindowChanged,base::Unretained(this))};base::CallbackListSubscription enabled_changed_{AddEnabledInViewsSubtreeChangedCallback(base::BindRepeating(&RustRowView::EnabledChanged,base::Unretained(this)))};base::WeakPtrFactory<RustRowView> weak_factory_{this};
 };
 BEGIN_METADATA(RustRowView)
@@ -5264,6 +5339,15 @@ void WorkspaceShell::Detach() {
   if (sidebar_root_) sidebar_root_->RemovePreTargetHandler(this);
   import_preview_timer_.Stop();
   if (folder_dialog_) folder_dialog_->CloseNow();
+  if (sidebar_rename_widget_) {
+    sidebar_rename_widget_->RemoveObserver(this);
+    sidebar_rename_editor_ = nullptr;
+    sidebar_rename_widget_.reset();
+    sidebar_rename_delegate_.reset();
+    sidebar_rename_row_.SetView(nullptr);
+    sidebar_rename_workspace_.clear();
+    sidebar_rename_position_pending_ = false;
+  }
   pin_url_editor_ = nullptr; pin_url_dialog_.reset(); pin_url_dialog_delegate_.reset();
   rust_folder_dialog_.reset();rust_folder_dialog_delegate_.reset();
 
@@ -5423,6 +5507,8 @@ void WorkspaceShell::Update(ShellState state) {
   if (swipe_overlay_ && (changed || (state.workspace_id != previous_workspace &&
       (!swipe_committing_ || state.workspace_id != swipe_commit_target_)))) CancelWorkspaceSwipe();
   const bool selected = state.workspace_id != previous_workspace;
+  if (selected || !state.configuration_ready || state.profiles_busy)
+    FinishSidebarRename(false);
   state_ = std::move(state);
   if (!widget_) return;
   // A removal that first asked a page (beforeunload) gets its toast once done.
@@ -5490,7 +5576,7 @@ void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view 
   if(cache.node_graph&&cache.pins==pins&&cache.split_tabs==split_tabs&&cache.split==split&&cache.tabs.size()==tabs.size()&&
       std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index&&a.pin_id==b.pin_id;}))return;
   if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.title);const auto monogram=pin.folder?std::u16string():TabMonogram(pin.url,base::UTF8ToUTF16(pin.title));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id),sidebar_tree_.Revealed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
+  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.display_title());const auto monogram=pin.folder?std::u16string():TabMonogram(pin.url,base::UTF8ToUTF16(pin.title));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id),sidebar_tree_.Revealed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
   // Rust owns the split group node, its pin anchor/parent and member visibility.
   rust::Vec<size_t> members;for(size_t member:split_tabs)members.push_back(member);
   const auto plan=cache.node_graph->graph->reconcile_sidebar_layout(std::move(pin_ids),std::move(tab_ids),
@@ -5895,6 +5981,7 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     if (auto* row=views::AsViewClass<RustRowView>(found->second.get())) {
       const auto icon=state_.favicons.find(tab.url.spec());
       row->SetFavicon(icon==state_.favicons.end()?std::vector<uint32_t>{}:icon->second,false);
+      ConfigureSidebarTabActions(row, tab.pin_id, false);
     }
   }
   for (const auto& pin : state_.pins) if (auto found=cache.pin_buttons.find(pin.id);found!=cache.pin_buttons.end()) {
@@ -5902,6 +5989,13 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       row->SetFolderIcon(PinFolderIcon(pin));
       const auto icon=state_.favicons.find(pin.url.spec());
       row->SetFavicon(icon==state_.favicons.end()?std::vector<uint32_t>{}:icon->second,pin.profile_pin);
+      if (!pin.folder) {
+        const auto page_title = state_.pin_page_titles.find(pin.id);
+        auto title = page_title == state_.pin_page_titles.end()
+            ? base::UTF8ToUTF16(pin.display_title()) : page_title->second;
+        if (row->GetTooltipText() != title) row->SetTitle(std::move(title));
+        ConfigureSidebarTabActions(row, pin.id, pin.profile_pin);
+      }
     }
   }
   if (!same_structure) {
@@ -6137,6 +6231,13 @@ void WorkspaceShell::SyncSceneRowInput(){
   if(!scene_row_input_.empty()){std::vector<base::RepeatingClosure> pending;for(const auto& [row,sync]:scene_row_input_)pending.push_back(sync);for(auto& sync:pending)sync.Run();}
 }
 void WorkspaceShell::ScheduleMetalSidebar() {
+  if (sidebar_rename_widget_ && sidebar_rename_widget_->IsVisible() &&
+      !sidebar_rename_position_pending_) {
+    sidebar_rename_position_pending_ = true;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(&WorkspaceShell::PositionSidebarRename,
+                                  weak_factory_.GetWeakPtr()));
+  }
   SyncSceneRowInput();
   // Layer transforms do not deliver descendant visibility callbacks. Retire a
   // clipped action synchronously, including while a GPU update is already queued.
@@ -6211,7 +6312,9 @@ void WorkspaceShell::UpdateMetalSidebar() {
       if(auto* rust_row=views::AsViewClass<RustRowView>(row)){auto scene=rust_row->SidebarScene(rect,clip);if(scene.valid){
         // The row being dragged stays in place as a faded placeholder.
         if(row==drag_row_.view()){auto& i=scene.item;i.ink=SkColorSetA(i.ink,0x59);i.badge=SkColorSetA(i.badge,0x59);i.fill=SkColorSetA(i.fill,SkColorGetA(i.fill)/3);i.close_visible=false;}
-        items.push_back(std::move(scene.item));continue;}}
+        items.push_back(std::move(scene.item));
+        if (row != drag_row_.view()) rust_row->AppendSidebarActions(items, rect, clip);
+        continue;}}
       const auto& spec = RowSpec(row);
       const bool hovered=RowHovered(row);
       SkColor fill = SK_ColorTRANSPARENT;
@@ -6481,7 +6584,7 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
         if(pair_slot&&pair_slot->pin==entry.index)pair(*pair_slot,entry.depth);
         else if(visible[entry.index])WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,entry.depth);});
       } else {
-        RowRecipe::Spec spec;spec.title=base::UTF8ToUTF16(pin.title);
+        RowRecipe::Spec spec;spec.title=base::UTF8ToUTF16(pin.display_title());
         if(pin.folder){spec.icon=PinFolderIcon(pin);spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}
         else {spec.monogram=TabMonogram(pin.url,base::UTF8ToUTF16(pin.title));spec.monogram_color=kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];}
         row(spec,entry.depth);
@@ -6573,7 +6676,7 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
               else if (pin_visibility[entry.index])
                 WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,indent,34);});
             } else {
-              RowRecipe::Spec spec; spec.title = base::UTF8ToUTF16(pin->title);
+              RowRecipe::Spec spec; spec.title = base::UTF8ToUTF16(pin->display_title());
               if (pin->folder) {
                 spec.icon = PinFolderIcon(*pin);
                 spec.title = (entry.collapsed ? u"▸ " : u"▾ ") + spec.title;
@@ -6748,7 +6851,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
     RowRecipe::Spec spec;
     spec.sidebar_row = true;
     spec.icon = PinFolderIcon(*pin);
-    if(!cache.node_graph){spec.title=base::UTF8ToUTF16(pin->title);if(pin->folder){spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}}
+    if(!cache.node_graph){spec.title=base::UTF8ToUTF16(pin->display_title());if(pin->folder){spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}}
     if(cache.node_graph)spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr());
     if (!pin->folder) {
       spec.drop=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string workspace,std::string id,gfx::Point point){
@@ -6946,6 +7049,8 @@ constexpr int kCopyTabAddress = 208;
 constexpr int kCopyCleanPageAddress = 209;
 constexpr int kCopyCleanLinkAddress = 210;
 constexpr int kCopyCleanTabAddress = 211;
+constexpr int kRenameSidebarTab = 212;
+constexpr int kRestoreSidebarTabTitle = 213;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
@@ -6962,9 +7067,26 @@ constexpr int kColorBase = 40;
 constexpr int kAddTab = 900;
 constexpr int kAddFolder = 901;
 constexpr int kAddSpace = 902;
-constexpr int kAddGitHubFolder = 903;
-constexpr int kConfigureGitHubFolder = 904;
-constexpr int kRefreshGitHubFolder = 905;
+constexpr int kConfigureLiveFolder = 904;
+constexpr int kRefreshLiveFolder = 905;
+constexpr int kLiveFoldersMenu = 906;
+constexpr int kAddLiveFolderBase = 913;
+constexpr int kNewWorkspaceFolder = 916;
+constexpr int kConfigureWorkspaceLiveFolderBase = 917;
+constexpr std::array<std::u16string_view, kLiveFolderProviders.size()>
+    kLiveFolderProviderNames{u"GitHub", u"GitLab", u"Jira"};
+
+std::optional<LiveFolderProvider> LiveFolderCommandProvider(int command, int base) {
+  const auto index = static_cast<size_t>(command - base);
+  if (index >= kLiveFolderProviders.size()) return std::nullopt;
+  return kLiveFolderProviders[index];
+}
+
+bool LiveFoldersEnabled(const ShellState& state, std::string_view id,
+                        LiveFolderProvider provider) {
+  const auto workspace = std::ranges::find(state.workspaces, id, &Workspace::id);
+  return workspace != state.workspaces.end() && workspace->LiveFoldersEnabled(provider);
+}
 // A draft's color and icon live under this key until the space exists.
 constexpr char kDraftWorkspace[] = "\x01draft";
 // Its 16 px line icons (Iconography): a tab, a folder and a space, each with „+”.
@@ -7236,6 +7358,18 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   context_workspace_id_ = std::move(id);
   menu_profiles_ = state_.profiles;
   profile_menu_ = std::make_unique<DesignMenuModel>(this);
+  const auto add_live_folders = [this] {
+    const size_t after_icon = workspace_menu_->GetIndexOfCommandId(kEmojiMenu).value() + 1;
+    workspace_menu_->InsertItemAt(after_icon, kNewWorkspaceFolder, T(u"Nowy folder"));
+    if (!callbacks_.configure_live_folder) return;
+    live_folders_menu_ = std::make_unique<DesignMenuModel>(this);
+    for (size_t index = 0; index < kLiveFolderProviders.size(); ++index) {
+      live_folders_menu_->AddItem(kConfigureWorkspaceLiveFolderBase + index,
+                                  std::u16string(kLiveFolderProviderNames[index]) + u"…");
+    }
+    workspace_menu_->InsertSubMenuAt(after_icon, kLiveFoldersMenu, u"Live Folders",
+                                    live_folders_menu_.get());
+  };
   if (metal_sidebar_) {
     color_menu_ = std::make_unique<DesignMenuModel>(this);
     emoji_menu_ = std::make_unique<DesignMenuModel>(this);
@@ -7254,6 +7388,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
         default: model->AddItem(entry.command, label);
       }
     }
+    add_live_folders();
     return;
   }
   for (size_t i = 0; i < menu_profiles_.size(); ++i)
@@ -7281,6 +7416,7 @@ void WorkspaceShell::BuildWorkspaceMenu(std::string id) {
   workspace_menu_->AddItem(kWorkspaceSettings, T(u"Ustawienia przestrzeni"));
   workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);  // The destructive action last.
   workspace_menu_->AddItem(kRemoveWorkspace, T(u"Usuń przestrzeń"));
+  add_live_folders();
 }
 
 void WorkspaceShell::BuildFolderMenu(std::string parent) {
@@ -7290,10 +7426,14 @@ void WorkspaceShell::BuildFolderMenu(std::string parent) {
   folder_parent_id_ = std::move(parent);
   context_workspace_id_ = state_.workspace_id;
   const auto folder = std::ranges::find(state_.pins, folder_parent_id_, &PinnedItem::id);
-  if (folder != state_.pins.end() && folder->github) {
-    workspace_menu_->AddItem(kConfigureGitHubFolder, T(u"Ustawienia folderu GitHub…"));
-    if (!folder->github->login.empty() || !folder->github->repository.empty())
-      workspace_menu_->AddItem(kRefreshGitHubFolder, T(u"Odśwież PR-y"));
+  if (folder != state_.pins.end() && folder->live_folder) {
+    const auto& config = *folder->live_folder;
+    const bool github = config.provider == LiveFolderProvider::kGitHub;
+    workspace_menu_->AddItem(kConfigureLiveFolder, github ? T(u"Ustawienia folderu GitHub…")
+                                                          : T(u"Ustawienia folderu Live…"));
+    if (!github || !config.account.empty() || !config.filter.empty())
+      workspace_menu_->AddItem(kRefreshLiveFolder, github ? T(u"Odśwież PR-y")
+                                                         : T(u"Odśwież folder"));
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
     workspace_menu_->AddItem(kDeleteFolder, T(u"Usuń folder"));
     return;
@@ -7332,57 +7472,141 @@ void WorkspaceShell::RequestNewFolder(std::string workspace, std::string parent)
   RequestFolderName(std::move(workspace), std::move(parent), {});
 }
 
-void WorkspaceShell::RequestGitHubFolder(std::string workspace, std::string folder) {
+namespace {
+void PlaceLiveFolderDialog(views::Widget* owner, views::Widget* dialog) {
+  auto bounds = dialog->GetWindowBoundsInScreen();
+  bounds.set_origin(owner->GetWindowBoundsInScreen().CenterPoint() -
+                    gfx::Vector2d(bounds.width() / 2, bounds.height() / 2));
+  bounds.AdjustToFit(display::Screen::Get()
+                         ->GetDisplayNearestWindow(owner->GetNativeWindow())
+                         .work_area());
+  dialog->SetBounds(bounds);
+}
+}  // namespace
+
+void WorkspaceShell::ConfigureWorkspaceLiveFolder(std::string workspace,
+                                                  LiveFolderProvider provider) {
+  if (workspace != state_.workspace_id) return;
+  const auto folder = std::ranges::find_if(state_.pins, [&](const PinnedItem& pin) {
+    return pin.live_folder && pin.live_folder->provider == provider;
+  });
+  RequestLiveFolder(std::move(workspace),
+                    folder == state_.pins.end() ? std::string() : folder->id, provider);
+}
+
+void WorkspaceShell::RequestLiveFolder(std::string workspace, std::string folder,
+                                      LiveFolderProvider provider) {
   if (folder_dialog_) { folder_dialog_->Activate(); return; }
   if (state_.workspace_id != workspace || !state_.configuration_ready ||
-      state_.profiles_busy || !callbacks_.configure_github_folder) return;
+      state_.profiles_busy || !callbacks_.configure_live_folder) return;
 
-  GitHubLiveFolder config;
-  std::u16string name = u"Pull Requests";
+  LiveFolderConfig config;
+  config.provider = provider;
+  std::u16string name;
   if (!folder.empty()) {
     const auto item = std::ranges::find(state_.pins, folder, &PinnedItem::id);
-    if (item == state_.pins.end() || !item->github) return;
-    config = *item->github;
+    if (item == state_.pins.end() || !item->live_folder) return;
+    config = *item->live_folder;
+    provider = config.provider;
     name = base::UTF8ToUTF16(item->title);
   }
 
   ui::DialogModel::Builder builder;
   auto* model = builder.model();
-  builder.SetTitle(T(u"Folder GitHub Live"))
-      .AddParagraph(ui::DialogModelLabel(T(u"Podaj login, aby śledzić swoje PR-y i prośby o review, lub repozytorium, aby śledzić wszystkie jego PR-y.")))
-      .AddTextfield(kFolderNameField, T(u"Nazwa folderu"), name)
-      .AddTextfield(kGitHubLoginField, T(u"Login GitHub"), base::UTF8ToUTF16(config.login))
-      .AddTextfield(kGitHubRepositoryField, T(u"Repozytorium (właściciel/nazwa)"), base::UTF8ToUTF16(config.repository))
-      .AddPasswordField(kGitHubTokenField, T(u"Token GitHub (opcjonalny)"),
-                        T(u"Token dostępu GitHub"), T(u"Wpisz token GitHub"))
-      .SetInitiallyFocusedField(kGitHubLoginField);
   const bool has_token = !config.encrypted_token.empty();
-  if (has_token)
-    builder.AddCheckbox(kGitHubRemoveTokenField, ui::DialogModelLabel(T(u"Usuń zapisany token")));
+  switch (provider) {
+    case LiveFolderProvider::kGitHub:
+      builder.SetTitle(T(u"Folder GitHub Live"))
+          .AddParagraph(ui::DialogModelLabel(T(u"Podaj login, aby śledzić swoje PR-y i prośby o review, lub repozytorium, aby śledzić wszystkie jego PR-y.")))
+          .AddTextfield(kFolderNameField, T(u"Nazwa folderu"), name.empty() ? u"Pull Requests" : name)
+          .AddTextfield(kLiveFolderAccountField, T(u"Login GitHub"), base::UTF8ToUTF16(config.account))
+          .AddTextfield(kLiveFolderFilterField, T(u"Repozytorium (właściciel/nazwa)"), base::UTF8ToUTF16(config.filter))
+          .AddPasswordField(kLiveFolderTokenField, T(u"Token GitHub (opcjonalny)"),
+                            T(u"Token dostępu GitHub"), T(u"Wpisz token GitHub"))
+          .SetInitiallyFocusedField(kLiveFolderAccountField);
+      if (has_token)
+        builder.AddCheckbox(kLiveFolderRemoveTokenField, ui::DialogModelLabel(T(u"Usuń zapisany token")));
+      break;
+    case LiveFolderProvider::kGitLab:
+      builder.SetTitle(T(u"Folder GitLab Live"))
+          .AddParagraph(ui::DialogModelLabel(T(u"Folder pokazuje otwarte merge requesty przypisane Ci do review na GitLab.com. Użyj osobistego tokena z uprawnieniem read_api.")))
+          .AddTextfield(kFolderNameField, T(u"Nazwa folderu"), name.empty() ? u"GitLab Reviews" : name)
+          .AddPasswordField(kLiveFolderTokenField, T(u"Token dostępu GitLab"),
+                            T(u"Token dostępu GitLab"), T(u"Wpisz token GitLab"))
+          .SetInitiallyFocusedField(kLiveFolderTokenField);
+      break;
+    case LiveFolderProvider::kJira:
+      builder.SetTitle(T(u"Folder Jira Live"))
+          .AddParagraph(ui::DialogModelLabel(T(u"Podaj domenę Jira Cloud (np. firma.atlassian.net), e-mail konta Atlassian i token API bez zakresów. JQL może zawierać odwołanie do zapisanego filtra, np. filter = 12345.")))
+          .AddTextfield(kFolderNameField, T(u"Nazwa folderu"), name.empty() ? u"Jira Issues" : name)
+          .AddTextfield(kLiveFolderSiteField, T(u"Domena Jira Cloud"), base::UTF8ToUTF16(config.site))
+          .AddTextfield(kLiveFolderAccountField, T(u"E-mail konta Atlassian"), base::UTF8ToUTF16(config.account))
+          .AddTextfield(kLiveFolderFilterField, T(u"Zapytanie JQL"),
+                        config.filter.empty() ? u"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
+                                              : base::UTF8ToUTF16(config.filter))
+          .AddPasswordField(kLiveFolderTokenField, T(u"Token API Atlassian"),
+                            T(u"Token API Atlassian"), T(u"Wpisz token API Atlassian"))
+          .SetInitiallyFocusedField(kLiveFolderSiteField);
+      break;
+  }
+  if (has_token && provider != LiveFolderProvider::kGitHub) {
+    builder.AddParagraph(ui::DialogModelLabel(
+        T(u"Zostaw pole tokena puste, aby zachować zapisany token.")));
+  }
+  if (!folder.empty()) {
+    builder.AddCheckbox(kLiveFolderEnabledField,
+        ui::DialogModelLabel(T(u"Odświeżaj foldery tego źródła w tej przestrzeni")),
+        ui::DialogModelCheckbox::Params().SetIsChecked(
+            LiveFoldersEnabled(state_, workspace, provider)));
+  }
+  builder.AddParagraph(ui::DialogModelLabel(
+      T(u"Nie można zapisać folderu. Sprawdź wymagane pola i token API.")),
+      {}, kLiveFolderConfigError);
+  model->SetVisible(kLiveFolderConfigError, false);
   auto dialog = builder
       .AddOkButton(base::BindRepeating(
           [](base::WeakPtr<WorkspaceShell> shell, ui::DialogModel* model,
-             std::string workspace, std::string folder, bool has_token) {
+             std::string workspace, std::string folder, LiveFolderProvider provider, bool has_token) {
             if (!shell) return true;
             auto read = [&](ui::ElementIdentifier id) {
               return base::UTF16ToUTF8(base::TrimWhitespace(
                   model->GetTextfieldByUniqueId(id)->text(), base::TRIM_ALL));
             };
-            GitHubLiveFolder config{read(kGitHubLoginField), read(kGitHubRepositoryField), ""};
+            LiveFolderConfig config;
+            config.provider = provider;
+            if (provider != LiveFolderProvider::kGitLab) {
+              config.account = read(kLiveFolderAccountField);
+              config.filter = read(kLiveFolderFilterField);
+            }
+            if (provider == LiveFolderProvider::kJira) {
+              config.site = base::ToLowerASCII(read(kLiveFolderSiteField));
+              const GURL site(config.site);
+              if (site.SchemeIs("https") && !site.has_username() && !site.has_password() &&
+                  !site.has_port() && site.path() == "/" && !site.has_query() && !site.has_ref())
+                config.site = site.host();
+            }
             auto token = base::UTF16ToUTF8(base::TrimWhitespace(
-                model->GetPasswordFieldByUniqueId(kGitHubTokenField)->text(), base::TRIM_ALL));
-            const bool remove_token = has_token &&
-                model->GetCheckboxByUniqueId(kGitHubRemoveTokenField)->is_checked();
-            const bool ok = shell->callbacks_.configure_github_folder.Run(
-                workspace, folder, read(kFolderNameField), std::move(config), std::move(token), remove_token);
+                model->GetPasswordFieldByUniqueId(kLiveFolderTokenField)->text(), base::TRIM_ALL));
+            const bool remove_token = provider == LiveFolderProvider::kGitHub && has_token &&
+                model->GetCheckboxByUniqueId(kLiveFolderRemoveTokenField)->is_checked();
+            const bool ok = shell->callbacks_.configure_live_folder.Run(
+                workspace, folder, read(kFolderNameField), std::move(config), std::move(token), remove_token,
+                folder.empty() || model->GetCheckboxByUniqueId(kLiveFolderEnabledField)->is_checked());
             if (ok) shell->folder_dialog_.reset();
+            else if (shell->folder_dialog_) {
+              model->SetVisible(kLiveFolderConfigError, true);
+              auto* prompt = shell->folder_dialog_.get();
+              auto* host = static_cast<views::BubbleDialogModelHost*>(prompt->widget_delegate());
+              host->SizeToContents();
+              PlaceLiveFolderDialog(shell->widget_, prompt);
+            }
             return ok;
-          }, weak_factory_.GetWeakPtr(), base::Unretained(model), workspace, folder, has_token),
+          }, weak_factory_.GetWeakPtr(), base::Unretained(model), workspace, folder, provider, has_token),
           ui::DialogModel::Button::Params().SetLabel(T(u"Zapisz")))
       .AddCancelButton(base::DoNothing(), ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")))
       .Build();
   auto* prompt = views::DialogDelegate::CreateDialogWidget(
-      views::BubbleDialogModelHost::CreateModal(std::move(dialog), ui::mojom::ModalType::kWindow),
+      views::BubbleDialogModelHost::CreateModal(std::move(dialog), ui::mojom::ModalType::kWindow, /*autosize=*/false),
       widget_->GetNativeWindow(), widget_->GetNativeView());
   prompt->SetColorModeOverride(widget_->color_mode_override());
 #if BUILDFLAG(IS_MAC)
@@ -7390,6 +7614,7 @@ void WorkspaceShell::RequestGitHubFolder(std::string workspace, std::string fold
 #endif
   PreparePanelText(prompt->GetRootView());
   folder_dialog_ = prompt->GetWeakPtr();
+  PlaceLiveFolderDialog(widget_, prompt);
   prompt->Show();
 }
 void WorkspaceShell::RequestEditPinnedUrl(std::string workspace, std::string pin) {
@@ -7597,15 +7822,17 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
     ShowTabMenu(point, source_type);
     return;
   }
+  std::string workspace;
   for (const auto& [id, button] : workspace_buttons_) {
-    if (button != source) continue;
-    BuildWorkspaceMenu(id);
-    workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
-    workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type, gfx::NativeView(), ZitterMenuCorners());
-    return;
+    if (button == source) {
+      workspace = id;
+      break;
+    }
   }
-  if (source == sidebar_root_ || source == tab_list_ || sidebar_root_->Contains(source)) {
-    BuildFolderMenu();
+  if (workspace.empty() && (source == sidebar_root_ || sidebar_root_->Contains(source)))
+    workspace = state_.workspace_id;
+  if (!workspace.empty()) {
+    BuildWorkspaceMenu(std::move(workspace));
     workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
     workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type, gfx::NativeView(), ZitterMenuCorners());
   }
@@ -7634,6 +7861,150 @@ views::View* WorkspaceShell::split_pane_button(size_t pane, bool close) const {
   return close ? bar->close() : bar->menu();
 }
 
+void WorkspaceShell::ConfigureSidebarTabActions(views::View* view,
+                                                const std::string& pin_id,
+                                                bool favorite) {
+  auto* row = views::AsViewClass<RustRowView>(view);
+  if (!row) return;
+  if (!favorite && callbacks_.rename_sidebar_tab && !row->HasTabMenuAction()) {
+    row->SetTabMenuAction(base::BindRepeating(
+        [](base::WeakPtr<WorkspaceShell> shell, base::WeakPtr<RustRowView> row,
+           const ui::Event&) {
+          if (!shell || !row || !SceneIsVisible(row.get())) return;
+          shell->ShowContextMenuForViewImpl(row.get(),
+              row->GetBoundsInScreen().bottom_left(), ui::mojom::MenuSourceType::kMouse);
+        }, weak_factory_.GetWeakPtr(), row->GetWeakPtr()));
+  }
+  if (!state_.departed_pins.contains(pin_id) || !callbacks_.reset_pinned_url) {
+    row->SetPinReturnAction({}, {}, {});
+    return;
+  }
+  const auto pin = std::ranges::find(state_.pins, pin_id, &PinnedItem::id);
+  if (pin == state_.pins.end()) return;
+  row->SetPinReturnAction(pin_id, base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell, base::WeakPtr<RustRowView> row,
+         std::string workspace, std::string pin, const ui::Event&) {
+        if (shell && row && SceneIsVisible(row.get()) &&
+            shell->state_.workspace_id == workspace && shell->state_.departed_pins.contains(pin))
+          shell->callbacks_.reset_pinned_url.Run(pin);
+      }, weak_factory_.GetWeakPtr(), row->GetWeakPtr(), state_.workspace_id, pin_id),
+      TF(u"Wróć do przypiętego adresu: {}", {base::UTF8ToUTF16(pin->url.spec())}));
+}
+
+std::u16string WorkspaceShell::SidebarRenameTitle(const ResolvedRowTarget& target) const {
+  if (target.tab) {
+    const auto tab = std::ranges::find(state_.tabs, *target.tab, &ShellTab::index);
+    if (tab != state_.tabs.end()) return tab->title;
+  }
+  if (const auto live_title = state_.pin_page_titles.find(target.pin);
+      live_title != state_.pin_page_titles.end()) return live_title->second;
+  const auto pin = std::ranges::find(state_.pins, target.pin, &PinnedItem::id);
+  return pin == state_.pins.end() ? std::u16string() : base::UTF8ToUTF16(pin->display_title());
+}
+
+bool WorkspaceShell::SidebarHasCustomTitle(const ResolvedRowTarget& target) const {
+  if (target.tab) {
+    const auto tab = std::ranges::find(state_.tabs, *target.tab, &ShellTab::index);
+    return tab != state_.tabs.end() && tab->custom_title;
+  }
+  const auto pin = std::ranges::find(state_.pins, target.pin, &PinnedItem::id);
+  return pin != state_.pins.end() && !pin->custom_title.empty();
+}
+
+void WorkspaceShell::BeginSidebarRename(std::string workspace,
+                                        std::array<uint64_t, 2> identity,
+                                        std::string pin) {
+  const auto target = ResolveSidebarTarget(workspace, identity, pin);
+  if (!target.valid || !callbacks_.rename_sidebar_tab) return;
+  auto* row = views::AsViewClass<RustRowView>(
+      target.tab ? tab_button(*target.tab) : pin_button(target.pin));
+  if (!row) return;
+
+  FinishSidebarRename(false);
+  if (!sidebar_visible()) ShowSidebar();
+  row->ScrollViewToVisible();
+  sidebar_widget_->LayoutRootViewIfNecessary();
+
+  // The sidebar deliberately cannot activate. The inline field uses an
+  // activatable panel positioned over the title, so it can receive native IME.
+  if (!sidebar_rename_widget_) {
+    auto editor = std::make_unique<views::View>();
+    sidebar_rename_editor_ = AddEditor(editor.get());
+    sidebar_rename_editor_->GetViewAccessibility().SetName(T(u"Nazwa karty"));
+    sidebar_rename_editor_->view()->SetPreferredSize(gfx::Size(100, 26));
+    sidebar_rename_editor_->SetPresentation(13, 6, true, std::nullopt);
+    sidebar_rename_editor_->SetCallbacks({}, base::BindRepeating(
+        [](base::WeakPtr<WorkspaceShell> shell, const ui::KeyEvent& event) {
+          if (!shell || shell->sidebar_rename_editor_->IsIMEComposing()) return false;
+          if (event.key_code() != ui::VKEY_ESCAPE && event.key_code() != ui::VKEY_RETURN)
+            return false;
+          shell->FinishSidebarRename(event.key_code() == ui::VKEY_RETURN);
+          return true;
+        }, weak_factory_.GetWeakPtr()));
+    auto* save = editor->AddChildView(CreateSceneAction(base::BindRepeating(
+        &WorkspaceShell::FinishSidebarRename, weak_factory_.GetWeakPtr(), true),
+        T(u"Zapisz nazwę"), ControlGlyph::kConfirmTabName, nullptr, {}, {}));
+    save->SetPreferredSize(gfx::Size(26, 26));
+    SetSidebarPanelLayout(editor.get(), false, gfx::Insets(), 2,
+                          sidebar_rename_editor_->view(), true);
+    CreatePanelWidget(std::move(editor), sidebar_rename_delegate_,
+                      sidebar_rename_widget_, T(u"Zmień nazwę"));
+    sidebar_rename_widget_->GetFocusManager()->UnregisterAccelerator(
+        ui::Accelerator(ui::VKEY_ESCAPE, 0), accelerator_target_);
+  }
+  sidebar_rename_widget_->SetColorModeOverride(widget_->color_mode_override());
+  sidebar_rename_widget_->GetContentsView()->SetBackground(
+      views::CreateSolidBackground(Tone(row, kCard)));
+  sidebar_rename_row_.SetView(row);
+  sidebar_rename_workspace_ = std::move(workspace);
+  sidebar_rename_identity_ = identity;
+  sidebar_rename_pin_ = std::move(pin);
+  const auto title = SidebarRenameTitle(target);
+  sidebar_rename_editor_->SetText(title);
+  row->SetRenaming(true);
+  PositionSidebarRename();
+  if (!sidebar_rename_row_.view()) return;
+  sidebar_rename_widget_->Show();
+  sidebar_rename_widget_->StackAboveWidget(sidebar_widget_.get());
+  sidebar_rename_widget_->Activate();
+  sidebar_rename_editor_->RequestFocus();
+  sidebar_rename_editor_->SelectRange(gfx::Range(0, title.size()));
+}
+
+void WorkspaceShell::PositionSidebarRename() {
+  sidebar_rename_position_pending_ = false;
+  if (sidebar_rename_workspace_.empty()) return;
+  auto* row = sidebar_rename_row_.view();
+  if (!SceneIsVisible(row) || row->GetVisibleBounds().height() < row->height()) {
+    FinishSidebarRename(false);
+    return;
+  }
+  const auto rect = row->GetBoundsInScreen();
+  const auto viewport = tab_list_->parent()->GetBoundsInScreen();
+  const int width = std::min(std::max(rect.width() - 40, 124), viewport.width());
+  const int left = base::i18n::IsRTL() ? rect.right() - 36 - width : rect.x() + 36;
+  const gfx::Rect bounds(std::clamp(left, viewport.x(), viewport.right() - width),
+                         rect.CenterPoint().y() - 13, width, 26);
+  if (bounds != sidebar_rename_widget_->GetWindowBoundsInScreen())
+    sidebar_rename_widget_->SetBounds(bounds);
+}
+
+void WorkspaceShell::FinishSidebarRename(bool save) {
+  if (sidebar_rename_workspace_.empty()) return;
+  if (save && sidebar_rename_editor_->IsIMEComposing()) return;
+  const auto target = ResolveSidebarTarget(sidebar_rename_workspace_,
+      sidebar_rename_identity_, sidebar_rename_pin_);
+  auto title = save ? std::u16string(sidebar_rename_editor_->GetText()) : std::u16string();
+  sidebar_rename_workspace_.clear();
+  if (auto* row = views::AsViewClass<RustRowView>(sidebar_rename_row_.view()))
+    row->SetRenaming(false);
+  sidebar_rename_row_.SetView(nullptr);
+  sidebar_rename_widget_->Hide();
+  ScheduleMetalSidebar();
+  if (save && target.valid && callbacks_.rename_sidebar_tab)
+    callbacks_.rename_sidebar_tab.Run(target.tab, target.pin, std::move(title));
+}
+
 void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string target_pin) {
   context_tab_=target_tab;context_pin_=std::move(target_pin);context_tab_identity_={};
   if(target_tab)for(const auto& row:state_.tabs)if(row.index==*target_tab){context_tab_identity_=row.identity;break;}
@@ -7644,9 +8015,15 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     if (!context_pin_.empty()) for (const auto& pin : state_.pins) if (pin.id == context_pin_) url = pin.url;
     context_url_ = url; link_source_workspace_ = state_.workspace_id;
     folder_parent_id_.clear();context_workspace_id_=state_.workspace_id;
+    const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
+    if (target.valid && callbacks_.rename_sidebar_tab) {
+      workspace_menu_->AddItem(kRenameSidebarTab, T(u"Zmień nazwę"));
+      if (SidebarHasCustomTitle(target))
+        workspace_menu_->AddItem(kRestoreSidebarTabTitle, T(u"Przywróć tytuł strony"));
+      workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    }
     workspace_menu_->AddItemWithIcon(kCopyTabAddress, T(u"Kopiuj adres karty"),
                                      MenuIcon(vector_icons::kLinkIcon));
-    const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
     if (target.valid && callbacks_.tab_menu_url &&
         CleanUrlForCopy(callbacks_.tab_menu_url.Run(target.tab, target.pin))) {
       workspace_menu_->AddItemWithIcon(kCopyCleanTabAddress, T(u"Kopiuj bez trackerów"),
@@ -7761,12 +8138,32 @@ std::string WorkspaceShell::ContextPinId() const {
   return std::any_of(state_.pins.begin(), state_.pins.end(), [&](const auto& item) { return item.id == pin && !item.folder; }) ? pin : std::string();
 }
 bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
-  if (command_id >= kAddGitHubFolder && command_id <= kRefreshGitHubFolder)
-    return state_.configuration_ready && !state_.profiles_busy && callbacks_.configure_github_folder;
+  if (LiveFolderCommandProvider(command_id, kAddLiveFolderBase))
+    return state_.configuration_ready && !state_.profiles_busy && callbacks_.configure_live_folder;
+  if (LiveFolderCommandProvider(command_id, kConfigureWorkspaceLiveFolderBase))
+    return context_workspace_id_ == state_.workspace_id &&
+           state_.configuration_ready && !state_.profiles_busy && callbacks_.configure_live_folder;
+  if (command_id == kNewWorkspaceFolder)
+    return state_.configuration_ready && !state_.profiles_busy && callbacks_.create_folder &&
+           std::ranges::find(state_.workspaces, context_workspace_id_, &Workspace::id) !=
+               state_.workspaces.end();
+  if (command_id == kConfigureLiveFolder || command_id == kRefreshLiveFolder) {
+    const auto folder = std::ranges::find(state_.pins, folder_parent_id_, &PinnedItem::id);
+    return state_.configuration_ready && !state_.profiles_busy && callbacks_.configure_live_folder &&
+           folder != state_.pins.end() && folder->live_folder &&
+           (command_id == kConfigureLiveFolder ||
+            LiveFoldersEnabled(state_, context_workspace_id_, folder->live_folder->provider));
+  }
   if (command_id == kCopyPageAddress) return IsWorkspaceTabUrl(page_menu_url_);
   if (command_id == kCopyLinkAddress) return context_url_.SchemeIsHTTPOrHTTPS();
   if (command_id == kCopyCleanPageAddress) return CleanUrlForCopy(page_menu_url_).has_value();
   if (command_id == kCopyCleanLinkAddress) return CleanUrlForCopy(context_url_).has_value();
+  if (command_id == kRenameSidebarTab || command_id == kRestoreSidebarTabTitle) {
+    const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
+    return callbacks_.rename_sidebar_tab && state_.configuration_ready &&
+        !state_.profiles_busy && target.valid &&
+        (command_id == kRenameSidebarTab || SidebarHasCustomTitle(target));
+  }
   if (command_id == kCopyTabAddress || command_id == kCopyCleanTabAddress) {
     const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
     if (!target.valid || !callbacks_.tab_menu_url) return false;
@@ -8302,16 +8699,35 @@ bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator*
   return false;
 }
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
-  if (command_id >= kAddGitHubFolder && command_id <= kRefreshGitHubFolder) {
+  if (command_id == kNewWorkspaceFolder) {
+    if (IsCommandIdEnabled(command_id))
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(&WorkspaceShell::RequestNewFolder,
+              weak_factory_.GetWeakPtr(), context_workspace_id_, std::string()));
+    return;
+  }
+  if (auto provider = LiveFolderCommandProvider(command_id, kConfigureWorkspaceLiveFolderBase)) {
+    if (IsCommandIdEnabled(command_id))
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(&WorkspaceShell::ConfigureWorkspaceLiveFolder,
+              weak_factory_.GetWeakPtr(), context_workspace_id_, *provider));
+    return;
+  }
+  const auto new_live_folder = LiveFolderCommandProvider(command_id, kAddLiveFolderBase);
+  if (new_live_folder || command_id == kConfigureLiveFolder || command_id == kRefreshLiveFolder) {
     if (!IsCommandIdEnabled(command_id)) return;
-    const bool create = command_id == kAddGitHubFolder;
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(
-        [](base::WeakPtr<WorkspaceShell> shell, int command, std::string workspace, std::string folder) {
+        [](base::WeakPtr<WorkspaceShell> shell, int command, std::string workspace,
+           std::string folder, LiveFolderProvider provider) {
           if (!shell || shell->state_.workspace_id != workspace) return;
-          if (command == kRefreshGitHubFolder) shell->callbacks_.refresh_github_folder.Run(workspace, folder);
-          else shell->RequestGitHubFolder(std::move(workspace), std::move(folder));
-        }, weak_factory_.GetWeakPtr(), command_id, create ? state_.workspace_id : context_workspace_id_,
-        create ? std::string() : folder_parent_id_));
+          if (command == kRefreshLiveFolder)
+            shell->callbacks_.refresh_live_folder.Run(workspace, folder);
+          else
+            shell->RequestLiveFolder(std::move(workspace), std::move(folder), provider);
+        }, weak_factory_.GetWeakPtr(), command_id,
+        new_live_folder ? state_.workspace_id : context_workspace_id_,
+        new_live_folder ? std::string() : folder_parent_id_,
+        new_live_folder.value_or(LiveFolderProvider::kGitHub)));
     return;
   }
   if (command_id == kPageNavigation) return;
@@ -8352,6 +8768,23 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
               .WriteText(base::UTF8ToUTF16(clean ? *clean : url.spec()));
         }, weak_factory_.GetWeakPtr(), context_workspace_id_, context_tab_identity_,
         context_pin_, command_id == kCopyCleanTabAddress));
+    return;
+  }
+  if (command_id == kRenameSidebarTab || command_id == kRestoreSidebarTabTitle) {
+    if (!IsCommandIdEnabled(command_id)) return;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool rename,
+                          std::string workspace, std::array<uint64_t, 2> identity,
+                          std::string pin) {
+          if (!shell || !shell->state_.configuration_ready || shell->state_.profiles_busy) return;
+          if (rename) {
+            shell->BeginSidebarRename(std::move(workspace), identity, std::move(pin));
+          } else {
+            const auto target = shell->ResolveSidebarTarget(workspace, identity, pin);
+            if (target.valid) shell->callbacks_.rename_sidebar_tab.Run(target.tab, target.pin, {});
+          }
+        }, weak_factory_.GetWeakPtr(), command_id == kRenameSidebarTab,
+        context_workspace_id_, context_tab_identity_, context_pin_));
     return;
   }
   if (command_id == kDuplicateTab || command_id == kPinProfileTab ||
@@ -11671,13 +12104,15 @@ void WorkspaceShell::ShowSidebar() {
   if (!pinned_) sidebar_hover_timer_.Start(FROM_HERE, base::Milliseconds(40), this, &WorkspaceShell::PollSidebar);
 }
 void WorkspaceShell::HideSidebar() {
+  FinishSidebarRename(false);
   sidebar_hover_timer_.Stop();
   sidebar_left_at_ = base::TimeTicks();
   AnimateSidebar(false);
 }
 void WorkspaceShell::PollSidebar() {
   if (!sidebar_visible() || pinned_ || content_fullscreen_) { sidebar_hover_timer_.Stop(); return; }
-  const bool blocked = sidebar_resizing_ || drag_row_.view() || settings_visible() || address_visible() ||
+  const bool blocked = (sidebar_rename_widget_ && sidebar_rename_widget_->IsVisible()) ||
+      sidebar_resizing_ || drag_row_.view() || settings_visible() || address_visible() ||
       (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) ||
       (workspace_menu_runner_ && workspace_menu_runner_->IsRunning()) ||
@@ -11822,8 +12257,14 @@ void WorkspaceShell::ShowAddMenu() {
   const auto icon=[](const gfx::VectorIcon& vector){return ui::ImageModel::FromVectorIcon(vector,ui::kColorMenuIcon,16);};
   add_menu_->AddItemWithIcon(kAddTab, T(u"Nowa karta"), icon(kAddTabIcon));
   add_menu_->AddItemWithIcon(kAddFolder, T(u"Nowy folder"), icon(kAddFolderIcon));
-  if (callbacks_.configure_github_folder)
-    add_menu_->AddItemWithIcon(kAddGitHubFolder, T(u"Folder GitHub Live…"), icon(kAddFolderIcon));
+  if (callbacks_.configure_live_folder) {
+    const std::array labels = {T(u"Folder GitHub Live…"), T(u"Folder GitLab Live…"),
+                               T(u"Folder Jira Live…")};
+    for (auto provider : kLiveFolderProviders) {
+      const auto index = static_cast<size_t>(provider);
+      add_menu_->AddItemWithIcon(kAddLiveFolderBase + index, labels[index], icon(kAddFolderIcon));
+    }
+  }
   add_menu_->AddItemWithIcon(kAddSpace, T(u"Nowa przestrzeń…"), icon(kAddSpaceIcon));
   add_menu_runner_ = std::make_unique<views::MenuRunner>(add_menu_.get(), kZitterMenuRun);
   add_menu_runner_->RunMenuAt(sidebar_widget_.get(), nullptr, add_button_->GetBoundsInScreen(), views::MenuAnchorPosition::kTopRight,
@@ -11932,12 +12373,14 @@ bool WorkspaceShell::app_menu_running_for_testing() const { return app_menu_runn
   } else ShowSidebar();
 }
 bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
+  const bool renaming = !sidebar_rename_workspace_.empty();
+  FinishSidebarRename(false);
   if (!keep_sidebar) CancelWorkspaceSwipe();
   const bool visible = address_visible() || settings_visible() ||
       (profiles_widget_ && profiles_widget_->IsVisible()) || import_visible() ||
       (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible()) ||
-      find_visible() || print_visible();
+      find_visible() || print_visible() || renaming;
   HideFind();
   HidePrint();
   CloseSitePanel();
@@ -15057,10 +15500,19 @@ void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rec
   if(workspace_switch_overlay_&&(widget==widget_||widget==sidebar_widget_.get()))StopWorkspaceAnimation();
   if(widget==address_widget_.get())ScheduleMetalPalette();
   if (widget == widget_) {PositionPanels();ScheduleMetalHeader();ScheduleMetalSplit();}
+  if (widget == sidebar_widget_.get() && !sidebar_rename_workspace_.empty())
+    ScheduleMetalSidebar();
 }
 void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool active) {
   if (widget == address_widget_.get()) VLOG(1) << "Palette activation=" << active;
   if (active) return;
+  if (widget == sidebar_rename_widget_.get()) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+          if (shell && shell->sidebar_rename_widget_ &&
+              !shell->sidebar_rename_widget_->IsActive()) shell->FinishSidebarRename(false);
+        }, weak_factory_.GetWeakPtr()));
+  }
   if (widget == address_widget_.get()) {
     // Native activation notifications can trail a close/reopen or stacking
     // change. Decide after that transition, using the current focus state.
@@ -15080,6 +15532,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
   if (widget == address_widget_.get()) VLOG(1) << "Palette visibility=" << visible;
   if (widget == sidebar_widget_.get() && !visible) {
+    FinishSidebarRename(false);
     sidebar_hover_timer_.Stop(); sidebar_slide_timer_.Stop();
     sidebar_slide_value_ = 0; sidebar_slide_show_ = false;
     sidebar_hover_armed_ = false;

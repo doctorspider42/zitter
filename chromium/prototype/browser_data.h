@@ -8,13 +8,16 @@
 #include <vector>
 
 #include "zitter/core/browser_state.h"
+#include "zitter/core/workspace_model.h"
 #include "url/gurl.h"
 #include "base/files/file_path.h"
+#include "base/feature_list.h"
 #include "base/time/time.h"
 
 class Profile;
 
 namespace zitter::prototype {
+BASE_DECLARE_FEATURE(kZitterLiveFolders);
 std::u16string BrowsingProfileName(Profile* profile);
 using ::zitter::BrowserPreference;
 using ::zitter::BrowserPreferences;
@@ -72,12 +75,17 @@ using ::zitter::LinkRule;
 
 using ::zitter::ProfileInfo;
 
-struct GitHubLiveFolder {
-  std::string login;
-  std::string repository;
+struct LiveFolderConfig {
+  std::string account;
+  std::string filter;
   std::string encrypted_token;
-  bool operator==(const GitHubLiveFolder&) const = default;
+  LiveFolderProvider provider = LiveFolderProvider::kGitHub;
+  std::string site = {};
+  bool operator==(const LiveFolderConfig&) const = default;
 };
+
+inline constexpr std::array<std::string_view, kLiveFolderProviders.size()>
+    kLiveFolderProviderKeys{"github", "gitlab", "jira"};
 
 struct PinnedItem {
   std::string id;
@@ -86,7 +94,11 @@ struct PinnedItem {
   GURL url;
   bool folder = false;
   bool profile_pin = false;
-  std::optional<GitHubLiveFolder> github = std::nullopt;
+  std::optional<LiveFolderConfig> live_folder = std::nullopt;
+  std::string custom_title = {};
+  const std::string& display_title() const {
+    return custom_title.empty() ? title : custom_title;
+  }
   bool operator==(const PinnedItem&) const = default;
 };
 

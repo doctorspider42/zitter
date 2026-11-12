@@ -71,7 +71,7 @@ void VisitItem(const std::string& id, const std::string& parent, const Dictionar
     if (!favorite) {
       pins.push_back({id, parent, Text(item, "title", data->contains("splitView") ? "Split View" : "Folder"), GURL(), true});
       if (data->FindDictByDottedPath("list.automaticLiveFolderData.dataSource.github"))
-        pins.back().github.emplace();
+        pins.back().live_folder.emplace();
       child_parent = id;
       ++result.folder_count;
     }

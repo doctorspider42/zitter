@@ -134,11 +134,11 @@ TEST(ArcImporterTest, ImportsGitHubLiveFolderAndItsCachedPullRequests) {
   const auto& pins = result.spaces[0].pins;
   ASSERT_EQ(pins.size(), 3u);
   EXPECT_EQ(pins[0].title, "Review");
-  ASSERT_TRUE(pins[0].github);
-  EXPECT_TRUE(pins[0].github->login.empty());
+  ASSERT_TRUE(pins[0].live_folder);
+  EXPECT_TRUE(pins[0].live_folder->account.empty());
   EXPECT_EQ(pins[1].parent_id, pins[0].id);
   EXPECT_EQ(pins[1].url, GURL("https://github.com/owner/repo/pull/17"));
-  EXPECT_FALSE(pins[2].github);
+  EXPECT_FALSE(pins[2].live_folder);
 }
 
 // Reads this computer's Arc, if any, and prints only counts: run by hand with

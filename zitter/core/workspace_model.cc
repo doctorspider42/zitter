@@ -34,6 +34,16 @@ bool WorkspaceModel::Update(std::string_view id, std::string name, std::string p
   return false;
 }
 
+bool WorkspaceModel::SetLiveFoldersEnabled(std::string_view id, LiveFolderProvider provider,
+                                          bool enabled) {
+  for (auto& workspace : workspaces_) {
+    if (workspace.id != id) continue;
+    workspace.live_folders_enabled[static_cast<std::size_t>(provider)] = enabled;
+    return true;
+  }
+  return false;
+}
+
 const Workspace* WorkspaceModel::Find(std::string_view id) const {
   for (const auto& workspace : workspaces_) {
     if (workspace.id == id) {

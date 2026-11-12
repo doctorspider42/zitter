@@ -38,6 +38,8 @@ base::DictValue WorkspaceWindow::CaptureHost(const Host& host) const {
     base::DictValue tab;
     tab.Set("url", IsWorkspaceTabUrl(url) ? url.spec() : "");
     tab.Set("title", base::UTF16ToUTF8(TabTitle(host, view)));
+    if (!CustomTabTitle(view).empty())
+      tab.Set("custom_title", base::UTF16ToUTF8(CustomTabTitle(view)));
     for (const auto& [id, pinned] : host.pin_tabs) if (pinned == view) tab.Set("pin", id);
     tabs.Append(std::move(tab));
   }
@@ -70,6 +72,8 @@ bool WorkspaceWindow::RestoreHost(Host& host, const base::DictValue& entry) {
     if (!url.empty()) host.deferred_urls[view] = GURL(url);
     if (const auto* title = tab.FindString("title"); title && title->size() <= 32768)
       host.deferred_titles[view] = base::UTF8ToUTF16(*title);
+    if (const auto* title = tab.FindString("custom_title"); title && title->size() <= 32768)
+      SetCustomTabTitle(view, base::UTF8ToUTF16(*title));
     if (const auto* pin = tab.FindString("pin")) {
       const auto& pins = pinned_items(host.workspace_id);
       if (std::any_of(pins.begin(), pins.end(), [&](const auto& item) { return item.id == *pin && !item.folder; })) host.pin_tabs[*pin] = view;
