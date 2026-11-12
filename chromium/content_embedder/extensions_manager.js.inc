@@ -3,6 +3,7 @@ R"MANAGER(
 
 const $ = id => document.getElementById(id);
 const glyphs = {
+  link: 'M10 13a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-2 2m2 6a4 4 0 0 0-6 0l-4 4a4 4 0 0 0 6 6l2-2',
   puzzle: 'M4 5h5a3 3 0 1 1 6 0h5v5a3 3 0 1 0 0 6v4H4v-5a3 3 0 1 0 0-6z',
   keyboard: 'M3 5h18v14H3zM7 9h.1m4 0h.1m4 0h.1m3 0h.1M7 13h.1m4 0h.1m4 0h.1m3 0h.1M8 16h8',
   store: 'M4 8h16l-1 12H5zM8 8V7a4 4 0 0 1 8 0v1',
@@ -99,8 +100,7 @@ function toggle(label, checked, enabled, fn) {
   return control;
 }
 
-function identity(item, heading = 'strong') {
-  const row = element('div', 'identity');
+function extensionIcon(item) {
   const tile = element('span', 'tile');
   if (item.icon) {
     const img = element('img');
@@ -110,12 +110,17 @@ function identity(item, heading = 'strong') {
   } else {
     tile.append(icon('puzzle'));
   }
+  return tile;
+}
+
+function identity(item, heading = 'strong') {
+  const row = element('div', 'identity');
   const copy = element('div');
   const showVersion = heading === 'h1' || $('developer').checked;
   copy.append(element(heading, '', item.name),
       element('p', 'muted', [item.description, showVersion ? item.version : '']
           .filter(Boolean).join(' · ')));
-  row.append(tile, copy);
+  row.append(extensionIcon(item), copy);
   return row;
 }
 
@@ -157,15 +162,21 @@ function renderList() {
       (item.name + ' ' + item.description).toLocaleLowerCase().includes(query));
   $('items').replaceChildren();
   for (const item of items) {
-    const row = element('article', 'row');
-    const actions = element('div', 'actions');
-    if (item.canPin) actions.append(pin(item));
+    const card = element('article', 'extension-card');
+    const top = element('div', 'card-top');
+    top.append(extensionIcon(item));
+    if (item.canPin) top.append(pin(item));
+    const copy = element('div', 'card-copy');
+    copy.append(element('h3', '', item.name),
+        element('p', 'muted', [item.description, $('developer').checked ? item.version : '']
+            .filter(Boolean).join(' · ')));
+    const actions = element('div', 'card-actions');
     actions.append(action(t('Szczegóły', 'Details'), () => {
       selected = item.id;
       navigate('detail');
-    }), remove(item, false), enable(item));
-    row.append(identity(item), actions);
-    $('items').append(row);
+    }, 'arrow'), remove(item, false));
+    card.append(top, copy, enable(item), actions);
+    $('items').append(card);
   }
   if (!items.length) {
     const text = query ? t('Brak wyników.', 'No results.')
@@ -271,6 +282,7 @@ function render() {
   const title = t('Rozszerzenia', 'Extensions');
   document.title = title;
   $('heading').textContent = title;
+  $('installed-title').textContent = t('Zainstalowane', 'Installed');
   $('profile').textContent = state.profile ? t('Profil ', 'Profile ') + state.profile : '';
   const shortcuts = t('Skróty klawiszowe', 'Keyboard shortcuts');
   $('shortcuts-title').textContent = shortcuts;
@@ -317,6 +329,7 @@ for (const button of document.querySelectorAll('nav [data-view]'))
   button.addEventListener('click', () => navigate(button.dataset.view));
 $('back').addEventListener('click', () => navigate('list'));
 $('search').parentElement.prepend(icon('search'));
+$('store-link').parentElement.prepend(icon('link'));
 $('search').addEventListener('input', renderList);
 $('developer').addEventListener('change', render);
 $('install').addEventListener('click', () => request('install'));

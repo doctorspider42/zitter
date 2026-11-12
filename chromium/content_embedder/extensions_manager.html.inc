@@ -16,13 +16,21 @@ R"MANAGER(<!doctype html>
   </nav>
   <main>
     <section id="list">
-      <header><div><h1 id="heading"></h1><p id="profile" class="muted"></p></div>
+      <div class="hero">
+        <div class="hero-content">
+          <p id="profile" class="muted"></p>
+          <h1><span id="heading"></span><span class="hero-dot" aria-hidden="true">.</span></h1>
+          <form id="store-install" hidden>
+            <label class="search"><input id="store-link" type="text" autocomplete="off" required></label>
+            <button type="submit" id="store-add" class="primary"></button>
+          </form>
+        </div>
+        <span class="hero-mark" aria-hidden="true">|z⟩</span>
+      </div>
+      <div class="library-heading">
+        <h2 id="installed-title"></h2>
         <label class="switch-label"><input id="developer" type="checkbox" role="switch"><span></span></label>
-      </header>
-      <form id="store-install" class="filters" hidden>
-        <label class="search"><input id="store-link" type="text" autocomplete="off" required></label>
-        <button type="submit" id="store-add" class="primary"></button>
-      </form>
+      </div>
       <div id="tools" class="tools" hidden>
         <button type="button" id="install"></button>
       </div>
