@@ -306,13 +306,14 @@ ZITTER_PRIVACY_FUNCTION(LabPrivacySetFunction, "set", TYPES_CHROMESETTING_SET);
 ZITTER_PRIVACY_FUNCTION(LabPrivacyClearFunction, "clear", TYPES_CHROMESETTING_CLEAR);
 #undef ZITTER_PRIVACY_FUNCTION
 
-class SidePanelDestination : public base::SupportsUserData::Data {
+class ExtensionViewDestination : public base::SupportsUserData::Data {
  public:
-  explicit SidePanelDestination(GURL url) : url(std::move(url)) {}
+  explicit ExtensionViewDestination(GURL url) : url(std::move(url)) {}
   const GURL url;
 };
 
 constexpr char kSidePanelDestination = 0;
+constexpr char kNightShiftSettingsDestination = 0;
 
 
 void ClearTabActionState(BrowserContext& context, int tab_id);
@@ -3841,9 +3842,16 @@ class ExtensionProbeThrottle final : public content::NavigationThrottle {
         dynamic_frame_url_ = url;
       return PROCEED;
     }
+    if (const auto* destination = static_cast<ExtensionViewDestination*>(
+            contents->GetUserData(&kNightShiftSettingsDestination))) {
+      return navigation->IsInPrimaryMainFrame() && !navigation->IsRendererInitiated() &&
+                     !navigation->GetInitiatorOrigin() && destination->url == url &&
+                     BundledNightShiftSettingsPage(*contents->GetBrowserContext()).is_valid()
+                 ? PROCEED : BLOCK_REQUEST;
+    }
     if (extensions::GetViewType(contents) == extensions::mojom::ViewType::kExtensionSidePanel &&
         navigation->IsInPrimaryMainFrame()) {
-      const auto* destination = static_cast<SidePanelDestination*>(
+      const auto* destination = static_cast<ExtensionViewDestination*>(
           contents->GetUserData(&kSidePanelDestination));
       return destination && destination->url == url &&
                      !navigation->IsRendererInitiated() && !navigation->GetInitiatorOrigin() &&
@@ -3890,6 +3898,8 @@ class ExtensionProbeThrottle final : public content::NavigationThrottle {
   }
 
   ThrottleCheckResult WillRedirectRequest() override {
+    if (navigation_handle()->GetWebContents()->GetUserData(&kNightShiftSettingsDestination))
+      return BLOCK_REQUEST;
     if (auto original = std::exchange(dynamic_frame_url_, std::nullopt)) {
       const auto& url = navigation_handle()->GetURL();
       const auto* extension = FindFrameExtension(url);
@@ -3978,9 +3988,19 @@ bool ToggleWorkspaceSidePanelOnAction(content::WebContents& contents, const std:
          tab->workspace().SetExtensionSidePanel(*tab, id, extension->GetResourceURL(*path), true);
 }
 
+void SetNightShiftSettingsDestination(content::WebContents& contents, const GURL& url) {
+  const GURL options = BundledNightShiftSettingsPage(*contents.GetBrowserContext());
+  GURL::Replacements strip_parameters;
+  strip_parameters.ClearQuery();
+  strip_parameters.ClearRef();
+  CHECK(options.is_valid() && url.ReplaceComponents(strip_parameters) == options);
+  contents.SetUserData(&kNightShiftSettingsDestination,
+                       std::make_unique<ExtensionViewDestination>(url));
+}
+
 void SetWorkspaceSidePanelDestination(content::WebContents& contents, const GURL& url) {
   CHECK(url.SchemeIs(extensions::kExtensionScheme));
-  contents.SetUserData(&kSidePanelDestination, std::make_unique<SidePanelDestination>(url));
+  contents.SetUserData(&kSidePanelDestination, std::make_unique<ExtensionViewDestination>(url));
   extensions::SetViewType(&contents, extensions::mojom::ViewType::kExtensionSidePanel);
 }
 

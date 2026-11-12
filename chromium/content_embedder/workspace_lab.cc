@@ -15934,6 +15934,8 @@ content::WebContents* WorkspaceLab::ShowExtensionDialog(
   auto* contents = view->GetWebContents(url);
   if (action_popup)
     extensions::SetViewType(contents, extensions::mojom::ViewType::kExtensionPopup);
+  else
+    SetNightShiftSettingsDestination(*contents, url);
   extension_popup_view_ = view.get();
   extension_popup_delegate_ = prototype::CreateSceneModalDialog(std::move(view), false);
   extension_popup_delegate_->SetTitle(std::move(title));

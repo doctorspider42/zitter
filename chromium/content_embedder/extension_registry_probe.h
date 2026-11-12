@@ -89,6 +89,7 @@ bool WorkspaceExtensionHasRulesForTesting(content::BrowserContext& context,
 bool WorkspaceExtensionHasOffscreenForTesting(content::BrowserContext& context,
                                                const std::string& id);
 void AttachExtensionWebContents(content::WebContents& contents);
+void SetNightShiftSettingsDestination(content::WebContents& contents, const GURL& url);
 void SetWorkspaceSidePanelDestination(content::WebContents& contents, const GURL& url);
 bool ToggleWorkspaceSidePanelOnAction(content::WebContents& contents, const std::string& id);
 void DispatchWorkspaceSidePanelEvent(content::BrowserContext& profile,
