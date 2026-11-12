@@ -216,6 +216,8 @@ pub static EN: &[(&str, &str)] = &[
     ("ZITTER / PREFERENCJE", "ZITTER / PREFERENCES"),
     ("Brak pasujących ustawień. Spróbuj innego hasła.", "No matching settings. Try another term."),
     ("Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter.", "Switches save automatically. Confirm text fields with Save or Enter."),
+    ("ULUBIONE PROFILU", "PROFILE FAVORITES"),
+    ("Dodano do ulubionych profilu", "Added to profile favorites"),
     ("Nie udało się dodać karty do ulubionych profilu", "Could not add the tab to profile favorites"),
     ("Brak zainstalowanych rozszerzeń", "No extensions installed"),
     ("Zaloguj się do Claude Code", "Sign in to Claude Code"),

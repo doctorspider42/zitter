@@ -1117,11 +1117,6 @@ class LabMainParts final : public content::BrowserMainParts,
     if (ordinary_prepared_startup_) {
       base::ScopedAllowBlockingForTesting allow_extension_io;
       RestoreApprovedWorkspaceExtensions(workspace_extension_profiles_);
-      if (!ConfigureBundledNightShift(base::apple::FrameworkBundlePath()
-                                         .AppendASCII("Resources")
-                                         .AppendASCII("night_shift"))) {
-        LOG(ERROR) << "Could not configure bundled Night Shift";
-      }
     } else if (workspace_keychain_ &&
         (base::CommandLine::ForCurrentProcess()->HasSwitch(kRestoreWorkspaceExtensions) ||
          (workspace_mock_keychain_ && IsWorkspaceExtensionRuntime()))) {
@@ -1131,6 +1126,16 @@ class LabMainParts final : public content::BrowserMainParts,
       if (!ConfigureWorkspaceExtensionProbe(workspace_extension_profiles_)) {
         quit_.Run();
         return false;
+      }
+    }
+    if (ordinary_prepared_startup_ ||
+        (workspace_lab_ && !workspace_probe_url_.is_valid() &&
+         base::CommandLine::ForCurrentProcess()->HasSwitch(kRestoreWorkspaceExtensions))) {
+      base::ScopedAllowBlockingForTesting allow_bundled_extension_io;
+      if (!ConfigureBundledNightShift(base::apple::FrameworkBundlePath()
+                                         .AppendASCII("Resources")
+                                         .AppendASCII("night_shift"))) {
+        LOG(ERROR) << "Could not configure bundled Night Shift";
       }
     }
     if (ordinary_prepared_startup_ && !install_file_keychain_fixture_) {

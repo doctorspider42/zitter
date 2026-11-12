@@ -473,6 +473,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // Preferences on the Privacy category (fingerprint protection).
   void OpenPrivacySettings();
   void OpenExtensionsSettings();
+  void RevealProfileFavorite(std::string_view id);
   void ShowExtensionsToolbarMenu(views::View* anchor, std::vector<PageMenuItem> items);
   void OpenTools(int page, bool return_to_settings = false);  // 0: Time Machine, 1: shortcuts, 2: search providers.
   void SyncShortcuts() { RefreshKeyRegistrations(); }

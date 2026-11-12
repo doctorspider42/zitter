@@ -273,6 +273,8 @@ namespace {
 
 constexpr char kExtensionsPuzzle[] =
     "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.5 0 0 0 0 3H12v2H3v-2h1.5a1.5 1.5 0 0 0 0-3H3z";
+constexpr char kNightShiftMoon[] =
+    "M12.8 9.8A5.3 5.3 0 0 1 6.2 3.2a5.2 5.2 0 1 0 6.6 6.6z";
 using ToolbarPalette = base::RepeatingCallback<sidebar::DesignPalette()>;
 
 class ContentToolbarButton final : public views::Button,
@@ -1784,6 +1786,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   fingerprint_button_ = trailing->AddChildView(
       fingerprint_toolbar_->CreateButton(/*private_mode=*/false));
   fingerprint_button_->SetVisible(false);
+  if (!private_owner_ && BundledNightShiftSettingsPage(work).is_valid()) {
+    trailing->AddChildView(std::make_unique<ContentToolbarButton>(
+        kNightShiftMoon, u"Night Shift",
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab)
+            lab->OpenNightShiftSettings();
+        }, weak), palette));
+  }
   if (IsManagedExtensionSession() && !private_owner_) {
     pinned_extension_toolbar_ = trailing->AddChildView(std::make_unique<views::View>());
     pinned_extension_toolbar_->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -8302,8 +8312,9 @@ bool WorkspaceLab::PinTab(size_t index, std::string parent, std::string before) 
   auto& tab = tabs[index];
   if (!tab.pin.empty())
     return MovePin(tab.pin, std::move(parent), std::move(before));
+  const bool profile_favorite = parent == "@profile";
   const auto url = TabUrl(index, {});
-  auto& pins = parent == "@profile"
+  auto& pins = profile_favorite
                    ? profile_favorites_[model_.active()->profile_id]
                    : pins_[active_index_];
   if (pins.size() >= prototype::kMaxWorkspaceSessionTabs ||
@@ -8317,8 +8328,10 @@ bool WorkspaceLab::PinTab(size_t index, std::string parent, std::string before) 
                  url, false, false, std::nullopt, base::UTF16ToUTF8(tab.custom_title)}, std::move(parent), std::move(before))) {
     return false;
   }
-  tab.pin = std::move(id);
+  tab.pin = id;
   RefreshShell();
+  if (profile_favorite)
+    shell_->RevealProfileFavorite(id);
   PersistWorkspaceChanges();
   return true;
 }
@@ -8407,7 +8420,8 @@ bool WorkspaceLab::MovePin(std::string id, std::string parent, std::string befor
   const auto pin = std::ranges::find(pins, id, &prototype::PinnedItem::id);
   if (pin == pins.end() || IsGitHubFolder(pins, pin->parent_id))
     return false;
-  if (parent == "@profile" && !pin->profile_pin) {
+  const bool profile_favorite = parent == "@profile";
+  if (profile_favorite && !pin->profile_pin) {
     auto& favorites = profile_favorites_[model_.active()->profile_id];
     auto promoted = *pin;
     // Older interactive imports numbered pins independently in each space.
@@ -8422,10 +8436,13 @@ bool WorkspaceLab::MovePin(std::string id, std::string parent, std::string befor
         tab.pin = promoted.id;
     }
     pins.erase(pin);
+    id = std::move(promoted.id);
   } else if (!PlacePin(pins, *pin, std::move(parent), std::move(before))) {
     return false;
   }
   RefreshShell();
+  if (profile_favorite)
+    shell_->RevealProfileFavorite(id);
   PersistWorkspaceChanges();
   return true;
 }
@@ -14030,6 +14047,7 @@ void WorkspaceLab::CheckClosedFavoriteDuplicate(std::string research,
     Finish(false);
     return;
   }
+  shell_->SetPinned(true);
   shell_->BuildTabMenu(selected_[active_index_], {});
   auto* menu = shell_->workspace_menu();
   for (size_t index = 0; index < menu->GetItemCount(); ++index) {
@@ -14045,12 +14063,13 @@ void WorkspaceLab::CheckClosedFavoriteDuplicate(std::string research,
           const auto id = lab->tabs_[lab->active_index_][lab->selected_[lab->active_index_]].pin;
           if (id.empty() || !std::ranges::contains(lab->profile_favorites_["work"], id,
                                                   &prototype::PinnedItem::id) ||
+              !lab->shell_->pin_button(id) ||
+              lab->shell_->pin_button(id)->GetVisibleBounds().IsEmpty() ||
               !lab->Unpin(id, lab->tabs_[lab->active_index_].size())) {
-            LOG(ERROR) << "The tab menu did not add a profile favorite";
+            LOG(ERROR) << "The tab menu did not show a profile favorite";
             lab->Finish(false);
             return;
           }
-          lab->shell_->SetPinned(true);
           if (!lab->shell_->DragTabToProfileForTesting(lab->selected_[lab->active_index_])) {
             LOG(ERROR) << "Could not drag a tab onto the profile drop slot";
             lab->Finish(false);
@@ -14063,8 +14082,10 @@ void WorkspaceLab::CheckClosedFavoriteDuplicate(std::string research,
                 const auto pin = lab->tabs_[lab->active_index_][lab->selected_[lab->active_index_]].pin;
                 if (pin.empty() || !std::ranges::contains(lab->profile_favorites_["work"], pin,
                                                          &prototype::PinnedItem::id) ||
+                    !lab->shell_->pin_button(pin) ||
+                    lab->shell_->pin_button(pin)->GetVisibleBounds().IsEmpty() ||
                     !lab->Unpin(pin, lab->tabs_[lab->active_index_].size())) {
-                  LOG(ERROR) << "Dropping the tab did not add a profile favorite";
+                  LOG(ERROR) << "Dropping the tab did not show a profile favorite";
                   lab->Finish(false);
                   return;
                 }
@@ -15748,6 +15769,13 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
           base::BindRepeating(&WorkspaceLab::OpenExtensionOptions, weak, id)});
     item.enabled = !item.children.empty();
     items.push_back(std::move(item));
+  }
+  if (BundledNightShiftSettingsPage(profile).is_valid()) {
+    items.insert(items.begin(), {u"Night Shift",
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab)
+            lab->OpenNightShiftSettings();
+        }, weak)});
   }
   if (items.empty())
     items.push_back({.title = prototype::T(u"Brak zainstalowanych rozszerzeń"), .enabled = false});

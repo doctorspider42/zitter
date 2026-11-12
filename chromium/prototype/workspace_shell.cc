@@ -5684,7 +5684,19 @@ void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view 
   if(cache.node_graph&&cache.pins==pins&&cache.split_tabs==split_tabs&&cache.split==split&&cache.tabs.size()==tabs.size()&&
       std::equal(cache.tabs.begin(),cache.tabs.end(),tabs.begin(),[](const auto& a,const auto& b){return a.identity==b.identity&&a.index==b.index&&a.pin_id==b.pin_id;}))return;
   if(!cache.node_graph)cache.node_graph=std::make_shared<SidebarNodeGraphState>();
-  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.display_title());const auto monogram=pin.folder?std::u16string():TabMonogram(pin.url,base::UTF8ToUTF16(pin.title));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id),sidebar_tree_.Revealed(workspace,pin.id)});}rust::Vec<sidebar::SidebarTabInput> tab_ids;for(const auto& tab:tabs)tab_ids.push_back({tab.identity[0],tab.identity[1],tab.index,tab.pin_id});
+  rust::Vec<sidebar::SidebarPinInput> pin_ids;for(const auto& pin:pins){const auto title=base::UTF8ToUTF16(pin.display_title());const auto monogram=pin.folder?std::u16string():TabMonogram(pin.url,base::UTF8ToUTF16(pin.title));const auto color=pin.folder?SK_ColorTRANSPARENT:kMonogramColors[base::FastHash(pin.url.host())%kMonogramColors.size()];pin_ids.push_back({pin.id,pin.parent_id,SceneUtf16(title),SceneUtf16(monogram),color,pin.folder,pin.folder&&sidebar_tree_.Collapsed(workspace,pin.id),sidebar_tree_.Revealed(workspace,pin.id)});}
+  // Only workspace pins trade their pin row for an open tab row. Profile
+  // favorites remain clickable in the grid and never anchor a split there.
+  std::set<std::string_view> favorites;
+  for (const auto& pin : pins) {
+    if (pin.profile_pin)
+      favorites.insert(pin.id);
+  }
+  rust::Vec<sidebar::SidebarTabInput> tab_ids;
+  for (const auto& tab : tabs) {
+    tab_ids.push_back({tab.identity[0], tab.identity[1], tab.index,
+                       favorites.contains(tab.pin_id) ? std::string() : tab.pin_id});
+  }
   // Rust owns the split group node, its pin anchor/parent and member visibility.
   rust::Vec<size_t> members;for(size_t member:split_tabs)members.push_back(member);
   const auto plan=cache.node_graph->graph->reconcile_sidebar_layout(std::move(pin_ids),std::move(tab_ids),
@@ -6031,7 +6043,11 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     std::vector<SidebarTabNode> tab_nodes;
     pin_nodes.reserve(state_.pins.size()); tab_nodes.reserve(state_.tabs.size());
     for (const auto& pin : state_.pins) pin_nodes.push_back({pin.id, pin.parent_id, pin.folder});
-    for (const auto& tab : state_.tabs) tab_nodes.push_back({tab.index, tab.pin_id});
+    for (const auto& tab : state_.tabs) {
+      const auto pin = std::ranges::find(state_.pins, tab.pin_id, &PinnedItem::id);
+      tab_nodes.push_back({tab.index,
+          pin != state_.pins.end() && pin->profile_pin ? std::string() : tab.pin_id});
+    }
     if (cache.node_graph) {
       // The Rust graph reconciled this exact layout above; project its slots.
       const auto tree = cache.node_graph->graph->sidebar_tabs();
@@ -6112,8 +6128,8 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
   if (!same_structure) {
     for (const auto& pin : cache.tab_plan.pins) {
       ++pin_visibility_update_count_;
-      // Hidden when a split pair stands in for it, or inside a collapsed folder
-      // it was not revealed from.
+      // Workspace pins are replaced by their open tab rows. Profile favorites
+      // stay in their grid, including when their page is open in this space.
       const auto& item = state_.pins[pin.index];
       const bool in_folder = item.parent_id.empty() || !sidebar_tree_.Collapsed(state_.workspace_id, item.parent_id) ||
           sidebar_tree_.Revealed(state_.workspace_id, item.id);
@@ -6958,7 +6974,9 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
   if (std::ranges::any_of(pins,&PinnedItem::profile_pin)) {
     favorites=root->AddChildView(std::make_unique<views::View>());
     favorites->SetLayoutManager(CreateProfileFavoritesLayout());
-    root->ReorderChildView(favorites,0);
+    auto* heading = Label(root, T(u"ULUBIONE PROFILU"), kMuted, Font(-2));
+    root->ReorderChildView(heading, 0);
+    root->ReorderChildView(favorites, 1);
   }
   for(const auto& entry:plan){
     const auto* pin=&pins[entry.index];auto* parent=pin->profile_pin?favorites:groups.at(entry.parent);
@@ -6999,7 +7017,7 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
       if(!adapter)adapter=CreateSceneRow({},std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,2,{},pin->id});
       button=row->AddChildView(std::move(adapter));
     }
-    if (pin->profile_pin) SetSidebarPanelLayout(row,true,gfx::Insets(),0,button);
+    if (pin->profile_pin) row->SetLayoutManager(std::make_unique<views::FillLayout>());
     if (projection) projection->Place(parent, row);
     row->SetVisible(shown_in_parent);
     if (!projection || !projection->depths.contains(pin->id) || projection->depths.at(pin->id) != entry.depth) {
@@ -8845,8 +8863,14 @@ void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_
         // A split's tab dragged into the list leaves the split.
         if(std::ranges::contains(shell->state_.split_tabs,*target.tab))shell->callbacks_.leave_split.Run(*target.tab);
         // Crossing into the pinned section pins the tab.
-        if(reorder.pinned)shell->callbacks_.pin_tab.Run(*target.tab,reorder.parent,reorder.before_pin);
-        else shell->callbacks_.move_tab.Run(*target.tab,reorder.before_tab);
+        if (reorder.pinned) {
+          if (!shell->callbacks_.pin_tab.Run(*target.tab, reorder.parent, reorder.before_pin) &&
+              reorder.parent == "@profile") {
+            shell->ShowToast(T(u"Nie udało się dodać karty do ulubionych profilu"), {}, {});
+          }
+        } else {
+          shell->callbacks_.move_tab.Run(*target.tab, reorder.before_tab);
+        }
       } else if(!target.pin.empty()) {
         if(!reorder.pinned)shell->callbacks_.unpin.Run(target.pin,reorder.before_tab);
         else if(reorder.before_pin!=target.pin&&reorder.parent!=target.pin)shell->callbacks_.move_pin.Run(target.pin,reorder.parent,reorder.before_pin);
@@ -10348,6 +10372,17 @@ void WorkspaceShell::ShowExtensionsToolbarMenu(views::View* anchor,
   workspace_menu_runner_->RunMenuAt(widget_, nullptr, anchor->GetBoundsInScreen(),
       views::MenuAnchorPosition::kTopRight, ui::mojom::MenuSourceType::kNone,
       gfx::NativeView(), ZitterMenuCorners());
+}
+
+void WorkspaceShell::RevealProfileFavorite(std::string_view id) {
+  auto* row = pin_button(std::string(id));
+  if (row) {
+    ShowSidebar();
+    sidebar_widget_->LayoutRootViewIfNecessary();
+    row->ScrollViewToVisible();
+    ScheduleMetalSidebar();
+  }
+  ShowToast(T(u"Dodano do ulubionych profilu"), {}, {});
 }
 
 void WorkspaceShell::OpenExtensionsSettings() {
