@@ -164,3 +164,12 @@ input { accent-color: var(--accent); }
     .ns-settings main { grid-template-columns: 1fr; margin: 16px; }
     .ns-settings .look { border-left: 0; border-top: 1px solid var(--line); }
 }
+
+:root[data-presentation="panel"],
+:root[data-presentation="panel"] .ns-settings .look { background: var(--surface); }
+:root[data-presentation="panel"] .ns-settings main {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+}
+:root[data-presentation="panel"] .ns-settings .column { gap: 14px; padding: 16px; }

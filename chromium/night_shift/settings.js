@@ -45,6 +45,9 @@ const COLORS = ["#9a92ff", "#5fe0b8", "#ff8a66", "#5cc8ff", "#ffc35c", "#ff7eb6"
 const SLIDERS = ["brightness", "contrast", "sepia", "grayscale"];
 
 const params = new URLSearchParams(location.search);
+if (params.get("presentation") === "panel") {
+    document.documentElement.dataset.presentation = "panel";
+}
 const language = params.get("language") === "pl" || (!params.has("language") && navigator.language.startsWith("pl")) ? "pl" : "en";
 const copy = strings[language];
 document.documentElement.lang = language;

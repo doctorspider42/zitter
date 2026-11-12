@@ -1790,7 +1790,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       fingerprint_toolbar_->CreateButton(/*private_mode=*/false));
   fingerprint_button_->SetVisible(false);
   if (!private_owner_ && BundledNightShiftSettingsPage(work).is_valid()) {
-    trailing->AddChildView(std::make_unique<ContentToolbarButton>(
+    night_shift_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
         kNightShiftMoon, u"Night Shift",
         base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
           if (lab)
@@ -2901,6 +2901,9 @@ WorkspaceLab::~WorkspaceLab() {
   adblock_count_subscription_ = {};
   extensions_toolbar_menu_widget_.reset();
   extensions_toolbar_menu_.reset();
+  night_shift_widget_.reset();
+  night_shift_panel_.reset();
+  night_shift_button_ = nullptr;
   DestroyAdblockShield();
   adblock_shield_button_ = nullptr;
   private_fingerprint_subscription_ = {};
@@ -3245,6 +3248,7 @@ bool WorkspaceLab::Activate(std::string_view workspace_id,
     }
     if (active_index_ != index) {
       CloseExtensionPopup();
+      CloseNightShiftSettings();
       ExitPageFullscreen();
       fingerprint_toolbar_->Close();
       address_history_tasks_.TryCancelAll();
@@ -4046,6 +4050,7 @@ void WorkspaceLab::RefreshAdblockShieldRequests() {
 }
 
 void WorkspaceLab::ToggleAdblockShield() {
+  CloseNightShiftSettings();
   if (adblock_shield_widget_) {
     CloseAdblockShield();
     return;
@@ -15760,6 +15765,7 @@ void WorkspaceLab::OpenExtensionPackage() {
 }
 
 void WorkspaceLab::ShowExtensionsToolbarMenu() {
+  CloseNightShiftSettings();
   if (extensions_toolbar_menu_widget_ && !extensions_toolbar_menu_widget_->IsClosed()) {
     CloseExtensionsToolbarMenu();
     return;
@@ -15921,21 +15927,18 @@ void WorkspaceLab::OpenExtensionPopup(std::string id) {
   auto name = base::UTF8ToUTF16(manager->name());
   std::ranges::replace_if(name, [](char16_t c) { return c < 0x20; }, u' ');
   base::i18n::SanitizeUserSuppliedString(&name);
-  ShowExtensionDialog(profile, url, std::move(name), gfx::Size(380, 420), true);
+  ShowExtensionDialog(profile, url, std::move(name), gfx::Size(380, 420));
 }
 
 content::WebContents* WorkspaceLab::ShowExtensionDialog(
     ProfileContext& profile, const GURL& url, std::u16string title,
-    gfx::Size size, bool action_popup) {
+    gfx::Size size) {
   if (extension_popup_widget_)
     return nullptr;
   auto view = std::make_unique<LabWebView>(&profile);
   view->SetPreferredSize(size);
   auto* contents = view->GetWebContents(url);
-  if (action_popup)
-    extensions::SetViewType(contents, extensions::mojom::ViewType::kExtensionPopup);
-  else
-    SetNightShiftSettingsDestination(*contents, url);
+  extensions::SetViewType(contents, extensions::mojom::ViewType::kExtensionPopup);
   extension_popup_view_ = view.get();
   extension_popup_delegate_ = prototype::CreateSceneModalDialog(std::move(view), false);
   extension_popup_delegate_->SetTitle(std::move(title));
@@ -15965,8 +15968,18 @@ void WorkspaceLab::CloseExtensionPopup() {
     extension_popup_widget_->Close();
 }
 
+void WorkspaceLab::CloseNightShiftSettings() {
+  if (night_shift_widget_ && !night_shift_widget_->IsClosed())
+    night_shift_widget_->Close();
+}
+
 bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document) {
-  if (private_owner_ || session_path_.empty() || !CanEditWorkspace())
+  if (night_shift_widget_ && !night_shift_widget_->IsClosed()) {
+    CloseNightShiftSettings();
+    if (!document)
+      return true;
+  }
+  if (!night_shift_button_ || private_owner_ || session_path_.empty() || !CanEditWorkspace())
     return false;
   auto& context = *WorkspaceProfile(active_index_);
   GURL url = BundledNightShiftSettingsPage(context);
@@ -16010,16 +16023,41 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document) {
     url = net::AppendOrReplaceQueryParameter(
         url, "document", extensions::ExtensionApiFrameIdMap::GetDocumentId(document).ToString());
   }
-  const auto available = widget_->GetWindowBoundsInScreen().size();
-  auto* page = ShowExtensionDialog(context, url, u"Night Shift",
-      gfx::Size(std::clamp(available.width() - 48, 240, 900),
-                std::clamp(available.height() - 100, 240, 600)),
-      false);
-  if (!page)
-    return false;
+  url = net::AppendOrReplaceQueryParameter(url, "presentation", "panel");
+  const auto palette = sidebar::design_palette(
+      widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
+      shell_->active_workspace_color());
+  shell_->CloseOverlays(true);
+  CloseAdblockShield();
+  CloseExtensionsToolbarMenu();
+  fingerprint_toolbar_->Close();
+  night_shift_widget_.reset();
+  night_shift_panel_ = std::make_unique<views::BubbleDialogDelegate>(
+      night_shift_button_, views::BubbleBorder::TOP_RIGHT);
+  auto& panel = *night_shift_panel_;
+  panel.SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  panel.SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  panel.set_margins(gfx::Insets());
+  panel.set_corner_radius(12);
+  panel.SetBackgroundColor(palette.bg_raised);
+  panel.SetTitle(u"Night Shift");
+  panel.SetShowTitle(false);
+  panel.SetShowCloseButton(false);
+  panel.set_close_on_deactivate(true);
+
+  auto view = std::make_unique<LabWebView>(&context);
+  const int height = std::clamp(widget_->GetWindowBoundsInScreen().height() - 80, 200, 440);
+  view->SetPreferredSize(gfx::Size(360, height));
+  auto* page = view->GetWebContents(url);
+  SetNightShiftSettingsDestination(*page, url);
   NightShiftSettingsObserver::CreateForWebContents(
       page, url, base::BindRepeating(&WorkspaceLab::ApplyNightShiftSettings,
                                      weak_factory_.GetWeakPtr()));
+  panel.SetContentsView(std::move(view));
+  night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(&panel);
+  night_shift_widget_->SetColorModeOverride(widget_->color_mode_override());
+  night_shift_widget_->Show();
+  prototype::LoadWorkspaceTab(page, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
   return true;
 }
 

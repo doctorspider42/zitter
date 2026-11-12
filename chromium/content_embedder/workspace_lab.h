@@ -779,9 +779,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool SetExtensionToolbarPinned(std::string id, bool pinned);
   void CloseExtensionsToolbarMenu();
   content::WebContents* ShowExtensionDialog(ProfileContext& profile, const GURL& url,
-                                             std::u16string title, gfx::Size size,
-                                             bool action_popup);
+                                             std::u16string title, gfx::Size size);
   void CloseExtensionPopup();
+  void CloseNightShiftSettings();
   void CheckActiveTabActionProbe(GURL target, GURL popup, base::TimeTicks deadline);
   void CheckExtensionPopup(GURL url, base::TimeTicks deadline);
   void CheckExtensionCommandGrant(GURL target, base::TimeTicks deadline);
@@ -927,6 +927,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   raw_ptr<views::View> extensions_toolbar_button_ = nullptr;
   std::unique_ptr<views::BubbleDialogDelegate> extensions_toolbar_menu_;
   std::unique_ptr<views::Widget> extensions_toolbar_menu_widget_;
+  raw_ptr<views::View> night_shift_button_ = nullptr;
+  std::unique_ptr<views::BubbleDialogDelegate> night_shift_panel_;
+  std::unique_ptr<views::Widget> night_shift_widget_;
   raw_ptr<views::View> pinned_extension_toolbar_ = nullptr;
   raw_ptr<views::View> extension_toolbar_divider_ = nullptr;
   base::CallbackListSubscription private_fingerprint_subscription_;
