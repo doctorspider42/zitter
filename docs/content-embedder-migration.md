@@ -231,7 +231,11 @@ had 202 passing tests and 28 skips. GN header checking passed with zero
 the app and DMG. The rebuilt DMG passed the distribution checks and
 the signed replacement preflight with 0.1.6. Its SHA-256 is
 `f5798a90195b2a9331fdd1d67c70b7ef391c6e96daf4bf055eb8744d85b3504f`.
-The earlier system Keychain and full-display trials used `1333e04`.
+The final DMG also passed the signed extension registry, sandboxed
+extension utility, and private-window probes. Its replacement trial
+with the file Keychain preserved both encrypted profiles and Shared
+Dictionary stores. The system Keychain and full-display trials used
+`1333e04`.
 
 The updater metadata probe selected the exact notarized 0.4.11 image
 for Content 0.1.6 on arm64 using a local GitHub-format catalogue.
