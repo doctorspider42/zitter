@@ -403,11 +403,12 @@ class NightShiftSettingsObserver final
 
   NightShiftSettingsObserver(content::WebContents* page,
                              GURL settings_url,
-                             base::RepeatingCallback<void(base::DictValue)> apply)
+                             base::RepeatingCallback<void(base::DictValue)> apply,
+                             base::RepeatingCallback<void(bool)> open_action)
       : content::WebContentsObserver(page),
         content::WebContentsUserData<NightShiftSettingsObserver>(*page),
         settings_url_(std::move(settings_url)),
-        apply_(std::move(apply)) {}
+        apply_(std::move(apply)), open_action_(std::move(open_action)) {}
 
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
     constexpr std::string_view kApply = "apply=";
@@ -418,10 +419,15 @@ class NightShiftSettingsObserver final
     const GURL& url = navigation->GetURL();
     if (url.GetWithoutRef() != settings_url_ ||
         web_contents()->GetPrimaryMainFrame()->GetLastCommittedOrigin() !=
-            url::Origin::Create(settings_url_) ||
-        !url.ref().starts_with(kApply) || url.ref().size() > 64 * 1024) {
+            url::Origin::Create(settings_url_)) {
       return;
     }
+    if (open_action_ && (url.ref() == "settings" || url.ref() == "repair")) {
+      open_action_.Run(url.ref() == "repair");
+      return;
+    }
+    if (!url.ref().starts_with(kApply) || url.ref().size() > 64 * 1024)
+      return;
     auto settings = base::JSONReader::ReadDict(
         base::UnescapeBinaryURLComponent(url.ref().substr(kApply.size())),
         base::JSON_PARSE_RFC);
@@ -431,6 +437,7 @@ class NightShiftSettingsObserver final
 
   const GURL settings_url_;
   const base::RepeatingCallback<void(base::DictValue)> apply_;
+  const base::RepeatingCallback<void(bool)> open_action_;
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
@@ -1794,7 +1801,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
         kNightShiftMoon, u"Night Shift",
         base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
           if (lab)
-            lab->OpenNightShiftSettings();
+            lab->OpenNightShiftSettings(nullptr, true);
         }, weak), palette));
   }
   if (IsManagedExtensionSession() && !private_owner_) {
@@ -9924,6 +9931,7 @@ void WorkspaceLab::DidStartNavigation(content::NavigationHandle* navigation) {
   if (navigation->IsInPrimaryMainFrame())
     ClearAssistantAdblockPreview();
   if (navigation->IsInPrimaryMainFrame() && !navigation->IsSameDocument()) {
+    CloseNightShiftSettings();
 #if BUILDFLAG(ENABLE_PRINTING)
     shell_->HidePrint();
     pdf_export_.reset();
@@ -15973,10 +15981,11 @@ void WorkspaceLab::CloseNightShiftSettings() {
     night_shift_widget_->Close();
 }
 
-bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document) {
+bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
+                                          bool quick_panel) {
   if (night_shift_widget_ && !night_shift_widget_->IsClosed()) {
     CloseNightShiftSettings();
-    if (!document)
+    if (quick_panel)
       return true;
   }
   if (!night_shift_button_ || private_owner_ || session_path_.empty() || !CanEditWorkspace())
@@ -16012,6 +16021,13 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document) {
   url = net::AppendOrReplaceQueryParameter(
       url, "language", prototype::UiLanguageIsEnglish() ? "en" : "pl");
   url = net::AppendOrReplaceQueryParameter(url, "state", *encoded);
+  if (quick_panel) {
+    auto* frame = web_contents()->GetPrimaryMainFrame();
+    if (CanSetNightShiftSiteMode(*frame))
+      document = frame;
+    if (document && assistant_host_settings_.enabled)
+      url = net::AppendOrReplaceQueryParameter(url, "repair", "1");
+  }
   if (document) {
     const auto site_key = NightShiftSiteKey(document->GetLastCommittedURL());
     auto* source = content::WebContents::FromRenderFrameHost(document);
@@ -16022,6 +16038,17 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document) {
     url = net::AppendOrReplaceQueryParameter(url, "tab", base::NumberToString(tab));
     url = net::AppendOrReplaceQueryParameter(
         url, "document", extensions::ExtensionApiFrameIdMap::GetDocumentId(document).ToString());
+  }
+  auto apply = base::BindRepeating(&WorkspaceLab::ApplyNightShiftSettings,
+                                   weak_factory_.GetWeakPtr());
+  if (!quick_panel) {
+    if (!CreateExtensionTab(context, url, /*active=*/true))
+      return false;
+    NightShiftSettingsObserver::CreateForWebContents(
+        web_contents(), url, std::move(apply), base::RepeatingCallback<void(bool)>());
+    shell_->CloseOverlays(true);
+    widget_->Activate();
+    return true;
   }
   url = net::AppendOrReplaceQueryParameter(url, "presentation", "panel");
   const auto palette = sidebar::design_palette(
@@ -16046,13 +16073,26 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document) {
   panel.set_close_on_deactivate(true);
 
   auto view = std::make_unique<LabWebView>(&context);
-  const int height = std::clamp(widget_->GetWindowBoundsInScreen().height() - 80, 200, 440);
-  view->SetPreferredSize(gfx::Size(360, height));
+  view->SetPreferredSize(gfx::Size(296, document ? 380 : 145));
   auto* page = view->GetWebContents(url);
   SetNightShiftSettingsDestination(*page, url);
   NightShiftSettingsObserver::CreateForWebContents(
-      page, url, base::BindRepeating(&WorkspaceLab::ApplyNightShiftSettings,
-                                     weak_factory_.GetWeakPtr()));
+      page, url, std::move(apply),
+      base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab,
+                             const content::WeakDocumentPtr& document, bool repair) {
+        if (!lab)
+          return;
+        lab->CloseNightShiftSettings();
+        if (repair) {
+          if (auto* frame = document.AsRenderFrameHostIfValid();
+              frame && content::WebContents::FromRenderFrameHost(frame) == lab->web_contents()) {
+            lab->PrepareNightShiftRepair(*frame);
+          }
+        } else {
+          lab->OpenNightShiftSettings();
+        }
+      }, weak_factory_.GetWeakPtr(),
+      document ? document->GetWeakDocumentPtr() : content::WeakDocumentPtr()));
   panel.SetContentsView(std::move(view));
   night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(&panel);
   night_shift_widget_->SetColorModeOverride(widget_->color_mode_override());

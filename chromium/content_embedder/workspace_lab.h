@@ -416,7 +416,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::optional<size_t> WorkspaceIndex(std::string_view id) const;
   size_t WorkspaceProfileIndex(size_t workspace) const;
   ProfileContext* WorkspaceProfile(size_t workspace) const;
-  bool OpenNightShiftSettings(content::RenderFrameHost* document = nullptr);
+  bool OpenNightShiftSettings(content::RenderFrameHost* document = nullptr,
+                              bool quick_panel = false);
   void ApplyNightShiftSettings(base::DictValue value);
   std::string_view WorkspaceProfileName(size_t workspace) const;
   void AppendWorkspace(Workspace workspace, const base::DictValue* session);

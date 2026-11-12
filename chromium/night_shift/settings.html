@@ -19,6 +19,15 @@
                 <input id="enabled" class="switch" type="checkbox" role="switch" data-label="enable" disabled>
             </header>
 
+            <section id="quick-site" class="group" hidden>
+                <small id="quick-state" role="status"></small>
+                <strong id="quick-host"></strong>
+                <div class="segmented" id="quick-modes" role="group" data-label="siteLook">
+                    <button type="button" value="auto" data-text="modeDefault">Default</button>
+                    <button type="button" value="dark" data-text="modeDark">Dark</button>
+                    <button type="button" value="off" data-text="modeLight">Light</button>
+                </div>
+            </section>
             <section class="group" id="scope-group">
                 <h2 data-text="where">Where it runs</h2>
                 <p class="hint" data-text="whereHint">One setting for all of Zitter.</p>
@@ -37,6 +46,10 @@
                     <label class="slider" for="site-brightness"><span data-text="brightness">Brightness</span><input id="site-brightness" type="range" min="75" max="125" value="100"><output for="site-brightness"></output></label>
                     <label class="slider" for="site-contrast"><span data-text="contrast">Contrast</span><input id="site-contrast" type="range" min="75" max="125" value="100"><output for="site-contrast"></output></label>
                 </div>
+                <label id="quick-force-row" hidden>
+                    <span data-text="force">Also on sites with their own dark mode</span>
+                    <input id="quick-force" class="switch" type="checkbox" role="switch">
+                </label>
                 <button type="button" id="site-tuning-reset" class="quiet" data-text="reset">Reset to defaults</button>
                 <div class="group" id="site-repair" hidden>
                     <h2 data-text="repairTitle">Assistant proposal</h2>
@@ -54,7 +67,9 @@
                 <button type="button" id="site-repair-undo" class="quiet" data-text="repairUndo" hidden>Undo last repair</button>
             </section>
 
-            <section class="group">
+            <button type="button" id="quick-fix" class="quiet quick-action" data-text="fixSite" hidden>Fix this site</button>
+            <button type="button" id="quick-settings" class="quiet quick-action" data-text="openSettings" hidden>Night Shift settings</button>
+            <section class="group" id="sites-group">
                 <h2 data-text="sites">Sites with their own settings</h2>
                 <div class="sites" id="sites"></div>
                 <p class="hint" id="sites-empty" data-text="sitesEmpty">Tune a site from the Night Shift button in the toolbar.</p>

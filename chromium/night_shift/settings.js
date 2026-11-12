@@ -13,6 +13,9 @@ const strings = {
         sitesHint: "In this profile.", look: "Default look", lookHint: "For every site without its own settings.",
         repairTitle: "Assistant proposal", repairBefore: "Before", repairPreview: "Preview",
         repairHint: "The preview appears in the site tab.", repairDiscard: "Discard", repairSave: "Save for this site", repairUndo: "Undo last repair",
+        modeDefault: "Default", modeDark: "Dark", modeLight: "Light",
+        automatic: "Automatic", unavailable: "Unavailable on this page",
+        fixSite: "Fix this site", openSettings: "Night Shift settings", resetTuning: "Reset tuning",
         siteLook: "Site appearance", brightness: "Brightness", contrast: "Contrast", sepia: "Sepia", grayscale: "Grayscale",
         force: "Also on sites with their own dark mode", forceHint: "By default a site's own dark theme stays",
         reset: "Reset to defaults", instant: "Changes apply right away", remove: "Remove the site's settings",
@@ -30,6 +33,9 @@ const strings = {
         sitesHint: "W tym profilu.", look: "Domyślny wygląd", lookHint: "Dla każdej strony bez własnych ustawień.",
         repairTitle: "Propozycja Asystenta", repairBefore: "Przed", repairPreview: "Podgląd",
         repairHint: "Podgląd pojawi się w karcie witryny.", repairDiscard: "Odrzuć", repairSave: "Zapisz dla tej witryny", repairUndo: "Cofnij ostatnią poprawkę",
+        modeDefault: "Domyślnie", modeDark: "Ciemna", modeLight: "Jasna",
+        automatic: "Tryb automatyczny", unavailable: "Niedostępne na tej stronie",
+        fixSite: "Popraw dla tej strony", openSettings: "Ustawienia Night Shift", resetTuning: "Przywróć ustawienia",
         siteLook: "Wygląd witryny", brightness: "Jasność", contrast: "Kontrast", sepia: "Sepia", grayscale: "Skala szarości",
         force: "Stosuj też na stronach z trybem ciemnym", forceHint: "Domyślnie zostaje własny motyw strony",
         reset: "Przywróć domyślne", instant: "Zmiany działają od razu", remove: "Usuń ustawienia witryny",
@@ -45,7 +51,8 @@ const COLORS = ["#9a92ff", "#5fe0b8", "#ff8a66", "#5cc8ff", "#ffc35c", "#ff7eb6"
 const SLIDERS = ["brightness", "contrast", "sepia", "grayscale"];
 
 const params = new URLSearchParams(location.search);
-if (params.get("presentation") === "panel") {
+const quickPanel = params.get("presentation") === "panel";
+if (quickPanel) {
     document.documentElement.dataset.presentation = "panel";
 }
 const language = params.get("language") === "pl" || (!params.has("language") && navigator.language.startsWith("pl")) ? "pl" : "en";
@@ -82,10 +89,12 @@ function format(template, value) {
 // Zitter reads the change from this page's own URL fragment.
 function apply() {
     clearTimeout(timer);
-    timer = setTimeout(() => {
+    const save = () => {
         const payload = {...config, profiles: [...config.profiles], revision: ++revision};
         history.replaceState(null, "", "#apply=" + encodeURIComponent(JSON.stringify(payload)));
-    }, 120);
+    };
+    if (quickPanel) save();
+    else timer = setTimeout(save, 120);
 }
 
 function change(update) {
@@ -128,7 +137,10 @@ function renderProfiles() {
 }
 
 function render() {
-    toggle.checked = config.enabled;
+    const profile = zitter.profiles.find(item => item.current);
+    toggle.checked = quickPanel && profile
+        ? config.profile_overrides[profile.id] ?? (config.enabled && (config.all_profiles || config.profiles.includes(profile.id)))
+        : config.enabled;
     for (const [id, all] of [["scope-all", true], ["scope-some", false]]) {
         get(id).setAttribute("aria-checked", String(config.all_profiles === all));
         get(id).disabled = !config.enabled;
@@ -242,6 +254,38 @@ async function openSiteTuning(key) {
         });
     };
 
+    if (quickPanel) {
+        const modes = [...get("quick-modes").querySelectorAll("button")];
+        const force = get("quick-force");
+        const select = mode => {
+            for (const button of modes) {
+                button.setAttribute("aria-pressed",
+                    String(button.value === (mode === "on" ? "dark" : mode)));
+            }
+            force.checked = mode === "on" || (mode === "auto" && ownDefaults.force);
+            force.disabled = mode === "off";
+            get("quick-state").textContent = mode === "auto" ? copy.automatic
+                : mode === "off" ? copy.modeLight : copy.modeDark;
+        };
+        select(siteSettings(saved).mode);
+        for (const button of modes) {
+            button.addEventListener("click", () => {
+                const mode = button.value === "dark" && force.checked ? "on" : button.value;
+                select(mode);
+                update({mode, force: mode === "on"});
+            });
+        }
+        force.addEventListener("change", () => {
+            const mode = force.checked ? "on" : "dark";
+            select(mode);
+            update({mode, force: force.checked});
+        });
+        get("quick-host").textContent = key.slice(5);
+        get("quick-modes").hidden = false;
+        get("quick-force-row").hidden = false;
+        reset.textContent = copy.resetTuning;
+    }
+
     fields.forEach((field, index) => {
         const input = inputs[index];
         show(input, saved[field] ?? ownDefaults[field]);
@@ -345,7 +389,14 @@ async function managed() {
     if (saved) {
         Object.assign(config, defaults(saved));
     }
-    toggle.addEventListener("change", () => change({enabled: toggle.checked, profile_overrides: {}}));
+    toggle.addEventListener("change", () => {
+        const profile = zitter.profiles.find(item => item.current);
+        if (quickPanel && profile) {
+            change({profile_overrides: {...config.profile_overrides, [profile.id]: toggle.checked}});
+        } else {
+            change({enabled: toggle.checked, profile_overrides: {}});
+        }
+    });
     get("scope-all").addEventListener("click", () => change({all_profiles: true, profile_overrides: {}}));
     get("scope-some").addEventListener("click", () => change({all_profiles: false, profile_overrides: {}}));
     for (const id of SLIDERS) {
@@ -364,6 +415,17 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 try {
+    if (quickPanel) {
+        get("quick-settings").hidden = false;
+        get("quick-settings").addEventListener("click", () => history.replaceState(null, "", "#settings"));
+        get("quick-site").hidden = false;
+        get("quick-modes").hidden = true;
+        get("quick-state").textContent = copy.unavailable;
+        if (params.get("repair") === "1") {
+            get("quick-fix").hidden = false;
+            get("quick-fix").addEventListener("click", () => history.replaceState(null, "", "#repair"));
+        }
+    }
     if (zitter && Array.isArray(zitter.profiles)) {
         await managed();
         await openSiteTuning(params.get("site"));
