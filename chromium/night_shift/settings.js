@@ -410,6 +410,7 @@ async function managed() {
 
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && Object.keys(changes).some(key => key.startsWith("site:"))) {
+        if (zitter) history.replaceState(null, "", "#site-changed=" + (++revision));
         renderSites().catch(console.error);
     }
 });

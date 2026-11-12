@@ -52,7 +52,7 @@ bool CanSetNightShiftSiteMode(content::RenderFrameHost& document) {
 }
 
 void SetNightShiftSiteMode(content::RenderFrameHost& document,
-                          NightShiftSiteMode mode) {
+                          NightShiftSiteMode mode, base::OnceClosure changed) {
   if (!CanSetNightShiftSiteMode(document))
     return;
   auto& context = *document.GetBrowserContext();
@@ -66,7 +66,7 @@ void SetNightShiftSiteMode(content::RenderFrameHost& document,
       std::vector<std::string>{key},
       base::BindOnce(
           [](content::WeakDocumentPtr document, std::string key,
-             NightShiftSiteMode mode,
+             NightShiftSiteMode mode, base::OnceClosure changed,
              extensions::StorageFrontend::GetResult result) {
             auto* frame = document.AsRenderFrameHostIfValid();
             if (!frame || !CanSetNightShiftSiteMode(*frame) || !result.data)
@@ -86,12 +86,15 @@ void SetNightShiftSiteMode(content::RenderFrameHost& document,
             storage->Set(
                 std::move(extension), extensions::StorageAreaNamespace::kLocal,
                 base::DictValue().Set(key, std::move(record)),
-                base::BindOnce([](extensions::StorageFrontend::ResultStatus status) {
+                base::BindOnce([](base::OnceClosure changed,
+                                  extensions::StorageFrontend::ResultStatus status) {
                   if (!status.success)
                     LOG(ERROR) << "Could not save Night Shift site mode";
-                }));
+                  else if (changed)
+                    std::move(changed).Run();
+                }, std::move(changed)));
           },
-          document.GetWeakDocumentPtr(), key, mode));
+          document.GetWeakDocumentPtr(), key, mode, std::move(changed)));
 }
 
 }  // namespace zitter::content_embedder

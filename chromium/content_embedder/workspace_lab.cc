@@ -135,6 +135,8 @@
 #include "extensions/browser/view_type_utils.h"
 #include "extensions/browser/extension_action.h"
 #include "extensions/browser/extension_action_icon_factory.h"
+#include "extensions/browser/api/storage/storage_area_namespace.h"
+#include "extensions/browser/api/storage/storage_frontend.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "chromium/prototype/assistant_visuals.h"
@@ -302,7 +304,12 @@ class ContentToolbarButton final : public views::Button,
       icon_ = icon_factory_->GetIcon(tab_id_);
     SchedulePaint();
   }
-  void SetToggledAppearance(bool toggled) { toggled_ = toggled; }
+  void SetToggledAppearance(bool toggled) {
+    if (toggled_ == toggled)
+      return;
+    toggled_ = toggled;
+    SchedulePaint();
+  }
   void PaintButtonContents(gfx::Canvas* canvas) override {
     const auto palette = palette_.Run();
     const bool hover = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED || HasFocus();
@@ -404,11 +411,13 @@ class NightShiftSettingsObserver final
   NightShiftSettingsObserver(content::WebContents* page,
                              GURL settings_url,
                              base::RepeatingCallback<void(base::DictValue)> apply,
-                             base::RepeatingCallback<void(bool)> open_action)
+                             base::RepeatingCallback<void(bool)> open_action,
+                             base::RepeatingClosure site_changed)
       : content::WebContentsObserver(page),
         content::WebContentsUserData<NightShiftSettingsObserver>(*page),
         settings_url_(std::move(settings_url)),
-        apply_(std::move(apply)), open_action_(std::move(open_action)) {}
+        apply_(std::move(apply)), open_action_(std::move(open_action)),
+        site_changed_(std::move(site_changed)) {}
 
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
     constexpr std::string_view kApply = "apply=";
@@ -426,6 +435,10 @@ class NightShiftSettingsObserver final
       open_action_.Run(url.ref() == "repair");
       return;
     }
+    if (url.ref().starts_with("site-changed=")) {
+      site_changed_.Run();
+      return;
+    }
     if (!url.ref().starts_with(kApply) || url.ref().size() > 64 * 1024)
       return;
     auto settings = base::JSONReader::ReadDict(
@@ -438,6 +451,7 @@ class NightShiftSettingsObserver final
   const GURL settings_url_;
   const base::RepeatingCallback<void(base::DictValue)> apply_;
   const base::RepeatingCallback<void(bool)> open_action_;
+  const base::RepeatingClosure site_changed_;
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
@@ -6202,11 +6216,13 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
         night_shift.children.push_back({
             .title = std::move(title),
             .run = base::BindRepeating(
-                [](const content::WeakDocumentPtr& document,
-                   NightShiftSiteMode mode) {
-                  if (auto* frame = document.AsRenderFrameHostIfValid())
-                    SetNightShiftSiteMode(*frame, mode);
-                }, document.GetWeakDocumentPtr(), mode)});
+                [](base::WeakPtr<WorkspaceLab> lab,
+                   const content::WeakDocumentPtr& document, NightShiftSiteMode mode) {
+                  if (auto* frame = document.AsRenderFrameHostIfValid()) {
+                    SetNightShiftSiteMode(*frame, mode,
+                        base::BindOnce(&WorkspaceLab::RefreshNightShiftButton, lab, true));
+                  }
+                }, weak_factory_.GetWeakPtr(), document.GetWeakDocumentPtr(), mode)});
       };
       add_mode(prototype::T(u"Jak w profilu"), NightShiftSiteMode::kAuto);
       add_mode(prototype::T(u"Ciemny motyw witryny"), NightShiftSiteMode::kDark);
@@ -9822,6 +9838,7 @@ void WorkspaceLab::RefreshShell() {
   if (!web_contents() || !model_.active())
     return;
   ScheduleGitHubRefresh();
+  RefreshNightShiftButton();
   if (assistant_ && assistant_profile_ != AssistantProfileId()) {
     if (assistant_->SwitchProfile()) {
       assistant_profile_ = AssistantProfileId();
@@ -16041,11 +16058,14 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
   }
   auto apply = base::BindRepeating(&WorkspaceLab::ApplyNightShiftSettings,
                                    weak_factory_.GetWeakPtr());
+  auto site_changed = base::BindRepeating(&WorkspaceLab::RefreshNightShiftButton,
+                                          weak_factory_.GetWeakPtr(), true);
   if (!quick_panel) {
     if (!CreateExtensionTab(context, url, /*active=*/true))
       return false;
     NightShiftSettingsObserver::CreateForWebContents(
-        web_contents(), url, std::move(apply), base::RepeatingCallback<void(bool)>());
+        web_contents(), url, std::move(apply), base::RepeatingCallback<void(bool)>(),
+        std::move(site_changed));
     shell_->CloseOverlays(true);
     widget_->Activate();
     return true;
@@ -16092,7 +16112,8 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
           lab->OpenNightShiftSettings();
         }
       }, weak_factory_.GetWeakPtr(),
-      document ? document->GetWeakDocumentPtr() : content::WeakDocumentPtr()));
+      document ? document->GetWeakDocumentPtr() : content::WeakDocumentPtr()),
+      std::move(site_changed));
   panel.SetContentsView(std::move(view));
   night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(&panel);
   night_shift_widget_->SetColorModeOverride(widget_->color_mode_override());
@@ -16118,6 +16139,43 @@ void WorkspaceLab::ApplyNightShiftSettings(base::DictValue value) {
                            night_shift_config_.EnabledFor(profiles_[i].id),
                            night_shift_config_);
   }
+  RefreshNightShiftButton(true);
+}
+
+void WorkspaceLab::RefreshNightShiftButton(bool force) {
+  if (!night_shift_button_)
+    return;
+  auto* page = web_contents();
+  const auto key = page ? NightShiftSiteKey(page->GetLastCommittedURL()) : std::string();
+  if (!force && night_shift_indicator_page_.get() == page && night_shift_indicator_key_ == key)
+    return;
+  const auto read = ++night_shift_indicator_read_;
+  if (!force || key.empty())
+    views::AsViewClass<ContentToolbarButton>(night_shift_button_)->SetToggledAppearance(false);
+  night_shift_indicator_page_ = page ? page->GetWeakPtr() : nullptr;
+  night_shift_indicator_key_ = key;
+  if (key.empty())
+    return;
+  auto* context = page->GetBrowserContext();
+  const auto* extension = GetBundledNightShiftExtension(*context);
+  if (!extension)
+    return;
+  extensions::StorageFrontend::Get(context)->GetValues(
+      base::WrapRefCounted(extension), extensions::StorageAreaNamespace::kLocal,
+      std::vector<std::string>{key, "enabled"},
+      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, uint64_t read, std::string key,
+                        extensions::StorageFrontend::GetResult result) {
+        if (!lab || !lab->night_shift_button_ || lab->night_shift_indicator_read_ != read ||
+            !result.data)
+          return;
+        const auto* record = result.data->FindDict(key);
+        const auto* mode = record ? record->FindString("mode") : nullptr;
+        const bool active = (mode && (*mode == "on" || *mode == "dark")) ||
+                            ((!mode || *mode != "off") &&
+                             result.data->FindBool("enabled").value_or(false));
+        views::AsViewClass<ContentToolbarButton>(lab->night_shift_button_)
+            ->SetToggledAppearance(active);
+      }, weak_factory_.GetWeakPtr(), read, key));
 }
 
 void WorkspaceLab::OpenExtensionOptions(std::string id) {

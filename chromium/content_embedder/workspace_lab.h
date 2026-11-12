@@ -419,6 +419,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool OpenNightShiftSettings(content::RenderFrameHost* document = nullptr,
                               bool quick_panel = false);
   void ApplyNightShiftSettings(base::DictValue value);
+  void RefreshNightShiftButton(bool force = false);
   std::string_view WorkspaceProfileName(size_t workspace) const;
   void AppendWorkspace(Workspace workspace, const base::DictValue* session);
   bool AddWorkspace(std::string name, std::string profile_id,
@@ -929,6 +930,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::unique_ptr<views::BubbleDialogDelegate> extensions_toolbar_menu_;
   std::unique_ptr<views::Widget> extensions_toolbar_menu_widget_;
   raw_ptr<views::View> night_shift_button_ = nullptr;
+  base::WeakPtr<content::WebContents> night_shift_indicator_page_;
+  std::string night_shift_indicator_key_;
+  uint64_t night_shift_indicator_read_ = 0;
   std::unique_ptr<views::BubbleDialogDelegate> night_shift_panel_;
   std::unique_ptr<views::Widget> night_shift_widget_;
   raw_ptr<views::View> pinned_extension_toolbar_ = nullptr;

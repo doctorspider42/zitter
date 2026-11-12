@@ -5,6 +5,8 @@
 
 #include <string>
 
+#include "base/functional/callback.h"
+
 class GURL;
 
 namespace content {
@@ -18,7 +20,8 @@ enum class NightShiftSiteMode { kAuto, kDark, kForce, kOff };
 std::string NightShiftSiteKey(const GURL& url);
 bool CanSetNightShiftSiteMode(content::RenderFrameHost& document);
 void SetNightShiftSiteMode(content::RenderFrameHost& document,
-                          NightShiftSiteMode mode);
+                          NightShiftSiteMode mode,
+                          base::OnceClosure changed);
 
 }  // namespace zitter::content_embedder
 
