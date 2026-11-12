@@ -50,7 +50,10 @@
                     <span data-text="force">Also on sites with their own dark mode</span>
                     <input id="quick-force" class="switch" type="checkbox" role="switch">
                 </label>
-                <button type="button" id="site-tuning-reset" class="quiet" data-text="reset">Reset to defaults</button>
+                <button type="button" id="site-tuning-reset" class="quiet">
+                    <svg class="action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3"/></svg>
+                    <span data-text="reset">Reset to defaults</span>
+                </button>
                 <div class="group" id="site-repair" hidden>
                     <h2 data-text="repairTitle">Assistant proposal</h2>
                     <p class="hint" id="site-repair-label"></p>
@@ -67,8 +70,14 @@
                 <button type="button" id="site-repair-undo" class="quiet" data-text="repairUndo" hidden>Undo last repair</button>
             </section>
 
-            <button type="button" id="quick-fix" class="quiet quick-action" data-text="fixSite" hidden>Fix this site</button>
-            <button type="button" id="quick-settings" class="quiet quick-action" data-text="openSettings" hidden>Night Shift settings</button>
+            <button type="button" id="quick-fix" class="quiet quick-action" hidden>
+                    <svg class="action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 1.5Q9.5 6.5 14.5 8Q9.5 9.5 8 14.5Q6.5 9.5 1.5 8Q6.5 6.5 8 1.5Z"/></svg>
+                    <span data-text="fixSite">Fix this site</span>
+                </button>
+            <button type="button" id="quick-settings" class="quiet quick-action" hidden>
+                    <svg class="action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M6.5 2h3l.4 1.8 1 .6 1.8-.5 1.5 2.6-1.3 1.3v1.2l1.3 1.3-1.5 2.6-1.8-.5-1 .6-.4 1.8h-3l-.4-1.8-1-.6-1.8.5-1.5-2.6 1.3-1.3V7.8L1.8 6.5l1.5-2.6 1.8.5 1-.6L6.5 2ZM10 8.4a2 2 0 1 1-4 0 2 2 0 1 1 4 0Z"/></svg>
+                    <span data-text="openSettings">Night Shift settings</span>
+                </button>
             <section class="group" id="sites-group">
                 <h2 data-text="sites">Sites with their own settings</h2>
                 <div class="sites" id="sites"></div>

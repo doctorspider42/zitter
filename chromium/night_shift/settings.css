@@ -190,7 +190,25 @@ input { accent-color: var(--accent); }
 :root[data-presentation="panel"] #quick-host { overflow-wrap: anywhere; }
 :root[data-presentation="panel"] #quick-force-row { margin: 5px 0; }
 :root[data-presentation="panel"] .quick-action,
-:root[data-presentation="panel"] #site-tuning-reset { text-align: start; padding-inline: 4px; }
+:root[data-presentation="panel"] #site-tuning-reset {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: start;
+    padding-inline: 4px;
+}
+.ns-settings .action-icon {
+    display: none;
+    width: 15px;
+    height: 15px;
+    flex: none;
+    fill: none;
+    stroke: var(--muted);
+    stroke-width: 1.3;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+:root[data-presentation="panel"] .action-icon { display: block; }
 :root[data-presentation="panel"] #quick-settings { border-top: 1px solid var(--line); border-radius: 0; }
 
 :root[data-presentation="panel"] .slider {

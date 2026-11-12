@@ -283,7 +283,7 @@ async function openSiteTuning(key) {
         get("quick-host").textContent = key.slice(5);
         get("quick-modes").hidden = false;
         get("quick-force-row").hidden = false;
-        reset.textContent = copy.resetTuning;
+        reset.querySelector("[data-text]").textContent = copy.resetTuning;
     }
 
     fields.forEach((field, index) => {
