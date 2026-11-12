@@ -10,8 +10,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chromium/prototype/content_blocking.h"
+#include "chromium/prototype/adblock_browser_support.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -55,9 +54,10 @@ AdBlockingRulesPanel::~AdBlockingRulesPanel() { Close(); }
 
 void AdBlockingRulesPanel::Close() {
   weak_factory_.InvalidateWeakPtrs();
+  try_action_ = nullptr;
   text_ = nullptr; add_field_ = nullptr; body_ = nullptr; count_ = nullptr; footer_ = nullptr;
   list_mode_ = nullptr; text_mode_ = nullptr; add_error_ = nullptr; text_status_ = nullptr; save_ = nullptr;
-  scene_.reset(); widget_.reset(); delegate_.reset(); watcher_.reset(); profile_ = nullptr;
+  scene_.reset(); widget_.reset(); delegate_.reset(); watcher_.reset(); profile_.clear(); callbacks_ = {};
 }
 
 views::View* AdBlockingRulesPanel::MakeLine(views::View* parent, uint32_t style, int tone) {
@@ -66,12 +66,13 @@ views::View* AdBlockingRulesPanel::MakeLine(views::View* parent, uint32_t style,
   return line;
 }
 
-void AdBlockingRulesPanel::Show(Profile* profile, views::Widget* parent, Repair repair) {
-  if (!profile || !parent) return;
+void AdBlockingRulesPanel::Show(std::string profile, views::Widget* parent,
+                                Callbacks callbacks) {
+  if (profile.empty() || !parent) return;
   if (widget_ && (widget_->IsClosed() || profile_ != profile)) Close();
-  repair_ = std::move(repair);
+  callbacks_ = std::move(callbacks);
   if (widget_) { widget_->Show(); widget_->Activate(); return; }
-  profile_ = profile;
+  profile_ = std::move(profile);
   auto delegate = std::make_unique<views::DialogDelegate>();
   delegate->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   delegate->SetTitle(T(u"Twoje reguły"));
@@ -122,10 +123,10 @@ void AdBlockingRulesPanel::Show(Profile* profile, views::Widget* parent, Repair 
 std::vector<AdBlockingRulesPanel::Entry> AdBlockingRulesPanel::Entries() const {
   std::vector<Entry> entries;
   std::string note;
-  for (const auto& line : ContentBlocking::Rules(profile_)) {
+  for (const auto& line : callbacks_.read.Run()) {
     // A note heads the rules under it ("Asystent: wp.pl, 2026-11-05").
     if (line.starts_with("!")) { note = std::string(base::TrimWhitespaceASCII(line.substr(1), base::TRIM_ALL)); continue; }
-    entries.push_back({line, note, ContentBlocking::RuleSite(line), ContentBlocking::RuleStale(profile_, line)});
+    entries.push_back({line, note, AdblockRuleSite(line), callbacks_.stale && callbacks_.stale.Run(line)});
   }
   return entries;
 }
@@ -207,17 +208,17 @@ void AdBlockingRulesPanel::BuildList() {
     if (!entry.note.empty()) scene_->SetText(MakeLine(text, kLabel, static_cast<int>(Tone::kMuted)), U(entry.note));
     SetSidebarPanelLayout(text, true, gfx::Insets(), 3);
     auto* actions = row->AddChildView(std::make_unique<views::View>());
-    if (entry.stale && repair_) {
+    if (entry.stale && callbacks_.repair) {
       auto* group = actions->AddChildView(scene_->MakeActions(0));
       auto* fix = scene_->AddAction(group, base::BindRepeating([](base::WeakPtr<AdBlockingRulesPanel> panel, std::string rule) {
-        if (panel && panel->repair_) panel->repair_.Run(rule); }, weak, entry.rule), T(u"Napraw z asystentem"));
+        if (panel && panel->callbacks_.repair) panel->callbacks_.repair.Run(rule); }, weak, entry.rule), T(u"Napraw z asystentem"));
       scene_->SetActionKind(fix, 3);
     }
     scene_->AddIconAction(actions, base::BindRepeating([](std::string rule) {
       ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(rule)); }, entry.rule),
       TF(u"Kopiuj regułę {}", {U(entry.rule)}), &vector_icons::kContentCopyIcon);
     scene_->AddIconAction(actions, base::BindRepeating([](base::WeakPtr<AdBlockingRulesPanel> panel, std::string rule) {
-      if (panel && panel->profile_) ContentBlocking::RemoveRule(panel->profile_, rule); }, weak, entry.rule),
+      if (panel && panel->callbacks_.remove) panel->callbacks_.remove.Run(std::move(rule)); }, weak, entry.rule),
       TF(u"Usuń regułę {}", {U(entry.rule)}), &vector_icons::kCloseIcon);
     SetSidebarPanelLayout(actions, false, gfx::Insets(), 2, nullptr, true);
     SetSidebarPanelLayout(row, false, gfx::Insets::VH(8, 10), 10, text, false);
@@ -245,6 +246,13 @@ void AdBlockingRulesPanel::BuildList() {
     if (event.type() != ui::EventType::kKeyPressed || event.key_code() != ui::VKEY_RETURN) return false;
     submit.Run(); return true; }, submit));
   auto* add_actions = field_row->AddChildView(scene_->MakeActions(0));
+  try_action_ = nullptr;
+  if (callbacks_.try_rule) {
+    try_action_ = scene_->AddAction(
+        add_actions, base::BindRepeating(&AdBlockingRulesPanel::TryRule, weak),
+        T(u"Wypróbuj na karcie"));
+    scene_->SetActionKind(try_action_, 3);
+  }
   scene_->SetActionKind(scene_->AddAction(add_actions, submit, T(u"Dodaj")), 0);
   SetSidebarPanelLayout(field_row, false, gfx::Insets(), 8, add_field_->view(), true);
   add_error_ = MakeLine(add, kLabel, static_cast<int>(Tone::kDanger));
@@ -262,24 +270,52 @@ void AdBlockingRulesPanel::BuildList() {
   SetSidebarPanelLayout(footer_, false, gfx::Insets(), 12, footer_->children().front(), true);
 }
 
+void AdBlockingRulesPanel::TryRule() {
+  if (!add_field_ || !callbacks_.try_rule)
+    return;
+  const auto rule = base::UTF16ToUTF8(
+      base::TrimWhitespace(add_field_->GetText(), base::TRIM_ALL));
+  callbacks_.try_rule.Run(
+      rule, base::BindOnce([](base::WeakPtr<AdBlockingRulesPanel> panel,
+                              bool success) {
+        if (!panel || !panel->widget_ || panel->widget_->IsClosed())
+          return false;
+        if (success) {
+          panel->widget_->Close();
+        } else if (panel->add_error_) {
+          panel->scene_->SetText(panel->add_error_,
+              T(u"Nie można wypróbować tej reguły na bieżącej stronie."));
+          panel->add_error_->SetVisible(true);
+        }
+        return true;
+      }, weak_factory_.GetWeakPtr()));
+}
+
+views::View* AdBlockingRulesPanel::PrepareTrialForTesting(
+    const std::u16string& rule) {
+  if (add_field_ && try_action_)
+    add_field_->SetText(rule);
+  return try_action_;
+}
+
 std::string AdBlockingRulesPanel::Add(const std::string& rule) {
   if (rule.size() > 1000) return base::UTF16ToUTF8(T(u"Reguła jest za długa."));
-  if (auto problem = ContentBlocking::RuleError(rule); !problem.empty())
+  if (auto problem = AdblockRuleError(rule); !problem.empty())
     return base::UTF16ToUTF8(TF(u"Tej reguły nie da się użyć: {}", {U(problem)}));
-  std::string error;
-  if (!ContentBlocking::AddRules(profile_, {rule}, {}, &error)) return error;
+  if (auto error = callbacks_.add.Run(rule); !error.empty()) return error;
   if (add_field_) add_field_->SetText(u"");
   return {};
 }
 std::string AdBlockingRulesPanel::AddForTesting(const std::string& rule) { return Add(rule); }
 
 void AdBlockingRulesPanel::BuildText() {
+  try_action_ = nullptr;
   auto weak = weak_factory_.GetWeakPtr();
   auto* hint = body_->AddChildView(scene_->MakeText(T(u"Jedna reguła w linii. Linie z ! to notatki."), false, false, 0));
   scene_->SetTextStyle(hint, kLabel, Tone::kMuted);
   auto textarea = std::make_unique<views::Textarea>();
   textarea->SetFontList(gfx::FontList({"JetBrains Mono", "Consolas", "Menlo", "monospace"}, gfx::Font::NORMAL, 12, gfx::Font::Weight::NORMAL));
-  textarea->SetText(base::UTF8ToUTF16(base::JoinString(ContentBlocking::Rules(profile_), "\n")));
+  textarea->SetText(base::UTF8ToUTF16(base::JoinString(callbacks_.read.Run(), "\n")));
   textarea->GetViewAccessibility().SetName(T(u"Reguły jako tekst"));
   watcher_ = std::make_unique<RulesTextWatcher>(base::BindRepeating([](base::WeakPtr<AdBlockingRulesPanel> panel) { if (panel) panel->CheckText(); }, weak));
   textarea->set_controller(watcher_.get());
@@ -300,7 +336,7 @@ void AdBlockingRulesPanel::BuildText() {
 
 void AdBlockingRulesPanel::CheckText() {
   if (!text_ || !text_status_) return;
-  const auto errors = ContentBlocking::TextErrors(base::UTF16ToUTF8(text_->GetText()));
+  const auto errors = AdblockTextErrors(base::UTF16ToUTF8(text_->GetText()));
   text_errors_ = errors.size();
   std::u16string status;
   if (errors.empty()) {
@@ -320,9 +356,9 @@ void AdBlockingRulesPanel::CheckText() {
 }
 
 bool AdBlockingRulesPanel::SaveText() {
-  if (!text_ || !profile_) return false;
+  if (!text_ || !callbacks_.save) return false;
   CheckText();
-  return text_errors_ == 0 && ContentBlocking::SetRulesText(profile_, base::UTF16ToUTF8(text_->GetText()));
+  return text_errors_ == 0 && callbacks_.save.Run(base::UTF16ToUTF8(text_->GetText()));
 }
 void AdBlockingRulesPanel::SetTextForTesting(const std::u16string& text) {
   if (!text_) return;

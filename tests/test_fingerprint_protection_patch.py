@@ -28,6 +28,36 @@ class FingerprintProtectionPatchTests(unittest.TestCase):
             patch.apply(patch.prepare(root))
             self.assertEqual(state, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob('*') if p.is_file()})
 
+    def test_content_plan_does_not_require_chrome_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fingerprint_protection_fixture.seed(root)
+            prefs = root / patch.CHROME_PREF_EDIT[0]
+            prefs.unlink()
+            plan = patch.prepare(root, register_chrome_pref=False)
+            self.assertNotIn(prefs, plan)
+            patch.apply(plan)
+            self.assertFalse(prefs.exists())
+            for path, _, _ in patch.RENDERER_PREFS_EDITS:
+                self.assertNotIn("zitter_fingerprint_key", (root / path).read_text())
+            self.assertTrue((root / patch.PUBLIC_STATE).exists())
+
+    def test_content_plan_removes_only_legacy_transport_edits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fingerprint_protection_fixture.seed(root)
+            original = {path: (root / path).read_bytes()
+                        for path, _, _ in patch.RENDERER_PREFS_EDITS}
+            patch.apply(patch.prepare(root))
+            header = root / next(iter(original))
+            header.write_bytes(header.read_bytes() + b"// unrelated local edit\n")
+            original[next(iter(original))] += b"// unrelated local edit\n"
+            patch.apply(patch.prepare(root, register_chrome_pref=False))
+            self.assertEqual(original, {path: (root / path).read_bytes() for path in original})
+            state = {path: (root / path).stat().st_mtime_ns for path in original}
+            patch.apply(patch.prepare(root, register_chrome_pref=False))
+            self.assertEqual(state, {path: (root / path).stat().st_mtime_ns for path in original})
+
     def test_rejects_unexpected_upstream_layout_before_any_write(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

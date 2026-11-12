@@ -2616,7 +2616,7 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderTextBudgetAndSavedRet
   reader->MarkAll({});
   base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,settle.QuitClosure(),base::Milliseconds(600));settle.Run();
   {base::ScopedAllowBlockingForTesting allow;base::ThreadPoolInstance::Get()->FlushForTesting();}
-  auto loaded=std::make_unique<RssReader>(work_); ASSERT_TRUE(base::test::RunUntil([&]{return loaded->ready()&&!loaded->busy();}));
+  auto loaded=std::make_unique<RssReader>(*work_); ASSERT_TRUE(base::test::RunUntil([&]{return loaded->ready()&&!loaded->busy();}));
   size_t kept=0; for(const auto& f:loaded->feeds())for(const auto& a:f.articles)if(a.saved){++kept;EXPECT_TRUE(a.read);}
   EXPECT_EQ(kept,50u);
   auto* alias_reader = RssReader::For(personal_); ASSERT_TRUE(base::test::RunUntil([&]{return alias_reader->ready();}));
@@ -2675,12 +2675,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RssReaderFetchParseIsolationAn
     base::RunLoop settle; base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, settle.QuitClosure(), base::Milliseconds(600)); settle.Run();
     base::ScopedAllowBlockingForTesting allow; base::ThreadPoolInstance::Get()->FlushForTesting();
   }
-  auto reloaded = std::make_unique<RssReader>(work_);
+  auto reloaded = std::make_unique<RssReader>(*work_);
   ASSERT_TRUE(base::test::RunUntil([&] { return reloaded->ready() && !reloaded->busy(); }));
   ASSERT_EQ(reloaded->feeds().size(), 5u); EXPECT_TRUE(reloaded->feeds()[0].articles[0].saved); EXPECT_TRUE(reloaded->feeds()[0].articles[0].read);
   auto* private_profile = work_->GetPrimaryOTRProfile(true);
   auto* ephemeral = RssReader::For(private_profile); EXPECT_TRUE(ephemeral->ready()); EXPECT_TRUE(ephemeral->feeds().empty());
-  RssPanel private_panel; private_panel.Show(private_profile,window_->widget()->GetContentsView(),base::DoNothing());
+  RssPanel private_panel; private_panel.Show(*ephemeral,window_->widget()->GetContentsView(),base::DoNothing());
   EXPECT_TRUE(private_panel.view());
   ephemeral->Add(embedded_test_server()->GetURL("/rss-delayed"));
   EXPECT_TRUE(ephemeral->busy()); ProfileDestroyer::DestroyOTRProfileWhenAppropriate(private_profile);
@@ -6110,6 +6110,39 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadProfileSleepAndWin
   EXPECT_EQ(0, closed); EXPECT_TRUE(window_->widget()->IsVisible());
   window_->widget()->Close(); AnswerUnload(page, true);
   ASSERT_TRUE(base::test::RunUntil([&] { return closed == 1; }));
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest,
+                       BeforeUnloadWindowCloseRevalidatesApprovedDocument) {
+  ASSERT_NO_FATAL_FAILURE(NavigateBoth("/storage_probe.html?close-batch"));
+  ASSERT_TRUE(window_->Select("work"));
+  auto* work = window_->contents("work");
+  ASSERT_NO_FATAL_FAILURE(ArmUnsaved(work));
+  ASSERT_TRUE(window_->Select("personal"));
+  auto* personal = window_->contents("personal");
+  ASSERT_NO_FATAL_FAILURE(ArmUnsaved(personal));
+
+  int closed = 0;
+  window_->SetCloseCallback(base::BindOnce(
+      [](int* count) { ++*count; }, &closed));
+  window_->widget()->Close();
+  ASSERT_NO_FATAL_FAILURE(AnswerUnload(work, true));
+  auto* personal_dialogs = PageDialogs::FromWebContents(personal);
+  ASSERT_TRUE(base::test::RunUntil(
+      [&] { return personal_dialogs && personal_dialogs->dialog(); }));
+
+  // An accepted prompt covers the old document. A navigation before the
+  // other prompt completes must cancel the whole close.
+  ASSERT_TRUE(content::ExecJs(work, "window.onbeforeunload = null;"));
+  ASSERT_TRUE(content::NavigateToURL(
+      work, embedded_test_server()->GetURL("/storage_probe.html?new-document")));
+  ASSERT_NO_FATAL_FAILURE(AnswerUnload(personal, true));
+  ASSERT_TRUE(base::test::RunUntil([&] { return !window_->lifecycle_pending(); }));
+  EXPECT_EQ(0, closed);
+  EXPECT_TRUE(window_->widget()->IsVisible());
+  EXPECT_EQ(work, window_->contents("work"));
+  EXPECT_EQ(personal, window_->contents("personal"));
+  EXPECT_EQ("draft", content::EvalJs(personal, "unsaved"));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, BeforeUnloadPeekAndBackgroundBatch) {

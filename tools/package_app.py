@@ -69,7 +69,7 @@ def runtime_signing_options(path, app):
     return ["--options", "runtime,restrict,kill,library"]
 
 
-def sign_bundle(app, identity, hardened_runtime=False):
+def sign_bundle(app, identity, hardened_runtime=False, *, bundle_id=BUNDLE_ID):
     """Sign nested code from the inside out, then verify the complete seal."""
     magic = {b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
              b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -103,7 +103,7 @@ def sign_bundle(app, identity, hardened_runtime=False):
         if hardened_runtime:
             command += runtime_signing_options(path, app)
         if path == app:
-            command += ["--identifier", BUNDLE_ID]
+            command += ["--identifier", bundle_id]
         subprocess.run(command + [str(path)], check=True)
     # Independent dylibs can be signed concurrently; parent seals wait for all.
     with ThreadPoolExecutor(max_workers=4) as pool:

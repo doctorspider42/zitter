@@ -24,6 +24,8 @@ namespace content { class WebContents; }
 namespace extensions { class Extension; }
 namespace zitter::sidebar { struct DesignPalette; }
 namespace zitter::prototype {
+
+class FingerprintToolbar;
 class ExtensionsContextMenu;
 class ExtensionsUninstall;
 
@@ -117,7 +119,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   views::View* fingerprint_button_for_testing() const { return fingerprint_button_; }
   void SetAssistantState(AssistantState state);
   views::View* assistant_button_for_testing() const { return assistant_button_; }
-  views::Widget* fingerprint_panel_for_testing() const { return fingerprint_widget_.get(); }
+  views::Widget* fingerprint_panel_for_testing() const;
   std::u16string fingerprint_code_for_testing() const;
   // Runs a panel command as its row would: 0 new fingerprint, 1 turn off,
   // 2 privacy settings.
@@ -132,7 +134,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   class ActionButton;
   class Menu;
   class Popup;
-  class FingerprintPanel;
   class ShieldPanel;
   class AssistantActions;
 
@@ -140,7 +141,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   friend class ActionButton;
   friend class Menu;
   friend class Popup;
-  friend class FingerprintPanel;
   friend class ShieldPanel;
   friend class AssistantActions;
   friend class ExtensionsContextMenu;
@@ -163,10 +163,6 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   SkColor workspace_color() const;
   void Tremor();
   void ObserveFingerprintProtection();
-  void DestroyFingerprintPanel();
-  void NewFingerprint();
-  void TurnOffFingerprintProtection();
-  void OpenPrivacySettings();
   void ObservePageCount();
   void RefreshShield();
   void DestroyShieldPanel();
@@ -191,8 +187,7 @@ class ExtensionsBar final : public views::View, public ToolbarActionsModel::Obse
   AssistantState assistant_state_;
   PrefChangeRegistrar fingerprint_pref_;
   base::CallbackListSubscription fingerprint_key_;
-  std::unique_ptr<FingerprintPanel> fingerprint_panel_;
-  std::unique_ptr<views::Widget> fingerprint_widget_;
+  std::unique_ptr<FingerprintToolbar> fingerprint_toolbar_;
   raw_ptr<views::View> shield_button_ = nullptr;
   base::CallbackListSubscription blocking_changed_;
   base::CallbackListSubscription page_count_;

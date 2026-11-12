@@ -1,23 +1,15 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/workspace_window.h"
 
-#include <deque>
 #include <map>
-#if BUILDFLAG(IS_POSIX)
-#include <unistd.h>
-#elif BUILDFLAG(IS_WIN)
-#include <windows.h>
-#endif
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "components/os_crypt/async/browser/os_crypt_async.h"
 #include "components/os_crypt/async/common/encryptor.h"
-#include "base/files/scoped_temp_dir.h"
-#include "base/process/launch.h"
-#include "base/process/kill.h"
+#include "chromium/prototype/assistant_connection.h"
 #include "chromium/prototype/assistant_panel.h"
 #include "chromium/assistant/native_cli_path.h"
-#include "assistant_page_script.h"
+#include "chromium/prototype/assistant_page_tools.h"
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -34,29 +26,23 @@
 #include "content_blocking_probe_script.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "components/download/public/common/download_item.h"
-#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "content/public/browser/download_manager.h"
-#include "ui/gfx/codec/jpeg_codec.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
-#include "base/path_service.h"
 #include "base/strings/cstring_view.h"
 #include "base/strings/string_split.h"
 #include "base/task/thread_pool.h"
 #include "chromium/prototype/i18n.h"
-#include "components/input/native_web_keyboard_event.h"
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "ui/events/base_event_utils.h"
-#include "content/public/browser/devtools_agent_host.h"
-#include "content/public/browser/devtools_agent_host_client.h"
+#include "chromium/prototype/devtools_console_reader.h"
 #include "content/public/browser/document_user_data.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "ui/events/event.h"
-#include "ui/events/keycodes/dom/dom_code.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "base/files/important_file_writer.h"
 #include "base/json/json_reader.h"
@@ -94,60 +80,6 @@ struct BackendProbe { bool openai = false, codex = false, claude = false; };
 // Docs, contenteditable) take text only this way. The focused element is
 // checked first; protected fields refuse, and Enter outside a multi-line
 // editor (it may submit a form) needs the same native consent as a click.
-struct NamedKey { const char* name; ui::KeyboardCode code; char16_t character; };
-constexpr NamedKey kKeys[] = {
-    {"enter", ui::VKEY_RETURN, u'\r'}, {"tab", ui::VKEY_TAB, u'\t'}, {"backspace", ui::VKEY_BACK, 0}, {"delete", ui::VKEY_DELETE, 0},
-    {"escape", ui::VKEY_ESCAPE, 0}, {"arrowup", ui::VKEY_UP, 0}, {"arrowdown", ui::VKEY_DOWN, 0}, {"arrowleft", ui::VKEY_LEFT, 0},
-    {"arrowright", ui::VKEY_RIGHT, 0}, {"home", ui::VKEY_HOME, 0}, {"end", ui::VKEY_END, 0}, {"pageup", ui::VKEY_PRIOR, 0},
-    {"pagedown", ui::VKEY_NEXT, 0}};
-// "ctrl+shift+k", "Enter", "F5", "a": modifiers, then one key. Shortcuts that
-// close or switch tabs and windows stay with the user.
-bool ParseKey(const std::string& name, ui::KeyboardCode& code, int& flags, char16_t& character) {
-  const auto parts = base::SplitString(base::ToLowerASCII(name), "+", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-  if (parts.empty() || parts.size() > 4) return false;
-  flags = 0; code = ui::VKEY_UNKNOWN; character = 0;
-  for (size_t i = 0; i + 1 < parts.size(); ++i) {
-    const auto& modifier = parts[i];
-    if (modifier == "ctrl" || modifier == "control") flags |= ui::EF_CONTROL_DOWN;
-    else if (modifier == "shift") flags |= ui::EF_SHIFT_DOWN;
-    else if (modifier == "alt" || modifier == "option") flags |= ui::EF_ALT_DOWN;
-    else if (modifier == "meta" || modifier == "cmd" || modifier == "command" || modifier == "win") flags |= ui::EF_COMMAND_DOWN;
-    else return false;
-  }
-  const auto& key = parts.back();
-  for (const auto& entry : kKeys) if (key == entry.name) { code = entry.code; character = entry.character; }
-  if (key == "return") { code = ui::VKEY_RETURN; character = u'\r'; }
-  if (key == "esc") code = ui::VKEY_ESCAPE;
-  if (key == "space") { code = ui::VKEY_SPACE; character = u' '; }
-  if (key.size() == 1 && key[0] >= 'a' && key[0] <= 'z') {
-    code = static_cast<ui::KeyboardCode>(ui::VKEY_A + (key[0] - 'a'));
-    character = static_cast<char16_t>((flags & ui::EF_SHIFT_DOWN) ? key[0] - 'a' + 'A' : key[0]);
-  }
-  if (key.size() == 1 && key[0] >= '0' && key[0] <= '9') { code = static_cast<ui::KeyboardCode>(ui::VKEY_0 + (key[0] - '0')); character = key[0]; }
-  if (int number = 0; key.size() >= 2 && key.size() <= 3 && key[0] == 'f' && base::StringToInt(key.substr(1), &number) && number >= 1 && number <= 12)
-    code = static_cast<ui::KeyboardCode>(ui::VKEY_F1 + number - 1);
-  if (code == ui::VKEY_UNKNOWN) return false;
-  const bool primary = flags & (ui::EF_CONTROL_DOWN | ui::EF_COMMAND_DOWN);
-  static constexpr ui::KeyboardCode kBrowserKeys[] = {ui::VKEY_W, ui::VKEY_Q, ui::VKEY_N, ui::VKEY_T, ui::VKEY_TAB, ui::VKEY_PRIOR, ui::VKEY_NEXT, ui::VKEY_F4};
-  if ((primary && std::ranges::find(kBrowserKeys, code) != std::end(kBrowserKeys)) || ((flags & ui::EF_ALT_DOWN) && code == ui::VKEY_F4) ||
-      (primary && (flags & ui::EF_SHIFT_DOWN) && code == ui::VKEY_DELETE)) return false;
-  // Shortcuts type no text; Enter keeps its own.
-  if ((flags & (ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN | ui::EF_COMMAND_DOWN)) && code != ui::VKEY_RETURN) character = 0;
-  return true;
-}
-void TypeCharacter(content::RenderWidgetHost* host, char16_t character, int flags = 0) {
-  // FromCharacter is portable; the two-argument native constructor is Aura-only.
-  host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(
-      ui::KeyEvent::FromCharacter(character,
-                                  static_cast<ui::KeyboardCode>(character),
-                                  ui::DomCode::NONE, flags)));
-}
-void PressKey(content::RenderWidgetHost* host, ui::KeyboardCode code, int flags, char16_t character) {
-  ui::KeyEvent down(ui::EventType::kKeyPressed, code, flags);
-  host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(down));
-  if (character) TypeCharacter(host, character, flags);
-  host->ForwardKeyboardEvent(input::NativeWebKeyboardEvent(ui::KeyEvent(ui::EventType::kKeyReleased, code, flags)));
-}
 // The assistant's own invisible reader tabs: `visit` loads any page there.
 // "@reader" is the first, "@reader:2" to "@reader:6" the others.
 constexpr char kReader[] = "__reader__";
@@ -180,45 +112,17 @@ void WhenLoaded(base::WeakPtr<content::WebContents> page, base::TimeTicks deadli
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
       base::BindOnce(&WhenLoaded, page, deadline, std::move(done)), base::Milliseconds(200));
 }
-void PageOp(content::WebContents* page, base::DictValue args, base::OnceCallback<void(base::Value)> done) {
-  std::string script = kAssistantPageScript;
-  base::ReplaceFirstSubstringAfterOffset(&script, 0, "ZITTER_ARGS", base::WriteJson(args).value_or("{}"));
-  page->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(base::UTF8ToUTF16(script), std::move(done), kAssistantWorld);
-}
-// Real mouse input, as a user's, at points in the page's CSS pixels.
-gfx::PointF WidgetPoint(content::WebContents* page, double x, double y) {
-  const double zoom = blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(page));
-  return gfx::PointF(x * zoom, y * zoom);
-}
-void SendMouse(content::RenderWidgetHost* host, blink::WebInputEvent::Type type, gfx::PointF point,
-               blink::WebPointerProperties::Button button, int modifiers, int clicks) {
-  blink::WebMouseEvent event(type, modifiers, ui::EventTimeForNow());
-  event.SetPositionInWidget(point); event.SetPositionInScreen(point);
-  event.button = button; event.click_count = clicks;
-  host->ForwardMouseEvent(event);
-}
-void ClickAt(content::WebContents* page, content::RenderWidgetHost* host, double x, double y,
-             blink::WebPointerProperties::Button button = blink::WebPointerProperties::Button::kLeft, int clicks = 1) {
-  using Type = blink::WebInputEvent::Type;
-  const auto point = WidgetPoint(page, x, y);
-  const int held = button == blink::WebPointerProperties::Button::kRight ? blink::WebInputEvent::kRightButtonDown : blink::WebInputEvent::kLeftButtonDown;
-  SendMouse(host, Type::kMouseMove, point, blink::WebPointerProperties::Button::kNoButton, 0, 0);
-  for (int count = 1; count <= clicks; ++count) {
-    SendMouse(host, Type::kMouseDown, point, button, held, count);
-    SendMouse(host, Type::kMouseUp, point, button, 0, count);
-  }
-}
 void DragBetween(content::WebContents* page, content::RenderWidgetHost* host, gfx::PointF from, gfx::PointF to) {
   using Type = blink::WebInputEvent::Type;
   using Button = blink::WebPointerProperties::Button;
-  const auto a = WidgetPoint(page, from.x(), from.y()), b = WidgetPoint(page, to.x(), to.y());
-  SendMouse(host, Type::kMouseMove, a, Button::kNoButton, 0, 0);
-  SendMouse(host, Type::kMouseDown, a, Button::kLeft, blink::WebInputEvent::kLeftButtonDown, 1);
+  const auto a = AssistantWidgetPoint(page, from.x(), from.y()), b = AssistantWidgetPoint(page, to.x(), to.y());
+  SendAssistantMouse(host, Type::kMouseMove, a, Button::kNoButton, 0, 0);
+  SendAssistantMouse(host, Type::kMouseDown, a, Button::kLeft, blink::WebInputEvent::kLeftButtonDown, 1);
   for (int step = 1; step <= 12; ++step) {
     const gfx::PointF at(a.x() + (b.x() - a.x()) * step / 12, a.y() + (b.y() - a.y()) * step / 12);
-    SendMouse(host, Type::kMouseMove, at, Button::kLeft, blink::WebInputEvent::kLeftButtonDown, 0);
+    SendAssistantMouse(host, Type::kMouseMove, at, Button::kLeft, blink::WebInputEvent::kLeftButtonDown, 0);
   }
-  SendMouse(host, Type::kMouseUp, b, Button::kLeft, 0, 1);
+  SendAssistantMouse(host, Type::kMouseUp, b, Button::kLeft, 0, 1);
 }
 struct KeyboardInput {
   std::string tool, label;
@@ -238,7 +142,7 @@ void CheckFocus(base::WeakPtr<content::WebContents> page, KeyboardInput request,
   if (!host) { std::move(done).Run(Error("Page is not ready")); return; }
   // Page focus lets editors such as Google Docs restore their own text target.
   host->Focus();
-  PageOp(page.get(), base::DictValue().Set("tool", "focus_info"), base::BindOnce(
+  RunAssistantPageOperation(page.get(), base::DictValue().Set("tool", "focus_info"), base::BindOnce(
       [](base::WeakPtr<content::WebContents> page, KeyboardInput request, base::OnceCallback<void(base::Value)> done, base::Value focus) {
         const auto* info = focus.GetIfDict();
         if (!page || !info) { std::move(done).Run(Error("Page is not ready")); return; }
@@ -249,7 +153,7 @@ void CheckFocus(base::WeakPtr<content::WebContents> page, KeyboardInput request,
             // Editors such as Google Docs read keys from a hidden editable frame:
             // when the click did not reach it, focus it directly.
             request.focused = true;
-            PageOp(page.get(), base::DictValue().Set("tool", "focus_editor"), base::BindOnce(
+            RunAssistantPageOperation(page.get(), base::DictValue().Set("tool", "focus_editor"), base::BindOnce(
                 [](base::WeakPtr<content::WebContents> page, KeyboardInput request, base::OnceCallback<void(base::Value)> done, base::Value value) {
                   if (!page || !value.is_dict() || !value.GetDict().FindBool("ok").value_or(false)) {
                     std::move(done).Run(Error("No editor took the keyboard; click into the document area first")); return;
@@ -260,12 +164,12 @@ void CheckFocus(base::WeakPtr<content::WebContents> page, KeyboardInput request,
             return;
           }
           if (request.clicked) { std::move(done).Run(Error("No editor took the keyboard; click into the document area first")); return; }
-          PageOp(page.get(), base::DictValue().Set("tool", "editor_point"), base::BindOnce(
+          RunAssistantPageOperation(page.get(), base::DictValue().Set("tool", "editor_point"), base::BindOnce(
               [](base::WeakPtr<content::WebContents> page, KeyboardInput request, base::OnceCallback<void(base::Value)> done, base::Value point) {
                 const auto* p = point.GetIfDict();
                 auto* view = page ? page->GetRenderWidgetHostView() : nullptr;
                 if (!view || !p || !p->FindDouble("x")) { std::move(done).Run(Error("Nothing editable has focus and the page has no editor to click")); return; }
-                ClickAt(page.get(), view->GetRenderWidgetHost(), *p->FindDouble("x"), *p->FindDouble("y"));
+                ClickAssistantPageAt(page.get(), view->GetRenderWidgetHost(), *p->FindDouble("x"), *p->FindDouble("y"));
                 request.clicked = true;
                 // Give the editor a moment to move its focus before checking again.
                 base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
@@ -286,14 +190,14 @@ void TypeAtFocus(base::WeakPtr<content::WebContents> page, KeyboardInput request
   if (!host) { std::move(done).Run(Error("Page is not ready")); return; }
   if (request.tool == "insert_text") {
     for (const char16_t unit : request.text) {
-      if (unit == u'\n') PressKey(host, ui::VKEY_RETURN, 0, u'\r');
-      else if (unit != u'\r') TypeCharacter(host, unit);
+      if (unit == u'\n') PressAssistantKey(host, ui::VKEY_RETURN, 0, u'\r');
+      else if (unit != u'\r') TypeAssistantCharacter(host, unit);
     }
     std::move(done).Run(base::Value(base::DictValue().Set("ok", true).Set("clicked_editor", request.clicked)
         .Set("detail", request.clicked ? "Clicked into the page's editor, then typed; the caret may not be at the end (press_key ctrl+end)" : "Typed at the focus")));
     return;
   }
-  PressKey(host, request.code, request.flags, request.character);
+  PressAssistantKey(host, request.code, request.flags, request.character);
   std::move(done).Run(base::Value(base::DictValue().Set("ok", true)));
 }
 void KeyboardTool(content::WebContents* page, std::string tool, base::DictValue args, bool confirmed,
@@ -308,7 +212,7 @@ void KeyboardTool(content::WebContents* page, std::string tool, base::DictValue 
   } else {
     // Parse the key now, so a refused key never reaches the page.
     request.label = key ? *key : std::string();
-    if (!key || !ParseKey(*key, request.code, request.flags, request.character)) {
+    if (!key || !ParseAssistantKey(*key, request.code, request.flags, request.character)) {
       std::move(done).Run(Error("Unsupported or reserved key (tab and window shortcuts stay with the user)")); return;
     }
   }
@@ -332,35 +236,12 @@ void Settle(base::WeakPtr<content::WebContents> page, base::TimeDelta delay, bas
             }, page, std::move(done)));
       }, page, std::move(done)), delay);
 }
-// The page as the user would see it, at most 1280 px wide, as JPEG.
-// `css_per_pixel` maps image pixels back to page coordinates for mouse x/y.
-void Capture(base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done) {
-  auto* view = page ? page->GetRenderWidgetHostView() : nullptr;
-  if (!view) { std::move(done).Run(Error("Page is not ready")); return; }
-  const gfx::Size size = view->GetViewBounds().size();
-  if (size.IsEmpty()) { std::move(done).Run(Error("The page has no size")); return; }
-  const double scale = std::min(1.0, 1280.0 / size.width());
-  const gfx::Size output(std::max(1, int(size.width() * scale)), std::max(1, int(size.height() * scale)));
-  const double zoom = blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(page.get()));
-  view->CopyFromSurface(gfx::Rect(), output, base::Seconds(5), base::BindOnce(
-      [](base::OnceCallback<void(base::Value)> done, double css_per_pixel, const content::CopyFromSurfaceResult& result) {
-        if (!result.has_value() || result->bitmap.drawsNothing()) { std::move(done).Run(Error("The page could not be captured")); return; }
-        const auto jpeg = gfx::JPEGCodec::Encode(result->bitmap, 70);
-        if (!jpeg) { std::move(done).Run(Error("The page could not be captured")); return; }
-        base::DictValue image;
-        image.Set("image", base::Base64Encode(*jpeg));
-        image.Set("width", result->bitmap.width());
-        image.Set("height", result->bitmap.height());
-        image.Set("css_per_pixel", css_per_pixel);
-        std::move(done).Run(base::Value(std::move(image)));
-      }, std::move(done), 1.0 / (scale * zoom)));
-}
 // A point for mouse input: an element from the last read_page, or x/y in page pixels.
 void ResolvePoint(base::WeakPtr<content::WebContents> page, const base::DictValue& args, const std::string& prefix,
                   base::OnceCallback<void(std::optional<gfx::PointF>, std::string)> done) {
   if (!page) { std::move(done).Run(std::nullopt, "Page is not ready"); return; }
   if (const auto* element = args.FindString(prefix + "element")) {
-    PageOp(page.get(), base::DictValue().Set("tool", "point").Set("element", *element), base::BindOnce(
+    RunAssistantPageOperation(page.get(), base::DictValue().Set("tool", "point").Set("element", *element), base::BindOnce(
         [](base::OnceCallback<void(std::optional<gfx::PointF>, std::string)> done, base::Value value) {
           const auto* dict = value.GetIfDict();
           if (!dict || !dict->FindDouble("x")) {
@@ -408,10 +289,10 @@ void MouseTool(content::WebContents* page, base::DictValue args, bool confirmed,
           return;
         }
         if (action == "hover") {
-          SendMouse(host, blink::WebInputEvent::Type::kMouseMove, WidgetPoint(page.get(), from->x(), from->y()),
+          SendAssistantMouse(host, blink::WebInputEvent::Type::kMouseMove, AssistantWidgetPoint(page.get(), from->x(), from->y()),
                     blink::WebPointerProperties::Button::kNoButton, 0, 0);
         } else {
-          ClickAt(page.get(), host, from->x(), from->y(),
+          ClickAssistantPageAt(page.get(), host, from->x(), from->y(),
                   action == "right_click" ? blink::WebPointerProperties::Button::kRight : blink::WebPointerProperties::Button::kLeft,
                   action == "double_click" ? 2 : 1);
         }
@@ -421,7 +302,8 @@ void MouseTool(content::WebContents* page, base::DictValue args, bool confirmed,
 // Ad blocking (docs/ad-blocking.md): what on the page looks like an ad, with
 // selectors and third-party requests, for the model to write rules from.
 void AdblockInspect(content::WebContents* page, base::OnceCallback<void(base::Value)> done) {
-  PageOp(page, base::DictValue().Set("tool", "adblock_inspect"), base::BindOnce(
+  RunAssistantPageOperation(page, base::DictValue().Set("tool", "adblock_inspect")
+      .Set("site", ContentBlocking::RegistrableDomain(page->GetLastCommittedURL())), base::BindOnce(
       [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, base::Value value) {
         if (!page || !value.is_dict()) { std::move(done).Run(Error("The page could not be inspected")); return; }
         auto result = std::move(value).TakeDict();
@@ -469,7 +351,7 @@ void AdblockDiagnose(content::WebContents* page, base::OnceCallback<void(base::V
   ReloadAndWait(page, base::Seconds(6), base::BindOnce(
       [](std::string nonce, base::OnceCallback<void(base::Value)> done, base::WeakPtr<content::WebContents> page) {
         if (!page) { std::move(done).Run(Error("The page closed")); return; }
-        PageOp(page.get(), base::DictValue().Set("tool", "probe_log").Set("nonce", nonce), base::BindOnce(
+        RunAssistantPageOperation(page.get(), base::DictValue().Set("tool", "probe_log").Set("nonce", nonce), base::BindOnce(
             [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, base::Value log) {
               if (!page) { std::move(done).Run(Error("The page closed")); return; }
               auto* helper = ContentBlockingTabHelper::FromWebContents(page.get());
@@ -663,113 +545,7 @@ class AssistantDebugDocument final
 };
 DOCUMENT_USER_DATA_KEY_IMPL(AssistantDebugDocument);
 
-// Read only Chromium's buffered console and diagnostic events. This client
-// dispatches two fixed commands and does not expose protocol access to models.
-class AssistantConsoleReader final : public content::DevToolsAgentHostClient {
- public:
-  AssistantConsoleReader(content::WebContents* page, int limit)
-      : document_(page->GetPrimaryMainFrame()->GetWeakDocumentPtr()),
-        host_(content::DevToolsAgentHost::GetOrCreateFor(page)), limit_(limit) {}
-  ~AssistantConsoleReader() override {
-    if (attached_ && host_) host_->DetachClient(this);
-  }
-  bool Start() {
-    attached_ = host_ && host_->AttachClient(this);
-    if (!attached_) return false;
-    Send(R"({"id":1,"method":"Runtime.enable"})");
-    Send(R"({"id":2,"method":"Log.enable"})");
-    return true;
-  }
-  base::Value Result() {
-    auto* frame = document_.AsRenderFrameHostIfValid();
-    if (!frame || !frame->IsActive() || !host_) return Error("The approved document changed or closed");
-    if (!ready_) return Error("The page console did not respond");
-    base::ListValue entries;
-    for (auto& entry : messages_) entries.Append(std::move(entry));
-    return base::Value(base::DictValue().Set("entries", std::move(entries))
-        .Set("url", SafeURL(frame->GetLastCommittedURL())));
-  }
 
- private:
-  void Send(std::string_view command) {
-    if (host_) host_->DispatchProtocolMessage(this, base::as_byte_span(command));
-  }
-  bool MayAttachToURL(const GURL& url, bool is_webui) override {
-    return !is_webui && url.SchemeIsHTTPOrHTTPS();
-  }
-  bool MayReadLocalFiles() override { return false; }
-  bool MayWriteLocalFiles() override { return false; }
-  void AgentHostClosed(content::DevToolsAgentHost*) override { host_.reset(); }
-  void DispatchProtocolMessage(content::DevToolsAgentHost*,
-                               base::span<const uint8_t> bytes) override {
-    if (bytes.size() > 128 * 1024) return;
-    auto message = base::JSONReader::ReadDict(base::as_string_view(bytes), base::JSON_PARSE_RFC);
-    if (!message) return;
-    if (message->FindInt("id") == 1 && message->FindDict("result")) ready_ = true;
-    const auto* method = message->FindString("method");
-    const auto* params = message->FindDict("params");
-    if (!method || !params) return;
-    const auto field = [](const base::DictValue& dict, std::string_view name) {
-      const auto* value = dict.FindString(name);
-      return value ? *value : std::string();
-    };
-    std::string level, text, source;
-    int line = 0;
-    if (*method == "Log.entryAdded") {
-      const auto* entry = params->FindDict("entry");
-      if (!entry) return;
-      level = field(*entry, "level");
-      text = field(*entry, "text");
-      source = field(*entry, "url");
-      line = entry->FindInt("lineNumber").value_or(-1) + 1;
-    } else if (*method == "Runtime.consoleAPICalled") {
-      level = field(*params, "type");
-      if (const auto* args = params->FindList("args")) {
-        for (const auto& arg : *args) {
-          const auto* object = arg.GetIfDict();
-          if (!object) continue;
-          if (!text.empty()) text += ' ';
-          if (const auto* value = object->Find("value")) {
-            text += value->is_string() ? value->GetString() : base::WriteJson(*value).value_or("");
-          } else {
-            text += field(*object, "description");
-          }
-          if (text.size() >= 800) break;
-        }
-      }
-      if (const auto* stack = params->FindDict("stackTrace")) {
-        if (const auto* frames = stack->FindList("callFrames"); frames && !frames->empty() && frames->front().is_dict()) {
-          const auto& first = frames->front().GetDict();
-          source = field(first, "url");
-          line = first.FindInt("lineNumber").value_or(-1) + 1;
-        }
-      }
-    } else if (*method == "Runtime.exceptionThrown") {
-      const auto* exception = params->FindDict("exceptionDetails");
-      if (!exception) return;
-      level = "error";
-      text = field(*exception, "text");
-      if (const auto* error = exception->FindDict("exception")) text += " " + field(*error, "description");
-      source = field(*exception, "url");
-      line = exception->FindInt("lineNumber").value_or(-1) + 1;
-    } else {
-      return;
-    }
-    if (text.empty()) return;
-    if (messages_.size() == static_cast<size_t>(limit_)) messages_.pop_front();
-    std::string clipped;
-    base::TruncateUTF8ToByteSize(text, 800, &clipped);
-    messages_.push_back(base::DictValue().Set("level", level).Set("message", clipped)
-        .Set("url", SafeURL(GURL(source))).Set("line", line));
-  }
-
-  content::WeakDocumentPtr document_;
-  scoped_refptr<content::DevToolsAgentHost> host_;
-  std::deque<base::DictValue> messages_;
-  const int limit_;
-  bool attached_ = false;
-  bool ready_ = false;
-};
 
 void RunAssistantDebugTool(content::WebContents* page, const std::string& tool,
                            base::DictValue args, bool confirmed,
@@ -814,13 +590,13 @@ void RunAssistantDebugTool(content::WebContents* page, const std::string& tool,
     return;
   }
   if (tool == "debug_console") {
-    auto reader = std::make_unique<AssistantConsoleReader>(page, std::clamp(args.FindInt("limit").value_or(25), 1, 40));
+    auto reader = std::make_unique<DevToolsConsoleReader>(page, std::clamp(args.FindInt("limit").value_or(25), 1, 40));
     if (!reader->Start()) {
       std::move(done).Run(Error("Could not read the page console"));
       return;
     }
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce(
-        [](std::unique_ptr<AssistantConsoleReader> reader, base::OnceCallback<void(base::Value)> done) {
+        [](std::unique_ptr<DevToolsConsoleReader> reader, base::OnceCallback<void(base::Value)> done) {
           auto result = reader->Result();
           reader.reset();
           std::move(done).Run(std::move(result));
@@ -834,7 +610,7 @@ void RunAssistantDebugTool(content::WebContents* page, const std::string& tool,
   }
   args.Remove("_debug_document");
   args.Set("tool", tool);
-  PageOp(page, std::move(args), std::move(done));
+  RunAssistantPageOperation(page, std::move(args), std::move(done));
 }
 
 // Everything the assistant does inside one page, visible or in the background.
@@ -860,15 +636,7 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
         .Set("dialog", std::move(*dialog)))); return;
   }
   if (tool == "screenshot") {
-    // A tab the user is not looking at renders only while it is being captured.
-    if (page->GetVisibility() == content::Visibility::VISIBLE || page->IsBeingCaptured()) { Capture(page->GetWeakPtr(), std::move(done)); return; }
-    auto keep = std::make_unique<base::ScopedClosureRunner>(page->IncrementCapturerCount(gfx::Size(), /*stay_hidden=*/true, /*stay_awake=*/true, /*is_activity=*/false));
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce(
-        [](base::WeakPtr<content::WebContents> page, std::unique_ptr<base::ScopedClosureRunner> keep, base::OnceCallback<void(base::Value)> done) {
-          Capture(page, base::BindOnce([](std::unique_ptr<base::ScopedClosureRunner>, base::OnceCallback<void(base::Value)> done, base::Value value) {
-            std::move(done).Run(std::move(value));
-          }, std::move(keep), std::move(done)));
-        }, page->GetWeakPtr(), std::move(keep), std::move(done)), base::Milliseconds(600));
+    CaptureAssistantPage(page->GetWeakPtr(), std::move(done));
     return;
   }
   if (tool == "wait") {
@@ -886,13 +654,13 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
   args.Set("tool", tool);
   args.Set("confirmed", confirmed);
   if (tool == "click") {
-    PageOp(page, std::move(args), base::BindOnce(
+    RunAssistantPageOperation(page, std::move(args), base::BindOnce(
         [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, base::Value value) {
           const auto* result = value.GetIfDict();
           auto* view = page ? page->GetRenderWidgetHostView() : nullptr;
           if (const auto* point = result ? result->FindDict("point") : nullptr; point && view) {
             view->GetRenderWidgetHost()->Focus();
-            ClickAt(page.get(), view->GetRenderWidgetHost(), point->FindDouble("x").value_or(0), point->FindDouble("y").value_or(0));
+            ClickAssistantPageAt(page.get(), view->GetRenderWidgetHost(), point->FindDouble("x").value_or(0), point->FindDouble("y").value_or(0));
             Settle(page, base::Milliseconds(400), std::move(done)); return;
           }
           if (page && result && result->FindBool("ok").value_or(false)) { Settle(page, base::Milliseconds(400), std::move(done)); return; }
@@ -903,7 +671,7 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
   if (tool == "type") {
     const auto* raw = args.FindString("text");
     std::string text = raw ? *raw : std::string();
-    PageOp(page, std::move(args), base::BindOnce(
+    RunAssistantPageOperation(page, std::move(args), base::BindOnce(
         [](base::WeakPtr<content::WebContents> page, std::string text, bool confirmed, base::OnceCallback<void(base::Value)> done, base::Value value) {
           // A rich editor: its content is selected; keyboard input replaces it.
           if (page && value.is_dict() && value.GetDict().FindBool("keyboard").value_or(false)) {
@@ -916,26 +684,10 @@ void ActOnPage(content::WebContents* page, std::string tool, base::DictValue arg
     return;
   }
   if (tool == "read_page") {
-    // Content drawn on a canvas (Google Docs, Sheets, maps) is not in the text:
-    // such pages come with a screenshot, so the model sees what the user sees.
-    PageOp(page, std::move(args), base::BindOnce(
-        [](base::WeakPtr<content::WebContents> page, base::OnceCallback<void(base::Value)> done, base::Value value) {
-          if (!page || !value.is_dict() || !value.GetDict().FindBool("canvas").value_or(false)) { std::move(done).Run(std::move(value)); return; }
-          Capture(page, base::BindOnce([](base::Value read, base::OnceCallback<void(base::Value)> done, base::Value shot) {
-            if (const auto* image = shot.GetIfDict(); image && image->FindString("image")) {
-              auto& result = read.GetDict();
-              result.Set("image", *image->FindString("image"));
-              result.Set("width", image->FindInt("width").value_or(0));
-              result.Set("height", image->FindInt("height").value_or(0));
-              result.Set("css_per_pixel", image->FindDouble("css_per_pixel").value_or(1));
-              result.Set("detail", "The page draws its content on a canvas; its screenshot is attached.");
-            }
-            std::move(done).Run(std::move(read));
-          }, std::move(value), std::move(done)));
-        }, page->GetWeakPtr(), std::move(done)));
+    ReadAssistantPage(page, std::move(done));
     return;
   }
-  PageOp(page, std::move(args), std::move(done));
+  RunAssistantPageOperation(page, std::move(args), std::move(done));
 }
 BackendProbe ProbeBackends(bool saved_key, std::string codex_path, std::string claude_path) {
   auto env = base::Environment::Create();
@@ -1029,82 +781,8 @@ void WorkspaceWindow::WithAssistantApiKey(base::OnceCallback<void(std::string)> 
   if(encrypted.empty()){std::move(callback).Run("");return;}
   g_browser_process->os_crypt_async()->GetInstance(base::BindOnce(
       [](base::OnceCallback<void(std::string)> callback,std::string encrypted,scoped_refptr<os_crypt_async::Encryptor> encryptor){
-        std::string ciphertext,plain;
-        if(!base::Base64Decode(encrypted,&ciphertext)||!encryptor->DecryptString(ciphertext,&plain))plain.clear();
-        std::move(callback).Run(std::move(plain));
+        std::move(callback).Run(DecryptAssistantApiKey(encrypted, *encryptor));
       },std::move(callback),encrypted));
-}
-namespace {
-std::u16string ConnectionError(std::string_view message) {
-  if (message.starts_with("Install native Codex"))
-    return T(u"Zainstaluj Codex i zaloguj się na swoje konto.");
-  if (message.starts_with("Install native Claude"))
-    return T(u"Zainstaluj Claude Code i zaloguj się na swoje konto.");
-  if (message.starts_with("Sign in to the provider CLI"))
-    return T(u"Zaloguj się w terminalu i ponów test. Wskazówki znajdziesz w sekcji „Pomoc i konfiguracja”.");
-  if (message.starts_with("The provider CLI does not support"))
-    return T(u"Zaktualizuj CLI dostawcy i ponów test.");
-  if (message.starts_with("The service did not find this model"))
-    return T(u"Sprawdź ID modelu i dostęp do niego na swoim koncie.");
-  if (message.starts_with("OpenAI rejected the API key"))
-    return T(u"OpenAI odrzucił klucz API. Sprawdź klucz w ustawieniach.");
-  if (message.starts_with("The connection test timed out"))
-    return T(u"Test nie dostał odpowiedzi na czas. Sprawdź połączenie i spróbuj ponownie.");
-  if (message.starts_with("Could not list models"))
-    return T(u"Uruchom Ollama i sprawdź adres lokalnego serwera albo dodaj model ręcznie.");
-  return message.empty() ? T(u"Sprawdź konfigurację i spróbuj ponownie.") : base::UTF8ToUTF16(message);
-}
-base::DictValue CheckProviderProcess(std::string provider, std::string model, bool discover,
-                                     base::EnvironmentMap environment, std::string api_key) {
-  auto error = [](std::string_view message) { return base::DictValue().Set("error", message); };
-  base::FilePath exe;
-  base::PathService::Get(base::DIR_EXE, &exe);
-#if BUILDFLAG(IS_WIN)
-  base::CommandLine command(exe.AppendASCII("zitter_assistant.exe"));
-#else
-  base::CommandLine command(exe.AppendASCII("zitter_assistant"));
-#endif
-  command.AppendSwitchASCII("check-provider", provider);
-  command.AppendSwitchASCII("check-model", model);
-  if (discover) command.AppendSwitch("list-models");
-  base::ScopedTempDir temp;
-  if (!temp.CreateUniqueTempDir()) return error("Could not prepare the connection test.");
-  const auto output_path = temp.GetPath().AppendASCII("result");
-  base::File output(output_path, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
-  base::LaunchOptions options;
-  options.environment = std::move(environment);
-#if BUILDFLAG(IS_WIN)
-  base::File input(temp.GetPath().AppendASCII("stdin"),
-                   base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_READ | base::File::FLAG_WRITE);
-  base::File diagnostics(temp.GetPath().AppendASCII("stderr"),
-                         base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
-  if (!input.IsValid()) return error("Could not prepare the connection test.");
-  options.start_hidden = true;
-  options.stdin_handle = input.GetPlatformFile();
-  options.stdout_handle = output.GetPlatformFile();
-  options.stderr_handle = diagnostics.GetPlatformFile();
-  options.handles_to_inherit = {input.GetPlatformFile(), output.GetPlatformFile(), diagnostics.GetPlatformFile()};
-  if (!api_key.empty()) options.environment[L"ZITTER_OPENAI_API_KEY"] = base::UTF8ToWide(api_key);
-#else
-  base::File diagnostics(base::FilePath("/dev/null"), base::File::FLAG_OPEN | base::File::FLAG_WRITE);
-  options.fds_to_remap = {{output.GetPlatformFile(), STDOUT_FILENO}, {diagnostics.GetPlatformFile(), STDERR_FILENO}};
-  if (!api_key.empty()) options.environment["ZITTER_OPENAI_API_KEY"] = api_key;
-#endif
-  if (!output.IsValid() || !diagnostics.IsValid()) return error("Could not prepare the connection test.");
-  auto process = base::LaunchProcess(command, options);
-  if (!process.IsValid()) return error("Could not start the Zitter assistant helper. Check the installation.");
-  int code = 1;
-  if (!process.WaitForExitWithTimeout(base::Seconds(60), &code)) {
-    process.Terminate(1, true);
-    return error("The connection test timed out. Check the connection and try again.");
-  }
-  std::string result;
-  if (base::ReadFileToStringWithMaxSize(output_path, &result, 8192)) {
-    auto parsed = base::JSONReader::ReadDict(result, base::JSON_PARSE_RFC);
-    if (parsed) return std::move(*parsed);
-  }
-  return error("The Zitter assistant helper did not return a result. Check the installation.");
-}
 }
 void WorkspaceWindow::CheckAssistantConnection(std::string provider, bool discover) {
   const auto found = std::ranges::find(kAssistantProviders, provider);
@@ -1138,7 +816,7 @@ void WorkspaceWindow::CheckAssistantConnection(std::string provider, bool discov
     if (!window || window->assistant_connection_generation_ != generation) return;
     base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
         {base::MayBlock(), base::WithBaseSyncPrimitives(), base::TaskPriority::USER_VISIBLE},
-        base::BindOnce(&CheckProviderProcess, provider, model, discover, std::move(environment), std::move(key)),
+        base::BindOnce(&CheckAssistantProvider, provider, model, discover, std::move(environment), std::move(key)),
         base::BindOnce([](base::WeakPtr<WorkspaceWindow> window, std::string provider, std::string model,
             size_t index, uint64_t generation, base::DictValue reply) {
           if (!window || window->assistant_connection_generation_ != generation) return;
@@ -1163,7 +841,7 @@ void WorkspaceWindow::CheckAssistantConnection(std::string provider, bool discov
             detail = TF(u"Model {} odpowiedział poprawnie", {base::UTF8ToUTF16(model)});
           } else {
             const auto* error = reply.FindString("error");
-            detail = ConnectionError(error ? *error : "");
+            detail = AssistantConnectionError(error ? *error : "");
           }
           if (ok) settings.available[index] = true;
           window->assistant_backend_status_[index] = base::Value(base::DictValue().Set("tone", ok ? 1 : 2).Set("checked", true)
@@ -1334,12 +1012,9 @@ void WorkspaceWindow::AssistantElementBounds(std::string tab, std::string elemen
   auto* view = AssistantTabView(std::move(tab));
   auto* page = view && view->GetVisible() ? view->web_contents() : nullptr;
   if (!page) { std::move(done).Run(std::nullopt); return; }
-  std::string script = kAssistantPageScript;
-  base::ReplaceFirstSubstringAfterOffset(&script, 0, "ZITTER_ARGS",
-      base::WriteJson(base::DictValue().Set("tool", "rect").Set("element", element)).value_or("{}"));
   const double zoom = blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(page));
   auto tracker = std::make_unique<views::ViewTracker>(); tracker->SetView(view);
-  page->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(base::UTF8ToUTF16(script), base::BindOnce(
+  RunAssistantPageOperation(page, base::DictValue().Set("tool", "rect").Set("element", element), base::BindOnce(
       [](base::OnceCallback<void(std::optional<gfx::Rect>)> done, std::unique_ptr<views::ViewTracker> tracker, double zoom, base::Value value) {
         const auto* dict = value.GetIfDict();
         if (!dict || !tracker->view() || !dict->FindDouble("width")) { std::move(done).Run(std::nullopt); return; }
@@ -1349,7 +1024,7 @@ void WorkspaceWindow::AssistantElementBounds(std::string tab, std::string elemen
         if (rect.IsEmpty()) { std::move(done).Run(std::nullopt); return; }
         views::View::ConvertRectToScreen(tracker->view(), &rect);
         std::move(done).Run(rect);
-      }, std::move(done), std::move(tracker), zoom), kAssistantWorld);
+      }, std::move(done), std::move(tracker), zoom));
 }
 
 Profile* WorkspaceWindow::AssistantProfile() const {
@@ -1367,11 +1042,37 @@ void WorkspaceWindow::OpenAdBlockingRules() {
   auto* profile = AssistantProfile();
   if (!profile || profile->IsOffTheRecord() || !shell_ || !shell_->general_widget()) return;
   if (!ad_blocking_rules_panel_) ad_blocking_rules_panel_ = std::make_unique<AdBlockingRulesPanel>();
-  ad_blocking_rules_panel_->Show(profile, shell_->general_widget(), base::BindRepeating([](WorkspaceWindow* window, std::string rule) {
+  const auto id = AssistantProfileId();
+  using ResolveProfile = base::RepeatingCallback<Profile*()>;
+  const auto resolve = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceWindow> window, const std::string& id) {
+        return window ? window->ProfileFor(id) : nullptr;
+      }, weak_factory_.GetWeakPtr(), id);
+  AdBlockingRulesPanel::Callbacks callbacks;
+  callbacks.read = base::BindRepeating([](const ResolveProfile& resolve) {
+    return ContentBlocking::Rules(resolve.Run());
+  }, resolve);
+  callbacks.add = base::BindRepeating([](const ResolveProfile& resolve, std::string rule) {
+    std::string error;
+    if (!ContentBlocking::AddRules(resolve.Run(), {rule}, {}, &error) && error.empty())
+      error = base::UTF16ToUTF8(T(u"Nie udało się zapisać ustawień."));
+    return error;
+  }, resolve);
+  callbacks.remove = base::BindRepeating([](const ResolveProfile& resolve, std::string rule) {
+    ContentBlocking::RemoveRule(resolve.Run(), rule);
+  }, resolve);
+  callbacks.save = base::BindRepeating([](const ResolveProfile& resolve, std::string text) {
+    return ContentBlocking::SetRulesText(resolve.Run(), text);
+  }, resolve);
+  callbacks.stale = base::BindRepeating([](const ResolveProfile& resolve, std::string rule) {
+    return ContentBlocking::RuleStale(resolve.Run(), rule);
+  }, resolve);
+  callbacks.repair = base::BindRepeating([](WorkspaceWindow* window, std::string rule) {
     // The same request as the shield's repair, for one rule.
     window->AskAssistant(TF(u"Moja reguła blokowania na {} od kilku wizyt nic nie ukrywa: {} Znajdź tę reklamę ponownie i zapisz nową regułę, zastępując nią starą (replaces).",
                             {base::UTF8ToUTF16(ContentBlocking::RuleSite(rule)), base::UTF8ToUTF16(rule)}));
-  }, base::Unretained(this)));
+  }, base::Unretained(this));
+  ad_blocking_rules_panel_->Show(id, shell_->general_widget(), std::move(callbacks));
 }
 base::DictValue WorkspaceWindow::ReadAdBlocking() {
   auto* profile = AssistantProfile();
@@ -1486,11 +1187,27 @@ void WorkspaceWindow::SaveAssistantSessions(base::DictValue sessions) {
     base::ImportantFileWriter::WriteFileAtomically(path, json);
   }, assistant_sessions_path(), std::move(json)));
 }
+WorkspaceShell* WorkspaceWindow::shell() const {
+  return shell_.get();
+}
+
+const AssistantSettings& WorkspaceWindow::assistant_settings() const {
+  return assistant_settings_;
+}
+
+bool WorkspaceWindow::AssistantHasBackground(const std::string& key) const {
+  return assistant_background_.contains(key);
+}
+
+content::BrowserContext* WorkspaceWindow::AssistantBrowserContext() const {
+  return AssistantProfile();
+}
+
 void WorkspaceWindow::EnsureAssistant() {
   if (is_private()) return;
   if (assistant_ || !assistant_settings_.enabled) return;
   AssistantSettingsForShell();
-  auto panel = std::make_unique<AssistantPanel>(this);
+  auto panel = std::make_unique<AssistantPanel>(static_cast<AssistantHost*>(this));
   assistant_ = panel.get();
   shell_->SetAssistantView(panel.release());
 }
@@ -1637,7 +1354,7 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
             if (auto dialog = OpenDialog(page.get())) {
               std::move(done).Run(base::Value(base::DictValue().Set("tab", alias).Set("dialog", std::move(*dialog)))); return;
             }
-            PageOp(page.get(), base::DictValue().Set("tool", "read_page"), base::BindOnce(
+            RunAssistantPageOperation(page.get(), base::DictValue().Set("tool", "read_page"), base::BindOnce(
                 [](base::WeakPtr<content::WebContents> page, std::string alias, bool many, base::OnceCallback<void(base::Value)> done, base::Value value) {
                   if (!page || !value.is_dict()) { std::move(done).Run(Error("The page could not be read")); return; }
                   auto result = std::move(value).TakeDict();

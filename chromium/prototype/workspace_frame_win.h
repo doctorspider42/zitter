@@ -15,7 +15,9 @@ namespace zitter::prototype {
 // The system frame keeps its shadow, resize borders, snapping and Aero
 // gestures, as Chrome's Windows frame does, while the client area extends over
 // the titlebar: Zitter draws the header band and its caption buttons there.
-void ConfigureWorkspaceNativeWidget(views::Widget* widget, views::Widget::InitParams& params);
+void ConfigureWorkspaceNativeWidget(views::Widget* widget,
+                                    views::Widget::InitParams& params,
+                                    base::RepeatingClosure session_ending);
 // A panel that never takes activation (the sidebar, toasts): Windows would
 // otherwise eat its clicks, since Views answers WM_MOUSEACTIVATE with
 // MA_NOACTIVATEANDEAT for a non-activatable window with a non-client view.

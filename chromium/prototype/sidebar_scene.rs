@@ -365,7 +365,7 @@ mod ffi {
         fn password_prompt_copy(update: bool, origin: &str, username: &str, profile: &str) -> PasswordPromptCopy;
         fn operation_status_copy(event: OperationStatusEvent) -> String;
         fn clear_data_status(event: ClearDataEvent, profile: &str) -> PreferenceStatus;
-        fn clear_data_confirm(profile: &str, period: i32, history: bool, cookies: bool, cache: bool) -> ClearDataConfirm;
+        fn clear_data_confirm(profile: &str, period: i32, history: bool, cookies: bool, cache: bool, time_machine: bool) -> ClearDataConfirm;
         fn import_status_copy(report: &ImportStatusReport) -> String;
         fn site_rule_detail(primary: &str, name: &str, setting: i32, secondary: &str, editable: bool) -> String;
         fn site_rules_empty(saved: bool) -> String;
@@ -422,6 +422,7 @@ mod ffi {
         fn timeline_mark(self: &mut Timeline, mark: &TimelineMark) -> bool;
         fn timeline_prune(self: &mut Timeline, cutoff_ms: i64, max_bytes: usize) -> bool;
         fn timeline_forget(self: &mut Timeline, profile: &str, from_ms: i64, to_ms: i64) -> bool;
+        fn timeline_forget_workspace(self: &mut Timeline, workspace: &str, from_ms: i64, to_ms: i64) -> bool;
         fn timeline_clear(self: &mut Timeline);
         fn timeline_frames(self: &Timeline) -> Vec<TimelineFrame>;
         fn timeline_marks(self: &Timeline) -> Vec<TimelineMark>;
@@ -1254,7 +1255,7 @@ fn password_prompt_copy(update:bool,origin:&str,username:&str,_profile:&str)->ff
     ffi::PasswordPromptCopy{title:if update{t("Zaktualizować hasło?")}else{t("Zapisać hasło?")}.into(),lines:vec![site.into(),tf("Użytkownik: {}",&[username])],accept:if update{t("Zaktualizuj")}else{t("Zapisz")}.into(),cancel:t("Nie teraz").into()}
 }
 // Browsing-data removal: confirmation copy and outcome wording/tone.
-fn clear_periods()->[&'static str;4]{[t("Ostatnia godzina"),t("Ostatnie 24 godziny"),t("Ostatnie 7 dni"),t("Cały okres")]}
+fn clear_periods()->[&'static str;5]{[t("Ostatnia godzina"),t("Ostatnie 24 godziny"),t("Ostatnie 7 dni"),t("Cały okres"),t("Ostatnie 4 tygodnie")]}
 fn clear_data_status(event:ffi::ClearDataEvent,profile:&str)->ffi::PreferenceStatus{
     use ffi::ClearDataEvent as E;
     let (text,error)=match event {
@@ -1268,10 +1269,11 @@ fn clear_data_status(event:ffi::ClearDataEvent,profile:&str)->ffi::PreferenceSta
     };
     ffi::PreferenceStatus{text,error}
 }
-fn clear_data_confirm(profile:&str,period:i32,history:bool,cookies:bool,cache:bool)->ffi::ClearDataConfirm{
-    let Some(range)=usize::try_from(period).ok().and_then(|p|clear_periods().get(p).copied()).filter(|_|history||cookies||cache) else{return ffi::ClearDataConfirm{valid:false,title:String::new(),description:String::new(),confirm:String::new(),cancel:String::new()};};
+fn clear_data_confirm(profile:&str,period:i32,history:bool,cookies:bool,cache:bool,time_machine:bool)->ffi::ClearDataConfirm{
+    let Some(range)=usize::try_from(period).ok().and_then(|p|clear_periods().get(p).copied()).filter(|_|history||cookies||cache||time_machine) else{return ffi::ClearDataConfirm{valid:false,title:String::new(),description:String::new(),confirm:String::new(),cancel:String::new()};};
     let mut description=tf("Profil: {}\nZakres: {}\n\nZostaną usunięte:",&[profile,range]);
     if history{description.push_str(t("\n• Historia przeglądania"));}if cookies{description.push_str(t("\n• Cookies i dane witryn — może to wylogować Cię z serwisów"));}if cache{description.push_str(t("\n• Pamięć podręczna"));}
+    if time_machine{description.push_str("\n• ");description.push_str(t("Time Machine — snapshoty i zamknięte karty"));}
     description.push_str(t("\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane."));
     ffi::ClearDataConfirm{valid:true,title:t("Wyczyścić dane przeglądania?").into(),description,confirm:t("Wyczyść dane").into(),cancel:t("Anuluj").into()}
 }
@@ -3412,6 +3414,19 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                         emit(cx+offset+(x-y)*0.707-0.65,cy-offset-(x+y)*0.707-0.65,1.3,1.3,0.65,i.ink,"",0.0,false);
                     }
                 }
+            } else if i.glyph==12 {
+                // Speaker and sound waves in the tab's trailing slot.
+                emit(cx-6.0,cy-2.0,3.0,4.0,0.8,i.ink,"",0.0,false);
+                for (dx,height) in [(-3.0,5.0),(-2.0,7.0),(-1.0,9.0)] {
+                    emit(cx+dx,cy-height/2.0,1.4,height,0.5,i.ink,"",0.0,false);
+                }
+                for radius in [3.0f32,5.5] {
+                    for n in 0..=10 {
+                        let a=-0.85+1.7*n as f32/10.0;
+                        emit(cx+radius*a.cos()-0.65,cy+radius*a.sin()-0.65,
+                             1.3,1.3,0.65,i.ink,"",0.0,false);
+                    }
+                }
             } else if i.glyph==6 {
                 for dx in [-5.0,0.0,5.0] {emit(cx+dx-1.0,cy-1.0,3.0,3.0,1.5,i.ink,"",0.0,false);}
             } else if i.glyph==11 && i.detail_font_size<0.0 && !i.active {
@@ -4174,8 +4189,9 @@ mod tests {
         assert!(import_status_copy(&import_report(S{repr:99})).is_empty());
     }
     #[test] fn clear_data_confirm_and_status_cover_selection_period_and_outcomes() {
-        let c=clear_data_confirm("Praca 🦀",1,true,false,true);assert!(c.valid);assert_eq!(c.description,"Profil: Praca 🦀\nZakres: Ostatnie 24 godziny\n\nZostaną usunięte:\n• Historia przeglądania\n• Pamięć podręczna\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.");assert_eq!((c.title.as_str(),c.confirm.as_str(),c.cancel.as_str()),("Wyczyścić dane przeglądania?","Wyczyść dane","Anuluj"));
-        assert!(clear_data_confirm("p",3,false,true,false).description.contains("Cały okres\n\nZostaną usunięte:\n• Cookies"));for (period,h,c,k) in [(-1,true,false,false),(4,true,false,false),(0,false,false,false)]{assert!(!clear_data_confirm("p",period,h,c,k).valid);}
+        let c=clear_data_confirm("Praca 🦀",1,true,false,true,false);assert!(c.valid);assert_eq!(c.description,"Profil: Praca 🦀\nZakres: Ostatnie 24 godziny\n\nZostaną usunięte:\n• Historia przeglądania\n• Pamięć podręczna\n\nTej operacji nie można cofnąć. Hasła, przypięte karty i pobrane pliki pozostaną zachowane.");assert_eq!((c.title.as_str(),c.confirm.as_str(),c.cancel.as_str()),("Wyczyścić dane przeglądania?","Wyczyść dane","Anuluj"));
+        assert!(clear_data_confirm("p",3,false,true,false,false).description.contains("Cały okres\n\nZostaną usunięte:\n• Cookies"));for (period,h,c,k) in [(-1,true,false,false),(5,true,false,false),(0,false,false,false)]{assert!(!clear_data_confirm("p",period,h,c,k,false).valid);}
+        let timeline=clear_data_confirm("p",4,false,false,false,true);assert!(timeline.valid);assert!(timeline.description.contains("Ostatnie 4 tygodnie"));assert!(timeline.description.contains("Time Machine"));
         use ffi::ClearDataEvent as E;let s=clear_data_status(E::Clearing,"Dom");assert_eq!((s.text.as_str(),s.error),("Czyszczenie danych profilu „Dom”…",false));let s=clear_data_status(E::Cleared,"Dom");assert_eq!((s.text.as_str(),s.error),("Wyczyszczono dane profilu „Dom”.",false));
         for e in [E::Busy,E::NothingSelected,E::HistoryForbidden,E::Failed]{let s=clear_data_status(e,"x");assert!(s.error&&!s.text.is_empty());}assert!(clear_data_status(E{repr:77},"x").text.is_empty());
     }

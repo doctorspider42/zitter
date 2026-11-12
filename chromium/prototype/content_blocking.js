@@ -357,7 +357,30 @@
     const observer = new MutationObserver(() => { if (document.documentElement) { observer.disconnect(); run(); } });
     observer.observe(document, { childList: true });
   };
+  const resetCosmetics = () => {
+    for (const sheet of Object.values(state.sheets)) sheet.remove();
+    for (const e of state.marked) e.removeAttribute(state.mark);
+    for (const byKey of state.masks.values()) for (const cover of byKey.values()) cover.remove();
+    state.sheets = {};
+    state.selectors = {};
+    state.procedural = {};
+    state.classes.clear();
+    state.ids.clear();
+    state.sticky?.clear();
+    state.marked.clear();
+    state.masks.clear();
+    state.maskList = [];
+    state.counted = new Set();
+    state.hits = {};
+    state.removed = 0;
+    // DOM removal and imperative actions need a reload to restore their input.
+  };
+  if (args.op === 'reset_cosmetics') {
+    resetCosmetics();
+    return { hidden: 0 };
+  }
   if (args.op === 'style') {
+    if (args.reset) resetCosmetics();
     // Rules with an action come from adblock-rust as JSON; back to filter text.
     const actions = (args.actions ?? []).map(json => {
       try {
@@ -388,14 +411,16 @@
   }
   if (args.op === 'scan') {
     // Class names and IDs not reported before, for the engine's generic rules.
-    if (args.reset) { state.classes.clear(); state.ids.clear(); state.selectors.generic = []; }
+    if (args.reset && !args.read_only) { state.classes.clear(); state.ids.clear(); state.selectors.generic = []; }
     const classes = [], ids = [];
+    const knownClasses = args.read_only ? new Set() : state.classes;
+    const knownIds = args.read_only ? new Set() : state.ids;
     for (const e of document.querySelectorAll('[class],[id]')) {
       if (classes.length + ids.length > 4000) break;
-      for (const name of e.classList ?? []) if (!state.classes.has(name)) { state.classes.add(name); classes.push(name); }
-      if (e.id && !state.ids.has(e.id)) { state.ids.add(e.id); ids.push(e.id); }
+      for (const name of e.classList ?? []) if (!knownClasses.has(name)) { knownClasses.add(name); classes.push(name); }
+      if (e.id && !knownIds.has(e.id)) { knownIds.add(e.id); ids.push(e.id); }
     }
-    apply();
+    if (!args.read_only) apply();
     return { classes, ids, hidden: hidden() };
   }
   if (args.op === 'count') {
@@ -406,6 +431,61 @@
       counts[selector] = compiled(selector).error ? 0 : Math.max(state.hits[selector] ?? 0, query(selector).length);
     }
     return { counts };
+  }
+  if (args.op === 'check' || args.op === 'assistant_preview') {
+    const targets = new Set();
+    const rules = (args.selectors ?? []).map(selector => {
+      const error = state.check(selector);
+      const matches = error ? [] : query(selector);
+      const protectedMatch = matches.some(e =>
+        e.closest('[data-private],[data-sensitive],input,textarea,select,[contenteditable]') ||
+        e.querySelector('[data-private],[data-sensitive],input,textarea,select,[contenteditable]'));
+      if (args.op === 'assistant_preview' && !protectedMatch) {
+        for (const e of matches) {
+          if (targets.size === 500) break;
+          if (e.getClientRects().length) targets.add(e);
+        }
+      }
+      return { matches: matches.length, valid: !error && !protectedMatch };
+    });
+    if (!rules.every(rule => rule.valid && rule.matches)) return { rules };
+    if (args.op === 'check') {
+      if (args.token) state.assistantPreviewToken = args.token;
+      return { rules };
+    }
+    if (!targets.size || typeof args.token !== 'string' ||
+        state.assistantPreviewToken !== args.token || location.href !== args.url) return { rules };
+    state.assistantPreviewToken = null;
+    state.assistantPreview?.clear();
+    const markerId = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16)).join('-');
+    const mark = 'data-zitter-assistant-preview-' + markerId;
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`[${mark}]{outline:2px dashed #6e56cf!important;outline-offset:-2px!important}`);
+    const clear = () => {
+      document.adoptedStyleSheets = document.adoptedStyleSheets.filter(current => current !== sheet);
+      for (const e of targets) e.removeAttribute(mark);
+      window.removeEventListener('pagehide', clear);
+      document.removeEventListener('visibilitychange', onVisibility);
+      state.assistantPreview = null;
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') clear(); };
+    state.assistantPreview = { token: args.token, clear };
+    window.addEventListener('pagehide', clear, { once: true });
+    document.addEventListener('visibilitychange', onVisibility);
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    for (const e of targets) e.setAttribute(mark, '');
+    const inViewport = e => {
+      const box = e.getBoundingClientRect();
+      return box.right > 0 && box.bottom > 0 && box.left < innerWidth && box.top < innerHeight;
+    };
+    if (![...targets].some(inViewport))
+      targets.values().next().value.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    return { count: targets.size, rules };
+  }
+  if (args.op === 'clear_assistant_preview') {
+    if (state.assistantPreviewToken === args.token) state.assistantPreviewToken = null;
+    if (state.assistantPreview?.token === args.token) state.assistantPreview.clear();
+    return {};
   }
   if (args.op === 'preview') {
     for (const e of state.preview) {

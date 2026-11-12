@@ -2,9 +2,8 @@
 # Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 """Guarded Chromium hooks for Zitter's optional fingerprint protection.
 
-The browser sends a per-profile session key in RendererPreferences; Blink adds
-small, per-site noise where pages read back canvas, WebGL and audio output.
-An empty key (the default) leaves every hook inert.
+Blink adds per-site noise to canvas, WebGL and audio readbacks. An empty
+profile session key leaves every hook inert.
 """
 from pathlib import Path
 import os
@@ -17,7 +16,11 @@ OWNED_MARKER = b'Copyright 2026 Zitter contributors'
 BLINK = 'third_party/blink/renderer/'
 # Zitter-owned Blink sources, kept in this repository: chromium/blink/<path>.
 OWNED = ['platform/graphics/zitter_fingerprint_noise.h', 'platform/graphics/zitter_fingerprint_noise.cc',
-         'core/frame/zitter_fingerprint_protection.h', 'core/frame/zitter_fingerprint_protection.cc']
+         'core/frame/zitter_fingerprint_protection.h', 'core/frame/zitter_fingerprint_protection.cc',
+         'core/frame/zitter_fingerprint_key.h', 'core/frame/zitter_fingerprint_key.cc']
+PUBLIC_STATE = 'third_party/blink/public/web/zitter_fingerprint_state.h'
+PUBLIC_STATE_EDIT = ('third_party/blink/public/BUILD.gn', '    "web/web_view.h",\n',
+                     '    "web/zitter_fingerprint_state.h",\n')
 INCLUDE = '// Zitter: optional fingerprint protection.\n#include "third_party/blink/renderer/core/frame/zitter_fingerprint_protection.h"\n'
 
 
@@ -26,34 +29,13 @@ def _own_include(header):
 
 
 # (path, anchor, addition): the addition goes right after the anchor.
-EDITS = [
+CONTENT_EDITS = [
     (BLINK + 'platform/BUILD.gn', '    "graphics/unaccelerated_static_bitmap_image.h",\n',
      '    "graphics/zitter_fingerprint_noise.cc",\n    "graphics/zitter_fingerprint_noise.h",\n'),
     (BLINK + 'core/frame/build.gni', '  "local_dom_window.h",\n',
      '  "zitter_fingerprint_protection.cc",\n  "zitter_fingerprint_protection.h",\n'),
-    ('third_party/blink/public/common/renderer_preferences/renderer_preferences.h',
-     '  bool caret_browsing_enabled{false};\n',
-     '  // Zitter: secret for per-site fingerprint noise; empty turns it off.\n'
-     '  std::vector<uint8_t> zitter_fingerprint_key;\n'),
-    ('third_party/blink/public/mojom/renderer_preferences.mojom',
-     '  bool caret_browsing_enabled = false;\n',
-     '\n  // Zitter: secret for per-site fingerprint noise; empty turns it off.\n'
-     '  array<uint8> zitter_fingerprint_key;\n'),
-    ('third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h',
-     '  static const bool& caret_browsing_enabled(\n'
-     '      const ::blink::RendererPreferences& data) {\n'
-     '    return data.caret_browsing_enabled;\n  }\n',
-     '\n  static const std::vector<uint8_t>& zitter_fingerprint_key(\n'
-     '      const ::blink::RendererPreferences& data) {\n'
-     '    return data.zitter_fingerprint_key;\n  }\n'),
-    ('third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc',
-     '  out->caret_browsing_enabled = data.caret_browsing_enabled();\n',
-     '  if (!data.ReadZitterFingerprintKey(&out->zitter_fingerprint_key)) {\n'
-     '    return false;\n  }\n'),
-    ('chrome/browser/prefs/browser_prefs.cc',
-     '  registry->RegisterBooleanPref(prefs::kRendererAccessibilityEnabled, true);\n',
-     f'  // Zitter: per-site noise against canvas, WebGL and audio fingerprinting.\n'
-     f'  registry->RegisterBooleanPref("{PREF}", false);\n'),
+    (BLINK + 'core/frame/build.gni', '  "zitter_fingerprint_protection.h",\n',
+     '  "zitter_fingerprint_key.cc",\n  "zitter_fingerprint_key.h",\n'),
     # Canvas: toDataURL, toBlob and OffscreenCanvas.convertToBlob encode a snapshot.
     (BLINK + 'core/html/canvas/html_canvas_element.cc', *_own_include('core/html/canvas/html_canvas_element.h')),
     (BLINK + 'core/html/canvas/html_canvas_element.cc',
@@ -105,6 +87,37 @@ EDITS = [
      '    }\n  }\n'),
 ]
 
+RENDERER_PREFS_EDITS = [
+    ('third_party/blink/public/common/renderer_preferences/renderer_preferences.h',
+     '  bool caret_browsing_enabled{false};\n',
+     '  // Zitter: secret for per-site fingerprint noise; empty turns it off.\n'
+     '  std::vector<uint8_t> zitter_fingerprint_key;\n'),
+    ('third_party/blink/public/mojom/renderer_preferences.mojom',
+     '  bool caret_browsing_enabled = false;\n',
+     '\n  // Zitter: secret for per-site fingerprint noise; empty turns it off.\n'
+     '  array<uint8> zitter_fingerprint_key;\n'),
+    ('third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h',
+     '  static const bool& caret_browsing_enabled(\n'
+     '      const ::blink::RendererPreferences& data) {\n'
+     '    return data.caret_browsing_enabled;\n  }\n',
+     '\n  static const std::vector<uint8_t>& zitter_fingerprint_key(\n'
+     '      const ::blink::RendererPreferences& data) {\n'
+     '    return data.zitter_fingerprint_key;\n  }\n'),
+    ('third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc',
+     '  out->caret_browsing_enabled = data.caret_browsing_enabled();\n',
+     '  if (!data.ReadZitterFingerprintKey(&out->zitter_fingerprint_key)) {\n'
+     '    return false;\n  }\n'),
+]
+
+CHROME_PREF_EDIT = (
+    'chrome/browser/prefs/browser_prefs.cc',
+    '  registry->RegisterBooleanPref(prefs::kRendererAccessibilityEnabled, true);\n',
+    f'  // Zitter: per-site noise against canvas, WebGL and audio fingerprinting.\n'
+    f'  registry->RegisterBooleanPref("{PREF}", false);\n',
+)
+
+# The default plan remains the Chrome-backed overlay.
+EDITS = [*CONTENT_EDITS, *RENDERER_PREFS_EDITS, CHROME_PREF_EDIT]
 
 def _insert(text, anchor, addition, path):
     if text.count(anchor + addition) == 1 and text.count(addition) == 1:
@@ -113,13 +126,26 @@ def _insert(text, anchor, addition, path):
         raise ValueError(f'Unexpected upstream layout in {path}; review the fingerprint protection hook')
     return text.replace(anchor, anchor + addition, 1)
 
+def _remove_renderer_pref(text, anchor, addition, path):
+    if text.count(anchor + addition) == 1 and text.count(addition) == 1:
+        text = text.replace(anchor + addition, anchor, 1)
+    if 'zitterfingerprintkey' in text.lower().replace('_', ''):
+        raise ValueError(f'Unexpected fingerprint preference hook in {path}')
+    return text
 
-def prepare(checkout):
+
+def prepare(checkout, *, register_chrome_pref=True):
     """Validate every edit before any write; preserve unrelated local edits."""
     root = Path(checkout).resolve()
     plan = {}
-    for name in OWNED:
-        target = root / BLINK / name
+    owned = {BLINK + name: name for name in OWNED}
+    if not register_chrome_pref:
+        owned[PUBLIC_STATE] = 'public/web/zitter_fingerprint_state.h'
+        owned[BLINK + 'core/frame/zitter_fingerprint_key.cc'] = (
+            'content/zitter_fingerprint_key.cc'
+        )
+    for path, name in owned.items():
+        target = root / path
         if target.is_symlink() or not target.resolve().is_relative_to(root):
             raise ValueError('Fingerprint protection path escapes the checkout')
         old = target.read_bytes() if target.exists() else None
@@ -127,7 +153,10 @@ def prepare(checkout):
             raise ValueError(f'Refusing to replace an unowned file: {target}')
         plan[target] = (old, (ROOT / 'chromium/blink' / name).read_bytes())
     texts = {}
-    for path, anchor, addition in EDITS:
+    edits = EDITS if register_chrome_pref else [*CONTENT_EDITS, PUBLIC_STATE_EDIT,
+                                               *RENDERER_PREFS_EDITS]
+    renderer_pref_paths = {path for path, _, _ in RENDERER_PREFS_EDITS}
+    for path, anchor, addition in edits:
         target = root / path
         if target.is_symlink() or not target.resolve().is_relative_to(root):
             raise ValueError('Fingerprint protection path escapes the checkout')
@@ -136,7 +165,9 @@ def prepare(checkout):
             # the staging check would see a change that never happened.
             plan[target] = (target.read_bytes(), None)
             texts[target] = plan[target][0].decode('utf-8')
-        texts[target] = _insert(texts[target], anchor, addition, path)
+        edit = (_remove_renderer_pref if not register_chrome_pref and path in renderer_pref_paths
+                else _insert)
+        texts[target] = edit(texts[target], anchor, addition, path)
     for target, text in texts.items():
         plan[target] = (plan[target][0], text.encode('utf-8'))
     return plan

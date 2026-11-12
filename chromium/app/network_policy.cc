@@ -112,29 +112,36 @@ void ConfigureSafeBrowsingKey() {
   // contain API keys; keep raw NetLog captures private.
   if (auto existing = environment->GetVar("GOOGLE_API_KEY");
       existing && !existing->empty()) return;
+  if (auto key = LoadSafeBrowsingKeyFile(); !key.empty() &&
+      !environment->SetVar("GOOGLE_API_KEY", key)) {
+    LOG(ERROR) << "Safe Browsing API key could not be configured";
+  }
+}
+
+std::string LoadSafeBrowsingKeyFile() {
+  auto environment = base::Environment::Create();
   base::FilePath path;
   if (auto configured = environment->GetVar("ZITTER_SAFE_BROWSING_API_KEY_FILE")) {
     path = base::FilePath::FromUTF8Unsafe(*configured);
     if (!path.IsAbsolute()) {
       LOG(ERROR) << "Safe Browsing key file must use an absolute path";
-      return;
+      return {};
     }
   } else {
     base::FilePath home;
-    if (!base::PathService::Get(base::DIR_HOME, &home)) return;
+    if (!base::PathService::Get(base::DIR_HOME, &home)) return {};
     path = home.Append(FILE_PATH_LITERAL(".config"))
                .Append(FILE_PATH_LITERAL("zitter"))
                .Append(FILE_PATH_LITERAL("safe-browsing-api-key"));
   }
   std::string key;
   const auto status = ReadSafeBrowsingKeyFile(path, &key);
-  if (status == SafeBrowsingKeyFileStatus::kReady) {
-    if (!environment->SetVar("GOOGLE_API_KEY", key))
-      LOG(ERROR) << "Safe Browsing API key could not be configured";
-  } else if (status != SafeBrowsingKeyFileStatus::kMissing) {
+  if (status != SafeBrowsingKeyFileStatus::kReady &&
+      status != SafeBrowsingKeyFileStatus::kMissing) {
     LOG(ERROR) << "Safe Browsing key file rejected (readability, format or permissions); "
                   "use a private file with mode 600";
   }
+  return key;
 }
 
 void ConfigureNetworkPolicy(base::CommandLine& command) {

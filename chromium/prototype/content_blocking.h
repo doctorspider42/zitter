@@ -19,6 +19,8 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "chromium/prototype/adblock_browser_support.h"
+#include "chromium/prototype/adblock_filter_lists.h"
 #include "url/gurl.h"
 
 class Profile;
@@ -28,28 +30,12 @@ namespace network { class SimpleURLLoader; class URLLoaderFactoryBuilder; }
 
 namespace zitter::prototype {
 
-// Per-profile prefs, registered by tools/content_blocking_patch.py.
-inline constexpr char kAdBlockingPref[] = "zitter.ad_blocking";
-inline constexpr char kAdBlockingAllowedSitesPref[] = "zitter.ad_blocking_allowed_sites";
-inline constexpr char kAdBlockingRulesPref[] = "zitter.ad_blocking_rules";
-// Own hiding rules that hid nothing on their site's recent loads: rule -> loads.
-inline constexpr char kAdBlockingRuleMissesPref[] = "zitter.ad_blocking_rule_misses";
-// Optional lists switched away from their default: list id -> on.
-inline constexpr char kAdBlockingListsPref[] = "zitter.ad_blocking_lists";
-
 // Built-in ad blocking (docs/ad-blocking.md): the downloaded filter lists, one
 // adblock-rust engine per profile (lists plus that profile's own rules), the
 // per-site switch and the request check. UI thread only.
 class ContentBlocking final {
  public:
-  struct List {
-    std::string id, name, url;
-    // `optional` lists have a switch (on when `default_on`); `builtin` ones
-    // ship with Zitter and are never downloaded.
-    bool optional = false, default_on = true, builtin = false;
-    size_t rules = 0;
-    base::Time updated;
-  };
+  using List = AdblockFilterList;
   enum class Verdict { kAllow, kBlock, kOff };
 
   static ContentBlocking& Get();
@@ -58,9 +44,9 @@ class ContentBlocking final {
 
   // Reads the lists from disk and schedules their refresh. Idempotent.
   void Start();
-  const std::vector<List>& lists() const { return lists_; }
-  bool updating() const { return updating_ > 0; }
-  const std::string& last_error() const { return last_error_; }
+  const std::vector<List>& lists() const { return list_store_.lists(); }
+  bool updating() const { return list_store_.updating(); }
+  const std::string& last_error() const { return list_store_.last_error(); }
   // Downloads every list now (Settings: Aktualizuj teraz).
   void UpdateLists();
   // Replaces the lists with these texts, for tests: no files, no downloads.
@@ -144,28 +130,12 @@ class ContentBlocking final {
   ProfileState* StateFor(Profile* profile, bool build);
   void Rebuild(Profile* profile);
   void RebuildAll();
-  void ListsLoaded(std::vector<std::optional<std::string>> texts, std::vector<base::Time> times);
-  void ScheduleUpdate(base::TimeDelta delay);
   void DownloadStale(bool force);
-  void Downloaded(size_t index, std::unique_ptr<network::SimpleURLLoader> loader, std::optional<std::string> body);
-  // uBlock-style lists pull in more files with `!#include name`; they are
-  // fetched from the list's directory and put in place of those lines.
-  void FetchIncludes(size_t index, std::string body);
-  void Store(size_t index, std::string body);
-  // Whether a loaded profile has the list on: only those are downloaded.
-  bool Wanted(size_t index);
+  bool Wanted(const AdblockFilterList& list);
   void Notify();
 
-  bool started_ = false;
-  base::FilePath directory_;
-  std::vector<List> lists_;
-  // The list texts as the engines see them; shared with background builds.
-  std::shared_ptr<const std::vector<std::string>> texts_;
-  int updating_ = 0;
-  std::string last_error_;
-  base::OneShotTimer update_timer_;
+  AdblockFilterLists list_store_;
   base::RepeatingClosureList observers_;
-  base::WeakPtrFactory<ContentBlocking> weak_factory_{this};
 };
 
 // One tab: counts what was blocked on its page and hides what the cosmetic

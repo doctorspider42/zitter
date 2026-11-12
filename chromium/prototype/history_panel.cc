@@ -7,9 +7,6 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -95,12 +92,14 @@ struct HistoryPanel::Row {
 HistoryPanel::HistoryPanel() = default;
 HistoryPanel::~HistoryPanel() { CloseUI(); }
 void HistoryPanel::CloseUI() {
-  weak_factory_.InvalidateWeakPtrs(); tracker_.TryCancelAll(); query_timer_.Stop(); querying_ = false;
+  weak_factory_.InvalidateWeakPtrs(); tracker_.TryCancelAll(); query_tracker_.TryCancelAll(); query_timer_.Stop(); querying_ = false;
   menu_runner_.reset(); menu_model_.reset(); rows_.clear(); layout_.clear();
   scene_.reset(); list_ = nullptr; count_ = nullptr; choose_ = nullptr; choosing_actions_ = nullptr; delete_ = nullptr;
   search_row_ = nullptr; search_ = nullptr; tabs_ = {}; scroll_ = nullptr;
   widget_.reset(); delegate_.reset();
-  observation_.Reset(); history_ = nullptr; profile_ = nullptr;
+  observation_.Reset(); history_ = nullptr;
+  visits_.clear(); chosen_.clear(); query_.clear();
+  show_closed_ = false; choosing_ = false;
 }
 views::View* HistoryPanel::MakeLine(views::View* parent, uint32_t style, int tone) {
   auto* line = parent->AddChildView(scene_->MakeText(u"", false, false, 0));
@@ -111,16 +110,39 @@ std::vector<GURL> HistoryPanel::listed_for_testing() const {
   std::vector<GURL> urls; for (const auto& visit : visits_) urls.push_back(visit.url); return urls;
 }
 
-void HistoryPanel::Show(Profile* profile, views::Widget* parent) {
-  if (!profile || !parent) return;
-  if (widget_ && (widget_->IsClosed() || profile_ != profile)) CloseUI();
-  if (widget_) { widget_->Show(); widget_->Activate(); Query(); return; }
-  profile_ = profile;
-  history_ = HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS);
+bool HistoryPanel::has_visible_visit_title_for_testing(
+    std::u16string_view title) const {
+  return std::ranges::any_of(rows_, [title](const Row& row) {
+    return row.title->IsDrawn() && !row.title->GetVisibleBounds().IsEmpty() &&
+           row.box->GetViewAccessibility().GetCachedName() == title;
+  });
+}
+
+void HistoryPanel::Show(history::HistoryService* history,
+                        std::u16string profile_label,
+                        views::Widget* parent,
+                        bool activate) {
+  if (!parent) return;
+  const auto title_text = TF(u"Historia · {}", {profile_label});
+  if (widget_ && (widget_->IsClosed() || history_ != history ||
+                  delegate_->GetWindowTitle() != title_text)) {
+    CloseUI();
+  }
+  if (widget_) {
+    if (activate) {
+      widget_->Show();
+      widget_->Activate();
+    } else {
+      widget_->ShowInactive();
+    }
+    Query();
+    return;
+  }
+  history_ = history;
   if (history_) observation_.Observe(history_.get());
   auto delegate = std::make_unique<views::DialogDelegate>();
   delegate->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  delegate->SetTitle(TF(u"Historia · {}", {BrowsingProfileName(profile)}));
+  delegate->SetTitle(title_text);
   delegate->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   delegate->SetCanResize(true);
   delegate->set_use_custom_frame(false);
@@ -144,13 +166,25 @@ void HistoryPanel::Show(Profile* profile, views::Widget* parent) {
   auto* nav = content->AddChildView(std::make_unique<views::View>());
   auto* lists = nav->AddChildView(scene_->MakeActions(6));
   tabs_[0] = scene_->AddAction(lists, base::BindRepeating([](base::WeakPtr<HistoryPanel> panel) { if (panel) panel->SetShowClosed(false); }, weak), T(u"Lista"));
-  tabs_[1] = scene_->AddAction(lists, base::BindRepeating([](base::WeakPtr<HistoryPanel> panel) { if (panel) panel->SetShowClosed(true); }, weak), T(u"Ostatnio zamknięte"));
-  for (auto& tab : tabs_) tab->GetViewAccessibility().SetRole(ax::mojom::Role::kTab);
-  auto* tools = nav->AddChildView(scene_->MakeActions(4));
-  auto* clear = scene_->AddAction(tools, base::BindRepeating([](base::WeakPtr<HistoryPanel> panel) { if (panel && panel->clear_) panel->clear_.Run(); }, weak), T(u"Wyczyść dane…"));
-  scene_->SetActionKind(clear, 3);
-  auto* machine = scene_->AddAction(tools, base::BindRepeating([](base::WeakPtr<HistoryPanel> panel) { if (panel && panel->time_machine_) panel->time_machine_.Run(); }, weak), u"Time Machine");
-  scene_->SetActionKind(machine, 3);
+  if (closed_ && reopen_) {
+    tabs_[1] = scene_->AddAction(lists, base::BindRepeating([](base::WeakPtr<HistoryPanel> panel) { if (panel) panel->SetShowClosed(true); }, weak), T(u"Ostatnio zamknięte"));
+    for (auto& tab : tabs_) tab->GetViewAccessibility().SetRole(ax::mojom::Role::kTab);
+  } else {
+    lists->SetVisible(false);
+  }
+  if (clear_ || time_machine_) {
+    auto* tools = nav->AddChildView(scene_->MakeActions(4));
+    if (clear_) {
+      auto* clear = scene_->AddAction(tools, clear_, T(u"Wyczyść dane…"));
+      scene_->SetActionKind(clear, 3);
+    }
+    if (time_machine_) {
+      auto* machine = scene_->AddAction(tools, time_machine_, u"Time Machine");
+      scene_->SetActionKind(machine, 3);
+    }
+  } else if (!tabs_[1]) {
+    nav->SetVisible(false);
+  }
   SetSidebarPanelLayout(nav, false, gfx::Insets(), 8, lists, true);
   // Search by title or address.
   search_row_ = content->AddChildView(std::make_unique<views::View>());
@@ -182,7 +216,10 @@ void HistoryPanel::Show(Profile* profile, views::Widget* parent) {
   gfx::Rect bounds(0, 0, std::min(760, area.width()), std::min(760, area.height()));
   bounds.set_origin(parent->GetWindowBoundsInScreen().CenterPoint() - gfx::Vector2d(bounds.width() / 2, bounds.height() / 2));
   bounds.AdjustToFit(area); widget->SetBounds(bounds);
-  Refresh(); widget->Show(); scene_->Schedule();
+  Refresh();
+  if (activate) widget->Show();
+  else widget->ShowInactive();
+  scene_->Schedule();
   Query();
 }
 
@@ -193,6 +230,9 @@ void HistoryPanel::SetQuery(std::u16string query) {
   query_timer_.Start(FROM_HERE, base::Milliseconds(150), base::BindOnce(&HistoryPanel::Query, weak_factory_.GetWeakPtr()));
 }
 void HistoryPanel::SetShowClosed(bool closed) { if (show_closed_ == closed) return; show_closed_ = closed; choosing_ = false; chosen_.clear(); Refresh(); }
+void HistoryPanel::RefreshClosedTabs() {
+  if (show_closed_) Refresh();
+}
 void HistoryPanel::SetChoosing(bool choosing) { if (choosing_ == choosing) return; choosing_ = choosing && !show_closed_; chosen_.clear(); Refresh(); }
 void HistoryPanel::Choose(size_t index, bool chosen) {
   if (index >= visits_.size()) return;
@@ -202,11 +242,11 @@ void HistoryPanel::Choose(size_t index, bool chosen) {
 // The newest 500 visits matching the search, one per page and day (as Chrome's History).
 void HistoryPanel::Query() {
   if (!history_) return;
-  tracker_.TryCancelAll(); querying_ = true;
+  query_tracker_.TryCancelAll(); querying_ = true;
   history::QueryOptions options;
   options.max_count = 500;
   options.duplicate_policy = history::QueryOptions::REMOVE_DUPLICATES_PER_DAY;
-  history_->QueryHistory(query_, options, base::BindOnce(&HistoryPanel::OnResults, weak_factory_.GetWeakPtr()), &tracker_);
+  history_->QueryHistory(query_, options, base::BindOnce(&HistoryPanel::OnResults, weak_factory_.GetWeakPtr()), &query_tracker_);
 }
 void HistoryPanel::OnResults(history::QueryResults results) {
   querying_ = false; visits_.clear(); chosen_.clear(); layout_.clear();
@@ -242,7 +282,8 @@ void HistoryPanel::Refresh() {
       auto* empty = list_->AddChildView(std::make_unique<views::View>());
       auto* title = MakeLine(empty, 2, static_cast<int>(PanelScene::Tone::kInk));
       scene_->SetText(title, querying_ ? u"" : T(u"Nic tu nie ma"));
-      empty->AddChildView(scene_->MakeText(show_closed_ ? T(u"Zamknięte w tej sesji karty pojawią się tutaj. Starsze są w Time Machine.")
+      empty->AddChildView(scene_->MakeText(show_closed_ ? T(time_machine_ ? u"Zamknięte w tej sesji karty pojawią się tutaj. Starsze są w Time Machine."
+                                                       : u"Zamknięte w tej sesji karty pojawią się tutaj.")
                                            : query_.empty() ? T(u"Historia tego profilu jest pusta.") : TF(u"Nic w historii nie pasuje do „{}”.", {query_}), true, false, 0));
       SetSidebarPanelLayout(empty, true, gfx::Insets::VH(48, 24), 12);
     }
@@ -265,7 +306,7 @@ void HistoryPanel::Refresh() {
       if (show_closed_) {
         auto* group_actions = buttons->AddChildView(scene_->MakeActions(0));
         row.restore = scene_->AddAction(group_actions, base::BindRepeating([](base::WeakPtr<HistoryPanel> panel, size_t index) {
-          if (panel && panel->reopen_) { panel->reopen_.Run(index); panel->Refresh(); } }, weak, index), T(u"Przywróć"));
+          if (panel) panel->Activate(index); }, weak, index), T(u"Przywróć"));
         scene_->SetActionKind(row.restore, 2);
       } else {
         row.more = scene_->AddMoreAction(buttons, base::BindRepeating([](base::WeakPtr<HistoryPanel> panel, size_t index) {
@@ -303,6 +344,7 @@ void HistoryPanel::RefreshChrome() {
   choose_->SetVisible(!choosing_ && !show_closed_); choosing_actions_->SetVisible(choosing_);
   delete_->SetEnabled(!chosen_.empty());
   for (size_t i = 0; i < tabs_.size(); ++i) {
+    if (!tabs_[i]) continue;
     const bool on = show_closed_ == (i == 1);
     scene_->SetActionKind(tabs_[i], on ? 7 : 6); tabs_[i]->GetViewAccessibility().SetIsSelected(on);
   }
@@ -321,8 +363,10 @@ void HistoryPanel::ShowRowMenu(size_t index, views::View* anchor) {
   if (!anchor) return;
   auto model = std::make_unique<ui::SimpleMenuModel>(this);
   model->AddItem(kNewTab, T(u"Otwórz w nowej karcie"));
-  model->AddItem(kSplit, T(u"Otwórz obok w Split View"));
-  model->AddItem(kPeek, T(u"Otwórz w Peek"));
+  if (auxiliary_open_modes_) {
+    model->AddItem(kSplit, T(u"Otwórz obok w Split View"));
+    model->AddItem(kPeek, T(u"Otwórz w Peek"));
+  }
   model->AddItem(kCopy, T(u"Kopiuj adres"));
   model->AddSeparator(ui::NORMAL_SEPARATOR);
   model->AddItem(kSite, TF(u"Więcej z {}", {HostOf(visits_[index].url)}));
@@ -356,24 +400,33 @@ void HistoryPanel::ExecuteCommand(int id, int) {
 }
 void HistoryPanel::DeleteChosen() {
   if (chosen_.empty() || !confirm_) return;
-  std::vector<size_t> indexes(chosen_.begin(), chosen_.end());
-  const size_t n = indexes.size(), tens = n % 100, ones = n % 10;
+  auto visits = VisitsToExpire({chosen_.begin(), chosen_.end()});
+  const size_t n = visits.size(), tens = n % 100, ones = n % 10;
   const auto entries = base::NumberToString16(n) + u" " + (n == 1 ? T(u"wpis") : (ones >= 2 && ones <= 4 && (tens < 12 || tens > 14)) ? T(u"wpisy") : T(u"wpisów"));
   confirm_.Run(widget_.get(), TF(u"Usunąć {} z historii?", {entries}), std::u16string(), T(u"Tego nie da się cofnąć."), T(u"Usuń z historii"),
-      base::BindOnce([](base::WeakPtr<HistoryPanel> panel, std::vector<size_t> indexes, bool yes) {
-        if (!panel || !yes) return; panel->SetChoosing(false); panel->DeleteVisits(std::move(indexes)); }, weak_factory_.GetWeakPtr(), std::move(indexes)));
+      base::BindOnce([](base::WeakPtr<HistoryPanel> panel, std::vector<history::ExpireHistoryArgs> visits, bool yes) {
+        if (!panel || !yes) return; panel->SetChoosing(false); panel->ExpireVisits(visits); }, weak_factory_.GetWeakPtr(), std::move(visits)));
 }
 // As Chrome's History: a row removes its page's visits on that day only.
 void HistoryPanel::DeleteVisits(std::vector<size_t> indexes) {
-  if (!history_) return;
+  ExpireVisits(VisitsToExpire(indexes));
+}
+
+std::vector<history::ExpireHistoryArgs> HistoryPanel::VisitsToExpire(
+    const std::vector<size_t>& indexes) const {
   std::vector<history::ExpireHistoryArgs> expire;
   for (size_t index : indexes) {
     if (index >= visits_.size()) continue;
     history::ExpireHistoryArgs args; args.urls.insert(visits_[index].url); args.SetTimeRangeForOneDay(visits_[index].time);
     expire.push_back(std::move(args));
   }
-  if (expire.empty()) return;
-  history_->ExpireHistory(expire, base::BindOnce(&HistoryPanel::Query, weak_factory_.GetWeakPtr()), &tracker_);
+  return expire;
+}
+
+void HistoryPanel::ExpireVisits(
+    const std::vector<history::ExpireHistoryArgs>& visits) {
+  if (history_ && !visits.empty())
+    history_->ExpireHistory(visits, base::BindOnce(&HistoryPanel::Query, weak_factory_.GetWeakPtr()), &tracker_);
 }
 // Every page of the host, not only the listed ones: a full search first.
 void HistoryPanel::DeleteSite(std::string host) {

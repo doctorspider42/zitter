@@ -1,6 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-#ifndef CHROME_RENDERER_ZITTER_PAGE_SCRIPTS_H_
-#define CHROME_RENDERER_ZITTER_PAGE_SCRIPTS_H_
+#ifndef ZITTER_CHROMIUM_RENDERER_ZITTER_PAGE_SCRIPTS_H_
+#define ZITTER_CHROMIUM_RENDERER_ZITTER_PAGE_SCRIPTS_H_
 
 namespace content { class RenderFrame; }
 
@@ -11,4 +11,4 @@ namespace zitter {
 void RunPageScripts(content::RenderFrame* render_frame);
 }  // namespace zitter
 
-#endif  // CHROME_RENDERER_ZITTER_PAGE_SCRIPTS_H_
+#endif  // ZITTER_CHROMIUM_RENDERER_ZITTER_PAGE_SCRIPTS_H_

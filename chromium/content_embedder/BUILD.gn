@@ -1,0 +1,680 @@
+# Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+
+import("//components/safe_browsing/buildflags.gni")
+import("//mojo/public/tools/bindings/mojom.gni")
+import("//printing/buildflags/buildflags.gni")
+import("//third_party/icu/config.gni")
+import("//tools/grit/repack.gni")
+import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
+import("//v8/gni/v8.gni")
+if (is_mac) {
+  import("//build/apple/tweak_info_plist.gni")
+  import("//build/config/mac/rules.gni")
+  import("//content/public/app/mac_helpers.gni")
+  import("//ui/gl/features.gni")
+}
+
+assert(is_mac || is_win, "The Content Lab requires macOS or Windows.")
+assert(safe_browsing_mode != 0,
+       "The Content Lab requires Chromium download file type policies.")
+
+night_shift_files = [
+  "//zitter/chromium/night_shift/manifest.json",
+  "//zitter/chromium/night_shift/moon.png",
+  "//zitter/chromium/night_shift/settings.css",
+  "//zitter/chromium/night_shift/settings.html",
+  "//zitter/chromium/night_shift/settings.js",
+  "//zitter/chromium/night_shift/site_policy.js",
+  "//zitter/chromium/night_shift/theme.js",
+  "//zitter/chromium/night_shift/worker.js",
+]
+night_shift_vendor = [
+  "//zitter/chromium/night_shift/vendor/LICENSE",
+  "//zitter/chromium/night_shift/vendor/compatibility.js",
+  "//zitter/chromium/night_shift/vendor/dark-sites.config",
+  "//zitter/chromium/night_shift/vendor/darkreader.js",
+  "//zitter/chromium/night_shift/vendor/detector.js",
+  "//zitter/chromium/night_shift/vendor/dynamic-theme-fixes.config",
+  "//zitter/chromium/night_shift/vendor/proxy.js",
+]
+
+mojom("extension_archive") {
+  sources = [ "extension_archive.mojom" ]
+  public_deps = [
+    "//mojo/public/mojom/base",
+    "//sandbox/policy/mojom",
+  ]
+}
+
+mojom("fingerprint_state") {
+  sources = [ "fingerprint_state.mojom" ]
+}
+
+mojom("adblock_probe") {
+  sources = [ "adblock_probe.mojom" ]
+  public_deps = [ "//third_party/blink/public/mojom/tokens" ]
+}
+
+action("content_blocking_probe_script") {
+  script = "//zitter/chromium/assistant/embed.py"
+  sources = [ "//zitter/chromium/prototype/content_blocking_probe.js" ]
+  outputs = [ "$target_gen_dir/content_blocking_probe_script.h" ]
+  args = [
+    rebase_path(sources[0], root_build_dir),
+    rebase_path(outputs[0], root_build_dir),
+    "kContentBlockingProbeScript",
+  ]
+}
+
+if (enable_printing && enable_pdf) {
+  mojom("pdf_preview") {
+    sources = [ "pdf_preview.mojom" ]
+    public_deps = [
+      "//mojo/public/mojom/base",
+      "//sandbox/policy/mojom",
+    ]
+  }
+}
+
+lab_includes = [ "$root_gen_dir/zitter" ]
+
+lab_sources = [
+  "//zitter/chromium/prototype/link_navigation.cc",
+  "//zitter/chromium/prototype/link_navigation.h",
+  "adblock_cache_probe.cc",
+  "adblock_cache_probe.h",
+  "cookie_store_verifier.cc",
+  "cookie_store_verifier.h",
+  "download_file_actions.cc",
+  "download_file_actions.h",
+  "download_file_reputation.cc",
+  "download_file_reputation.h",
+  "download_probe.cc",
+  "download_probe.h",
+  "download_save_picker.cc",
+  "download_save_picker.h",
+  "download_url_reputation.cc",
+  "download_url_reputation.h",
+  "extension_archive_service.cc",
+  "extension_archive_service.h",
+  "extension_manifest.cc",
+  "extension_manifest.h",
+  "extension_registry_probe.cc",
+  "extension_registry_probe.h",
+  "night_shift_site.cc",
+  "night_shift_site.h",
+  "//zitter/chromium/prototype/night_shift_config.cc",
+  "//zitter/chromium/prototype/night_shift_config.h",
+  "http_auth_prompt.cc",
+  "http_auth_prompt.h",
+  "lab_clients.cc",
+  "lab_clients.h",
+  "lab_web_view.cc",
+  "lab_web_view.h",
+  "navigation_reputation.cc",
+  "navigation_reputation.h",
+  "page_file_chooser.cc",
+  "page_file_chooser.h",
+  "page_password_manager.cc",
+  "page_password_manager.h",
+  "profile_context.cc",
+  "profile_context.h",
+  "profile_download_delegate.cc",
+  "profile_download_delegate.h",
+  "profile_download_history.cc",
+  "profile_download_history.h",
+  "profile_permission_controller.cc",
+  "profile_permission_controller.h",
+  "tabs_hooks_delegate.cc",
+  "workspace_assistant.cc",
+  "workspace_devtools.cc",
+  "workspace_devtools.h",
+  "workspace_favicon_refresh.cc",
+  "workspace_favicon_refresh.h",
+  "workspace_lab.cc",
+  "workspace_lab.h",
+  "workspace_media_access.cc",
+  "workspace_media_access.h",
+  "workspace_session_store.cc",
+  "workspace_session_store.h",
+  "workspace_timeline.cc",
+  "workspace_timeline.h",
+]
+
+lab_deps = [
+  ":adblock_probe",
+  ":content_blocking_probe_script",
+  ":extension_archive",
+  ":fingerprint_state",
+  "//base",
+  "//base:i18n",
+  "//components/autofill/content/renderer",
+  "//components/crx_file",
+  "//components/device_reauth",
+  "//components/download/content/public",
+  "//components/download/public/common:public",
+  "//components/embedder_support:user_agent",
+  "//components/favicon/content",
+  "//components/favicon/core:history_implementation",
+  "//components/favicon_base",
+  "//components/find_in_page",
+  "//components/history/content/browser",
+  "//components/history/core/browser",
+  "//components/input",
+  "//components/keyed_service/content",
+  "//components/metrics",
+  "//components/network_session_configurator/common",
+  "//components/os_crypt/async/common",
+  "//components/password_manager/content/browser",
+  "//components/password_manager/core/browser",
+  "//components/password_manager/core/browser/affiliation:affiliation_match_helper",
+  "//components/password_manager/core/browser/features:utils",
+  "//components/password_manager/core/browser/password_store:password_store_impl",
+  "//components/password_manager/core/common",
+  "//components/policy/core/common",
+  "//components/pref_registry",
+  "//components/prefs",
+  "//components/safe_browsing:buildflags",
+  "//components/safe_browsing/content/common:file_type_policies",
+  "//components/safe_browsing/core/browser",
+  "//components/safe_browsing/core/browser/db:database_manager",
+  "//components/safe_browsing/core/browser/db:sb_local_database_manager",
+  "//components/safe_browsing/core/browser/db:sb_protocol_manager_util",
+  "//components/safe_browsing/core/browser/db:v5_get_hash_protocol_manager",
+  "//components/safe_browsing/core/browser/db:v5_search_hashes_cache",
+  "//components/safe_browsing/core/browser/db:v5_search_hashes_util",
+  "//components/safe_browsing/core/common",
+  "//components/safe_browsing/core/common:safe_browsing_prefs",
+  "//components/security_state/content",
+  "//components/sync/model",
+  "//components/user_prefs",
+  "//components/value_store",
+  "//components/version_info",
+  "//content/public/app",
+  "//content/public/browser",
+  "//content/public/common",
+  "//content/public/renderer",
+  "//content/public/utility",
+  "//crypto",
+  "//extensions/browser",
+  "//extensions/browser/api/alarms",
+  "//extensions/browser/api/declarative_net_request",
+  "//extensions/browser/api/idle",
+  "//extensions/browser/api/messaging",
+  "//extensions/browser/api/offscreen",
+  "//extensions/browser/api/permissions",
+  "//extensions/browser/api/runtime",
+  "//extensions/browser/api/scripting",
+  "//extensions/browser/api/user_scripts",
+  "//extensions/common",
+  "//extensions/common:core_api_provider",
+  "//extensions/common:mojom",
+  "//extensions/renderer",
+  "//gin",
+  "//ipc:mojom_constants",
+  "//media",
+  "//media/mojo/mojom",
+  "//mojo/public/cpp/base",
+  "//mojo/public/cpp/bindings",
+  "//net",
+  "//sandbox/policy",
+  "//services/cert_verifier/public/mojom",
+  "//services/metrics/public/cpp:metrics_cpp",
+  "//services/network/public/cpp",
+  "//third_party/blink/public:blink",
+  "//third_party/blink/public/common",
+  "//third_party/blink/public/mojom:mojom_platform",
+  "//third_party/re2",
+  "//third_party/zlib/google:zip",
+  "//ui/base",
+  "//ui/base/clipboard",
+  "//ui/color",
+  "//ui/native_theme",
+  "//ui/display",
+  "//ui/events",
+  "//ui/gfx",
+  "//ui/shell_dialogs",
+  "//ui/views",
+  "//ui/views/controls/webview",
+  "//url",
+  "//v8",
+  "//zitter:adblock_browser_support",
+  "//zitter:adblock_page_scripts_renderer",
+  "//zitter:assistant_cli_path",
+  "//zitter:assistant_page_tools",
+  "//zitter:content_blocking_engine",
+  "//zitter:fingerprint_session",
+  "//zitter:workspace_presentation",
+  "//zitter:workspace_session_codec",
+]
+
+if (enable_printing) {
+  lab_sources += [
+    "workspace_printing.cc",
+    "workspace_printing.h",
+  ]
+  lab_deps += [
+    "//components/printing/browser",
+    "//components/printing/browser/headless",
+    "//components/printing/browser/print_to_pdf",
+    "//components/printing/renderer",
+    "//components/services/print_compositor",
+    "//components/services/print_compositor/public/mojom",
+    "//printing/mojom",
+  ]
+}
+if (enable_printing && enable_pdf) {
+  lab_sources += [
+    "workspace_pdf_preview.cc",
+    "workspace_pdf_preview.h",
+  ]
+  lab_deps += [
+    ":pdf_preview",
+    "//pdf",
+  ]
+}
+lab_deps += [
+  "//pdf:buildflags",
+  "//printing/buildflags",
+]
+
+repack("resources") {
+  output = "$root_out_dir/zitter_content.pak"
+  sources = [
+    "$root_gen_dir/components/components_resources.pak",
+    "$root_gen_dir/content/browser/devtools/devtools_resources.pak",
+    "$root_gen_dir/content/content_resources.pak",
+    "$root_gen_dir/content/gpu_resources.pak",
+    "$root_gen_dir/content/process_resources.pak",
+    "$root_gen_dir/extensions/extensions_browser_resources_100_percent.pak",
+    "$root_gen_dir/extensions/extensions_renderer_generated_resources.pak",
+    "$root_gen_dir/extensions/extensions_renderer_resources.pak",
+    "$root_gen_dir/extensions/extensions_resources.pak",
+    "$root_gen_dir/extensions/strings/extensions_strings_en-US.pak",
+    "$root_gen_dir/mojo/public/js/mojo_bindings_resources.pak",
+    "$root_gen_dir/net/net_resources.pak",
+    "$root_gen_dir/third_party/blink/public/resources/blink_resources.pak",
+    "$root_gen_dir/third_party/blink/public/resources/blink_scaled_resources_100_percent.pak",
+    "$root_gen_dir/third_party/blink/public/strings/blink_strings_en-US.pak",
+    "$root_gen_dir/third_party/blink/public/strings/permission_element_generated_strings.pak",
+    "$root_gen_dir/third_party/blink/public/strings/permission_element_strings_en-US.pak",
+    "$root_gen_dir/ui/resources/ui_resources_100_percent.pak",
+    "$root_gen_dir/ui/strings/app_locale_settings_en-US.pak",
+    "$root_gen_dir/ui/strings/ax_strings_en-US.pak",
+    "$root_gen_dir/ui/strings/ui_strings_en-US.pak",
+  ]
+  deps = [
+    "//components/resources:components_resources",
+    "//content:content_resources",
+    "//content/browser/devtools:devtools_resources",
+    "//content/browser/resources/gpu:resources",
+    "//content/browser/resources/process:resources",
+    "//extensions:extensions_browser_resources",
+    "//extensions:extensions_resources",
+    "//extensions/strings",
+    "//mojo/public/js:resources",
+    "//net:net_resources",
+    "//third_party/blink/public:resources",
+    "//third_party/blink/public:scaled_resources_100_percent",
+    "//third_party/blink/public/strings",
+    "//third_party/blink/public/strings:permission_element_generated_strings",
+    "//third_party/blink/public/strings:permission_element_strings",
+    "//ui/resources",
+    "//ui/strings",
+  ]
+  if (enable_printing) {
+    sources +=
+        [ "$root_gen_dir/components/strings/components_strings_en-US.pak" ]
+    deps += [ "//components/strings:components_strings_grit" ]
+  }
+}
+
+if (is_mac) {
+  executable("mac_release_metadata_probe") {
+    testonly = true
+    include_dirs = [ "//zitter" ]
+    sources = [
+      "//zitter/chromium/app/mac_release_metadata.cc",
+      "//zitter/chromium/app/mac_release_metadata.h",
+      "//zitter/chromium/app/mac_release_metadata_probe.cc",
+    ]
+    deps = [
+      "//base",
+      "//crypto",
+      "//url",
+    ]
+  }
+
+  executable("verify_login_database") {
+    testonly = true
+    sources = [
+      "cookie_encryption_mac.cc",
+      "cookie_encryption_mac.h",
+      "cookie_store_verifier.cc",
+      "cookie_store_verifier.h",
+      "verify_login_database_mac.cc",
+    ]
+    deps = [
+      "//base",
+      "//base:i18n",
+      "//components/os_crypt/async/browser",
+      "//components/os_crypt/async/browser:key_provider_interface",
+      "//components/os_crypt/async/browser:keychain_key_provider",
+      "//components/password_manager/core/browser/password_store:password_store_impl",
+      "//components/password_manager/core/browser/sync",
+      "//crypto",
+      "//crypto:mock_apple_keychain",
+      "//services/network/public/cpp",
+      "//services/network/public/mojom",
+      "//sql",
+      "//url",
+    ]
+    if (icu_use_data_file) {
+      data_deps = [ "//third_party/icu:icudata" ]
+    }
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  product = "Zitter Content Lab"
+  framework = "$product Framework"
+  helper = "$product Helper"
+  launch_sources = [ "//content/shell/app/shell_main_mac.cc" ]
+  launch_deps = [
+    "//base:compiler_specific",
+    "//base/allocator:early_zone_registration_apple",
+    "//sandbox/mac:seatbelt",
+  ]
+
+  bundle_data("night_shift_resources") {
+    sources = night_shift_files
+    outputs = [ "{{bundle_resources_dir}}/night_shift/{{source_file_part}}" ]
+  }
+
+  bundle_data("night_shift_vendor_resources") {
+    sources = night_shift_vendor
+    outputs =
+        [ "{{bundle_resources_dir}}/night_shift/vendor/{{source_file_part}}" ]
+  }
+
+  bundle_data("framework_resources") {
+    sources = [
+      "$root_out_dir/zitter_content.pak",
+      "//ui/gl/resources/angle-metal/gpu_shader_cache.bin",
+    ]
+    public_deps = [ ":resources" ]
+    if (icu_use_data_file) {
+      sources += [ "$root_out_dir/icudtl.dat" ]
+      public_deps += [ "//third_party/icu:icudata" ]
+    }
+    if (v8_use_external_startup_data) {
+      if (use_v8_context_snapshot) {
+        sources += [ "$root_out_dir/$v8_context_snapshot_filename" ]
+        public_deps += [ "//tools/v8_context_snapshot" ]
+      }
+      if (!use_v8_context_snapshot || include_both_v8_snapshots) {
+        sources += [ "$root_out_dir/snapshot_blob.bin" ]
+        public_deps += [ "//v8:run_mksnapshot_default" ]
+      }
+    }
+    outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
+  }
+
+  bundle_data("framework_libraries") {
+    sources = [
+      "$root_out_dir/vk_intermediates/libvk_swiftshader.dylib",
+      "$root_out_dir/vk_intermediates/vk_swiftshader_icd.json",
+      "$root_out_dir/vulkan_intermediates/libvulkan.dylib",
+    ]
+    public_deps = [
+      "//ui/gl:swiftshader_vk_library_copy",
+      "//ui/gl:vulkan_loader_library_copy",
+    ]
+    if (!use_static_angle) {
+      sources += [
+        "$root_out_dir/egl_intermediates/libEGL.dylib",
+        "$root_out_dir/egl_intermediates/libGLESv2.dylib",
+      ]
+      public_deps += [ "//ui/gl:angle_library_copy" ]
+    }
+    outputs = [ "{{bundle_contents_dir}}/Libraries/{{source_file_part}}" ]
+  }
+
+  foreach(kind,
+          [
+            "app",
+            "framework",
+            "helper",
+          ]) {
+    tweak_info_plist("${kind}_plist") {
+      info_plist = "${kind}-Info.plist"
+      args = [
+        "--breakpad=0",
+        "--keystone=0",
+        "--scm=0",
+        "--version",
+        "0.1.0.0",
+      ]
+    }
+  }
+
+  helpers = content_mac_helpers + content_mac_aperitif_helpers
+  foreach(params, helpers) {
+    mac_app_bundle("helper_${params[0]}") {
+      output_name = helper + params[2]
+      info_plist_target = ":helper_plist"
+      extra_substitutions = [ "HELPER_BUNDLE_ID_SUFFIX=${params[1]}" ]
+      sources = launch_sources
+      deps = launch_deps
+
+      if (is_component_build) {
+        # Seatbelt is loaded before main(), so the framework's rpath is not yet
+        # available. From a bundled helper, walk back to the component output.
+        ldflags =
+            [ "-Wl,-rpath,@executable_path/../../../../../../../../../.." ]
+      }
+      defines = [
+        "HELPER_EXECUTABLE",
+        "SHELL_PRODUCT_NAME=\"$product\"",
+      ]
+    }
+  }
+
+  bundle_data("framework_helpers") {
+    sources = []
+    public_deps = []
+    foreach(params, helpers) {
+      sources += [ "$root_out_dir/$helper${params[2]}.app" ]
+      public_deps += [ ":helper_${params[0]}" ]
+    }
+    outputs = [ "{{bundle_contents_dir}}/Helpers/{{source_file_part}}" ]
+  }
+
+  mac_framework_bundle("browser_framework") {
+    output_name = framework
+    framework_version = "A"
+    framework_contents = [
+      "Helpers",
+      "Libraries",
+      "Resources",
+    ]
+    info_plist_target = ":framework_plist"
+    sources = lab_sources + [
+                "//zitter/chromium/app/mac_release_metadata.cc",
+                "//zitter/chromium/app/mac_release_metadata.h",
+                "//zitter/chromium/app/network_policy.cc",
+                "//zitter/chromium/app/network_policy.h",
+                "//zitter/chromium/app/updater_mac.cc",
+                "//zitter/chromium/app/updater_mac.h",
+                "cookie_encryption_mac.cc",
+                "cookie_encryption_mac.h",
+                "download_file_actions_mac.mm",
+                "embedder_mac.mm",
+                "extension_notifications_mac.h",
+                "extension_notifications_mac.mm",
+                "native_message_process_host.cc",
+                "native_message_process_host.h",
+                "native_process_launcher.h",
+                "password_authenticator_mac.h",
+                "password_authenticator_mac.mm",
+                "workspace_media_access_mac.mm",
+                "workspace_native_message_port_dispatcher.cc",
+                "workspace_native_message_port_dispatcher.h",
+                "workspace_native_messaging_mac.cc",
+                "workspace_native_messaging_mac.h",
+              ]
+    include_dirs = lab_includes
+    if (enable_printing) {
+      sources += [
+        "system_print_mac.h",
+        "system_print_mac.mm",
+      ]
+    }
+    frameworks = [
+      "AppKit.framework",
+      "AVFoundation.framework",
+      "LocalAuthentication.framework",
+      "UserNotifications.framework",
+    ]
+    if (enable_printing) {
+      frameworks += [ "ApplicationServices.framework" ]
+    }
+    deps = lab_deps + [
+             "//components/os_crypt/async/browser",
+             "//components/os_crypt/async/browser:key_provider_interface",
+             "//components/os_crypt/async/browser:keychain_key_provider",
+             "//components/os_crypt/common:switches",
+             "//components/services/quarantine",
+             "//device/fido",
+             "//services/network/public/mojom",
+             "//sql",
+             "//zitter:devtools_console",
+           ]
+    bundle_deps = [
+      ":framework_helpers",
+      ":framework_libraries",
+      ":framework_resources",
+      ":night_shift_resources",
+      ":night_shift_vendor_resources",
+    ]
+    ldflags = [ "-Wl,-install_name,@rpath/$framework.framework/$framework" ]
+    if (is_component_build) {
+      ldflags += [ "-Wl,-rpath,@loader_path/../../../../../.." ]
+    }
+  }
+
+  bundle_data("framework_bundle") {
+    sources = [ "$root_out_dir/$framework.framework" ]
+    outputs = [ "{{bundle_contents_dir}}/Frameworks/{{source_file_part}}" ]
+    public_deps = [ ":browser_framework" ]
+  }
+
+  bundle_data("assistant_bundle") {
+    sources = [ "$root_out_dir/zitter_assistant" ]
+    outputs = [ "{{bundle_executable_dir}}/{{source_file_part}}" ]
+    public_deps = [ "//zitter:zitter_assistant" ]
+  }
+
+  mac_app_bundle("lab_app") {
+    output_name = product
+    info_plist_target = ":app_plist"
+    sources = launch_sources
+    deps = launch_deps + [
+             ":assistant_bundle",
+             ":framework_bundle",
+           ]
+    defines = [ "SHELL_PRODUCT_NAME=\"$product\"" ]
+  }
+} else {
+  copy("night_shift_resources") {
+    sources = night_shift_files
+    outputs = [ "$root_out_dir/resources/night_shift/{{source_file_part}}" ]
+  }
+
+  copy("night_shift_vendor_resources") {
+    sources = night_shift_vendor
+    outputs =
+        [ "$root_out_dir/resources/night_shift/vendor/{{source_file_part}}" ]
+  }
+
+  executable("lab_app_win") {
+    output_name = "zitter_content"
+    write_runtime_deps = "$root_out_dir/zitter_content.runtime_deps"
+    sources = lab_sources + [
+                "cookie_encryption_win.cc",
+                "cookie_encryption_win.h",
+                "download_file_actions_win.cc",
+                "embedder_win.cc",
+                "password_authenticator_win.cc",
+                "password_authenticator_win.h",
+              ]
+    include_dirs = lab_includes
+    deps = lab_deps + [
+             "//build/win:default_exe_manifest",
+             "//components/os_crypt/async/browser",
+             "//components/os_crypt/async/browser:dpapi_key_provider",
+             "//components/pref_registry",
+             "//components/prefs",
+             "//components/services/quarantine",
+             "//content:sandbox_helper_win",
+             "//sandbox",
+             "//services/network/public/mojom",
+             "//sql",
+             "//ui/wm",
+           ]
+    data_deps = [
+      ":night_shift_resources",
+      ":night_shift_vendor_resources",
+      ":resources",
+      "//zitter:zitter_assistant",
+    ]
+    if (icu_use_data_file) {
+      data_deps += [ "//third_party/icu:icudata" ]
+    }
+    if (v8_use_external_startup_data) {
+      if (use_v8_context_snapshot) {
+        data_deps += [ "//tools/v8_context_snapshot" ]
+      }
+      if (!use_v8_context_snapshot || include_both_v8_snapshots) {
+        data_deps += [ "//v8:run_mksnapshot_default" ]
+      }
+    }
+    configs -= [ "//build/config/win:console" ]
+    configs += [
+      "//build/config/win:delayloads",
+      "//build/config/win:windowed",
+    ]
+    libs = [
+      "advapi32.lib",
+      "credui.lib",
+      "ole32.lib",
+      "secur32.lib",
+      "shell32.lib",
+      "user32.lib",
+    ]
+    ldflags = [ "/STACK:0x800000" ]
+  }
+}
+
+group("zitter_content") {
+  if (is_mac) {
+    deps = [ ":lab_app" ]
+  } else {
+    deps = [ ":lab_app_win" ]
+  }
+  assert_no_deps = [
+    "//chrome:*",
+    "//chrome/*",
+  ]
+}
+
+executable("import_extension_alarms") {
+  sources = [ "import_extension_alarms.cc" ]
+  deps = [
+    "//base",
+    "//extensions/common/api",
+    "//third_party/leveldatabase",
+  ]
+}

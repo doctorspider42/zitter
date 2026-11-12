@@ -1,6 +1,7 @@
 #ifndef ZITTER_CHROMIUM_PROTOTYPE_PAGE_DIALOGS_H_
 #define ZITTER_CHROMIUM_PROTOTYPE_PAGE_DIALOGS_H_
 
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/memory/raw_ptr.h"
 #include <memory>
@@ -13,6 +14,7 @@
 
 namespace views { class Widget; class View; class ScrollView; class DialogDelegate; class Button; class ClientView; }
 namespace ui { class KeyEvent; }
+namespace content { class BrowserContext; }
 namespace zitter::prototype {
 class EditorControl;
 class PanelViewport;
@@ -31,15 +33,21 @@ class PageDialogs final : public content::JavaScriptDialogManager,
                           public content::WebContentsObserver,
                           public content::WebContentsUserData<PageDialogs> {
  public:
-  static PageDialogs* Attach(content::WebContents* contents);
+  using ProfileLabel =
+      base::RepeatingCallback<std::u16string(content::BrowserContext*)>;
+  // Resolve the label when a dialog opens so it follows profile renames.
+  static PageDialogs* Attach(content::WebContents* contents,
+                             ProfileLabel profile_label);
   ~PageDialogs() override;
   void CheckBeforeUnload(base::OnceCallback<void(bool)> done);
+  void ConfirmFormResubmission();
   bool checking_before_unload() const { return checking_; }
   size_t navigation_generation() const { return navigation_generation_; }
   views::Widget* dialog() const { return dialog_.get(); }
   // The open page dialog, for the assistant: its kind and message.
-  bool dialog_open() const { return !!dialog_callback_; }
+  bool dialog_open() const { return !!dialog_callback_ && !repost_dialog_; }
   bool leave_dialog_open() const { return unload_dialog_; }
+  bool repost_dialog_open() const { return repost_dialog_; }
   content::JavaScriptDialogType dialog_type() const { return dialog_type_; }
   const std::u16string& dialog_message() const { return dialog_message_; }
   EditorControl* prompt_input() const { return dialog_?prompt_.get():nullptr; }
@@ -61,9 +69,10 @@ class PageDialogs final : public content::JavaScriptDialogManager,
 
  private:
   friend class content::WebContentsUserData<PageDialogs>;
-  explicit PageDialogs(content::WebContents* contents);
+  enum class DialogKind { kScript, kLeave, kRepost };
+  PageDialogs(content::WebContents* contents, ProfileLabel profile_label);
   void Show(content::RenderFrameHost*, content::JavaScriptDialogType,
-      const std::u16string&, const std::u16string&, bool, DialogClosedCallback);
+      const std::u16string&, const std::u16string&, DialogKind, DialogClosedCallback);
   void Answer(bool accepted);
   void PostPromptAction(bool accepted);
   void FinishCheck(bool proceed);
@@ -80,12 +89,16 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   raw_ptr<views::View> body_ = nullptr;
   raw_ptr<EditorControl> prompt_ = nullptr;
   raw_ptr<content::RenderFrameHost> requesting_frame_ = nullptr;
+  const ProfileLabel profile_label_;
   DialogClosedCallback dialog_callback_;
   base::OnceCallback<void(bool)> check_callback_;
   size_t navigation_generation_ = 0;
   size_t dialog_generation_ = 0;
+  size_t repost_generation_ = 0;
+  size_t repost_page_generation_ = 0;
   bool checking_ = false;
   bool unload_dialog_ = false;
+  bool repost_dialog_ = false;
   content::JavaScriptDialogType dialog_type_ = content::JAVASCRIPT_DIALOG_TYPE_ALERT;
   std::u16string dialog_message_;
   base::WeakPtrFactory<PageDialogs> weak_factory_{this};

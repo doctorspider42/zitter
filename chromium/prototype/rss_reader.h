@@ -9,16 +9,19 @@
 #include "base/memory/weak_ptr.h"
 #include "base/supports_user_data.h"
 #include "base/scoped_observation.h"
-#include "chrome/browser/profiles/profile_observer.h"
+#include "base/files/file_path.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
+#include "chromium/prototype/workspace_urls.h"
 #include "url/gurl.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/accelerator_manager.h"
+#include "ui/base/page_transition_types.h"
 class Profile;
+namespace content { class BrowserContext; class WebContents; }
 namespace network { class SimpleURLLoader; }
 namespace views { class Widget; class View; }
 namespace zitter::prototype {
@@ -38,16 +41,21 @@ struct RssFeed {
 };
 // Converts the sandboxed XML parser's inert tree. No HTML is ever rendered.
 std::optional<RssFeed> DecodeRss(const base::Value& tree, const GURL& final_url);
-class RssReader final : public base::SupportsUserData::Data, public ProfileObserver {
+void LoadWorkspaceTab(content::WebContents* page, const GURL& url,
+                      ui::PageTransition transition);
+
+class RssReader : public base::SupportsUserData::Data {
  public:
   static RssReader* For(Profile* profile);
-  explicit RssReader(Profile* profile);
+  explicit RssReader(content::BrowserContext& context);
   ~RssReader() override;
+  bool is_private() const { return path_.empty(); }
   const std::vector<RssFeed>& feeds() const { return feeds_; }
   bool ready() const { return ready_; }
   bool busy() const { return busy_; }
   const std::string& status() const { return status_; }
   base::CallbackListSubscription Observe(base::RepeatingClosure changed);
+  base::CallbackListSubscription ObserveShutdown(base::OnceClosure closing);
   void Add(GURL url);
   void Remove(GURL url);
   void Refresh();
@@ -55,9 +63,10 @@ class RssReader final : public base::SupportsUserData::Data, public ProfileObser
   void MarkAll(GURL feed);
   base::DictValue Serialize() const;
   void Restore(base::DictValue state);
+ protected:
+  void Shutdown();
+
  private:
-  void OnProfileWillBeDestroyed(Profile* profile) override;
-  base::ScopedObservation<Profile, ProfileObserver> observation_{this};
   void Next();
   void Downloaded(std::optional<std::string> body);
   void Parsed(GURL final_url, data_decoder::DataDecoder::ValueOrError result);
@@ -66,7 +75,8 @@ class RssReader final : public base::SupportsUserData::Data, public ProfileObser
   void Write();
   void Prune();
   void Notify();
-  raw_ptr<Profile> profile_;
+  raw_ptr<content::BrowserContext> context_;
+  const base::FilePath path_;
   std::vector<RssFeed> feeds_;
   std::vector<GURL> queue_;
   GURL fetching_;
@@ -77,24 +87,17 @@ class RssReader final : public base::SupportsUserData::Data, public ProfileObser
   base::RepeatingTimer timer_;
   base::OneShotTimer save_timer_;
   base::RepeatingClosureList changed_;
+  base::OnceClosureList closing_;
   base::WeakPtrFactory<RssReader> weak_{this};
 };
-inline constexpr char kRssTabUrl[] = "zitter://rss/";
-inline bool IsRssTabUrl(const GURL& url) { return url == GURL(kRssTabUrl); }
-inline bool IsWorkspaceTabUrl(const GURL& url) {
-  return url.SchemeIsHTTPOrHTTPS() || IsRssTabUrl(url);
-}
-class RssPanel final : public ProfileObserver, public views::WidgetObserver, public ui::AcceleratorTarget {
+class RssPanel final : public views::WidgetObserver, public ui::AcceleratorTarget {
  public:
   RssPanel();
   ~RssPanel() override;
-  void Show(Profile* profile, views::View* parent,
+  void Show(RssReader& reader, views::View* parent,
             base::RepeatingCallback<void(GURL)> open);
   void Discover(std::vector<GURL> urls);
-  void DiscoverFromPage(base::Value value);
-  void BeginDiscovery();
-  size_t discovery_generation() const { return discovery_generation_; }
-  base::WeakPtr<RssPanel> GetWeakPtr() { return weak_.GetWeakPtr(); }
+  void DiscoverFromPage(content::WebContents& page);
   views::Widget* widget() const { return widget_; }
   views::View* view() const { return content_; }
   RssReader* reader() const { return reader_; }
@@ -106,11 +109,10 @@ class RssPanel final : public ProfileObserver, public views::WidgetObserver, pub
   size_t discovered_for_testing() const { return discovered_.size(); }
  private:
   void Close();
-  void OnProfileWillBeDestroyed(Profile* profile) override;
+  void ApplyDiscoveredFeeds(base::Value value);
   void OnWidgetThemeChanged(views::Widget* widget) override;
   void OnWidgetDestroying(views::Widget* widget) override;
   base::ScopedObservation<views::Widget, views::WidgetObserver> parent_observation_{this};
-  base::ScopedObservation<Profile, ProfileObserver> observation_{this};
   void Update();
   void ScheduleUpdate();
   void Subscribe();
@@ -121,8 +123,8 @@ class RssPanel final : public ProfileObserver, public views::WidgetObserver, pub
   views::View* Text(views::View* parent, std::string text, int style = 5);
   views::View* Action(views::View* parent, std::u16string text, base::RepeatingClosure callback, int kind = 3);
   raw_ptr<RssReader> reader_ = nullptr;
-  raw_ptr<Profile> profile_ = nullptr;
   base::CallbackListSubscription subscription_;
+  base::CallbackListSubscription closing_subscription_;
   base::RepeatingCallback<void(GURL)> open_;
   GURL source_, article_feed_;
   std::string selected_;

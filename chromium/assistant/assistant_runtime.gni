@@ -1,0 +1,64 @@
+# Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+
+import("//build/rust/rust_static_library.gni")
+
+# Native assistant core. Uses Chromium's vendored crates and toolchain only.
+template("zitter_assistant_runtime") {
+  config("assistant_includes") {
+    include_dirs = [ "." ]
+  }
+
+  rust_static_library("assistant_engine") {
+    public_configs = [ ":assistant_includes" ]
+    crate_root = "chromium/assistant/runtime.rs"
+    sources = [ crate_root ]
+    inputs = [
+      "chromium/assistant/system.txt",
+      "chromium/assistant/help.txt",
+    ]
+    cxx_bindings = [ crate_root ]
+    allow_unsafe = true
+    build_native_rust_unit_tests = true
+    deps = [
+      ":assistant_transport",
+      "//third_party/rust/serde_json/v1:lib",
+    ]
+  }
+
+  source_set("assistant_transport") {
+    public_configs = [ ":assistant_includes" ]
+    sources = [
+      "chromium/assistant/native_cli.cc",
+      "chromium/assistant/native_http.cc",
+      "chromium/assistant/native_transport.cc",
+      "chromium/assistant/native_transport.h",
+    ]
+    deps = [
+      ":assistant_cli_path",
+      "//base",
+      "//crypto",
+      "//net",
+      "//third_party/re2",
+      "//third_party/rust/cxx/v1:lib",
+      "//url",
+    ]
+  }
+
+  source_set("assistant_cli_path") {
+    sources = [ "chromium/assistant/native_cli_path.h" ]
+    public_deps = [ "//base" ]
+  }
+
+  executable(target_name) {
+    sources = [ "chromium/assistant/native_main.cc" ]
+    forward_variables_from(invoker, [ "ldflags" ])
+    deps = [
+      ":assistant_engine",
+      ":assistant_transport",
+      "//base",
+      "//base:i18n",
+      "//net",
+      "//url",
+    ]
+  }
+}

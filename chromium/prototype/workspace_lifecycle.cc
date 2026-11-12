@@ -2,20 +2,11 @@
 #include <algorithm>
 
 #include "base/functional/bind.h"
-#include "base/task/single_thread_task_runner.h"
-#include "chromium/prototype/page_dialogs.h"
-#include "content/public/browser/navigation_controller.h"
-#include "content/public/browser/navigation_entry.h"
+#include "chromium/prototype/page_services.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
 
 namespace zitter::prototype {
-namespace {
-int EntryId(content::WebContents* page) {
-  auto* entry = page->GetController().GetLastCommittedEntry();
-  return entry ? entry->GetUniqueID() : 0;
-}
-}
 std::vector<content::WebContents*> WorkspaceWindow::WorkspacePages(std::string_view id, bool peek, bool any_peek) const {
   std::vector<content::WebContents*> pages;
   for (const auto& host : hosts_) if (id.empty() || host.workspace_id == id)
@@ -27,45 +18,44 @@ bool WorkspaceWindow::GuardPages(std::vector<content::WebContents*> pages, base:
   if (closing_ || lifecycle_approved_) return false;
   if (lifecycle_pending_) return true;
   if (std::none_of(pages.begin(), pages.end(), [](auto* page) { return page && page->NeedToFireBeforeUnload(); })) return false;
-  lifecycle_pending_ = true; lifecycle_index_ = 0; lifecycle_workspace_ = active_id();
+  lifecycle_pending_ = true;
+  lifecycle_workspace_ = active_id();
   lifecycle_action_ = std::move(action);
-  if (auto* source = contents(active_id())) lifecycle_source_page_ = source->GetWeakPtr();
-  for (auto* page : WorkspacePages({})) lifecycle_topology_.push_back(page->GetWeakPtr());
-  for (auto* page : pages) if (page) lifecycle_pages_.push_back({page->GetWeakPtr(), EntryId(page), false, PageDialogs::Attach(page)->navigation_generation()});
+  if (auto* source = contents(active_id()))
+    lifecycle_source_page_ = source->GetWeakPtr();
+  for (auto* page : WorkspacePages({}))
+    lifecycle_topology_.push_back(page->GetWeakPtr());
+
   shell_->CloseOverlays(true);
   shell_->SetOperationStatus(WorkspaceShell::OperationStatusEvent::kChecking);
-  ContinueLifecycle(true);
+  before_unload_batch_.Start(
+      pages, base::BindRepeating(&AttachChromePageDialogs),
+      base::BindRepeating(
+          [](base::WeakPtr<WorkspaceWindow> window) {
+            return window && window->LifecycleScopeIsCurrent();
+          },
+          weak_factory_.GetWeakPtr()),
+      base::BindOnce(&WorkspaceWindow::FinishLifecycle,
+                     weak_factory_.GetWeakPtr()));
   return true;
 }
-void WorkspaceWindow::ContinueLifecycle(bool proceed) {
-  if (!lifecycle_pending_) return;
-  if (!proceed || lifecycle_workspace_ != active_id()) { FinishLifecycle(false); return; }
-  while (lifecycle_index_ < lifecycle_pages_.size()) {
-    auto& entry = lifecycle_pages_[lifecycle_index_++];
-    if (!entry.page || EntryId(entry.page.get()) != entry.entry_id || PageDialogs::Attach(entry.page.get())->navigation_generation() != entry.navigation_generation) { FinishLifecycle(false); return; }
-    if (entry.checked || !entry.page->NeedToFireBeforeUnload()) continue;
-    entry.checked = true;
-    PageDialogs::Attach(entry.page.get())->CheckBeforeUnload(
-        base::BindOnce(&WorkspaceWindow::ContinueLifecycle, weak_factory_.GetWeakPtr()));
-    return;
+
+bool WorkspaceWindow::LifecycleScopeIsCurrent() const {
+  if (lifecycle_workspace_ != active_id() ||
+      contents(active_id()) != lifecycle_source_page_.get()) {
+    return false;
   }
-  for (const auto& entry : lifecycle_pages_) if (!entry.page || EntryId(entry.page.get()) != entry.entry_id || PageDialogs::Attach(entry.page.get())->navigation_generation() != entry.navigation_generation) {
-    FinishLifecycle(false); return;
-  }
-  // Scripts can install a new handler while another page's sheet is open.
-  // Check newly dirty pages before committing any part of the operation.
-  for (size_t i = 0; i < lifecycle_pages_.size(); ++i) if (!lifecycle_pages_[i].checked && lifecycle_pages_[i].page->NeedToFireBeforeUnload()) {
-    lifecycle_index_ = i; ContinueLifecycle(true); return;
-  }
-  if (contents(active_id()) != lifecycle_source_page_.get()) { FinishLifecycle(false); return; }
   const auto current = WorkspacePages({});
-  if (current.size() != lifecycle_topology_.size()) { FinishLifecycle(false); return; }
-  for (size_t i = 0; i < current.size(); ++i) if (lifecycle_topology_[i].get() != current[i]) { FinishLifecycle(false); return; }
-  FinishLifecycle(true);
+  return std::ranges::equal(
+      current, lifecycle_topology_,
+      [](auto* page, const auto& snapshot) { return page == snapshot.get(); });
 }
+
 void WorkspaceWindow::FinishLifecycle(bool proceed) {
   auto action = std::move(lifecycle_action_);
-  lifecycle_pages_.clear(); lifecycle_topology_.clear(); lifecycle_source_page_.reset(); lifecycle_pending_ = false; lifecycle_index_ = 0;
+  lifecycle_topology_.clear();
+  lifecycle_source_page_.reset();
+  lifecycle_pending_ = false;
   if (!proceed) {
     shell_->SetOperationStatus(WorkspaceShell::OperationStatusEvent::kCancelled);
     return;

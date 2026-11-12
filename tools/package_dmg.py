@@ -16,7 +16,11 @@ import subprocess
 import sys
 import tempfile
 
-from notarize_app import cdhash, run, save, sha256, verify_nested_signatures, wait_for_acceptance
+from notarize_app import (
+    CONTENT_APP_NAME, CONTENT_BUNDLE_ID, cdhash, read_content_release_metadata,
+    run, save, sha256,
+    verify_nested_signatures, wait_for_acceptance,
+)
 from package_app import BUNDLE_ID, signing_identity
 
 
@@ -26,7 +30,6 @@ VOLUME_NAME = "Zitter"
 # icons sit at the centres the artwork leaves for them.
 WINDOW_ORIGIN = (200, 120)
 WINDOW_SIZE = (720, 432 + 28)
-ICON_POSITIONS = {"Zitter.app": (200, 236), "Applications": (520, 236)}
 ARCHITECTURE_LABELS = {"arm64": "Apple Silicon", "x86_64": "Intel", "universal": "Apple Silicon · Intel"}
 
 
@@ -39,12 +42,13 @@ def render_background(folder, version, architecture, work):
          "-out", str(folder / "background.tiff")])
 
 
-def finder_layout_script(disk):
+def finder_layout_script(disk, app_name="Zitter.app"):
     left, top = WINDOW_ORIGIN
     width, height = WINDOW_SIZE
+    icon_positions = {app_name: (200, 236), "Applications": (520, 236)}
     positions = "\n".join(
         f'        set position of item "{name}" of container window to {{{x}, {y}}}'
-        for name, (x, y) in ICON_POSITIONS.items())
+        for name, (x, y) in icon_positions.items())
     return f'''tell application "Finder"
     tell disk "{disk}"
         open
@@ -68,10 +72,10 @@ end tell
 '''
 
 
-def build_image(payload, layout, image):
+def build_image(payload, layout, image, *, app_name="Zitter.app", volume_name=VOLUME_NAME):
     """Create the compressed image after Finder saves the window layout in .DS_Store."""
     megabytes = int(run(["du", "-sm", str(payload)], capture=True).stdout.split()[0])
-    run(["hdiutil", "create", "-volname", VOLUME_NAME, "-srcfolder", str(payload),
+    run(["hdiutil", "create", "-volname", volume_name, "-srcfolder", str(payload),
          "-fs", "HFS+", "-format", "UDRW", "-size", f"{megabytes + megabytes // 5 + 64}m", str(layout)])
     attached = run(["hdiutil", "attach", str(layout), "-readwrite", "-noverify", "-noautoopen",
                     "-plist"], capture=True).stdout
@@ -83,7 +87,7 @@ def build_image(payload, layout, image):
     try:
         run(["SetFile", "-a", "C", str(mount)])
         run(["SetFile", "-a", "V", str(mount / ".VolumeIcon.icns")])
-        run(["osascript", "-e", finder_layout_script(mount.name)])
+        run(["osascript", "-e", finder_layout_script(mount.name, app_name)])
         if not (mount / ".DS_Store").exists():
             raise ValueError("Finder did not save the DMG window layout")
         shutil.rmtree(mount / ".fseventsd", ignore_errors=True)
@@ -101,16 +105,29 @@ def verify_app(app):
     run(["spctl", "--assess", "--type", "execute", "--verbose=2", str(app)])
 
 
-def prepare(source, destination, identity):
+def prepare(source, destination, identity, *, content_candidate=False,
+            production_identity_trial=False, content_release=False):
     info = plistlib.loads((source / "Contents/Info.plist").read_bytes())
-    if info.get("CFBundleIdentifier") != BUNDLE_ID:
-        raise ValueError("Expected a Zitter application")
+    bundle_id = BUNDLE_ID if production_identity_trial or content_release or not content_candidate else CONTENT_BUNDLE_ID
+    app_name = CONTENT_APP_NAME if content_candidate and not content_release else "Zitter.app"
+    executable_name = "Zitter Content Lab" if content_candidate else "Chromium"
+    if (info.get("CFBundleIdentifier") != bundle_id
+            or info.get("CFBundleExecutable") != executable_name
+            or (content_release and (info.get("CFBundleDisplayName") != "Zitter"
+                                     or info.get("ZitterUsePreparedWorkspace") is not True))):
+        raise ValueError(f"Expected the {bundle_id} application")
     version = info["CFBundleShortVersionString"]
+    if production_identity_trial and re.fullmatch(r"\d+\.\d+\.\d+\.0", version):
+        # GN emits a fourth component. Keep the signed plist untouched.
+        version = version.rsplit(".", 1)[0]
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("Expected a three-component numeric application version")
     verify_app(source)
     verify_nested_signatures(source)
-    architecture = run(["lipo", "-archs", str(source / "Contents/MacOS/Chromium")], capture=True).stdout.split()
+    metadata_file = source / "Contents/Resources/zitter-build.json"
+    metadata = (read_content_release_metadata(source) if content_release
+                else json.loads(metadata_file.read_text()) if metadata_file.exists() else {})
+    architecture = run(["lipo", "-archs", str(source / "Contents/MacOS" / executable_name)], capture=True).stdout.split()
     architecture = "universal" if set(architecture) == {"arm64", "x86_64"} else "-".join(architecture)
     if architecture not in ("arm64", "x86_64", "universal"):
         raise ValueError("Unsupported application architecture")
@@ -119,8 +136,10 @@ def prepare(source, destination, identity):
     destination.mkdir(parents=True, exist_ok=True)
     payload = destination / "payload"
     payload.mkdir()
-    app = payload / "Zitter.app"
-    run(["ditto", str(source), str(app)])
+    app = payload / app_name
+    # Clone on APFS so staging a large signed bundle does not duplicate its
+    # data before hdiutil creates the writable layout image.
+    run(["/bin/cp", "-cRp", str(source), str(app)])
     if cdhash(source) != cdhash(app):
         raise ValueError("Copying the app changed its code signature")
     verify_app(app)
@@ -128,20 +147,31 @@ def prepare(source, destination, identity):
     render_background(payload / ".background", version, architecture, destination / "background")
     shutil.copy2(REPOSITORY / "assets/icon/Zitter.icns", payload / ".VolumeIcon.icns")
     image = destination / "submission.dmg"
-    build_image(payload, destination / "layout.dmg", image)
+    volume_name = VOLUME_NAME if app_name == "Zitter.app" else "Zitter Content Lab"
+    build_image(payload, destination / "layout.dmg", image,
+                app_name=app_name, volume_name=volume_name)
+    image_id = (CONTENT_BUNDLE_ID + ".identity-trial.dmg"
+                if production_identity_trial else bundle_id + ".dmg")
     run(["codesign", "--force", "--sign", identity, "--timestamp", "--identifier",
-         BUNDLE_ID + ".dmg", str(image)])
+         image_id, str(image)])
     run(["codesign", "--verify", "--strict", str(image)])
-    metadata_file = source / "Contents/Resources/zitter-build.json"
-    metadata = json.loads(metadata_file.read_text()) if metadata_file.exists() else {}
     state = {"source": str(source), "version": version, "architecture": architecture,
              "source_commit": metadata.get("source_commit"), "app_cdhash": cdhash(app),
              "upload_sha256": sha256(image), "status": "Prepared"}
+    if content_candidate:
+        state["content_candidate"] = True
+    if production_identity_trial:
+        state["production_identity_trial"] = True
+    if content_release:
+        state["content_release"] = True
+        for field in ("backend", "source_dirty", "chromium_revision", "gn_args_sha256",
+                      "gn_dependency_count", "gn_dependencies_sha256", "chrome_metadata_inputs"):
+            state[field] = metadata[field]
     save(destination / "dmg-state.json", state)
     return state
 
 
-def verify_image(image, expected_cdhash):
+def verify_image(image, expected_cdhash, *, app_name="Zitter.app"):
     run(["hdiutil", "verify", str(image)])
     run(["codesign", "--verify", "--strict", str(image)])
     run(["xcrun", "stapler", "validate", str(image)])
@@ -152,7 +182,7 @@ def verify_image(image, expected_cdhash):
         mount.mkdir()
         run(["hdiutil", "attach", str(image), "-readonly", "-nobrowse", "-mountpoint", str(mount)])
         try:
-            app = mount / "Zitter.app"
+            app = mount / app_name
             if not (mount / "Applications").is_symlink() or (mount / "Applications").readlink() != Path("/Applications"):
                 raise ValueError("DMG is missing its Applications shortcut")
             if not (mount / ".background/background.tiff").is_file() or not (mount / ".DS_Store").is_file():
@@ -161,7 +191,7 @@ def verify_image(image, expected_cdhash):
                 raise ValueError("The DMG contains a different app signature")
             verify_app(app)
             # Model a browser download without bypassing quarantine protections.
-            copy = Path(directory) / "downloaded/Zitter.app"
+            copy = Path(directory) / "downloaded" / app_name
             copy.parent.mkdir()
             run(["ditto", str(app), str(copy)])
             run(["xattr", "-w", "com.apple.quarantine", "0083;00000000;ZitterDistributionCheck;", str(copy)])
@@ -175,18 +205,26 @@ def finish(destination, state, profile, timeout, poll_interval):
     image = destination / "submission.dmg"
     if not wait_for_acceptance(destination, state, profile, image, state_path, timeout, poll_interval):
         return False
-    output = destination / f"Zitter-v{state['version']}-macos-{state['architecture']}.dmg"
+    lab = state.get("content_candidate", False) and not state.get("content_release", False)
+    if state.get("production_identity_trial", False):
+        prefix = "Zitter-Content-Identity-Trial"
+    else:
+        prefix = "Zitter-Content-Lab" if lab else "Zitter"
+    platform = "macos-content" if state.get("content_release", False) else "macos"
+    stem = f"{prefix}-v{state['version']}-{platform}-{state['architecture']}"
+    output = destination / f"{stem}.dmg"
     # Preserve the submitted image byte-for-byte so interrupted stapling is resumable.
     shutil.copy2(image, output)
     run(["xcrun", "stapler", "staple", str(output)])
-    verify_image(output, state["app_cdhash"])
+    verify_image(output, state["app_cdhash"], app_name=CONTENT_APP_NAME if lab else "Zitter.app")
     checksum = sha256(output)
-    (destination / f"SHA256SUMS-macos-{state['architecture']}-dmg.txt").write_text(f"{checksum}  {output.name}\n")
+    (destination / f"SHA256SUMS-{platform}-{state['architecture']}-dmg.txt").write_text(
+        f"{checksum}  {output.name}\n")
     state.update({"status": "Complete", "artifact": output.name, "artifact_sha256": checksum,
                   "dmg_ticket": "passed", "mounted_app_ticket": "passed", "gatekeeper": "passed",
                   "quarantined_app_distribution": "passed"})
     save(state_path, state)
-    save(destination / f"Zitter-v{state['version']}-macos-{state['architecture']}-dmg-build.json",
+    save(destination / f"{stem}-dmg-build.json",
          {k: v for k, v in state.items() if k != "source"})
     print(f"Notarized release DMG: {output}", flush=True)
     return True
@@ -198,11 +236,21 @@ def main():
     parser.add_argument("--destination", required=True, type=Path)
     parser.add_argument("--keychain-profile", default="zitter-notary")
     parser.add_argument("--sign-identity")
+    parser.add_argument("--content-candidate", action="store_true",
+                        help="Package a stapled Content Lab app under its separate identity")
+    identity_mode = parser.add_mutually_exclusive_group()
+    identity_mode.add_argument("--content-release", action="store_true",
+                               help="Package the Content release as Zitter.app")
+    identity_mode.add_argument("--production-identity-trial", action="store_true",
+                        help="Package a Content rehearsal signed under the production bundle identifier")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--submission-id", help="Recover the matching interrupted DMG upload")
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--poll-interval", type=int, default=20)
     args = parser.parse_args()
+    if args.production_identity_trial and not args.content_candidate:
+        parser.error("--production-identity-trial requires --content-candidate")
+    content_candidate = args.content_candidate or args.content_release
     if sys.platform != "darwin":
         parser.error("This tool requires macOS and Xcode command-line tools")
     if args.timeout < 0 or not 1 <= args.poll_interval <= 60:
@@ -216,8 +264,15 @@ def main():
             state = json.loads(state_path.read_text())
             if state["source"] != str(source):
                 raise ValueError("Destination belongs to another source app")
+            if (state.get("content_candidate", False) != content_candidate
+                    or state.get("production_identity_trial", False) != args.production_identity_trial
+                    or state.get("content_release", False) != args.content_release):
+                raise ValueError("Destination belongs to another packaging mode")
         else:
-            state = prepare(source, destination, signing_identity(args.sign_identity))
+            state = prepare(source, destination, signing_identity(args.sign_identity),
+                            content_candidate=content_candidate,
+                            production_identity_trial=args.production_identity_trial,
+                            content_release=args.content_release)
         if args.submission_id:
             if state.get("submission_id") and state["submission_id"] != args.submission_id:
                 raise ValueError("Destination tracks another Apple submission")

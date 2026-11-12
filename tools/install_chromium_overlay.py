@@ -14,6 +14,7 @@ import tempfile
 import content_blocking_patch as content_blocking
 import editor_service_patch as editor_services
 import devtools_docking_patch as devtools_docking
+from keychain_identity_patch import patch_keychain
 import fingerprint_protection_patch as fingerprint_protection
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,20 +55,6 @@ def overlay_files():
                     continue
                 files[path.relative_to(ROOT).as_posix()] = path
     return files
-
-
-def patch_keychain(text):
-    # Keep OSCrypt's random key and native Keychain protection, with our own
-    # identity. Reusing Chromium's item can block behind another app's ACL.
-    for old, new in (("Chromium Safe Storage", "Zitter Safe Storage"),
-                     ('"Chromium";', '"Zitter";')):
-        if text.count(new) == 1 and old not in text:
-            continue
-        if text.count(old) != 1 or new in text:
-            raise ValueError("Unexpected upstream Keychain identity; review the patch")
-        text = text.replace(old, new)
-    return text
-
 
 
 def patch_embedded_autofill(text):

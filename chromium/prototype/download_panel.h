@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
@@ -17,7 +18,6 @@
 #include "content/public/browser/download_manager.h"
 #include "components/download/public/common/download_item.h"
 
-class Profile;
 namespace views { class Widget; class View; class ScrollView; class DialogDelegate; class MenuRunner; }
 namespace zitter::prototype {
 class EditorControl;
@@ -30,6 +30,7 @@ class DownloadPanel final : public content::DownloadManager::Observer,
                             public download::DownloadItem::Observer,
                             public ui::SimpleMenuModel::Delegate {
  public:
+  enum class FileActions { kNone, kOpenAndReveal, kOpenRevealAndDelete };
   enum class Action { kPauseResume, kCancel, kReveal, kOpen, kCopyLink, kRetry, kRemove, kDelete };
   // The state chips: all, in progress, done, interrupted (with cancelled).
   enum class StateFilter { kAll, kActive, kDone, kFailed };
@@ -37,9 +38,14 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   enum class Clear { kDone, kFailed, kOlderThan30Days, kMissing, kAll };
   DownloadPanel();
   ~DownloadPanel() override;
-  void SetProfile(Profile* profile);
+  void SetSource(content::DownloadManager* manager,
+                 std::u16string profile_name,
+                 base::RepeatingCallback<base::FilePath()> folder = {},
+                 base::RepeatingClosure open_folder = {},
+                 base::OnceClosure initialize_history = {},
+                 FileActions file_actions = FileActions::kNone);
   // `anchor` (screen) is the ring or pill the list opens above; empty centres it.
-  void Show(Profile* profile, views::Widget* parent, gfx::Rect anchor = {});
+  void Show(views::Widget* parent, gfx::Rect anchor = {});
   views::Widget* widget() const { return widget_.get(); }
   bool Act(std::string guid, Action action);
   // Runs when a transfer this panel saw in progress finishes safely.
@@ -55,6 +61,12 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   using Confirm = base::RepeatingCallback<void(views::Widget* parent, std::u16string title, std::u16string detail,
                                                std::u16string warning, std::u16string action, base::OnceCallback<void(bool)> answer)>;
   void SetConfirmCallback(Confirm confirm) { confirm_ = std::move(confirm); }
+  using CanDeleteFile = base::RepeatingCallback<bool(const download::DownloadItem&)>;
+  using DeleteFile = base::RepeatingCallback<void(
+      const download::DownloadItem&, base::OnceCallback<void(bool)>)>;
+  void SetFileDeletionPolicy(CanDeleteFile can_delete, DeleteFile delete_file);
+  void SetHistoryOnlyPolicy(
+      base::RepeatingCallback<bool(const download::DownloadItem&)> history_only);
   // Starts the file's address again (a file gone from the disk).
   void SetRedownloadCallback(base::RepeatingCallback<void(GURL)> redownload) { redownload_ = std::move(redownload); }
   // „Zmień” beside the downloads folder.
@@ -112,16 +124,20 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   void RemoveLater(std::vector<std::string> guids);
   void CommitRemoval();
   void UndoRemoval(uint64_t batch);
+  bool IsHistoryOnly(const download::DownloadItem& item) const;
+  bool CanDelete(const download::DownloadItem& item) const;
   void Delete(std::vector<std::string> guids);
-  void Deleted(std::string guid, bool deleted);
   void OnDownloadCreated(content::DownloadManager*, download::DownloadItem*) override;
   void OnManagerInitialized() override;
   void ManagerGoingDown(content::DownloadManager*) override;
   void OnDownloadUpdated(download::DownloadItem*) override;
   void OnDownloadRemoved(download::DownloadItem*) override;
   void OnDownloadDestroyed(download::DownloadItem*) override;
-  raw_ptr<Profile> profile_ = nullptr;
   raw_ptr<content::DownloadManager> manager_ = nullptr;
+  std::u16string profile_name_;
+  base::RepeatingCallback<base::FilePath()> get_folder_;
+  base::RepeatingClosure open_folder_;
+  FileActions file_actions_ = FileActions::kNone;
   std::map<std::string, raw_ptr<download::DownloadItem>> items_;
   std::set<std::string> in_progress_;  // Seen transferring: their completion is news.
   base::RepeatingCallback<void(std::string, std::u16string)> completed_;
@@ -129,6 +145,9 @@ class DownloadPanel final : public content::DownloadManager::Observer,
   base::RepeatingCallback<void(int, double, std::u16string)> progress_;
   base::RepeatingCallback<void(int, base::OnceClosure)> removed_;
   Confirm confirm_;
+  CanDeleteFile can_delete_file_;
+  base::RepeatingCallback<bool(const download::DownloadItem&)> history_only_;
+  DeleteFile delete_file_;
   base::RepeatingCallback<void(GURL)> redownload_;
   base::RepeatingClosure change_folder_;
   bool initialized_ = false;  // History loaded: later creations are new transfers.

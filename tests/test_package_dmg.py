@@ -17,26 +17,37 @@ class DmgTests(unittest.TestCase):
             run.assert_not_called()
 
     def test_only_a_verified_stapled_image_becomes_the_release_artifact(self):
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory)
-            image = destination / 'submission.dmg'
-            image.write_bytes(b'submitted image')
-            state = {'version': '0.1.0', 'architecture': 'arm64', 'app_cdhash': 'abc'}
-            events = []
-            def run(command, capture=False):
-                events.append('stapled')
-                Path(command[-1]).write_bytes(b'stapled image')
-            def verify(output, cdhash):
-                self.assertEqual('abc', cdhash)
-                self.assertEqual(b'stapled image', output.read_bytes())
-                events.append('verified')
-            with mock.patch.object(dmg, 'wait_for_acceptance', return_value=True), mock.patch.object(
-                    dmg, 'run', side_effect=run), mock.patch.object(dmg, 'verify_image', side_effect=verify):
-                self.assertTrue(dmg.finish(destination, state, 'test', 0, 1))
-            self.assertEqual(['stapled', 'verified'], events)
-            self.assertEqual(b'submitted image', image.read_bytes())
-            self.assertEqual('Complete', state['status'])
-            self.assertEqual(dmg.sha256(destination / state['artifact']), state['artifact_sha256'])
+        cases = (
+            (False, False, False, "Zitter.app", "Zitter-v0.1.0-macos-arm64.dmg"),
+            (True, False, False, "Zitter Content Lab.app", "Zitter-Content-Lab-v0.1.0-macos-arm64.dmg"),
+            (True, True, False, "Zitter Content Lab.app", "Zitter-Content-Identity-Trial-v0.1.0-macos-arm64.dmg"),
+            (True, False, True, "Zitter.app", "Zitter-v0.1.0-macos-content-arm64.dmg"),
+        )
+        for content, production_identity, release, expected_app, expected_artifact in cases:
+            with self.subTest(artifact=expected_artifact), tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory)
+                image = destination / 'submission.dmg'
+                image.write_bytes(b'submitted image')
+                state = {'version': '0.1.0', 'architecture': 'arm64', 'app_cdhash': 'abc',
+                         'content_candidate': content,
+                         'production_identity_trial': production_identity, 'content_release': release}
+                events = []
+                def run(command, capture=False):
+                    events.append('stapled')
+                    Path(command[-1]).write_bytes(b'stapled image')
+                def verify(output, cdhash, *, app_name):
+                    self.assertEqual(expected_app, app_name)
+                    self.assertEqual('abc', cdhash)
+                    self.assertEqual(b'stapled image', output.read_bytes())
+                    events.append('verified')
+                with mock.patch.object(dmg, 'wait_for_acceptance', return_value=True), mock.patch.object(
+                        dmg, 'run', side_effect=run), mock.patch.object(dmg, 'verify_image', side_effect=verify):
+                    self.assertTrue(dmg.finish(destination, state, 'test', 0, 1))
+                self.assertEqual(['stapled', 'verified'], events)
+                self.assertEqual(b'submitted image', image.read_bytes())
+                self.assertEqual('Complete', state['status'])
+                self.assertEqual(expected_artifact, state['artifact'])
+                self.assertEqual(dmg.sha256(destination / state['artifact']), state['artifact_sha256'])
 
     def test_failed_distribution_check_does_not_mark_the_image_complete(self):
         with tempfile.TemporaryDirectory() as directory:

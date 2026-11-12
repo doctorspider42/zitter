@@ -4,7 +4,6 @@
 #include <map>
 #include <set>
 #include "base/files/file_util.h"
-#include "base/no_destructor.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
@@ -15,8 +14,10 @@
 #include "base/strings/utf_string_conversion_utils.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
-#include "chrome/browser/profiles/profile.h"
+#include "content/public/browser/browser_context.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/web_contents.h"
 #include "net/base/load_flags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/data_decoder/public/cpp/safe_xml_parser.h"
@@ -26,7 +27,6 @@ namespace zitter::prototype {
 namespace {
 constexpr size_t kMaxBody = 2 * 1024 * 1024;
 constexpr size_t kMaxFeeds = 50, kMaxArticles = 100;
-const char kReaderKey[] = "zitter.rss.reader";
 using Namespaces = std::map<std::string, std::string>;
 Namespaces Names(const base::Value& node, Namespaces names) {
   if (node.is_dict()) if (auto* ns = node.GetDict().FindDict("namespaces"))
@@ -197,30 +197,54 @@ std::optional<RssFeed> DecodeRss(const base::Value& tree, const GURL& final_url)
   });
   return feed;
 }
-RssReader* RssReader::For(Profile* profile) {
-  if (auto* reader = profile->GetUserData(kReaderKey)) return static_cast<RssReader*>(reader);
-  auto reader = std::make_unique<RssReader>(profile); auto* ptr = reader.get();
-  profile->SetUserData(kReaderKey, std::move(reader)); return ptr;
+// The internal reader uses an inert opaque document as its navigation entry.
+// The browser supplies the virtual URL. Feed contents stay in native views.
+void LoadWorkspaceTab(content::WebContents* page, const GURL& url,
+                      ui::PageTransition transition) {
+  content::NavigationController::LoadURLParams params(url);
+  params.transition_type = transition;
+  if (IsRssTabUrl(url)) {
+    params.url = GURL("data:text/html,<meta http-equiv=Content-Security-Policy content=\"default-src 'none'\"><title>RSS</title>");
+    params.load_type = content::NavigationController::LOAD_TYPE_DATA;
+    params.virtual_url_for_special_cases = url;
+  }
+  page->GetController().LoadURLWithParams(params);
 }
-RssReader::RssReader(Profile* profile) : profile_(profile), files_(base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
-  observation_.Observe(profile);
+
+RssReader::RssReader(content::BrowserContext& context)
+    : context_(&context),
+      path_(context.IsOffTheRecord() ? base::FilePath()
+                                    : context.GetPath().AppendASCII("ZitterRSS.json")),
+      files_(base::ThreadPool::CreateSequencedTaskRunner(
+          {base::MayBlock(), base::TaskShutdownBehavior::BLOCK_SHUTDOWN})) {
   timer_.Start(FROM_HERE, base::Minutes(30), this, &RssReader::Refresh);
-  if (profile_->IsOffTheRecord()) { ready_ = true; return; }
+  if (is_private()) { ready_ = true; return; }
   files_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path) {
     std::string text; if (!base::ReadFileToStringWithMaxSize(path, &text, 64 * 1024 * 1024)) return base::DictValue();
     auto value = base::JSONReader::Read(text, base::JSON_PARSE_RFC);
     return value && value->is_dict() ? std::move(*value).TakeDict() : base::DictValue();
-  }, profile->GetPath().AppendASCII("ZitterRSS.json")), base::BindOnce([](base::WeakPtr<RssReader> self, base::DictValue state) {
+  }, path_), base::BindOnce([](base::WeakPtr<RssReader> self, base::DictValue state) {
     if (!self) return;
     self->Restore(std::move(state)); self->ready_ = true; self->Notify(); self->Refresh();
   }, weak_.GetWeakPtr()));
 }
-RssReader::~RssReader() { if (save_timer_.IsRunning()) Write(); }
-void RssReader::OnProfileWillBeDestroyed(Profile*) {
-  if (save_timer_.IsRunning()) Write();
-  observation_.Reset(); timer_.Stop(); save_timer_.Stop(); loader_.reset(); weak_.InvalidateWeakPtrs(); profile_ = nullptr;
+RssReader::~RssReader() { Shutdown(); }
+void RssReader::Shutdown() {
+  if (!context_)
+    return;
+  if (save_timer_.IsRunning())
+    Write();
+  context_ = nullptr;
+  timer_.Stop();
+  loader_.reset();
+  weak_.InvalidateWeakPtrs();
+  closing_.Notify();
 }
 base::CallbackListSubscription RssReader::Observe(base::RepeatingClosure changed) { return changed_.Add(std::move(changed)); }
+base::CallbackListSubscription RssReader::ObserveShutdown(base::OnceClosure closing) {
+  CHECK(context_);
+  return closing_.Add(std::move(closing));
+}
 void RssReader::Notify() { changed_.Notify(); }
 void RssReader::Add(GURL url) {
   url = Clean(url);
@@ -239,7 +263,7 @@ void RssReader::Refresh() {
   Next();
 }
 void RssReader::Next() {
-  if (busy_) return;
+  if (busy_ || !context_) return;
   if (queue_.empty()) { Notify(); return; }
   fetching_ = queue_.front(); queue_.erase(queue_.begin()); busy_ = true;
   auto request = std::make_unique<network::ResourceRequest>(); request->url = fetching_;
@@ -252,7 +276,7 @@ void RssReader::Next() {
     policy { cookies_allowed: NO setting: "Remove the subscription in RSS reader." policy_exception_justification: "User requested public feeds." })");
   loader_ = network::SimpleURLLoader::Create(std::move(request), annotation);
   loader_->SetTimeoutDuration(base::Seconds(20));
-  loader_->DownloadToString(profile_->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(), base::BindOnce(&RssReader::Downloaded, weak_.GetWeakPtr()), kMaxBody);
+  loader_->DownloadToString(context_->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(), base::BindOnce(&RssReader::Downloaded, weak_.GetWeakPtr()), kMaxBody);
   Notify();
 }
 void RssReader::Downloaded(std::optional<std::string> body) {
@@ -364,12 +388,12 @@ void RssReader::Prune() {
 }
 void RssReader::Save() {
   Prune();
-  if (!profile_ || profile_->IsOffTheRecord()) return;
+  if (!context_ || is_private()) return;
   if (!save_timer_.IsRunning()) save_timer_.Start(FROM_HERE, base::Milliseconds(500), this, &RssReader::Write);
 }
 void RssReader::Write() {
   save_timer_.Stop();
-  if (!profile_ || profile_->IsOffTheRecord()) return;
+  if (!context_ || is_private()) return;
   // Copy the bounded model once per burst; JSON serialization and atomic disk
   // I/O run on the same sequence as startup reads, never on the UI sequence.
   files_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce([](base::FilePath path, std::vector<RssFeed> feeds) {
@@ -381,7 +405,7 @@ void RssReader::Write() {
     }
     state.Set("feeds", std::move(list)); auto json = base::WriteJson(state);
     return json && json->size() <= 64 * 1024 * 1024 && base::ImportantFileWriter::WriteFileAtomically(path, *json);
-  }, profile_->GetPath().AppendASCII("ZitterRSS.json"), feeds_), base::BindOnce([](base::WeakPtr<RssReader> self, bool saved) {
+  }, path_, feeds_), base::BindOnce([](base::WeakPtr<RssReader> self, bool saved) {
     if (self && !saved) { self->status_ = "Nie udało się zapisać czytnika na dysku."; self->Notify(); }
   }, weak_.GetWeakPtr()));
 }

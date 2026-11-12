@@ -482,8 +482,11 @@ views::View* TimeMachineView::deck_for_testing() const { return deck_; }
 
 void TimeMachineView::Open(std::string workspace_id, std::u16string workspace_name, bool enabled) {
   // Opening rebuilds the deck so its cards swing in.
-  for (auto& card : cards_) RemoveChildViewT(card.view.get());
-  cards_.clear(); card_urls_.clear(); paint_order_.clear();
+  StopTicking();
+  paint_order_.clear();
+  for (auto& card : cards_)
+    RemoveCard(card);
+  cards_.clear(); card_urls_.clear();
   workspace_id_ = std::move(workspace_id); workspace_name_ = std::move(workspace_name); enabled_ = enabled;
   focus_url_.clear(); dragging_ = false;
   t_ms_ = now_ms();
@@ -648,12 +651,22 @@ void TimeMachineView::Animate() {
   }
 }
 
+void TimeMachineView::RemoveCard(CardMotion& card) {
+  auto* view = card.view.get();
+  std::erase(paint_order_, view);
+  card.view = nullptr;
+  RemoveChildViewT(view);
+}
+
 void TimeMachineView::Settle() {
   StopTicking();
   deck_position_ = front_; deck_velocity_ = 0;
   for (size_t i = 0; i < reel_target_.size(); ++i) { reel_position_[i] = reel_target_[i]; reel_velocity_[i] = 0; }
   std::erase_if(cards_, [this](CardMotion& card) {
-    if (card.leaving) { RemoveChildViewT(card.view.get()); return true; }
+    if (card.leaving) {
+      RemoveCard(card);
+      return true;
+    }
     card.slot = card.index; card.slot_velocity = 0; card.appear = 1; card.appear_velocity = 0; card.delay = 0;
     return false;
   });
@@ -694,8 +707,8 @@ bool TimeMachineView::Advance(float dt) {
   }
   std::erase_if(cards_, [this](CardMotion& card) {
     if (!card.leaving || card.appear > 0.02f) return false;
-    std::erase(paint_order_, card.view.get());
-    RemoveChildViewT(card.view.get()); return true;
+    RemoveCard(card);
+    return true;
   });
   return settled;
 }

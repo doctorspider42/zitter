@@ -21,6 +21,7 @@
 #include "build/build_config.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
 #include "chromium/prototype/timeline_store.h"
+#include "chromium/prototype/workspace_session.h"
 namespace zitter::prototype {
 base::DictValue WorkspaceWindow::CaptureHost(const Host& host) const {
   if (host.sleeping) return host.sleeping->Clone();
@@ -34,10 +35,7 @@ base::DictValue WorkspaceWindow::CaptureHost(const Host& host) const {
   for (double weight : host.weights) weights.Append(weight);
   for (size_t i = 0; i < host.tabs.size(); ++i) {
     auto* view = host.tabs[i].get();
-    const GURL url = TabUrl(host, view);
-    base::DictValue tab;
-    tab.Set("url", IsWorkspaceTabUrl(url) ? url.spec() : "");
-    tab.Set("title", base::UTF16ToUTF8(TabTitle(host, view)));
+    auto tab = WriteWorkspaceSessionTab(TabUrl(host, view), TabTitle(host, view));
     for (const auto& [id, pinned] : host.pin_tabs) if (pinned == view) tab.Set("pin", id);
     tabs.Append(std::move(tab));
   }
@@ -54,25 +52,17 @@ void WorkspaceWindow::ReleaseHost(Host& host) {
   closing_ = was_closing;
 }
 bool WorkspaceWindow::RestoreHost(Host& host, const base::DictValue& entry) {
-  const auto* profile = entry.FindString("profile_id"); const auto* tabs = entry.FindList("tabs");
-  if (!profile || *profile != host.profile_id || !tabs || tabs->empty() || tabs->size() > 500) return false;
-  for (const auto& value : *tabs) {
-    const auto* tab = value.GetIfDict(); if (!tab) return false;
-    const auto* url = tab->FindString("url");
-    if (!url || url->size() > 32768 || (!url->empty() && !IsWorkspaceTabUrl(GURL(*url)))) return false;
-  }
+  auto tabs = ReadWorkspaceSessionTabs(entry, host.profile_id);
+  if (!tabs) return false;
   const bool was_closing = closing_; closing_ = true;
   ReleaseHost(host); host.sleeping.reset();
-  for (const auto& value : *tabs) {
-    const auto& tab = value.GetDict();
+  for (auto& tab : *tabs) {
     auto* view = CreatePage(host.profile, nullptr, nullptr, false); host.tabs.push_back(view);
-    const auto& url = *tab.FindString("url");
-    if (!url.empty()) host.deferred_urls[view] = GURL(url);
-    if (const auto* title = tab.FindString("title"); title && title->size() <= 32768)
-      host.deferred_titles[view] = base::UTF8ToUTF16(*title);
-    if (const auto* pin = tab.FindString("pin")) {
+    if (!tab.url.is_empty()) host.deferred_urls[view] = std::move(tab.url);
+    if (tab.title) host.deferred_titles[view] = std::move(*tab.title);
+    if (tab.pin) {
       const auto& pins = pinned_items(host.workspace_id);
-      if (std::any_of(pins.begin(), pins.end(), [&](const auto& item) { return item.id == *pin && !item.folder; })) host.pin_tabs[*pin] = view;
+      if (std::any_of(pins.begin(), pins.end(), [&](const auto& item) { return item.id == *tab.pin && !item.folder; })) host.pin_tabs[*tab.pin] = view;
     }
   }
   const int count = host.tabs.size();
@@ -146,14 +136,6 @@ size_t WorkspaceWindow::timeline_frames_for_testing() const { return timeline_->
 bool WorkspaceWindow::timeline_recorded_for_testing(std::string_view workspace_id) const {
   return timeline_->current->timeline_bounds(std::string(workspace_id)).valid;
 }
-int TimelineUtcOffsetMinutes(base::Time time) {
-  base::Time::Exploded local;
-  time.LocalExplode(&local);
-  base::Time as_utc;
-  if (!base::Time::FromUTCExploded(local, &as_utc)) return 0;
-  return static_cast<int>(std::lround((as_utc - time).InSecondsF() / 60.0));
-}
-
 void WorkspaceWindow::LoadTimeline(std::string data) {
   size_t lines = 0;
   for (const auto piece : base::SplitStringPiece(data, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY)) {

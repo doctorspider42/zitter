@@ -184,6 +184,20 @@ impl Timeline {
         after.frames != before.frames || after.marks != before.marks
     }
 
+    /// Forgets one workspace's frames and marks when its profile ID is fixed.
+    pub fn timeline_forget_workspace(&mut self, workspace: &str, from_ms: i64, to_ms: i64) -> bool {
+        let before = self.timeline_stats();
+        if let Some(frames) = self.spaces.get_mut(workspace) {
+            frames.retain(|f| f.t < from_ms || f.t > to_ms);
+            if frames.is_empty() {
+                self.spaces.remove(workspace);
+            }
+        }
+        self.marks.retain(|m| m.workspace != workspace || m.t_ms < from_ms || m.t_ms > to_ms);
+        let after = self.timeline_stats();
+        after.frames != before.frames || after.marks != before.marks
+    }
+
     pub fn timeline_clear(&mut self) {
         self.spaces.clear();
         self.marks.clear();
@@ -807,6 +821,22 @@ mod tests {
         assert_eq!(tl.timeline_frames().iter().map(|f| f.t_ms).collect::<Vec<_>>(), [7 * DAY_MS, 9 * DAY_MS]);
         tl.timeline_clear();
         assert_eq!(tl.timeline_stats().bytes, 0);
+    }
+
+    #[test]
+    fn forget_workspace_includes_marks_without_frames() {
+        let mut timeline = Timeline::default();
+        for (workspace, time) in [("work", 1), ("work", 2), ("personal", 2)] {
+            assert!(timeline.timeline_mark(&ffi::TimelineMark {
+                t_ms: time, workspace: workspace.into(), name: "Saved".into(),
+            }));
+        }
+        assert!(timeline.timeline_forget_workspace("work", 2, i64::MAX));
+        let marks = timeline.timeline_marks();
+        assert_eq!(marks.len(), 2);
+        assert_eq!((&*marks[0].workspace, marks[0].t_ms), ("work", 1));
+        assert_eq!((&*marks[1].workspace, marks[1].t_ms), ("personal", 2));
+        assert!(!timeline.timeline_forget_workspace("work", 2, i64::MAX));
     }
 
     #[test]

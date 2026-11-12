@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "base/functional/callback.h"
+#include "chromium/prototype/print_options.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -13,30 +14,9 @@
 namespace printing { class PwgRasterConverter; }
 namespace zitter::prototype {
 
-// What the print sheet asks for (design: Find & Print, Print sheet).
-struct PrintOptions {
-  enum class Pages { kAll, kCurrent, kRange };
-  enum class Margins { kDefault, kNone, kMinimal };
-  std::string printer;  // Empty: Save as PDF.
-  Pages pages = Pages::kAll;
-  std::u16string range;  // "1–2, 5" for kRange.
-  int current = 0;       // The previewed page, for kCurrent.
-  bool landscape = false;
-  int copies = 1;
-  bool color = true;
-  bool backgrounds = false;
-  bool headers = true;
-  Margins margins = Margins::kDefault;
-};
-
 // Chromium's printing for a page, with a page's own window.print() handed to
 // `scripted` (Zitter's print sheet) instead of the system dialog.
 void AttachPagePrinting(content::WebContents* page, base::RepeatingCallback<void(content::WebContents*)> scripted);
-
-struct PrinterChoice {
-  std::string name;
-  std::u16string label;
-};
 
 // Chromium prints; Zitter only asks. The page goes to PDF in the renderer
 // (Chrome's PrintToPdf), the preview is rasterized by the sandboxed printing
@@ -61,8 +41,6 @@ class PagePrinter final : public content::WebContentsObserver {
   void Print(const PrintOptions& options, base::OnceCallback<void(std::u16string)> done);
   // Windows' or macOS's own print dialog.
   void PrintWithSystemDialog();
-  // The page range text Chromium reads ("1-2,5"), or nullopt when invalid.
-  static std::optional<std::string> PageRanges(const PrintOptions& options, int page_count);
 
  private:
   void WebContentsDestroyed() override;

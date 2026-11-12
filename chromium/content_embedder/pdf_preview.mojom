@@ -1,0 +1,23 @@
+// Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+
+module zitter.content_embedder.mojom;
+
+import "mojo/public/mojom/base/big_buffer.mojom";
+import "sandbox/policy/mojom/sandbox.mojom";
+
+struct PreviewPage {
+  uint32 width;
+  uint32 height;
+  mojo_base.mojom.BigBuffer pixels;
+};
+
+// Rasterizes the renderer's PDF in a utility with no destination file handle.
+[ServiceSandbox=sandbox.mojom.Sandbox.kPrintCompositor]
+interface PdfPreview {
+  Rasterize(mojo_base.mojom.BigBuffer pdf) => (array<PreviewPage>? pages);
+};
+
+// Requests the Workspace's interactive print sheet for this document.
+interface ScriptedPrint {
+  OpenPrintSheet();
+};

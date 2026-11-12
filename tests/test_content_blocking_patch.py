@@ -7,6 +7,7 @@ from unittest import mock
 
 with mock.patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'tools'), *sys.path]):
     import content_blocking_patch as patch
+    import fingerprint_protection_patch
     import vendor_adblock
 import content_blocking_fixture
 
@@ -39,6 +40,39 @@ class ContentBlockingPatchTests(unittest.TestCase):
             state = snapshot(root)
             patch.apply(patch.prepare(root))
             self.assertEqual(state, snapshot(root))
+
+    def test_content_preserves_scriptlets_when_removing_legacy_fingerprint_transport(self):
+        from fingerprint_protection_fixture import seed as seed_fingerprint
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed(root)
+            seed_fingerprint(root)
+            for path, anchor, addition in fingerprint_protection_patch.RENDERER_PREFS_EDITS:
+                target = root / path
+                original = target.read_text()
+                if anchor not in original:
+                    original += anchor
+                target.write_text(original.replace(anchor, anchor + addition, 1), newline="\n")
+            for path in root.glob("chrome/**/*"):
+                if path.is_file():
+                    path.unlink()
+
+            def prepare():
+                fingerprint = fingerprint_protection_patch.prepare(
+                    root, register_chrome_pref=False
+                )
+                return patch.prepare(root, include_chrome=False, previous_plan=fingerprint)
+
+            plan = prepare()
+            self.assertFalse(any(path.is_relative_to(root / "chrome") for path in plan))
+            patch.apply(plan)
+            header = root / patch.CONTENT_EDITS[0][0]
+            self.assertIn("zitter_page_scripts", header.read_text())
+            for path, _, _ in fingerprint_protection_patch.RENDERER_PREFS_EDITS:
+                self.assertNotIn("zitter_fingerprint_key", (root / path).read_text())
+            self.assertTrue((root / patch.VENDOR / patch.MARKER).is_file())
+            self.assertTrue(all(old == new for old, new in prepare().values()))
 
     def test_removes_files_no_longer_vendored(self):
         with tempfile.TemporaryDirectory() as directory:

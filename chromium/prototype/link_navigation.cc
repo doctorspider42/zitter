@@ -16,7 +16,7 @@ class LinkThrottle final : public content::NavigationThrottle {
     // Only explicit top-level GET links. Forms, redirects, frames, reloads and
     // history traversal retain their original context and request semantics.
     if (navigation.IsInPrimaryMainFrame() && navigation.IsRendererInitiated() &&
-        navigation.HasUserGesture() && !navigation.IsPost() && !navigation.IsSameDocument() && !navigation.IsHistory() &&
+        navigation.HasUserGesture() && !navigation.IsPost() && !navigation.IsFormSubmission() && !navigation.IsSameDocument() && !navigation.IsHistory() &&
         ui::PageTransitionCoreTypeIs(navigation.GetPageTransition(), ui::PAGE_TRANSITION_LINK) &&
         handler_.Run(navigation)) return CANCEL_AND_IGNORE;
     return PROCEED;

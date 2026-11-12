@@ -492,6 +492,29 @@ mod tests {
     }
 
     #[test]
+    fn emits_scriptlets_for_loopback_ip() {
+        let e = engine("127.0.0.1##+js(set-constant, zitterScriptletProbe, true)");
+        let scripts = e.page_scripts();
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].host, "127.0.0.1");
+        assert!(scripts[0].script.contains(r#"setConstant("zitterScriptletProbe", "true")"#));
+    }
+
+    #[test]
+    fn resolves_cosmetic_rules_for_loopback_ip() {
+        let e = engine("127.0.0.1##.site-ad\n127.0.0.1##.procedural-ad:has-text(Probe sponsored)\n127.0.0.1##.action-ad:remove()\n##.generic-ad\n##.exempt-ad\n127.0.0.1#@#.exempt-ad");
+        let page = e.cosmetic_resources("http://127.0.0.1:8080/scriptlets");
+        assert!(page.hide_selectors.contains(&".site-ad".to_string()));
+        assert!(page.hide_selectors.contains(&".procedural-ad:has-text(Probe sponsored)".to_string()));
+        assert!(page.procedural.iter().any(|rule| rule.contains(".action-ad")));
+        let generic = e.hidden_class_id_selectors(
+            &vec!["generic-ad".to_string(), "exempt-ad".to_string()],
+            &vec![], &page.exceptions,
+        );
+        assert_eq!(generic, vec![".generic-ad"]);
+    }
+
+    #[test]
     fn preprocesses_ublock_conditions() {
         let list = "a.test##.one\n!#if env_mobile\na.test##.mobile\n!#else\na.test##.desktop\n!#endif\n!#if !ext_ublock\na.test##.other\n!#endif\n!#if (ext_ublock && !adguard) || env_firefox\na.test##.ours\n!#if cap_html_filtering\na.test##^script\n!#endif\n!#endif";
         assert_eq!(preprocess(list), "a.test##.one\na.test##.desktop\na.test##.ours\n");

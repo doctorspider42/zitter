@@ -4,6 +4,7 @@
 #include "net/base/ip_address.h"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include "base/strings/escape.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -12,6 +13,15 @@
 #include "chromium/prototype/i18n.h"
 #include "ui/events/event_constants.h"
 namespace zitter::prototype {
+int TimelineUtcOffsetMinutes(base::Time time) {
+  base::Time::Exploded local;
+  time.LocalExplode(&local);
+  base::Time as_utc;
+  if (!base::Time::FromUTCExploded(local, &as_utc)) return 0;
+  return static_cast<int>(std::lround((as_utc - time).InSecondsF() / 60.0));
+}
+
+
 namespace {
 constexpr int Primary() {
 #if BUILDFLAG(IS_MAC)

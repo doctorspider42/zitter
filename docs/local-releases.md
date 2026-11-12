@@ -302,6 +302,60 @@ earlier signature and no stapled ticket. Avoid that ambiguity in future releases
 References: [Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
 [Apple app-specific passwords](https://support.apple.com/en-us/102654).
 
+## macOS: prepare and verify a Content candidate
+
+Use the isolated Content checkout and a local non-component Release
+output. The examples below use 0.1.1 for the rehearsal. For an actual
+release, use the version and clean source tag selected above.
+The build records the Zitter commit, dirty state, Chromium revision,
+and SHA-256 of the GN arguments in the sealed bundle metadata. Content
+DMG preparation carries those fields into its build record. Production
+Content signing and DMG preparation require the bundle's build metadata,
+including its dependency audit and the declared Chromium metadata inputs.
+Use the dirty state when distinguishing a local rehearsal from a tagged build.
+Publish production Content images as
+`Zitter-v<version>-macos-content-<architecture>.dmg`. The Content
+updater selects this filename from the release feed. The first Content
+installation can be downloaded manually from the release page.
+An isolated checkout may lack the local signing configuration. Set
+`ZITTER_CODESIGN_IDENTITY` to the configured Developer ID Application
+identity before running the preparation and packaging commands in that
+checkout.
+
+```sh
+./build.sh --content
+python3 tools/notarize_app.py --app build/ZitterContentLab.app \
+  --destination build/notarization/content-0.1.1 --content-version 0.1.1 \
+  --content-release --prepare-only \
+  --third-party-licenses build/license-audit/mac-content-local/THIRD_PARTY_LICENSES.txt
+python3 tools/verify_content_bundle.py --content-release --preserve-signature \
+  build/notarization/content-0.1.1/work/Zitter.app
+```
+
+The verifier keeps the Developer ID seal and tests the relocated
+Workspace, DevTools, isolated profiles, and private windows. Pass
+`--crx-signer` with the local Chromium `crx3_build_action` to add the
+signed extension registry suite. Pass `--scratch` with an existing
+directory on another local volume if the system volume lacks space for
+the relocated app. The disposable runtime profiles still use the
+account's ordinary temporary directory.
+
+```sh
+python3 tools/notarize_app.py --app build/ZitterContentLab.app \
+  --destination build/notarization/content-0.1.1 --content-release \
+  --submit-content-candidate --keychain-profile zitter-notary
+python3 tools/package_dmg.py --content-release \
+  --app build/notarization/content-0.1.1/work/Zitter.app \
+  --destination build/releases/content-0.1.1-dmg --keychain-profile zitter-notary
+python3 tools/verify_content_bundle.py --content-release --preserve-signature \
+  build/releases/content-0.1.1-dmg/Zitter-v0.1.1-macos-content-arm64.dmg
+```
+
+Run the ordinary startup and system Keychain checks in a disposable
+macOS account before switching the production backend. The migration
+plan also records the signed replacement and release feed checks.
+[Content embedder migration](content-embedder-migration.md)
+
 ## Windows: build the same tagged source
 
 Use a Windows machine with Chromium's Windows toolchain and the revision pinned

@@ -10,10 +10,6 @@
 #include "base/apple/foundation_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include <CoreFoundation/CoreFoundation.h>
-#else
-#include "chrome/browser/browser_process.h"
-#include "components/language/core/browser/pref_names.h"
-#include "components/prefs/pref_service.h"
 #endif
 namespace zitter::prototype {
 namespace {
@@ -21,11 +17,6 @@ std::optional<std::string>& TestingLanguage() {
   static base::NoDestructor<std::optional<std::string>> language;
   return *language;
 }
-#if BUILDFLAG(IS_MAC)
-// The choice lives in the app's defaults; "AppleLanguages" follows it so the
-// Chromium-owned UI (menus, system dialogs) switches with it on the next start.
-constexpr char kLanguageKey[] = "ZitterLanguage";
-#endif
 // The user's first preferred language. Chromium's app locale is not enough: a
 // bundle without a Polish locale pack reports en-US on a Polish system.
 std::string SystemLanguage(std::string_view app_locale) {
@@ -58,55 +49,12 @@ std::u16string TF(std::u16string_view polish, std::initializer_list<std::u16stri
   out.append(pattern, start, std::u16string::npos);
   return out;
 }
-std::string StoredUiLanguage() {
-#if BUILDFLAG(IS_MAC)
-  base::apple::ScopedCFTypeRef<CFPropertyListRef> value(CFPreferencesCopyAppValue(
-      base::SysUTF8ToCFStringRef(kLanguageKey).get(), kCFPreferencesCurrentApplication));
-  if (auto* string = base::apple::CFCast<CFStringRef>(value.get())) {
-    const auto choice = base::SysCFStringRefToUTF8(string);
-    if (choice == "pl" || choice == "en") return choice;
-  }
-#else
-  // Elsewhere Chromium's own UI language preference holds the choice, so the
-  // Chromium-owned UI switches with it on the next start, as on Windows Chrome.
-  if (auto* local_state = g_browser_process ? g_browser_process->local_state() : nullptr) {
-    const auto choice = local_state->GetString(language::prefs::kApplicationLocale);
-    if (choice == "pl") return "pl";
-    if (choice == "en" || choice == "en-US") return "en";
-  }
-#endif
-  return "system";
-}
-void StoreUiLanguage(std::string_view choice) {
-#if BUILDFLAG(IS_MAC)
-  const bool fixed = choice == "pl" || choice == "en";
-  const auto key = base::SysUTF8ToCFStringRef(kLanguageKey);
-  const auto apple = base::SysUTF8ToCFStringRef("AppleLanguages");
-  if (fixed) {
-    const auto code = base::SysUTF8ToCFStringRef(std::string(choice));
-    CFStringRef codes[] = {code.get()};
-    base::apple::ScopedCFTypeRef<CFArrayRef> list(CFArrayCreate(nullptr, reinterpret_cast<const void**>(codes), 1, &kCFTypeArrayCallBacks));
-    CFPreferencesSetAppValue(key.get(), code.get(), kCFPreferencesCurrentApplication);
-    CFPreferencesSetAppValue(apple.get(), list.get(), kCFPreferencesCurrentApplication);
-  } else {
-    CFPreferencesSetAppValue(key.get(), nullptr, kCFPreferencesCurrentApplication);
-    CFPreferencesSetAppValue(apple.get(), nullptr, kCFPreferencesCurrentApplication);
-  }
-  CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
-#else
-  if (auto* local_state = g_browser_process ? g_browser_process->local_state() : nullptr) {
-    // Chromium has an en-US pack, not a bare "en" one.
-    local_state->SetString(language::prefs::kApplicationLocale,
-                           choice == "pl" ? "pl" : choice == "en" ? "en-US" : "");
-  }
-#endif
-}
-void ApplyUiLanguage(std::string_view app_locale) {
+void ApplyUiLanguage(std::string_view app_locale, PrefService* preferences) {
   if (const auto& testing = TestingLanguage()) {
     sidebar::set_ui_language(rust::Str(testing->data(), testing->size()));
     return;
   }
-  const auto choice = StoredUiLanguage();
+  const auto choice = StoredUiLanguage(preferences);
   const std::string locale = choice == "system" ? SystemLanguage(app_locale) : choice;
   sidebar::set_ui_language(rust::Str(locale.data(), locale.size()));
 }

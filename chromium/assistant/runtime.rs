@@ -621,7 +621,14 @@ fn provider_inner(id: &str, config: &Value, messages: &[Value], kind: &str) -> R
     let reply: Value = if kind == "codex" || kind == "claude" {
         serde_json::from_str(&ffi::transport_cli(id, &json!({"provider":kind,"model":config["model"],"system":SYSTEM,"messages":messages,"schema":schema()}).to_string()))
     } else {
-        let body = provider_http_body(config, messages, kind);
+        let mut body = provider_http_body(config, messages, kind);
+        if kind == "ollama" && id == "connection-check" {
+            body["messages"][0]["content"] =
+                json!("Reply with the JSON object {\"answer\":\"OK\",\"actions\":[]}.");
+            body["options"] = json!({"num_predict":48,"temperature":0});
+            body["format"]["properties"]["answer"]["enum"] = json!(["OK"]);
+            body["format"]["properties"]["actions"]["maxItems"] = json!(0);
+        }
         serde_json::from_str(&ffi::transport_http(id, &json!({"provider":kind,"body":body}).to_string()))
     }.map_err(|_|error("Provider request failed. Check credentials, endpoint and model."))?;
     if let Some(e) = reply["error"].as_str() {

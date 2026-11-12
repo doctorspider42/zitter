@@ -1,0 +1,13 @@
+// Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+
+module zitter.content_embedder.mojom;
+
+import "mojo/public/mojom/base/big_buffer.mojom";
+import "sandbox/policy/mojom/sandbox.mojom";
+
+// Extracts the bounded Workspace fixture without a filesystem handle.
+[ServiceSandbox=sandbox.mojom.Sandbox.kService]
+interface ExtensionArchive {
+  Extract(mojo_base.mojom.BigBuffer archive) =>
+      (uint32 process_id, map<string, array<uint8>>? files);
+};

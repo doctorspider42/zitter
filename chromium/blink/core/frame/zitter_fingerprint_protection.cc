@@ -2,10 +2,9 @@
 
 #include "third_party/blink/renderer/core/frame/zitter_fingerprint_protection.h"
 
-#include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
-#include "third_party/blink/renderer/core/page/page.h"
+#include "third_party/blink/renderer/core/frame/zitter_fingerprint_key.h"
 
 namespace blink {
 
@@ -17,7 +16,7 @@ std::optional<ZitterFingerprintNoise> ZitterFingerprintNoiseFor(
   if (!page) {
     return std::nullopt;
   }
-  const auto& key = page->GetRendererPreferences().zitter_fingerprint_key;
+  const auto key = ZitterFingerprintKeyFor(*page);
   if (key.empty()) {
     return std::nullopt;
   }

@@ -2,16 +2,13 @@
 
 #include <algorithm>
 #include <map>
+#include <utility>
 #include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "chrome/browser/device_reauth/chrome_device_authenticator_factory.h"
-#include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -83,10 +80,12 @@ PasswordsPanel::PasswordsPanel() = default;
 PasswordsPanel::~PasswordsPanel() { CloseUI(); }
 void PasswordsPanel::CloseUI() {
   weak_factory_.InvalidateWeakPtrs(); cancelable_task_tracker()->TryCancelAll();
+  CancelAuthentication();
+  authenticator_factory_.Reset();
   if (store_) store_->RemoveObserver(this);
   store_.reset(); authenticator_.reset(); credentials_.clear(); blocked_.clear(); loaded_ = false; revealed_ = false; editing_ = false; detail_.reset();
   fields_.clear(); scene_.reset(); body_ = nullptr; count_ = nullptr; add_ = nullptr; search_row_ = nullptr; search_ = nullptr; tabs_ = {}; scroll_ = nullptr;
-  widget_.reset(); delegate_.reset(); profile_ = nullptr;
+  widget_.reset(); delegate_.reset();
 }
 views::View* PasswordsPanel::MakeLine(views::View* parent, uint32_t style, int tone) {
   auto* line = parent->AddChildView(scene_->MakeText(u"", false, false, 0));
@@ -101,16 +100,35 @@ int PasswordsPanel::issues_for_testing(int kind) const {
   return n;
 }
 
-void PasswordsPanel::Show(Profile* profile, views::Widget* parent) {
-  if (!profile || !parent) return;
-  if (widget_ && (widget_->IsClosed() || profile_ != profile)) CloseUI();
-  if (widget_) { widget_->Show(); widget_->Activate(); return; }
-  profile_ = profile;
-  store_ = ProfilePasswordStoreFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS);
+bool PasswordsPanel::scene_contains_for_testing(std::string_view text) const {
+  return scene_ && scene_->contains_text(text);
+}
+
+void PasswordsPanel::Show(
+    scoped_refptr<password_manager::PasswordStoreInterface> store,
+    std::u16string profile_label,
+    views::Widget* parent,
+    AuthenticatorFactory authenticator_factory,
+    bool activate) {
+  if (!store || !parent)
+    return;
+  if (widget_ && (widget_->IsClosed() || store_.get() != store.get()))
+    CloseUI();
+  if (widget_) {
+    if (activate) {
+      widget_->Show();
+      widget_->Activate();
+    } else {
+      widget_->ShowInactive();
+    }
+    return;
+  }
+  store_ = std::move(store);
+  authenticator_factory_ = std::move(authenticator_factory);
   if (store_) store_->AddObserver(this);
   auto delegate = std::make_unique<views::DialogDelegate>();
   delegate->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  delegate->SetTitle(TF(u"Hasła · {}", {BrowsingProfileName(profile)}));
+  delegate->SetTitle(TF(u"Hasła · {}", {profile_label}));
   delegate->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   delegate->SetCanResize(true);
   delegate->set_use_custom_frame(false);
@@ -137,6 +155,7 @@ void PasswordsPanel::Show(Profile* profile, views::Widget* parent) {
   auto* tools = nav->AddChildView(scene_->MakeActions(4));
   auto* import = scene_->AddAction(tools, base::BindRepeating([](base::WeakPtr<PasswordsPanel> panel) { if (panel && panel->import_) panel->import_.Run(); }, weak), T(u"Importuj…"));
   scene_->SetActionKind(import, 3);
+  tools->SetVisible(!import_.is_null());
   SetSidebarPanelLayout(nav, false, gfx::Insets(), 8, pages, true);
   search_row_ = content->AddChildView(std::make_unique<views::View>());
   search_ = scene_->AddSearch(search_row_, T(u"Szukaj witryny lub loginu"), T(u"Szukaj haseł"));
@@ -167,12 +186,23 @@ void PasswordsPanel::Show(Profile* profile, views::Widget* parent) {
   gfx::Rect bounds(0, 0, std::min(760, area.width()), std::min(760, area.height()));
   bounds.set_origin(parent->GetWindowBoundsInScreen().CenterPoint() - gfx::Vector2d(bounds.width() / 2, bounds.height() / 2));
   bounds.AdjustToFit(area); widget->SetBounds(bounds);
-  page_ = Page::kList; Rebuild(); widget->Show(); scene_->Schedule();
+  page_ = Page::kList;
+  Rebuild();
+  if (activate)
+    widget->Show();
+  else
+    widget->ShowInactive();
+  scene_->Schedule();
   Load();
 }
 void PasswordsPanel::Load() { if (store_) store_->GetAllLogins(weak_factory_.GetWeakPtr()); }
-void PasswordsPanel::OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface*,
+void PasswordsPanel::OnGetPasswordStoreResultsOrErrorFrom(password_manager::PasswordStoreInterface* store,
     base::expected<std::vector<StoredCredential>, password_manager::PasswordStoreBackendError> results) {
+  if (store != store_.get())
+    return;
+  const auto selected = detail_ ? credentials_[*detail_].primary_key : std::nullopt;
+  CancelAuthentication();
+  revealed_ = false;
   loaded_ = true; credentials_.clear(); blocked_.clear();
   if (results.has_value())
     for (auto& credential : results.value()) {
@@ -182,7 +212,14 @@ void PasswordsPanel::OnGetPasswordStoreResultsOrErrorFrom(password_manager::Pass
   // Sites alphabetically, then logins (design: lista witryn).
   auto order = [](const auto& a, const auto& b) { const auto sa = Site(a), sb = Site(b); return sa != sb ? sa < sb : a.username_value < b.username_value; };
   std::sort(credentials_.begin(), credentials_.end(), order); std::sort(blocked_.begin(), blocked_.end(), order);
-  if (detail_ && *detail_ >= credentials_.size()) { detail_.reset(); if (page_ == Page::kDetail) page_ = Page::kList; }
+  detail_.reset();
+  if (selected) {
+    auto entry = std::ranges::find(credentials_, selected, &StoredCredential::primary_key);
+    if (entry != credentials_.end())
+      detail_ = static_cast<size_t>(entry - credentials_.begin());
+  }
+  if (page_ == Page::kDetail && !detail_)
+    page_ = Page::kList;
   Rebuild();
 }
 void PasswordsPanel::OnLoginsChanged(password_manager::PasswordStoreInterface*, const password_manager::PasswordStoreChangeList&) { Load(); }
@@ -210,6 +247,7 @@ std::vector<size_t> PasswordsPanel::Listed() const {
 }
 void PasswordsPanel::SetPage(Page page) {
   if (page == Page::kDetail && !detail_) page = Page::kList;
+  CancelAuthentication();
   page_ = page; editing_ = false; revealed_ = false; Rebuild();
 }
 void PasswordsPanel::SetQuery(std::u16string query) {
@@ -310,10 +348,12 @@ void PasswordsPanel::Rebuild() {
       scene_->AddIconAction(login, base::BindRepeating([](std::u16string value) { ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(value); },
                                                        credential.username_value), T(u"Kopiuj login"), &vector_icons::kContentCopyIcon);
       auto* password = line(T(u"Hasło"), revealed_ ? credential.password_value.value() : std::u16string(14, u'•'), PanelScene::Tone::kInk);
-      scene_->AddIconAction(password, base::BindRepeating([](base::WeakPtr<PasswordsPanel> panel) { if (panel) panel->RevealPassword(false); }, weak),
+      auto* reveal = scene_->AddIconAction(password, base::BindRepeating([](base::WeakPtr<PasswordsPanel> panel) { if (panel) panel->RevealPassword(false); }, weak),
                             revealed_ ? T(u"Ukryj hasło") : T(u"Pokaż hasło"), revealed_ ? &vector_icons::kVisibilityOffIcon : &vector_icons::kVisibilityIcon);
-      scene_->AddIconAction(password, base::BindRepeating([](base::WeakPtr<PasswordsPanel> panel) { if (panel) panel->RevealPassword(true); }, weak),
+      auto* copy = scene_->AddIconAction(password, base::BindRepeating([](base::WeakPtr<PasswordsPanel> panel) { if (panel) panel->RevealPassword(true); }, weak),
                             T(u"Kopiuj hasło"), &vector_icons::kContentCopyIcon);
+      reveal->SetEnabled(!authenticator_factory_.is_null());
+      copy->SetEnabled(!authenticator_factory_.is_null());
       line(T(u"Witryna"), base::UTF8ToUTF16(credential.url.spec()), PanelScene::Tone::kMuted);
       for (const auto& note : credential.notes) if (!note.value.empty()) line(T(u"Notatka"), note.value, PanelScene::Tone::kMuted);
       if (editing_) {
@@ -371,18 +411,38 @@ void PasswordsPanel::Refresh() {
 }
 // The system asks first (Touch ID or the account password), as Chrome's manager does.
 void PasswordsPanel::RevealPassword(bool copy) {
-  if (!detail_) return;
-  if (!copy && revealed_) { revealed_ = false; Rebuild(); return; }
-  if (skip_auth_) { Authenticated(copy, true); return; }
-  if (!authenticator_ && profile_ && widget_)
-    authenticator_ = ChromeDeviceAuthenticatorFactory::GetForProfile(profile_, widget_->GetNativeWindow(),
-        device_reauth::DeviceAuthParams(base::Seconds(60), device_reauth::DeviceAuthSource::kPasswordManager));
-  if (!authenticator_) return;
+  if (page_ != Page::kDetail || !detail_ || authentication_pending_)
+    return;
+  if (!copy && revealed_) {
+    revealed_ = false;
+    Rebuild();
+    return;
+  }
+  if (skip_auth_) {
+    Authenticated(copy, true);
+    return;
+  }
+  if (!authenticator_ && authenticator_factory_ && widget_)
+    authenticator_ = authenticator_factory_.Run(widget_.get());
+  if (!authenticator_)
+    return;
+  authentication_pending_ = true;
   authenticator_->AuthenticateWithMessage(copy ? T(u"skopiować hasło") : T(u"pokazać hasło"),
-      base::BindOnce(&PasswordsPanel::Authenticated, weak_factory_.GetWeakPtr(), copy));
+      base::BindOnce(&PasswordsPanel::Authenticated, authentication_weak_.GetWeakPtr(), copy));
 }
+
+void PasswordsPanel::CancelAuthentication() {
+  authentication_weak_.InvalidateWeakPtrs();
+  if (std::exchange(authentication_pending_, false) && authenticator_)
+    authenticator_->Cancel();
+}
+
 void PasswordsPanel::Authenticated(bool copy, bool success) {
-  if (!success || !detail_ || *detail_ >= credentials_.size()) return;
+  authentication_pending_ = false;
+  if (!success || page_ != Page::kDetail || !detail_ ||
+      *detail_ >= credentials_.size() || !widget_ || !widget_->IsVisible()) {
+    return;
+  }
   if (copy) { ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(credentials_[*detail_].password_value.value()); return; }
   revealed_ = true; Rebuild();
 }
@@ -406,6 +466,7 @@ bool PasswordsPanel::AddPassword(std::u16string site, std::u16string username, s
 }
 bool PasswordsPanel::ChangePassword(std::u16string password) {
   if (!store_ || !detail_ || password.empty()) return false;
+  CancelAuthentication();
   auto credential = password_manager::CloneStoredCredential(credentials_[*detail_]);
   credential.password_value = password_manager::PasswordString(std::move(password));
   credential.date_password_modified = base::Time::Now();

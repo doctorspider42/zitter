@@ -1,0 +1,457 @@
+# Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+
+import("//build/rust/rust_static_library.gni")
+
+# Keep the Views/Rust presentation independent of browser services.
+workspace_presentation_sources = [
+  "chromium/prototype/ad_blocking_rules_panel.cc",
+  "chromium/prototype/ad_blocking_rules_panel.h",
+  "chromium/prototype/arc_importer.cc",
+  "chromium/prototype/arc_importer.h",
+  "chromium/prototype/assistant_connection.cc",
+  "chromium/prototype/assistant_connection.h",
+  "chromium/prototype/assistant_host.h",
+  "chromium/prototype/assistant_panel.cc",
+  "chromium/prototype/assistant_panel.h",
+  "chromium/prototype/assistant_providers.h",
+  "chromium/prototype/assistant_settings.cc",
+  "chromium/prototype/assistant_settings.h",
+  "chromium/prototype/assistant_visuals.cc",
+  "chromium/prototype/before_unload_batch.cc",
+  "chromium/prototype/before_unload_batch.h",
+  "chromium/prototype/assistant_visuals.h",
+  "chromium/prototype/browser_data.h",
+  "chromium/prototype/browser_import_data.cc",
+  "chromium/prototype/browser_import_data.h",
+  "chromium/prototype/browser_tools.cc",
+  "chromium/prototype/browser_tools.h",
+  "chromium/prototype/clean_url.cc",
+  "chromium/prototype/clean_url.h",
+  "chromium/prototype/download_panel.cc",
+  "chromium/prototype/download_panel.h",
+  "chromium/prototype/editor_control.h",
+  "chromium/prototype/editor_text_layout.h",
+  "chromium/prototype/fingerprint_toolbar.cc",
+  "chromium/prototype/fingerprint_toolbar.h",
+  "chromium/prototype/history_panel.cc",
+  "chromium/prototype/history_panel.h",
+  "chromium/prototype/i18n.cc",
+  "chromium/prototype/i18n.h",
+  "chromium/prototype/page_dialogs.cc",
+  "chromium/prototype/page_dialogs.h",
+  "chromium/prototype/passwords_panel.cc",
+  "chromium/prototype/passwords_panel.h",
+  "chromium/prototype/rss_panel.cc",
+  "chromium/prototype/scene_editor.cc",
+  "chromium/prototype/sidebar_layout.cc",
+  "chromium/prototype/sidebar_layout.h",
+  "chromium/prototype/sidebar_metal.h",
+  "chromium/prototype/sidebar_raster.cc",
+  "chromium/prototype/sidebar_tree.cc",
+  "chromium/prototype/sidebar_tree.h",
+  "chromium/prototype/time_machine_view.cc",
+  "chromium/prototype/time_machine_view.h",
+  "chromium/prototype/toolbar_menu.cc",
+  "chromium/prototype/toolbar_menu.h",
+  "chromium/prototype/workspace_shell.cc",
+  "chromium/prototype/workspace_shell.h",
+]
+
+template("zitter_workspace_presentation") {
+  not_needed(invoker, [ "*" ])
+  if (!is_mac && !is_win) {
+    not_needed([ "target_name" ])
+  }
+
+  config("shell_includes") {
+    include_dirs = [ "." ]
+  }
+
+  source_set("workspace_session_codec") {
+    public_configs = [ ":shell_includes" ]
+    sources = [
+      "chromium/prototype/workspace_session.cc",
+      "chromium/prototype/workspace_session.h",
+      "chromium/prototype/workspace_urls.h",
+    ]
+    public_deps = [
+      "//base",
+      "//url",
+    ]
+  }
+
+  action("assistant_page_script") {
+    script = "chromium/assistant/embed.py"
+    sources = [ "chromium/assistant/page.js" ]
+    outputs = [ "$target_gen_dir/assistant_page_script.h" ]
+    args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir) ]
+  }
+
+  source_set("assistant_page_tools") {
+    public_configs = [ ":shell_includes" ]
+    sources = [
+      "chromium/prototype/assistant_page_tools.cc",
+      "chromium/prototype/assistant_page_tools.h",
+    ]
+    include_dirs = [ target_gen_dir ]
+    public_deps = [
+      "//base",
+      "//third_party/blink/public/common",
+      "//ui/events",
+      "//ui/gfx/geometry",
+    ]
+    deps = [
+      ":assistant_page_script",
+      "//components/input",
+      "//components/viz/common",
+      "//content/public/browser",
+      "//mojo/public/cpp/bindings",
+      "//ui/gfx/codec",
+    ]
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  source_set("devtools_console") {
+    public_configs = [ ":shell_includes" ]
+    sources = [
+      "chromium/prototype/devtools_console_reader.cc",
+      "chromium/prototype/devtools_console_reader.h",
+    ]
+    public_deps = [
+      "//base",
+      "//content/public/browser",
+    ]
+    deps = [ "//url" ]
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  source_set("rss_reader") {
+    public_configs = [ ":shell_includes" ]
+    sources = [
+      "chromium/prototype/rss_reader.cc",
+      "chromium/prototype/rss_reader.h",
+    ]
+    public_deps = [
+      ":workspace_session_codec",
+      "//base",
+      "//services/data_decoder/public/cpp",
+      "//ui/base",
+      "//ui/views",
+    ]
+    deps = [
+      "//content/public/browser",
+      "//net",
+      "//services/network/public/cpp",
+    ]
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  source_set("fingerprint_session") {
+    public_configs = [ ":shell_includes" ]
+    sources = [
+      "chromium/prototype/fingerprint_session.cc",
+      "chromium/prototype/fingerprint_session.h",
+    ]
+    public_deps = [ "//base" ]
+    deps = [
+      "//content/public/browser",
+      "//crypto",
+      "//net",
+      "//third_party/blink/public/common",
+      "//url",
+    ]
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  # Built-in ad blocking (docs/ad-blocking.md): Brave's adblock-rust (MPL-2.0),
+  # vendored unmodified by tools/vendor_adblock.py, behind a small cxx bridge.
+  rust_static_library("content_blocking_engine") {
+    crate_root = "chromium/prototype/adblock.rs"
+    sources = [ crate_root ]
+    # Zitter's scriptlets and redirect bodies, compiled in with include_str!.
+    inputs = [
+      "chromium/prototype/adblock_resources.js",
+      "chromium/prototype/adblock_zitter_list.txt",
+    ]
+    cxx_bindings = [ crate_root ]
+    allow_unsafe = true
+    build_native_rust_unit_tests = true
+    deps = [ "//third_party/rust/zitter_vendor:adblock" ]
+  }
+
+  action("content_blocking_script") {
+    script = "chromium/assistant/embed.py"
+    sources = [ "chromium/prototype/content_blocking.js" ]
+    outputs = [ "$target_gen_dir/content_blocking_script.h" ]
+    args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingScript" ]
+  }
+
+  source_set("adblock_browser_support") {
+    public_configs = [ ":shell_includes" ]
+    include_dirs = [ target_gen_dir ]
+    sources = [
+      "chromium/prototype/adblock_browser_support.cc",
+      "chromium/prototype/adblock_browser_support.h",
+      "chromium/prototype/adblock_filter_lists.cc",
+      "chromium/prototype/adblock_filter_lists.h",
+      "chromium/prototype/adblock_network.cc",
+      "chromium/prototype/adblock_network.h",
+    ]
+    public_deps = [
+      "//base",
+      "//content/public/browser",
+      "//url",
+    ]
+    deps = [
+      ":content_blocking_engine",
+      ":content_blocking_script",
+      "//content/public/common",
+      "//mojo/public/cpp/bindings",
+      "//mojo/public/cpp/system",
+      "//net",
+      "//services/cert_verifier/public/mojom",
+      "//services/network/public/cpp",
+      "//services/network/public/mojom",
+      "//third_party/blink/public/common",
+    ]
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  source_set("adblock_page_scripts_renderer") {
+    public_configs = [ ":shell_includes" ]
+    sources = [
+      "chromium/renderer/zitter_page_scripts.cc",
+      "chromium/renderer/zitter_page_scripts.h",
+    ]
+    deps = [
+      "//content/public/renderer",
+      "//third_party/blink/public:blink",
+      "//third_party/blink/public/common",
+      "//url",
+    ]
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  # The Rust UI: scene, layout, controls and editor state. Portable on purpose.
+  rust_static_library("sidebar_scene") {
+    crate_root = "chromium/prototype/sidebar_scene.rs"
+    sources = [
+      "chromium/prototype/design.rs",
+      "chromium/prototype/design_tokens.rs",
+      "chromium/prototype/i18n.rs",
+      "chromium/prototype/i18n_en_native.rs",
+      "chromium/prototype/i18n_en_scene.rs",
+      "chromium/prototype/i18n_en_shell.rs",
+      "chromium/prototype/sidebar_editor.rs",
+      "chromium/prototype/timeline.rs",
+      crate_root,
+    ]
+    cxx_bindings = [ crate_root ]
+    allow_unsafe = true
+    build_native_rust_unit_tests = true
+  }
+
+  source_set("core") {
+    sources = [
+      "zitter/application/workspace_controller.cc",
+      "zitter/application/workspace_controller.h",
+      "zitter/core/browser_state.h",
+      "zitter/core/command_history.cc",
+      "zitter/core/command_history.h",
+      "zitter/core/mouse_gesture.h",
+      "zitter/core/pin_tree.cc",
+      "zitter/core/pin_tree.h",
+      "zitter/core/workspace_model.cc",
+      "zitter/core/workspace_model.h",
+      "zitter/ports/workspace_runtime.h",
+    ]
+    include_dirs = [ "." ]
+  }
+
+  source_set("print_options") {
+    public_configs = [ ":shell_includes" ]
+    sources = [
+      "chromium/prototype/print_options.cc",
+      "chromium/prototype/print_options.h",
+    ]
+    deps = [ "//base" ]
+    assert_no_deps = [
+      "//chrome:*",
+      "//chrome/*",
+    ]
+  }
+
+  action("brave_clean_urls_json") {
+    script = "chromium/assistant/embed.py"
+    sources = [ "third_party/brave_clean_urls/clean-urls.json" ]
+    outputs = [ "$target_gen_dir/brave_clean_urls_json.h" ]
+    args = [
+      rebase_path(sources[0], root_build_dir),
+      rebase_path(outputs[0], root_build_dir),
+      "kBraveCleanUrlsJson",
+    ]
+  }
+
+  if (!is_mac) {
+    # Text layout, paragraph shaping and the editor fallback painter on
+    # gfx::RenderText; macOS has them in sidebar_metal.mm on CoreText.
+    source_set("text_services") {
+      sources = [
+        "chromium/prototype/editor_text_layout.h",
+        "chromium/prototype/text_services_skia.cc",
+      ]
+      include_dirs = [
+        ".",
+        target_gen_dir,
+      ]
+      public_deps = [
+        ":sidebar_scene",
+        "//base",
+        "//base:i18n",
+        "//cc/paint",
+        "//skia",
+        "//ui/gfx",
+      ]
+    }
+  }
+
+  if (is_mac) {
+    action("sidebar_shader") {
+      script = "chromium/app/compile_ui_lab_metal.py"
+      sources = [ "chromium/prototype/sidebar.metal" ]
+      outputs = [ "$target_gen_dir/chromium/prototype/sidebar_shader.h" ]
+      args = [
+        rebase_path(sources[0], root_build_dir),
+        rebase_path(outputs[0], root_build_dir),
+        "--namespace",
+        "zitter::sidebar",
+      ]
+    }
+  }
+
+  if (is_mac || is_win) {
+    source_set(target_name) {
+      public_configs = [ ":shell_includes" ]
+      sources =
+          workspace_presentation_sources + [ "chromium/app/zitter_version.h" ]
+      include_dirs = [
+        ".",
+        target_gen_dir,
+      ]
+      public_deps = [
+        ":core",
+        ":print_options",
+        ":rss_reader",
+        ":sidebar_scene",
+        "//base",
+        "//components/download/public/common:public",
+        "//components/history/core/browser",
+        "//components/password_manager/core/browser/password_store:password_store_interface",
+        "//content/public/browser",
+        "//ui/menus",
+        "//ui/views",
+        "//url",
+      ]
+      deps = [
+        ":adblock_browser_support",
+        ":brave_clean_urls_json",
+        ":workspace_session_codec",
+        "//base:i18n",
+        "//cc/paint",
+        "//components/input",
+        "//components/device_reauth",
+        "//components/os_crypt/async/common",
+        "//components/password_manager/core/browser/ui",
+        "//components/url_formatter",
+        "//components/vector_icons",
+        "//components/version_info",
+        "//crypto",
+        "//extensions/common",
+        "//mojo/public/cpp/bindings",
+        "//net",
+        "//services/network/public/cpp",
+        "//services/network/public/mojom",
+        "//sql",
+        "//skia",
+        "//ui/accessibility",
+        "//ui/base",
+        "//ui/color",
+        "//ui/color:mixers",
+        "//ui/compositor",
+        "//ui/content_accelerators",
+        "//ui/display",
+        "//ui/events",
+        "//ui/gfx",
+        "//ui/gfx/animation",
+        "//ui/native_theme",
+      ]
+      if (is_mac) {
+        sources += [
+          "chromium/prototype/browser_import_key_mac.mm",
+          "chromium/prototype/editor_text_layout_mac.inc",
+          "chromium/prototype/i18n_mac.cc",
+          "chromium/prototype/sidebar_metal.mm",
+          "chromium/prototype/workspace_frame_mac.h",
+          "chromium/prototype/workspace_frame_mac.mm",
+          "chromium/prototype/workspace_keyboard_mac.h",
+          "chromium/prototype/workspace_keyboard_mac.mm",
+        ]
+        deps += [
+          ":sidebar_shader",
+          "//components/remote_cocoa/app_shim",
+          "//components/remote_cocoa/common:mojo",
+        ]
+        frameworks = [
+          "AppKit.framework",
+          "CoreFoundation.framework",
+          "CoreText.framework",
+          "Metal.framework",
+          "QuartzCore.framework",
+        ]
+      } else {
+        sources += [
+          "chromium/app/windows_channel.h",
+          "chromium/prototype/i18n_pref_service.cc",
+          "chromium/prototype/jump_list_win.cc",
+          "chromium/prototype/jump_list_win.h",
+          "chromium/prototype/workspace_frame_win.cc",
+          "chromium/prototype/workspace_frame_win.h",
+        ]
+        deps += [
+          ":text_services",
+          "//components/language/core/browser",
+          "//components/prefs",
+          "//ui/aura",
+          "//ui/base/emoji",
+        ]
+        libs = [
+          "dwmapi.lib",
+          "propsys.lib",
+          "shell32.lib",
+        ]
+      }
+      assert_no_deps = [
+        "//chrome:*",
+        "//chrome/*",
+      ]
+    }
+  }
+}

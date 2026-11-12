@@ -15,8 +15,6 @@
 #include "ui/gfx/font_list.h"
 #include "base/strings/string_util.h"
 #include "base/functional/callback_helpers.h"
-#include "chrome/browser/download/download_prefs.h"
-#include "chrome/browser/platform_util.h"
 #include "chromium/prototype/editor_control.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/mojom/menu_source_type.mojom.h"
@@ -27,9 +25,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/vector_icons/vector_icons.h"
 #include "base/task/single_thread_task_runner.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/download/download_core_service.h"
-#include "chrome/browser/download/download_core_service_factory.h"
+#include "content/public/browser/browser_context.h"
 #include "ui/base/text/bytes_formatting.h"
 #include "ui/display/screen.h"
 #include "ui/display/display.h"
@@ -86,6 +82,13 @@ std::string Utf8Extension(Item* item) { return base::FilePath(item->GetFileNameT
 bool Active(Item* item) { return item->GetState() == Item::IN_PROGRESS; }
 bool Failed(Item* item) { return item->GetState() == Item::INTERRUPTED || item->GetState() == Item::CANCELLED; }
 bool OnDisk(Item* item) { return item->GetState() == Item::COMPLETE && !item->GetFileExternallyRemoved(); }
+std::u16string RevealLabel() {
+#if BUILDFLAG(IS_WIN)
+  return T(u"Pokaż w folderze");
+#else
+  return T(u"Pokaż w Finderze");
+#endif
+}
 // The day group a file starts in: „Dziś”, „Wczoraj”, „28 października”.
 std::u16string DayLabel(base::Time start) {
   const auto now = base::Time::Now();
@@ -135,10 +138,18 @@ DownloadPanel::~DownloadPanel() { Disconnect(); }
 void DownloadPanel::Disconnect() {
   CloseUI();
   CommitRemoval();
+  model_weak_factory_.InvalidateWeakPtrs();
   for (auto& [guid, item] : items_) item->RemoveObserver(this);
   items_.clear(); in_progress_.clear(); initialized_ = false; chosen_.clear(); choosing_ = false;
   if (manager_) manager_->RemoveObserver(this);
-  manager_ = nullptr; profile_ = nullptr;
+  manager_ = nullptr;
+  profile_name_.clear();
+  query_.clear();
+  state_ = StateFilter::kAll;
+  category_ = 0;
+  get_folder_.Reset();
+  open_folder_.Reset();
+  file_actions_ = FileActions::kNone;
 }
 void DownloadPanel::CloseUI(){
   weak_factory_.InvalidateWeakPtrs();timer_.Stop();refresh_pending_=false;menu_runner_.reset();menu_model_.reset();
@@ -153,24 +164,35 @@ bool DownloadPanel::scene_visible_for_testing() const{return scene_&&scene_->vis
 bool DownloadPanel::scene_contains_text_for_testing(std::string_view text) const{return scene_&&scene_->contains_text(text);}
 bool DownloadPanel::scene_animating_for_testing() const{return scene_&&scene_->animating();}
 bool DownloadPanel::scene_order_correct_for_testing() const{return scene_&&scene_->order_correct();}
-void DownloadPanel::SetProfile(Profile* profile) {
-  if (profile_ == profile) return;
+void DownloadPanel::SetSource(
+    content::DownloadManager* manager,
+    std::u16string profile_name,
+    base::RepeatingCallback<base::FilePath()> folder,
+    base::RepeatingClosure open_folder,
+    base::OnceClosure initialize_history,
+    FileActions file_actions) {
+  if (manager_ == manager) {
+    profile_name_ = std::move(profile_name);
+    return;
+  }
   Disconnect();
-  profile_ = profile;
-  if (!profile) return;
-  manager_ = profile->GetDownloadManager();
+  if (!manager) return;
+  manager_ = manager;
+  profile_name_ = std::move(profile_name);
+  get_folder_ = std::move(folder);
+  open_folder_ = std::move(open_folder);
+  file_actions_ = file_actions;
   manager_->AddObserver(this);
-  DownloadCoreServiceFactory::GetForBrowserContext(profile)->InitializeHistory(
-      DownloadCoreService::DownloadHistoryLoadTrigger::kDownloadBubble);
+  if (initialize_history)
+    std::move(initialize_history).Run();
   content::DownloadManager::DownloadVector items;
   manager_->GetAllDownloads(&items);
   for (auto item : items) Observe(item.get());
   initialized_ = manager_->IsManagerInitialized();
   ReportProgress();
 }
-void DownloadPanel::Show(Profile* profile, views::Widget* parent, gfx::Rect anchor) {
-  SetProfile(profile);
-  if (!profile_ || !parent) return;
+void DownloadPanel::Show(views::Widget* parent, gfx::Rect anchor) {
+  if (!manager_ || !parent) return;
   if(widget_&&widget_->IsClosed())CloseUI();
   // Above the ring: its left edge 16 px before the ring, 8 px over it.
   auto place = [&](views::Widget* widget) {
@@ -184,7 +206,7 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent, gfx::Rect anch
   if (widget_) { place(widget_.get()); widget_->Show(); widget_->Activate(); Refresh(); return; }
   auto delegate = std::make_unique<views::DialogDelegate>();
   delegate->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-  delegate->SetTitle(TF(u"Pobrania · {}", {BrowsingProfileName(profile)}));
+  delegate->SetTitle(TF(u"Pobrania · {}", {profile_name_}));
   delegate->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   delegate->SetCanResize(true);
   delegate->set_use_custom_frame(false);
@@ -242,6 +264,7 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent, gfx::Rect anch
   auto* change_group=footer_->AddChildView(scene_->MakeActions(0));
   auto* change=scene_->AddAction(change_group,base::BindRepeating([](base::WeakPtr<DownloadPanel> panel){if(panel&&panel->change_folder_)panel->change_folder_.Run();},weak),T(u"Zmień"));
   scene_->SetActionKind(change,3);change->GetViewAccessibility().SetName(T(u"Zmień folder pobierania"));
+  change_group->SetVisible(!!change_folder_);
   SetSidebarPanelLayout(footer_,false,gfx::Insets(),8,path_,true);
   bulk_=content->AddChildView(std::make_unique<views::View>());
   bulk_size_=MakeLine(bulk_,8,static_cast<int>(PanelScene::Tone::kMuted));
@@ -250,6 +273,7 @@ void DownloadPanel::Show(Profile* profile, views::Widget* parent, gfx::Rect anch
   scene_->SetActionKind(remove,2);
   bulk_delete_=scene_->AddAction(bulk_actions,base::BindRepeating([](base::WeakPtr<DownloadPanel> panel){if(panel)panel->DeleteChosen();},weak),T(u"Usuń z dysku…"));
   scene_->SetActionKind(bulk_delete_,5);
+  bulk_delete_->SetVisible(file_actions_ == FileActions::kOpenRevealAndDelete);
   SetSidebarPanelLayout(bulk_,false,gfx::Insets(),8,bulk_size_,true);
   SetSidebarPanelLayout(content.get(),true,gfx::Insets::TLBR(16,16,12,16),10,scroll);
   content->SetPreferredSize(gfx::Size(440, 640));
@@ -389,7 +413,7 @@ void DownloadPanel::Refresh() {
       row.pause = button(T(u"Wstrzymaj"), vector_icons::kPauseIcon, Action::kPauseResume);
       row.cancel = button(T(u"Anuluj"), vector_icons::kCloseSmallIcon, Action::kCancel);
       row.retry = button(T(u"Pobierz ponownie"), vector_icons::kReplayIcon, Action::kRetry);
-      row.reveal = button(T(u"Pokaż w Finderze"), vector_icons::kFolderOpenIcon, Action::kReveal);
+      row.reveal = button(RevealLabel(), vector_icons::kFolderOpenIcon, Action::kReveal);
       row.more = scene_->AddMoreAction(buttons, base::BindRepeating([](base::WeakPtr<DownloadPanel> panel, std::string guid, views::View* anchor) {
         if (panel) panel->ShowRowMenu(std::move(guid), anchor); }, weak, guid, nullptr), T(u"Więcej"));
       SetSidebarPanelLayout(buttons,false,gfx::Insets(),2);
@@ -416,18 +440,19 @@ void DownloadPanel::Refresh() {
     SetText(row.meta, base::UTF8ToUTF16(std::string(rust.meta)));
     const bool active = Active(item);
     const bool safe = !Unsafe(item);
+    const bool history_only = IsHistoryOnly(*item);
     row.progress->GetViewAccessibility().SetName(TF(u"Postęp pobierania: {}", {name}));
     row.progress->SetVisible(active);
     scene_->SetProgressPaused(row.progress, item->IsPaused());
     const double value=item->PercentComplete()<0?-1.0:item->PercentComplete()/100.0;scene_->SetProgress(row.progress,value);
     // While choosing, the checkbox is the row's only control.
-    row.pause->SetVisible(!choosing_ && safe && (active || item->CanResume()));
+    row.pause->SetVisible(!choosing_ && !history_only && safe && (active || item->CanResume()));
     const bool resume = item->IsPaused() || item->GetState() == Item::INTERRUPTED;
     scene_->SetIconAction(row.pause, resume ? T(u"Wznów") : T(u"Wstrzymaj"), resume ? &vector_icons::kPlayArrowIcon : &vector_icons::kPauseIcon);
     row.pause->SetEnabled((active && !item->IsPaused()) || item->CanResume());
-    row.cancel->SetVisible(!choosing_ && (active || item->GetState() == Item::INTERRUPTED));
-    row.reveal->SetVisible(!choosing_ && safe && OnDisk(item));
-    row.retry->SetVisible(!choosing_ && safe && !active && !item->CanResume() && (Failed(item) || item->GetFileExternallyRemoved()));
+    row.cancel->SetVisible(!choosing_ && !history_only && (active || item->GetState() == Item::INTERRUPTED));
+    row.reveal->SetVisible(!choosing_ && !history_only && file_actions_ != FileActions::kNone && safe && OnDisk(item));
+    row.retry->SetVisible(!choosing_ && !history_only && safe && !active && !item->CanResume() && (Failed(item) || item->GetFileExternallyRemoved()));
     row.more->SetVisible(!choosing_);
   }
   RefreshChrome(listed.size(), items_.size());
@@ -446,7 +471,7 @@ void DownloadPanel::RefreshChrome(size_t shown, size_t total) {
                             : filtered ? TF(u"{} z {}", {base::NumberToString16(shown), base::NumberToString16(all)})
                             : all ? Files(all) + u" · " + Bytes(bytes) : std::u16string());
   scene_->SetTextStyle(count_, 8, choosing_ ? PanelScene::Tone::kInk : PanelScene::Tone::kMuted);
-  choose_->SetVisible(!choosing_); folder_->SetVisible(!choosing_); choosing_actions_->SetVisible(choosing_);
+  choose_->SetVisible(!choosing_); folder_->SetVisible(!choosing_ && !!open_folder_); choosing_actions_->SetVisible(choosing_);
   const std::array<std::u16string, 4> states = {T(u"Wszystkie"), T(u"W toku"), T(u"Gotowe"), T(u"Przerwane")};
   for (size_t i = 0; i < chips_.size(); ++i) {
     const auto filter = static_cast<StateFilter>(i);
@@ -462,10 +487,13 @@ void DownloadPanel::RefreshChrome(size_t shown, size_t total) {
   scene_->RefreshSearch(search_);
   footer_->SetVisible(!choosing_); bulk_->SetVisible(choosing_);
   SetText(bulk_size_, chosen_.empty() ? T(u"Zaznacz pliki na liście") : Bytes(chosen_bytes));
-  bulk_delete_->SetEnabled(!chosen_.empty());
+  bulk_delete_->SetEnabled(std::ranges::any_of(chosen_, [this](const auto& guid) {
+    auto item = items_.find(guid);
+    return item != items_.end() && CanDelete(*item->second);
+  }));
   // The folder with the home directory as „~”.
-  if (profile_) {
-    auto folder = DownloadPrefs::FromBrowserContext(profile_)->DownloadPath();
+  if (get_folder_) {
+    auto folder = get_folder_.Run();
     base::FilePath relative;
     const auto home = base::GetHomeDir();
     std::u16string text = home.AppendRelativePath(folder, &relative) ? u"~/" + relative.LossyDisplayName() : folder.LossyDisplayName();
@@ -486,13 +514,18 @@ void DownloadPanel::ShowRowMenu(std::string guid, views::View* anchor) {
   menu_guid_ = guid;
   if (!anchor) for (const auto& row : rows_) if (row.guid == guid) anchor = row.more;
   auto model = std::make_unique<ui::SimpleMenuModel>(this);
-  model->AddItem(kRowOpen, T(u"Otwórz"));
-  model->AddItem(kRowReveal, T(u"Pokaż w Finderze"));
+  const bool history_only = IsHistoryOnly(*items_.at(guid));
+  if (!history_only && file_actions_ != FileActions::kNone) {
+    model->AddItem(kRowOpen, T(u"Otwórz"));
+    model->AddItem(kRowReveal, RevealLabel());
+  }
   model->AddItem(kRowCopy, T(u"Kopiuj adres pliku"));
-  model->AddItem(kRowRetry, T(u"Pobierz ponownie"));
+  if (!history_only)
+    model->AddItem(kRowRetry, T(u"Pobierz ponownie"));
   model->AddSeparator(ui::NORMAL_SEPARATOR);
   model->AddItem(kRowRemove, T(u"Usuń z listy"));
-  model->AddItem(kRowDelete, T(u"Usuń z dysku…"));
+  if (CanDelete(*items_.at(guid)))
+    model->AddItem(kRowDelete, T(u"Usuń z dysku…"));
   ShowMenu(std::move(model), anchor);
 }
 void DownloadPanel::ShowTypeMenu(views::View* anchor) {
@@ -531,11 +564,11 @@ bool DownloadPanel::IsCommandIdEnabled(int id) const {
   Item* item = found->second;
   const bool safe = !Unsafe(item);
   switch (id) {
-    case kRowOpen: case kRowReveal: return safe && OnDisk(item);
+    case kRowOpen: case kRowReveal: return !IsHistoryOnly(*item) && file_actions_ != FileActions::kNone && safe && OnDisk(item);
     case kRowCopy: return item->GetURL().is_valid();
-    case kRowRetry: return safe && !Active(item) && (item->CanResume() || Failed(item) || item->GetFileExternallyRemoved());
+    case kRowRetry: return !IsHistoryOnly(*item) && safe && !Active(item) && (item->CanResume() || Failed(item) || item->GetFileExternallyRemoved());
     case kRowRemove: return true;
-    case kRowDelete: return true;
+    case kRowDelete: return CanDelete(*item);
   }
   return false;
 }
@@ -546,8 +579,8 @@ void DownloadPanel::ExecuteCommand(int id, int) {
   if (id >= kRowOpen && id <= kRowDelete) Act(menu_guid_, kActions[id - kRowOpen]);
 }
 void DownloadPanel::OpenFolder() {
-  if (!profile_) return;
-  platform_util::OpenItem(profile_, DownloadPrefs::FromBrowserContext(profile_)->DownloadPath(), platform_util::OPEN_FOLDER, base::DoNothing());
+  if (open_folder_)
+    open_folder_.Run();
 }
 void DownloadPanel::RemoveChosen() {
   std::vector<std::string> guids;
@@ -555,9 +588,30 @@ void DownloadPanel::RemoveChosen() {
   if (guids.empty()) return;
   SetChoosing(false); RemoveLater(std::move(guids));
 }
+void DownloadPanel::SetFileDeletionPolicy(CanDeleteFile can_delete,
+                                          DeleteFile delete_file) {
+  can_delete_file_ = std::move(can_delete);
+  delete_file_ = std::move(delete_file);
+}
+void DownloadPanel::SetHistoryOnlyPolicy(
+    base::RepeatingCallback<bool(const download::DownloadItem&)> history_only) {
+  history_only_ = std::move(history_only);
+}
+
+bool DownloadPanel::IsHistoryOnly(const download::DownloadItem& item) const {
+  return history_only_ && history_only_.Run(item);
+}
+
+bool DownloadPanel::CanDelete(const Item& item) const {
+  return file_actions_ == FileActions::kOpenRevealAndDelete &&
+         (!can_delete_file_ || can_delete_file_.Run(item));
+}
 void DownloadPanel::DeleteChosen() {
   std::vector<std::string> guids(chosen_.begin(), chosen_.end());
-  std::erase_if(guids, [&](const auto& guid) { return !items_.contains(guid); });
+  std::erase_if(guids, [this](const auto& guid) {
+    auto item = items_.find(guid);
+    return item == items_.end() || !CanDelete(*item->second);
+  });
   if (guids.empty() || !confirm_) return;
   // Design: Potwierdzenie — no way back is offered, so the warning says so.
   std::vector<std::u16string> names;
@@ -608,14 +662,31 @@ void DownloadPanel::Delete(std::vector<std::string> guids) {
     auto found = items_.find(guid);
     if (found == items_.end()) continue;
     Item* item = found->second;
-    if (OnDisk(item) && !Unsafe(item)) { item->DeleteFile(base::BindOnce(&DownloadPanel::Deleted, model_weak_factory_.GetWeakPtr(), guid)); continue; }
+    if (!CanDelete(*item))
+      continue;
+    if (delete_file_ || (OnDisk(item) && !Unsafe(item))) {
+      // The user already confirmed this deletion. Complete it in its owning
+      // context even if the panel has since switched to another profile.
+      auto done = base::BindOnce(
+          [](base::WeakPtr<content::BrowserContext> context,
+             const std::string& guid, const base::FilePath& path, bool deleted) {
+            if (!deleted || !context || context->ShutdownStarted())
+              return;
+            auto* item = context->GetDownloadManager()->GetDownloadByGuid(guid);
+            if (item && (item->GetFullPath() == path ||
+                         item->GetFileExternallyRemoved()))
+              item->Remove();
+          }, manager_->GetBrowserContext()->GetWeakPtr(), guid, item->GetFullPath());
+      if (delete_file_)
+        delete_file_.Run(*item, std::move(done));
+      else
+        item->DeleteFile(std::move(done));
+      continue;
+    }
     // A partial file goes with its transfer; one already gone only leaves the list.
     if (Active(item) || item->GetState() == Item::INTERRUPTED) item->Cancel(true);
     if (items_.contains(guid)) items_.at(guid)->Remove();
   }
-}
-void DownloadPanel::Deleted(std::string guid, bool) {
-  if (auto found = items_.find(guid); found != items_.end()) found->second->Remove();
 }
 bool DownloadPanel::Act(std::string guid, Action action) {
   auto found = items_.find(guid);
@@ -623,10 +694,10 @@ bool DownloadPanel::Act(std::string guid, Action action) {
   auto* item = found->second.get();
   switch (action) {
     case Action::kCancel:
-      if (!Active(item) && item->GetState() != Item::INTERRUPTED) return false;
+      if (IsHistoryOnly(*item) || (!Active(item) && item->GetState() != Item::INTERRUPTED)) return false;
       item->Cancel(true); break;
     case Action::kPauseResume:
-      if (Unsafe(item)) return false;
+      if (IsHistoryOnly(*item) || Unsafe(item)) return false;
       if (item->IsPaused() || item->GetState() == Item::INTERRUPTED) {
         if (!item->CanResume()) return false;
         item->Resume(true);
@@ -634,7 +705,7 @@ bool DownloadPanel::Act(std::string guid, Action action) {
       else return false;
       break;
     case Action::kReveal: case Action::kOpen:
-      if (Unsafe(item) || !OnDisk(item)) return false;
+      if (file_actions_ == FileActions::kNone || IsHistoryOnly(*item) || Unsafe(item) || !OnDisk(item)) return false;
       if (action == Action::kReveal) item->ShowDownloadInShell(); else item->OpenDownload();
       break;
     case Action::kCopyLink:
@@ -642,14 +713,14 @@ bool DownloadPanel::Act(std::string guid, Action action) {
       ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(base::UTF8ToUTF16(item->GetURL().spec()));
       break;
     case Action::kRetry:
-      if (Unsafe(item) || Active(item)) return false;
+      if (IsHistoryOnly(*item) || Unsafe(item) || Active(item)) return false;
       if (item->CanResume()) { item->Resume(true); break; }
       if (!redownload_ || !(Failed(item) || item->GetFileExternallyRemoved())) return false;
       redownload_.Run(item->GetURL()); break;
     case Action::kRemove:
       RemoveLater({guid}); break;
     case Action::kDelete: {
-      if (!confirm_) return false;
+      if (!CanDelete(*item) || !confirm_) return false;
       chosen_ = {guid}; DeleteChosen(); chosen_.clear(); break;
     }
   }

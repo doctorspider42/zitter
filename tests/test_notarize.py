@@ -40,6 +40,48 @@ class NotarizationTests(unittest.TestCase):
             with path.open('rb') as stream:
                 self.assertNotIn('com.apple.security.get-task-allow', packager.plistlib.load(stream))
 
+    def test_production_identity_trial_sets_startup_only_on_the_outer_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / notarizer.CONTENT_APP_NAME
+            outer = app / "Contents/Info.plist"
+            helper = app / "Contents/Helpers/Helper.app/Contents/Info.plist"
+            for path, suffix in ((outer, ""), (helper, ".helper")):
+                path.parent.mkdir(parents=True)
+                path.write_bytes(packager.plistlib.dumps({
+                    "CFBundleIdentifier": notarizer.CONTENT_BUNDLE_ID + suffix,
+                }))
+
+            notarizer.configure_production_identity_trial(app)
+
+            outer_info = packager.plistlib.loads(outer.read_bytes())
+            helper_info = packager.plistlib.loads(helper.read_bytes())
+            self.assertEqual(packager.BUNDLE_ID, outer_info["CFBundleIdentifier"])
+            self.assertIs(outer_info["ZitterUsePreparedWorkspace"], True)
+            self.assertEqual(packager.BUNDLE_ID + ".helper", helper_info["CFBundleIdentifier"])
+            self.assertNotIn("ZitterUsePreparedWorkspace", helper_info)
+
+    def test_content_release_sets_outer_product_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "Zitter.app"
+            info = app / "Contents/Info.plist"
+            info.parent.mkdir(parents=True)
+            info.write_bytes(packager.plistlib.dumps({
+                "CFBundleIdentifier": notarizer.CONTENT_BUNDLE_ID,
+                "CFBundleExecutable": "Zitter Content Lab",
+            }))
+            notarizer.configure_production_identity_trial(app, content_release=True)
+            values = packager.plistlib.loads(info.read_bytes())
+            self.assertEqual(values["CFBundleIdentifier"], packager.BUNDLE_ID)
+            self.assertEqual(values["CFBundleName"], "Zitter")
+            self.assertEqual(values["CFBundleDisplayName"], "Zitter")
+            self.assertEqual(values["CFBundleExecutable"], "Zitter Content Lab")
+            self.assertEqual(values["CFBundleURLTypes"], [{
+                "CFBundleTypeRole": "Viewer",
+                "CFBundleURLName": "dev.zitter.browser.web",
+                "CFBundleURLSchemes": ["http", "https"],
+            }])
+            self.assertTrue(values["ZitterUsePreparedWorkspace"])
+
     def test_rejected_submission_never_staples_or_creates_release_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             destination, state = self.fixture(directory)

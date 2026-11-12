@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "base/callback_list.h"
+#include "chromium/prototype/fingerprint_session.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/web_contents_user_data.h"
 
@@ -13,9 +14,6 @@ class GURL;
 class Profile;
 
 namespace zitter::prototype {
-
-// Per-profile switch, registered by tools/fingerprint_protection_patch.py.
-inline constexpr char kFingerprintProtectionPref[] = "zitter.fingerprint_protection";
 
 // The page's renderer key for per-site canvas, WebGL and audio noise, kept in
 // step with its profile's switch. Off sends no key and leaves pages untouched.

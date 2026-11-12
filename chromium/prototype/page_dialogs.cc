@@ -1,6 +1,6 @@
 #include "chromium/prototype/page_dialogs.h"
 #include <algorithm>
-#include "chromium/prototype/browser_data.h"
+#include <utility>
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -14,9 +14,8 @@
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/common/pref_names.h"
-#include "components/prefs/pref_service.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -91,11 +90,15 @@ views::View* DialogActionButton(views::Widget* widget,bool accept){
 }
 views::View* PageDialogs::dialog_button_for_testing(bool accept) const{return DialogActionButton(dialog_.get(),accept);}
 WEB_CONTENTS_USER_DATA_KEY_IMPL(PageDialogs);
-PageDialogs* PageDialogs::Attach(content::WebContents* contents) {
-  CreateForWebContents(contents); return FromWebContents(contents);
+PageDialogs* PageDialogs::Attach(content::WebContents* contents,
+                                 ProfileLabel profile_label) {
+  return GetOrCreateForWebContents(contents, std::move(profile_label));
 }
-PageDialogs::PageDialogs(content::WebContents* contents)
-    : content::WebContentsObserver(contents), content::WebContentsUserData<PageDialogs>(*contents) {}
+PageDialogs::PageDialogs(content::WebContents* contents,
+                         ProfileLabel profile_label)
+    : content::WebContentsObserver(contents),
+      content::WebContentsUserData<PageDialogs>(*contents),
+      profile_label_(std::move(profile_label)) {}
 PageDialogs::~PageDialogs() { CancelDialogs(web_contents(), true); FinishCheck(false); }
 
 void PageDialogs::RunJavaScriptDialog(content::WebContents*, content::RenderFrameHost* frame,
@@ -103,32 +106,79 @@ void PageDialogs::RunJavaScriptDialog(content::WebContents*, content::RenderFram
     const std::u16string& initial, DialogClosedCallback callback, bool* suppressed) {
   *suppressed = !web_contents() || web_contents()->GetVisibility() != content::Visibility::VISIBLE || dialog_callback_ || checking_;
   if (*suppressed) return;
-  Show(frame, type, message, initial, false, std::move(callback));
+  Show(frame, type, message, initial, DialogKind::kScript, std::move(callback));
 }
 void PageDialogs::RunBeforeUnloadDialog(content::WebContents*, content::RenderFrameHost* frame,
     bool reload, DialogClosedCallback callback) {
   if (dialog_callback_) CancelDialogs(web_contents(), false);
   Show(frame, content::JAVASCRIPT_DIALOG_TYPE_CONFIRM,
       reload ? T(u"Odświeżenie strony może usunąć niezapisane zmiany.") : T(u"Opuszczenie strony może usunąć niezapisane zmiany."),
-      {}, true, std::move(callback));
+      {}, DialogKind::kLeave, std::move(callback));
 }
+void PageDialogs::ConfirmFormResubmission() {
+  if (!web_contents() || repost_dialog_)
+    return;
+  const size_t request = ++repost_generation_;
+  auto& controller = web_contents()->GetController();
+  const auto* entry = controller.GetLastCommittedEntry();
+  if (dialog_callback_ || checking_ || !entry || !entry->GetHasPostData() ||
+      web_contents()->GetVisibility() != content::Visibility::VISIBLE) {
+    controller.CancelPendingReload();
+    return;
+  }
+  Show(
+      web_contents()->GetPrimaryMainFrame(), content::JAVASCRIPT_DIALOG_TYPE_CONFIRM,
+      T(u"Odświeżenie ponownie wyśle dane formularza. Może to powtórzyć ostatnią operację."),
+      {}, DialogKind::kRepost,
+      base::BindOnce(
+          [](base::WeakPtr<PageDialogs> dialogs, size_t request,
+             size_t navigation, int entry_id, bool accepted,
+             const std::u16string&) {
+            if (!dialogs || dialogs->repost_generation_ != request ||
+                !dialogs->web_contents()) {
+              return;
+            }
+            auto* page = dialogs->web_contents();
+            auto& controller = page->GetController();
+            const auto* entry = controller.GetLastCommittedEntry();
+            if (accepted && dialogs->repost_page_generation_ == navigation &&
+                entry && entry->GetHasPostData() && entry->GetUniqueID() == entry_id &&
+                page->GetVisibility() == content::Visibility::VISIBLE) {
+              controller.ContinuePendingReload();
+            } else {
+              controller.CancelPendingReload();
+            }
+          },
+          weak_factory_.GetWeakPtr(), request, repost_page_generation_,
+          entry->GetUniqueID()));
+}
+
 void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialogType type,
-    const std::u16string& message, const std::u16string& initial, bool unload, DialogClosedCallback callback) {
+    const std::u16string& message, const std::u16string& initial,
+    DialogKind kind, DialogClosedCallback callback) {
   if (!web_contents() || !frame || !frame->IsActive() || !web_contents()->GetTopLevelNativeWindow()) {
     std::move(callback).Run(false, {}); return;
   }
+  const bool unload = kind == DialogKind::kLeave;
+  const bool repost = kind == DialogKind::kRepost;
   const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
+  repost_dialog_ = repost;
   dialog_type_ = type; dialog_message_ = message.substr(0, 2000);
   std::unique_ptr<views::DialogDelegate> dialog=std::make_unique<PageDialogDelegate>();
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());body_=body;
   scene_=CreatePageDialogScene(body);
   const auto origin=frame->GetLastCommittedOrigin().Serialize();
-  auto* profile = Profile::FromBrowserContext(web_contents()->GetBrowserContext());
-  std::u16string title=unload?TF(u"Opuścić stronę? · {}",{base::UTF8ToUTF16(origin)}):TF(u"Strona: {}",{base::UTF8ToUTF16(origin)}),identity_text=TF(u"Profil: {}",{BrowsingProfileName(profile)}),message_text=message.substr(0,8192),accept=unload?T(u"Opuść stronę"):u"OK",cancel=unload?T(u"Zostań"):T(u"Anuluj");
+  const auto profile_name = profile_label_.Run(web_contents()->GetBrowserContext());
+  std::u16string title=unload?TF(u"Opuścić stronę? · {}",{base::UTF8ToUTF16(origin)}):TF(u"Strona: {}",{base::UTF8ToUTF16(origin)}),identity_text=TF(u"Profil: {}",{profile_name}),message_text=message.substr(0,8192),accept=unload?T(u"Opuść stronę"):u"OK",cancel=unload?T(u"Zostań"):T(u"Anuluj");
   bool show_cancel=type!=content::JAVASCRIPT_DIALOG_TYPE_ALERT,default_cancel=unload,is_prompt=type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT;
-  {const auto copy=sidebar::page_dialog_copy(type==content::JAVASCRIPT_DIALOG_TYPE_ALERT?0:type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT?2:1,unload,origin,base::UTF16ToUTF8(BrowsingProfileName(profile)),rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(message.data()),message.size()));title=base::UTF8ToUTF16(std::string(copy.title));identity_text=base::UTF8ToUTF16(std::string(copy.identity));message_text=std::u16string(copy.message.begin(),copy.message.end());accept=base::UTF8ToUTF16(std::string(copy.accept));cancel=base::UTF8ToUTF16(std::string(copy.cancel));show_cancel=copy.show_cancel;default_cancel=copy.default_cancel;is_prompt=copy.prompt;}
+  {const auto copy=sidebar::page_dialog_copy(type==content::JAVASCRIPT_DIALOG_TYPE_ALERT?0:type==content::JAVASCRIPT_DIALOG_TYPE_PROMPT?2:1,unload,origin,base::UTF16ToUTF8(profile_name),rust::Slice<const uint16_t>(reinterpret_cast<const uint16_t*>(message.data()),message.size()));title=base::UTF8ToUTF16(std::string(copy.title));identity_text=base::UTF8ToUTF16(std::string(copy.identity));message_text=std::u16string(copy.message.begin(),copy.message.end());accept=base::UTF8ToUTF16(std::string(copy.accept));cancel=base::UTF8ToUTF16(std::string(copy.cancel));show_cancel=copy.show_cancel;default_cancel=copy.default_cancel;is_prompt=copy.prompt;}
+  if (repost) {
+    title = TF(u"Wysłać formularz ponownie? · {}", {base::UTF8ToUTF16(origin)});
+    accept = T(u"Wyślij ponownie");
+    default_cancel = true;
+  }
   dialog->SetTitle(title);
   dialog->SetModalType(ui::mojom::ModalType::kWindow);
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|(show_cancel?static_cast<int>(ui::mojom::DialogButton::kCancel):0));
@@ -175,7 +225,7 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
 }
 bool PageDialogs::HandleJavaScriptDialog(content::WebContents* contents, bool accept,
     const std::u16string* override_text) {
-  if (contents != web_contents() || !dialog_callback_) return false;
+  if (contents != web_contents() || !dialog_callback_ || repost_dialog_) return false;
   if(!dialog_){Answer(false);return false;}
   if(prompt_&&override_text)prompt_->SetText(*override_text);
   else if(prompt_&&accept)prompt_->ConfirmCompositionText(false);
@@ -202,6 +252,7 @@ void PageDialogs::Answer(bool accepted) {
   if(field){field->SetCallbacks({},{});if(!accepted)field->ClearCompositionText();}
   const std::u16string text = field && accepted ? std::u16string(field->GetText()) : std::u16string();
   prompt_ = nullptr; requesting_frame_ = nullptr; unload_dialog_ = false;
+  repost_dialog_ = false;
   scene_.reset();viewport_=nullptr;body_=nullptr;dialog_.reset();delegate_.reset();
   // Renderer callbacks can destroy pages. Never run them on a button's stack.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(callback), accepted, text));
@@ -229,6 +280,11 @@ void PageDialogs::FinishCheck(bool proceed) {
       }, weak_factory_.GetWeakPtr(), std::move(callback), proceed));
 }
 void PageDialogs::DidStartNavigation(content::NavigationHandle* navigation) {
+  if (navigation->IsInPrimaryMainFrame()) {
+    ++repost_page_generation_;
+    if (navigation->IsSameDocument() && repost_dialog_)
+      CancelDialogs(web_contents(), false);
+  }
   if (!navigation->IsSameDocument()) ++navigation_generation_;
   if (!navigation->IsSameDocument() && (navigation->IsInPrimaryMainFrame() ||
       (requesting_frame_ && navigation->GetFrameTreeNodeId() == requesting_frame_->GetFrameTreeNodeId()))) {
@@ -236,6 +292,11 @@ void PageDialogs::DidStartNavigation(content::NavigationHandle* navigation) {
   }
 }
 void PageDialogs::OnVisibilityChanged(content::Visibility visibility) {
+  if (visibility != content::Visibility::VISIBLE) {
+    ++repost_page_generation_;
+    if (repost_dialog_)
+      CancelDialogs(web_contents(), false);
+  }
   if (visibility == content::Visibility::HIDDEN && !unload_dialog_) CancelDialogs(web_contents(), false);
 }
 void PageDialogs::RenderFrameDeleted(content::RenderFrameHost* frame) {

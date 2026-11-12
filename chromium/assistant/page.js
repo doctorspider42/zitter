@@ -3,11 +3,140 @@
   const args = ZITTER_ARGS;
   // Protected inputs: passwords, one-time codes, payment and marked fields. Rich
   // editors (contenteditable) are ordinary content the assistant may read and edit.
-  const sensitive = e => !!e.closest('[data-private], [data-sensitive]') ||
+  const markedPrivate = e => {
+    for (let node = e; node;) {
+      if (node.closest('[data-private], [data-sensitive]')) return true;
+      const root = node.getRootNode();
+      node = root.host ?? node.ownerDocument.defaultView?.frameElement;
+    }
+    return false;
+  };
+  const sensitive = e => markedPrivate(e) ||
     (e.matches('input') && /password|hidden|file/i.test(e.type ?? '')) ||
     /password|passwd|secret|token|credit|card.?number|cvv|cvc|otp|one.?time|cc-/i.test(
       [e.name, e.id, e.autocomplete, e.getAttribute('aria-label')].join(' '));
+  const activeEditor = () => {
+    let e = document.activeElement;
+    for (let depth = 0; e && depth < 8; ++depth) {
+      if (e.shadowRoot?.activeElement) {
+        e = e.shadowRoot.activeElement;
+      } else if (e.matches('iframe,frame')) {
+        e = e.contentDocument?.activeElement;
+      } else {
+        return e;
+      }
+    }
+    return null;
+  };
+  const containsProtectedField = e =>
+    [...e.querySelectorAll('[data-private],[data-sensitive],input,textarea')].some(sensitive);
+  const insertInEditor = (e, text, replace) => {
+    if (!e || sensitive(e) || !visible(e) ||
+        !(e.isContentEditable || e.matches('textarea,input[type=text],input:not([type]),input[type=search],input[type=tel],input[type=url]')) ||
+        e.disabled || e.readOnly ||
+        (e.isContentEditable && containsProtectedField(e)))
+      return { error: 'The editor is unavailable or protected.' };
+    if (replace) {
+      e.focus();
+      if (activeEditor() !== e || sensitive(e) || !e.isContentEditable || containsProtectedField(e))
+        return { error: 'The editor focus changed.' };
+      const range = e.ownerDocument.createRange();
+      range.selectNodeContents(e);
+      const selection = e.ownerDocument.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    const selection = e.ownerDocument.getSelection();
+    if (e.isContentEditable &&
+        (!selection?.rangeCount || !e.contains(selection.anchorNode) || !e.contains(selection.focusNode)))
+      return { error: 'The selection is outside the editor.' };
+    if (activeEditor() !== e || sensitive(e))
+      return { error: 'The editor focus changed.' };
+    const ok = replace && !text
+      ? e.ownerDocument.execCommand('delete')
+      : e.ownerDocument.execCommand('insertText', false, text);
+    return ok ? { ok: true } : { error: 'The editor did not accept text.' };
+  };
   const style = e => e.ownerDocument.defaultView.getComputedStyle(e);
+  if (args.tool === 'night_shift_inspect') {
+    const candidates = [];
+    const seen = new Set();
+    const identifier = /^[a-z_][\w-]{0,63}$/i;
+    const validTag = /^[a-z][a-z0-9-]{0,31}$/;
+    const containers = 'article,section,main,aside,nav,header,footer';
+    const parseRgb = value => {
+      const match = /^rgba?\((\d+(?:\.\d+)?), (\d+(?:\.\d+)?), (\d+(?:\.\d+)?)(?:, (\d+(?:\.\d+)?))?\)$/.exec(value);
+      return match ? [...match.slice(1, 4).map(Number), Number(match[4] ?? 1)] : null;
+    };
+    const luminance = color => color.slice(0, 3).map(channel => {
+      const normalized = channel / 255;
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0);
+    const textContrast = (element, foreground) => {
+      // Restrict scoring to text on an opaque, flat surface. Keep sampling
+      // style identifiers and colors for everything else without a score.
+      if (!foreground || foreground[3] !== 1 ||
+          ![...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && /\S/.test(node.nodeValue))) return null;
+      let surface = null;
+      for (let current = element; current; current = current.parentElement) {
+        const css = style(current);
+        if (css.opacity !== '1' || css.filter !== 'none' || css.mixBlendMode !== 'normal') return null;
+        if (surface) continue;
+        if (css.backgroundImage !== 'none') return null;
+        const color = parseRgb(css.backgroundColor);
+        if (!color || (color[3] !== 0 && color[3] !== 1)) return null;
+        if (color[3] === 1) surface = color;
+      }
+      if (!surface) return null;
+      const a = luminance(foreground);
+      const b = luminance(surface);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    };
+    const consider = element => {
+      if (!element || seen.has(element) || candidates.length >= 48 ||
+          sensitive(element) || element.closest('form, [contenteditable]') ||
+          !validTag.test(element.localName)) return;
+      seen.add(element);
+      const tag = element.localName;
+      const id = identifier.test(element.id) ? element.id : null;
+      const classes = id ? [] : [...element.classList].filter(name => identifier.test(name)).slice(0, 3);
+      if (!id && classes.length === 0 && !element.matches(containers + ',html,body,figcaption,p,span')) return;
+      const css = style(element);
+      let surface = element;
+      let background = css.backgroundColor;
+      while (surface.parentElement && background === 'rgba(0, 0, 0, 0)') {
+        surface = surface.parentElement;
+        background = style(surface).backgroundColor;
+      }
+      const ratio = textContrast(element, parseRgb(css.color));
+      candidates.push({
+        target: candidates.length, path: [{tag, id, classes}],
+        color: css.color, background, ownBackground: css.backgroundColor,
+        contrastRatio: ratio === null ? null : Math.round(ratio * 100) / 100,
+      });
+    };
+    consider(document.body);
+    for (let row = 1; row <= 5; row++) {
+      for (let column = 1; column <= 7; column++) {
+        for (const hit of document.elementsFromPoint(innerWidth * column / 8, innerHeight * row / 6).slice(0, 4)) {
+          consider(hit);
+        }
+      }
+    }
+    // Short captions can lie between sampled points.
+    for (const element of [...document.querySelectorAll('figcaption, [role="note"], caption')].slice(0, 20)) {
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width > 0 && bounds.height > 0 && bounds.bottom > 0 && bounds.top < innerHeight) {
+        consider(element);
+      }
+    }
+    return {
+      candidates,
+      lowContrastTargets: candidates.filter(candidate => candidate.contrastRatio !== null && candidate.contrastRatio < 4.5)
+        .sort((a, b) => a.contrastRatio - b.contrastRatio).map(candidate => candidate.target),
+    };
+  }
+
   const visible = e => {
     const r = e.getBoundingClientRect(), s = style(e);
     if (r.width <= 0 || r.height <= 0 || s.visibility === 'hidden' || s.display === 'none') return false;
@@ -229,8 +358,19 @@
     const words = /(^|[^a-z])(ads?|adv|advert\w*|adslot|adunit|adbox|adsense|adsbygoogle|banners?|sponsor\w*|promo\w*|dfp|gpt|doubleclick|taboola|outbrain|teads|criteo|affiliate|commercial|reklam\w*|partner-?content|native-?ad)([^a-z]|$)/i;
     const randomish = token => /\d{4,}|[0-9a-f]{8,}|^[a-z0-9]{14,}$|^_|__/i.test(token) || token.length > 40;
     const css = token => CSS.escape(token);
-    const site = location.hostname.split('.').slice(-2).join('.');
-    const thirdParty = url => { try { const h = new URL(url, location.href).hostname; return !!h && h !== site && !h.endsWith('.' + site); } catch { return false; } };
+    const site = args.site || location.hostname;
+    const webUrl = input => {
+      try {
+        const url = new URL(input, location.href);
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+        url.username = url.password = url.search = url.hash = '';
+        return url;
+      } catch { return null; }
+    };
+    const thirdParty = input => {
+      const host = webUrl(input)?.hostname;
+      return !!host && host !== site && !host.endsWith('.' + site);
+    };
     const blocking = globalThis.__zitterBlocking;
     const zitterHides = e => !!blocking && (blocking.marked?.has(e) ||
       Object.values(blocking.selectors).some(list => list.some(s => { try { return e.matches(s); } catch { return false; } })));
@@ -266,7 +406,7 @@
     const sizes = ['300x250', '728x90', '160x600', '320x50', '300x600', '970x250', '970x90', '336x280', '468x60', '320x100'];
     const candidates = [], seen = new Set();
     const consider = (e, reason, extra = {}) => {
-      if (candidates.length >= 80 || seen.has(e)) return;
+      if (candidates.length >= 80 || seen.has(e) || sensitive(e) || containsProtectedField(e)) return;
       for (const s of seen) if (s.contains(e)) return;
       seen.add(e);
       const r = e.getBoundingClientRect(), hiddenByZitter = zitterHides(e);
@@ -277,7 +417,8 @@
         text: (e.innerText ?? '').replace(/\s+/g, ' ').trim().slice(0, 80), hidden_by_zitter: hiddenByZitter };
       item.matches = count(item.selector);
       const source = e.src || e.querySelector?.('iframe[src],img[src]')?.src;
-      if (source) item.source = String(source).split('?')[0].slice(0, 200);
+      const url = source && webUrl(source);
+      if (url) item.source = url.href.slice(0, 200);
       Object.assign(item, extra);
       if (item.rule_hint) item.rule_hint_matches = count(item.rule_hint.slice(item.rule_hint.indexOf('##') + 2));
       candidates.push(item);
@@ -370,13 +511,13 @@
     }
     const requests = [], hosts = {};
     for (const entry of performance.getEntriesByType('resource')) {
-      if (!thirdParty(entry.name)) continue;
-      let host = '';
-      try { host = new URL(entry.name).hostname; } catch { continue; }
+      const url = webUrl(entry.name);
+      const host = url?.hostname;
+      if (!host || host === site || host.endsWith('.' + site)) continue;
       hosts[host] = (hosts[host] ?? 0) + 1;
-      if (requests.length < 150) requests.push({ url: entry.name.split('?')[0].slice(0, 200), type: entry.initiatorType });
+      if (requests.length < 150) requests.push({ url: url.href.slice(0, 200), type: entry.initiatorType });
     }
-    return { url: location.href.split('?')[0], title: document.title, candidates, third_party_hosts: hosts, requests,
+    return { url: webUrl(location.href)?.href ?? '', title: document.title, candidates, third_party_hosts: hosts, requests,
              scanned_elements: scanned,
              note: 'Candidates are guesses: keep only what the user would call an ad, never the content they came for. ' +
                    'A candidate with a label comes with rule_hint, a procedural rule anchored on that label, and how many elements it matches.' };
@@ -390,7 +531,19 @@
     document.dispatchEvent(new CustomEvent(`zitter-probe-${args.nonce}`));
     document.removeEventListener(`zitter-probe-${args.nonce}-log`, take);
     if (typeof data !== 'string') return { error: 'The probe did not run on this load' };
+    if (data.length > 131072) return { error: 'The probe log is too large' };
     try { return JSON.parse(data); } catch { return { error: 'The probe log could not be read' }; }
+  }
+  if (args.tool === 'key_focus') {
+    const e = activeEditor();
+    if (!e || sensitive(e)) return { error: 'The focused field is protected or unavailable.' };
+    globalThis.__zitterKeyFocusIds ??= new WeakMap();
+    let id = globalThis.__zitterKeyFocusIds.get(e);
+    if (!id) {
+      id = Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16)).join('-');
+      globalThis.__zitterKeyFocusIds.set(e, id);
+    }
+    return { id, rich: e.isContentEditable || e.matches('textarea') };
   }
   if (args.tool === 'focus_info') {
     // Natively requested before keyboard input: where would typing land?
@@ -411,6 +564,11 @@
     return { secret, editable: opaque || !!e?.isContentEditable || field,
              rich: opaque || !!e?.isContentEditable || !!e?.matches?.('textarea') };
   }
+  if (args.tool === 'insert_text') {
+    if (typeof args.text !== 'string' || !args.text.length || args.text.length > 8000)
+      return { error: 'Text of 1 to 8000 characters is required.' };
+    return insertInEditor(activeEditor(), args.text, false);
+  }
   if (args.tool === 'scroll' && !args.element) {
     const dy = Math.max(-5000, Math.min(5000, Number(args.dy) || 0)), dx = Math.max(-5000, Math.min(5000, Number(args.dx) || 0));
     scrollBy(dx, dy);
@@ -420,8 +578,8 @@
   const e = state?.url === location.href ? state.map.get(args.element) : null;
   if (!e?.isConnected || !visible(e) || sensitive(e)) return { error: 'Element expired, hidden or protected. Read the page again.' };
   if (args.tool === 'rect') {
-    // Natively requested for the consent bubble only; brings the element into view.
-    e.scrollIntoView({ block: 'center', inline: 'nearest' });
+    // Natively requested for the consent bubble only.
+    if (!args.preview_only) e.scrollIntoView({ block: 'center', inline: 'nearest' });
     return box(e);
   }
   if (args.tool === 'scroll') {
@@ -438,17 +596,22 @@
   }
   if (args.tool === 'point') return { ...point(e), label: label(e).replace(/\s+/g, ' ').trim().slice(0, 120) };
   if (args.tool === 'click') {
+    const clickLabel = (label(e).replace(/\s+/g, ' ').trim() || 'Click').slice(0, 120);
     if (!args.confirmed)
-      return { confirmation_required: true, label: (label(e).replace(/\s+/g, ' ').trim() || 'Click').slice(0, 120) };
+      return { confirmation_required: true, label: clickLabel };
+    if (args.expected_label !== undefined && args.expected_label !== clickLabel)
+      return { error: 'The click target changed. Read the page again.' };
     // A real mouse click at a visible spot of the element; a covered element
     // still gets a scripted click.
     const at = point(e);
     if (!at.covered) return { point: { x: at.x, y: at.y } };
+    if (args.native_only) return { error: 'The click target is covered.' };
     e.click(); return { ok: true, detail: 'The element was covered; sent a scripted click instead' };
   }
   if (args.tool === 'type') {
     if (typeof args.text !== 'string' || args.text.length > 16000) return { error: 'Text of up to 16000 characters is required' };
     if (e.isContentEditable) {
+      if (args.edit_in_renderer) return insertInEditor(e, args.text, true);
       // Rich editors take text only as keyboard input: select their content, then type.
       e.focus();
       const range = e.ownerDocument.createRange(); range.selectNodeContents(e);
@@ -457,8 +620,14 @@
     }
     if (!e.matches('input,textarea') || e.disabled || e.readOnly)
       return { error: 'Not an editable, non-sensitive field' };
+    const isTextField = field => field.matches('textarea,input:not([type]),input[type=text],input[type=search],input[type=tel],input[type=url],input[type=email],input[type=number]');
+    if (args.edit_in_renderer && !isTextField(e))
+      return { error: 'The target is not a text field.' };
     const prototype = e.tagName === 'TEXTAREA' ? e.ownerDocument.defaultView.HTMLTextAreaElement.prototype : e.ownerDocument.defaultView.HTMLInputElement.prototype;
     e.focus();
+    if (args.edit_in_renderer && (activeEditor() !== e || sensitive(e) || !e.isConnected ||
+        e.disabled || e.readOnly || !isTextField(e)))
+      return { error: 'The field focus changed.' };
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(e, args.text);
     e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true }));
     return { ok: true };

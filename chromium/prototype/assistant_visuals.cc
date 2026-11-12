@@ -1,5 +1,8 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "chromium/prototype/assistant_visuals.h"
+
+#include "base/strings/utf_string_conversions.h"
+#include "chromium/prototype/assistant_providers.h"
 #include <algorithm>
 #include <array>
 #include "third_party/skia/include/utils/SkParsePath.h"
@@ -43,6 +46,17 @@
 #include "ui/views/focus/focus_manager.h"
 
 namespace zitter::prototype {
+
+std::u16string AssistantProviderLabel(std::string_view provider) {
+  constexpr std::array<const char16_t*, 4> kProviderLabels = {
+      u"OpenAI", u"Codex", u"Claude Code", u"Ollama"};
+  for (size_t i = 0; i < kAssistantProviders.size(); ++i) {
+    if (provider == kAssistantProviders[i])
+      return kProviderLabels[i];
+  }
+  return base::UTF8ToUTF16(provider);
+}
+
 void PaintAssistantSpark(gfx::Canvas* canvas, const gfx::RectF& box, SkColor color) {
   cc::PaintFlags flags; flags.setAntiAlias(true); flags.setColor(color);
   flags.setStyle(cc::PaintFlags::kStroke_Style); flags.setStrokeWidth(1.5f * box.width() / 16.f);
@@ -712,6 +726,7 @@ class ConsentBubble final : public views::View {
     skip_=AddChildView(CreateAssistantPill(std::move(skip),T(u"Pomiń"),1,std::nullopt,u"Esc"));
     if(allow_all){
       remember_=AddChildView(std::make_unique<views::Checkbox>(T(u"Nie pytaj do końca sesji")));
+      remember_->SetTextSubpixelRenderingEnabled(false);
     }
   }
   void OnThemeChanged() override {

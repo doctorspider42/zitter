@@ -5,11 +5,9 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
-#include "base/i18n/case_conversion.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -25,8 +23,10 @@
 #include "chrome/browser/ui/views/extensions/extension_view_views.h"
 #include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
+#include "chromium/prototype/fingerprint_toolbar.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
+#include "chromium/prototype/toolbar_menu.h"
 #include "components/input/native_web_keyboard_event.h"
 #include "components/prefs/pref_service.h"
 #include "components/sessions/content/session_tab_helper.h"
@@ -85,9 +85,7 @@ using SiteInteraction = extensions::SitePermissionsHelper::SiteInteraction;
 // between the pinned actions and the puzzle; a 296 px menu with 44 px rows.
 constexpr int kButton = 28;
 constexpr int kIcon = 16;
-constexpr int kMenuWidth = 296;
 constexpr int kRowHeight = 44;
-constexpr int kFooterHeight = 30;
 constexpr int kRowAction = 24;
 constexpr gfx::Size kPopupMin(25, 25);
 constexpr gfx::Size kPopupMax(800, 600);
@@ -95,132 +93,12 @@ constexpr gfx::Size kPopupMax(800, 600);
 // Design-system line icons on the 16 px grid, stroke 1.6.
 constexpr char kPuzzleIcon[] = "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.5 0 0 0 0 3H12v2H3v-2h1.5a1.5 1.5 0 0 0 0-3H3z";
 constexpr char kPinIcon[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
-constexpr char kWarnIcon[] = "M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1";
-constexpr char kGearIcon[] = "M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14M3.8 3.8l1 1M11.2 11.2l1 1M3.8 12.2l1-1M11.2 4.8l1-1";
 constexpr char kPlusIcon[] = "M8 3v10M3 8h10";
 constexpr char kStoreIcon[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
-// Fingerprint protection: ridges, a turn arrow, a crossed-out shield.
-constexpr char kFingerprintIcon[] = "M4.2 4.2a5.5 5.5 0 0 1 7.6 0M3 11.5V9.5a5 5 0 0 1 10 0v1M5.5 13.5V9.5a2.5 2.5 0 0 1 5 0V12M8 9v5";
-constexpr char kTurnIcon[] = "M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3";
-constexpr char kShieldOffIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM2.5 2.5l11 11";
-// Ad blocking: a shield with a bar across, the assistant's spark.
-constexpr char kShieldIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM5.5 7.5h5";
-
-// The subset of SVG path data the design icons use: M L H V A Z, absolute or
-// relative, with implicit repeats.
-SkPath SvgPath(std::string_view d, const SkMatrix& transform) {
-  SkPathBuilder path;
-  SkPoint current{0, 0}, start{0, 0};
-  char command = 0;
-  size_t i = 0;
-  auto skip = [&] { while (i < d.size() && (d[i] == ' ' || d[i] == ',')) ++i; };
-  auto number = [&]() -> float {
-    skip();
-    size_t j = i;
-    if (j < d.size() && (d[j] == '-' || d[j] == '+')) ++j;
-    bool dot = false;
-    while (j < d.size() && (std::isdigit(static_cast<unsigned char>(d[j])) || (d[j] == '.' && !dot))) {
-      dot |= d[j] == '.';
-      ++j;
-    }
-    double value = 0;
-    base::StringToDouble(d.substr(i, j - i), &value);
-    i = j;
-    return static_cast<float>(value);
-  };
-  while (true) {
-    skip();
-    if (i >= d.size()) break;
-    if (std::isalpha(static_cast<unsigned char>(d[i]))) {
-      command = d[i++];
-      if (command == 'z' || command == 'Z') { path.close(); current = start; continue; }
-    }
-    const bool relative = std::islower(static_cast<unsigned char>(command));
-    switch (std::tolower(static_cast<unsigned char>(command))) {
-      case 'm': {
-        SkPoint p{number(), number()};
-        if (relative) p += current;
-        path.moveTo(p);
-        current = start = p;
-        command = relative ? 'l' : 'L';  // Further pairs are lines.
-        break;
-      }
-      case 'l': {
-        SkPoint p{number(), number()};
-        if (relative) p += current;
-        path.lineTo(p);
-        current = p;
-        break;
-      }
-      case 'h': {
-        const float x = number();
-        current.fX = relative ? current.fX + x : x;
-        path.lineTo(current);
-        break;
-      }
-      case 'v': {
-        const float y = number();
-        current.fY = relative ? current.fY + y : y;
-        path.lineTo(current);
-        break;
-      }
-      case 'a': {
-        const float rx = number(), ry = number(), rotation = number();
-        const bool large = number() != 0, sweep = number() != 0;
-        SkPoint p{number(), number()};
-        if (relative) p += current;
-        // SVG sweep-flag 1 is clockwise.
-        path.rArcTo({rx, ry}, rotation, large ? SkPathBuilder::kLarge_ArcSize : SkPathBuilder::kSmall_ArcSize,
-                    sweep ? SkPathDirection::kCW : SkPathDirection::kCCW, p - current);
-        current = p;
-        break;
-      }
-      default:
-        return path.detach(&transform);
-    }
-  }
-  return path.detach(&transform);
-}
-
-void StrokeIcon(gfx::Canvas* canvas, std::string_view d, gfx::RectF box, SkColor color) {
-  if (d == kAssistantSparkIcon) { PaintAssistantSpark(canvas, box, color); return; }
-  const float scale = box.width() / kIcon;
-  SkMatrix transform = SkMatrix::Translate(box.x(), box.y());
-  transform.preScale(scale, scale);
-  cc::PaintFlags flags;
-  flags.setAntiAlias(true);
-  flags.setStyle(cc::PaintFlags::kStroke_Style);
-  flags.setStrokeWidth(1.6f * scale);
-  flags.setStrokeCap(cc::PaintFlags::kRound_Cap);
-  flags.setStrokeJoin(cc::PaintFlags::kRound_Join);
-  flags.setColor(color);
-  canvas->DrawPath(SvgPath(d, transform), flags);
-}
-
-void FillCircle(gfx::Canvas* canvas, gfx::PointF center, float radius, SkColor color, bool stroke = false) {
-  cc::PaintFlags flags;
-  flags.setAntiAlias(true);
-  flags.setColor(color);
-  if (stroke) { flags.setStyle(cc::PaintFlags::kStroke_Style); flags.setStrokeWidth(1.6f); }
-  canvas->DrawCircle(center, radius, flags);
-}
-
-void FillRound(gfx::Canvas* canvas, gfx::RectF rect, float radius, SkColor color) {
-  cc::PaintFlags flags;
-  flags.setAntiAlias(true);
-  flags.setColor(color);
-  canvas->DrawRoundRect(rect, radius, flags);
-}
 
 bool IsDark(const views::View* view) {
   return view && view->GetWidget() &&
          view->GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
-}
-
-// A design system family (1 display, 2 sans, 3 mono; design.rs family_id).
-gfx::FontList DesignFont(uint32_t family, int size, int weight) {
-  return gfx::FontList({std::string(sidebar::design_font_family(family))}, gfx::Font::NORMAL, size,
-                       static_cast<gfx::Font::Weight>(weight));
 }
 
 // The icon an action shows for a tab, in full color or in the grey of an
@@ -595,284 +473,6 @@ class PrivateModeBadge final : public views::View {
 BEGIN_METADATA(PrivateModeBadge)
 END_METADATA
 
-// Fingerprint protection in the bar, before the pinned actions: an IconButton
-// like theirs, shown while the profile's protection is on.
-class FingerprintButton final : public views::Button {
-  METADATA_HEADER(FingerprintButton, views::Button)
- public:
-  FingerprintButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette)
-      : views::Button(std::move(callback)), palette_(std::move(palette)) {
-    SetPreferredSize(gfx::Size(kButton, kButton));
-    GetViewAccessibility().SetName(T(u"Ochrona przed fingerprintingiem"));
-    SetTooltipText(T(u"Ochrona przed fingerprintingiem"));
-    GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kDialog);
-  }
-  void SetOpen(bool open) { if (open_ != open) { open_ = open; SchedulePaint(); } }
-  void SetShake(int dx) { if (shake_ != dx) { shake_ = dx; SchedulePaint(); } }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    const auto p = palette_.Run();
-    const gfx::RectF box(GetLocalBounds());
-    SkColor ink = p.ink_muted;
-    if (open_) { FillRound(canvas, box, 8, p.accent_soft); ink = p.accent_ink; }
-    else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
-    StrokeIcon(canvas, kFingerprintIcon, gfx::RectF(box.CenterPoint().x() - 8 + shake_, box.CenterPoint().y() - 8, 16, 16), ink);
-  }
- private:
-  base::RepeatingCallback<sidebar::DesignPalette()> palette_;
-  bool open_ = false;
-  int shake_ = 0;
-};
-BEGIN_METADATA(FingerprintButton)
-END_METADATA
-
-// The panel's first block: what this site sees. An `accent-soft` tile with the
-// fingerprint, the code in `url`, then what makes it change in `label`.
-class FingerprintCard final : public views::View {
-  METADATA_HEADER(FingerprintCard, views::View)
- public:
-  explicit FingerprintCard(const sidebar::DesignPalette& palette) : palette_(palette) {
-    SetPreferredSize(gfx::Size(kMenuWidth - 8, 88));
-    GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
-  }
-  void SetCode(std::u16string code) {
-    code_ = std::move(code);
-    GetViewAccessibility().SetName(code_.empty() ? T(u"Ta strona nie dostaje odcisku")
-                                                 : TF(u"Odcisk dla tej strony: {}", {code_}));
-    SchedulePaint();
-  }
-  const std::u16string& code() const { return code_; }
-  void SetShake(int dx) { if (shake_ != dx) { shake_ = dx; SchedulePaint(); } }
-  void OnPaint(gfx::Canvas* canvas) override {
-    const gfx::RectF tile(8, 8, 32, 32);
-    FillRound(canvas, tile, 6, palette_.accent_soft);
-    StrokeIcon(canvas, kFingerprintIcon, gfx::RectF(16, 16, 16, 16), palette_.accent_ink);
-    const auto label = DesignFont(2, 12, 400);
-    const int x = 52, right = width() - 8;
-    canvas->DrawStringRectWithFlags(code_.empty() ? T(u"Ta strona nie dostaje odcisku") : T(u"Odcisk dla tej strony"),
-                                    label, palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
-    canvas->DrawStringRectWithFlags(code_.empty() ? u"—" : code_, DesignFont(3, 13, 500), palette_.ink,
-                                    gfx::Rect(x + shake_, 23, right - x, 18), gfx::Canvas::NO_SUBPIXEL_RENDERING);
-    canvas->DrawStringRectWithFlags(T(u"Inny na każdej stronie i nowy po ponownym uruchomieniu Zittera."), label,
-                                    palette_.ink_muted, gfx::Rect(8, 48, width() - 16, 32), gfx::Canvas::MULTI_LINE);
-  }
- private:
-  sidebar::DesignPalette palette_;
-  std::u16string code_;
-  int shake_ = 0;
-};
-BEGIN_METADATA(FingerprintCard)
-END_METADATA
-
-// Ad blocking in the bar, first: the fingerprint button's IconButton with the
-// page's blocked count in a small pill, crossed out where the site is allowed.
-class ShieldButton final : public views::Button {
-  METADATA_HEADER(ShieldButton, views::Button)
- public:
-  ShieldButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette)
-      : views::Button(std::move(callback)), palette_(std::move(palette)) {
-    SetPreferredSize(gfx::Size(kButton, kButton));
-    GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kDialog);
-    SetCount(0);
-  }
-  void SetOpen(bool open) { if (open_ != open) { open_ = open; SchedulePaint(); } }
-  // -1: off on this site.
-  void SetCount(int count) {
-    count_ = count;
-    const auto name = count < 0 ? T(u"Blokowanie reklam wyłączone na tej stronie")
-                                : TF(u"Blokowanie reklam: {} zablokowanych na tej stronie", {base::NumberToString16(count)});
-    GetViewAccessibility().SetName(name);
-    SetTooltipText(name);
-    SchedulePaint();
-  }
-  int count() const { return count_; }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    const auto p = palette_.Run();
-    const gfx::RectF box(GetLocalBounds());
-    SkColor ink = p.ink_muted;
-    if (open_) { FillRound(canvas, box, 8, p.accent_soft); ink = p.accent_ink; }
-    else if (GetState() == STATE_HOVERED || GetState() == STATE_PRESSED) { FillRound(canvas, box, 8, p.bg_hover); ink = p.ink; }
-    StrokeIcon(canvas, count_ < 0 ? kShieldOffIcon : kShieldIcon, gfx::RectF(box.CenterPoint().x() - 8, box.CenterPoint().y() - 8, 16, 16), ink);
-    if (count_ <= 0) return;
-    // The extension badge (design: Extensions): neutral, so it never competes
-    // with the space accent.
-    const auto text = count_ > 99 ? std::u16string(u"99+") : base::NumberToString16(count_);
-    const auto font = DesignFont(3, 9, 600);
-    const float width = std::max(14, gfx::GetStringWidth(text, font) + 6);
-    const gfx::RectF pill(this->width() - width, height() - 1 - 12, width, 12);
-    auto ring = pill;
-    ring.Outset(1.5f);
-    FillRound(canvas, ring, 7.5f, p.bg_void);
-    FillRound(canvas, pill, 6, p.ink);
-    canvas->DrawStringRectWithFlags(text, font, p.bg_raised, gfx::ToEnclosingRect(pill), gfx::Canvas::TEXT_ALIGN_CENTER);
-  }
- private:
-  base::RepeatingCallback<sidebar::DesignPalette()> palette_;
-  bool open_ = false;
-  int count_ = 0;
-};
-BEGIN_METADATA(ShieldButton)
-END_METADATA
-
-// The shield panel's first block, built like the fingerprint card: a tile,
-// what was blocked here in `url`, and the site.
-class ShieldCard final : public views::View {
-  METADATA_HEADER(ShieldCard, views::View)
- public:
-  explicit ShieldCard(const sidebar::DesignPalette& palette) : palette_(palette) {
-    SetPreferredSize(gfx::Size(kMenuWidth - 8, 88));
-    GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
-  }
-  void Set(int count, std::u16string site) {
-    count_ = count; site_ = std::move(site);
-    GetViewAccessibility().SetName(count_ < 0 ? T(u"Blokowanie wyłączone na tej stronie")
-                                              : TF(u"Zablokowano na tej stronie: {}", {base::NumberToString16(count_)}));
-    // As tall as the detail needs: one line or two, no empty band above the rows.
-    int w = kMenuWidth - 8 - 16, h = 0;
-    gfx::Canvas::SizeStringInt(Detail(), DesignFont(2, 12, 400), &w, &h, 0, gfx::Canvas::MULTI_LINE);
-    SetPreferredSize(gfx::Size(kMenuWidth - 8, 48 + h + 8));
-    SchedulePaint();
-  }
-  void OnPaint(gfx::Canvas* canvas) override {
-    const gfx::RectF tile(8, 8, 32, 32);
-    FillRound(canvas, tile, 6, count_ < 0 ? palette_.bg_hover : palette_.accent_soft);
-    StrokeIcon(canvas, count_ < 0 ? kShieldOffIcon : kShieldIcon, gfx::RectF(16, 16, 16, 16), count_ < 0 ? palette_.ink_muted : palette_.accent_ink);
-    const auto label = DesignFont(2, 12, 400);
-    const int x = 52, right = width() - 8;
-    canvas->DrawStringRectWithFlags(count_ < 0 ? T(u"Blokowanie wyłączone na tej stronie") : T(u"Zablokowano na tej stronie"),
-                                    label, palette_.ink_muted, gfx::Rect(x, 6, right - x, 16), 0);
-    canvas->DrawStringRectWithFlags(count_ < 0 ? u"—" : base::NumberToString16(count_), DesignFont(2, 13, 600), palette_.ink,
-                                    gfx::Rect(x, 23, right - x, 18), gfx::Canvas::NO_SUBPIXEL_RENDERING);
-    canvas->DrawStringRectWithFlags(Detail(), label, palette_.ink_muted, gfx::Rect(8, 48, width() - 16, height() - 48 - 8),
-                                    gfx::Canvas::MULTI_LINE);
-  }
- private:
-  std::u16string Detail() const {
-    return site_.empty() ? T(u"Reklamy i elementy śledzące z list EasyList i EasyPrivacy.")
-                         : TF(u"{} · listy EasyList i EasyPrivacy oraz Twoje reguły.", {site_});
-  }
-  sidebar::DesignPalette palette_;
-  int count_ = 0;
-  std::u16string site_;
-};
-BEGIN_METADATA(ShieldCard)
-END_METADATA
-
-// A menu row: an extension (icon, name, site access, pin and more) or a
-// footer command (icon, label).
-class MenuRow final : public views::Button {
-  METADATA_HEADER(MenuRow, views::Button)
- public:
-  MenuRow(PressedCallback callback, const sidebar::DesignPalette& palette, int height)
-      : views::Button(std::move(callback)), palette_(palette) {
-    SetPreferredSize(gfx::Size(kMenuWidth - 8, height));
-    SetNotifyEnterExitOnChild(true);
-    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
-        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 8), 8));
-    layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
-  }
-  // Extension rows: the icon view, then text drawn by the row, then actions.
-  void SetText(std::u16string title, std::u16string detail, bool warn, int lead) {
-    title_ = std::move(title); detail_ = std::move(detail); warn_ = warn; lead_ = lead;
-    GetViewAccessibility().SetName(detail_.empty() ? title_ : title_ + u", " + detail_);
-  }
-  void SetGlyph(const char* glyph) { glyph_ = glyph; }
-  // The gear: spokes from the path and a ring in the middle.
-  void SetRing(bool ring) { ring_ = ring; }
-  void SetSelected(bool selected) { selected_ = selected; SchedulePaint(); }
-  // Pin and more appear on hover; a pinned pin stays.
-  void AddTrailing(views::View* view, bool always) { trailing_.push_back({view, always}); UpdateTrailing(); }
-  views::View* text_slot() { return slot_; }
-  void Init() {
-    if (glyph_) {
-      auto* icon = AddChildView(std::make_unique<views::View>());
-      icon->SetPreferredSize(gfx::Size(16, 16));
-      icon->SetCanProcessEventsWithinSubtree(false);
-      icon_slot_ = icon;
-    }
-    slot_ = AddChildView(std::make_unique<views::View>());
-    // The text column spans the row's height; the row draws the text in it.
-    slot_->SetPreferredSize(gfx::Size(0, GetPreferredSize({}).height()));
-    slot_->SetCanProcessEventsWithinSubtree(false);
-    static_cast<views::BoxLayout*>(GetLayoutManager())->SetFlexForView(slot_, 1);
-  }
-  void OnMouseEntered(const ui::MouseEvent& event) override { views::Button::OnMouseEntered(event); UpdateTrailing(); }
-  void OnMouseExited(const ui::MouseEvent& event) override { views::Button::OnMouseExited(event); UpdateTrailing(); }
-  void PaintButtonContents(gfx::Canvas* canvas) override {
-    const bool hovered = IsMouseHovered() || GetState() == STATE_PRESSED || selected_ || HasFocus();
-    if (hovered) FillRound(canvas, gfx::RectF(GetLocalBounds()), 8, palette_.bg_hover);
-    if (icon_slot_) {
-      const gfx::RectF icon(icon_slot_->bounds());
-      StrokeIcon(canvas, glyph_, icon, palette_.ink_muted);
-      if (ring_) FillCircle(canvas, icon.CenterPoint(), 2, palette_.ink_muted, true);
-    }
-    if (!slot_) return;
-    const auto box = slot_->bounds();
-    const auto body = DesignFont(2, 13, 400);
-    if (detail_.empty()) {
-      canvas->DrawStringRectWithFlags(title_, body, palette_.ink, box, gfx::Canvas::NO_SUBPIXEL_RENDERING);
-      return;
-    }
-    const auto label = DesignFont(2, 12, 400);
-    const int top = box.y() + (box.height() - 34) / 2;
-    canvas->DrawStringRectWithFlags(title_, body, palette_.ink, gfx::Rect(box.x(), top, box.width(), 18), 0);
-    int x = box.x();
-    const SkColor tone = warn_ ? palette_.warn : palette_.ink_muted;
-    if (warn_) { StrokeIcon(canvas, kWarnIcon, gfx::RectF(x, top + 20, 12, 12), tone); x += 16; }
-    canvas->DrawStringRectWithFlags(detail_, label, tone, gfx::Rect(x, top + 18, box.right() - x, 16), 0);
-  }
-  void OnFocus() override { views::Button::OnFocus(); SchedulePaint(); }
-  void OnBlur() override { views::Button::OnBlur(); SchedulePaint(); }
- private:
-  void UpdateTrailing() {
-    const bool hovered = IsMouseHovered();
-    for (auto& [view, always] : trailing_) view->SetVisible(always || hovered);
-    // Keep the text column the same width whether or not the actions show.
-    InvalidateLayout();
-  }
-  sidebar::DesignPalette palette_;
-  std::u16string title_, detail_;
-  bool warn_ = false;
-  int lead_ = 0;
-  const char* glyph_ = nullptr;
-  bool ring_ = false;
-  bool selected_ = false;
-  raw_ptr<views::View> icon_slot_ = nullptr;
-  raw_ptr<views::View> slot_ = nullptr;
-  std::vector<std::pair<raw_ptr<views::View>, bool>> trailing_;
-};
-BEGIN_METADATA(MenuRow)
-END_METADATA
-
-// The eyebrow above the rows: "ROZSZERZENIA" (or the panel's own label).
-class MenuHeader final : public views::View {
-  METADATA_HEADER(MenuHeader, views::View)
- public:
-  explicit MenuHeader(const sidebar::DesignPalette& palette, std::u16string eyebrow = {})
-      : eyebrow_(eyebrow.empty() ? T(u"Rozszerzenia") : std::move(eyebrow)), palette_(palette) {
-    SetPreferredSize(gfx::Size(kMenuWidth - 8, 26));
-  }
-  void OnPaint(gfx::Canvas* canvas) override {
-    const gfx::Rect box(8, 8, width() - 16, 14);
-    canvas->DrawStringRectWithFlags(base::i18n::ToUpper(eyebrow_), DesignFont(2, 10, 600), palette_.ink_muted, box, 0);
-  }
- private:
-  std::u16string eyebrow_;
-  sidebar::DesignPalette palette_;
-};
-BEGIN_METADATA(MenuHeader)
-END_METADATA
-
-class MenuSeparator final : public views::View {
-  METADATA_HEADER(MenuSeparator, views::View)
- public:
-  explicit MenuSeparator(SkColor color) : color_(color) { SetPreferredSize(gfx::Size(kMenuWidth - 8, 9)); }
-  void OnPaint(gfx::Canvas* canvas) override { canvas->FillRect(gfx::Rect(8, 4, width() - 16, 1), color_); }
- private:
-  SkColor color_;
-};
-BEGIN_METADATA(MenuSeparator)
-END_METADATA
-
 // Popup links open in a Zitter tab of the popup's profile: the popup has no
 // browser window of its own.
 class PopupHostDelegate final : public extensions::ExtensionViewHost::Delegate {
@@ -1097,70 +697,6 @@ class ExtensionsBar::Popup final : public views::BubbleDialogDelegate,
   std::unique_ptr<ActivationWatcher> anchor_watcher_;
 };
 
-// Fingerprint protection under its button (design: Extensions menu): what this
-// site sees, then a new fingerprint, turning protection off and Preferences.
-// The bar owns this delegate and its widget.
-class ExtensionsBar::FingerprintPanel final : public views::BubbleDialogDelegate {
- public:
-  FingerprintPanel(ExtensionsBar* bar, views::View* anchor)
-      : views::BubbleDialogDelegate(anchor, views::BubbleBorder::TOP_RIGHT), bar_(bar), palette_(bar->palette()) {
-    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-    SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
-    set_margins(gfx::Insets(4));
-    set_corner_radius(12);
-    set_fixed_width(kMenuWidth);
-    SetBackgroundColor(palette_.bg_raised);
-    SetShowCloseButton(false);
-    SetAccessibleWindowRole(ax::mojom::Role::kDialog);
-    SetTitle(T(u"Ochrona przed fingerprintingiem"));
-    SetShowTitle(false);
-    auto body = std::make_unique<views::View>();
-    body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
-    body->AddChildView(std::make_unique<MenuHeader>(palette_, T(u"Odcisk przeglądarki")));
-    card_ = body->AddChildView(std::make_unique<FingerprintCard>(palette_));
-    body->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
-    auto weak = bar_->weak_factory_.GetWeakPtr();
-    auto add_row = [&](std::u16string text, const char* glyph, void (ExtensionsBar::*command)()) {
-      auto* row = body->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
-          [](base::WeakPtr<ExtensionsBar> bar, void (ExtensionsBar::*command)()) { if (bar) (bar.get()->*command)(); },
-          weak, command), palette_, kFooterHeight));
-      row->SetGlyph(glyph);
-      row->Init();
-      row->SetText(std::move(text), {}, false, 16);
-      return row;
-    };
-    add_row(T(u"Zmień odcisk"), kTurnIcon, &ExtensionsBar::NewFingerprint);
-    const bool enabled = bar_->profile()->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
-    add_row(enabled ? T(u"Wyłącz ochronę") : T(u"Włącz ochronę"), kShieldOffIcon, &ExtensionsBar::TurnOffFingerprintProtection);
-    add_row(T(u"Ustawienia prywatności"), kGearIcon, &ExtensionsBar::OpenPrivacySettings)->SetRing(true);
-    SetContentsView(std::move(body));
-    Refresh();
-  }
-  void Refresh() {
-    const GURL url = bar_->page() ? bar_->page()->GetLastCommittedURL() : GURL();
-    card_->SetCode(bar_->profile() ? FingerprintProtection::SiteCode(bar_->profile(), url) : std::u16string());
-  }
-  // A new fingerprint lands: one tremor of the code and of the bar's button.
-  void Tremor() {
-    if (!gfx::Animation::ShouldRenderRichAnimation()) return;
-    step_ = 0;
-    timer_.Start(FROM_HERE, base::Milliseconds(45), base::BindRepeating([](FingerprintPanel* panel) {
-      static constexpr std::array<int, 4> kOffsets = {1, -1, 1, 0};
-      if (panel->step_ >= kOffsets.size()) { panel->timer_.Stop(); return; }
-      const int dx = kOffsets[panel->step_++];
-      panel->card_->SetShake(dx);
-      if (auto* button = views::AsViewClass<FingerprintButton>(panel->bar_->fingerprint_button_.get())) button->SetShake(dx);
-    }, base::Unretained(this)));
-  }
-  const std::u16string& code() const { return card_->code(); }
- private:
-  raw_ptr<ExtensionsBar> bar_;
-  sidebar::DesignPalette palette_;
-  raw_ptr<FingerprintCard> card_ = nullptr;
-  base::RepeatingTimer timer_;
-  size_t step_ = 0;
-};
-
 // Ad blocking under the shield: what was blocked here, the site switch, the
 // assistant for what the lists miss, and Preferences. The bar owns it.
 class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
@@ -1274,6 +810,40 @@ ExtensionsBar::ExtensionsBar(Callbacks callbacks) : callbacks_(std::move(callbac
   GetViewAccessibility().SetRole(ax::mojom::Role::kToolbar);
   GetViewAccessibility().SetName(T(u"Rozszerzenia"));
   SetVisible(false);
+  FingerprintToolbar::Callbacks fingerprint;
+  fingerprint.palette = base::BindRepeating(&ExtensionsBar::palette,
+                                             base::Unretained(this));
+  fingerprint.enabled = base::BindRepeating([](ExtensionsBar* bar) {
+    return bar->profile_ &&
+           bar->profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
+  }, base::Unretained(this));
+  fingerprint.site_code = base::BindRepeating([](ExtensionsBar* bar) {
+    const GURL url = bar->page_ ? bar->page_->GetLastCommittedURL() : GURL();
+    return bar->profile_ ? FingerprintProtection::SiteCode(bar->profile_, url)
+                         : std::u16string();
+  }, base::Unretained(this));
+  fingerprint.before_open = base::BindRepeating([](ExtensionsBar* bar) {
+    bar->CloseMenus();
+    bar->ClosePopup();
+  }, base::Unretained(this));
+  fingerprint.rotate = base::BindRepeating([](ExtensionsBar* bar) {
+    if (bar->profile_)
+      FingerprintProtection::NewSessionKey(bar->profile_);
+  }, base::Unretained(this));
+  fingerprint.toggle_protection = base::BindRepeating([](ExtensionsBar* bar) {
+    if (bar->profile_) {
+      auto* prefs = bar->profile_->GetPrefs();
+      prefs->SetBoolean(kFingerprintProtectionPref,
+                        bar->callbacks_.private_mode &&
+                            !prefs->GetBoolean(kFingerprintProtectionPref));
+    }
+  }, base::Unretained(this));
+  fingerprint.open_settings = base::BindRepeating([](ExtensionsBar* bar) {
+    if (bar->callbacks_.open_privacy_settings)
+      bar->callbacks_.open_privacy_settings.Run();
+  }, base::Unretained(this));
+  fingerprint_toolbar_ = std::make_unique<FingerprintToolbar>(
+      std::move(fingerprint));
   if (callbacks_.private_mode) Rebuild();
 }
 
@@ -1284,8 +854,7 @@ ExtensionsBar::~ExtensionsBar() {
   assistant_panel_.reset();
   shield_widget_.reset();
   shield_panel_.reset();
-  fingerprint_widget_.reset();
-  fingerprint_panel_.reset();
+  fingerprint_toolbar_.reset();
   context_menu_.reset();
   popup_widget_.reset();
   popup_.reset();
@@ -1306,6 +875,7 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
   page_ = page ? page->GetWeakPtr() : nullptr;
   if (page_changed) ObservePageCount();
   if (profile_changed) {
+    fingerprint_toolbar_->Close();
     CloseMenus();
     model_observation_.Reset();
     profile_ = profile;
@@ -1316,7 +886,7 @@ void ExtensionsBar::SetContext(Profile* profile, content::WebContents* page) {
   }
   RefreshButtons();
   RefreshShield();
-  if (fingerprint_panel_) fingerprint_panel_->Refresh();
+  fingerprint_toolbar_->Refresh();
 }
 
 const Extension* ExtensionsBar::ExtensionFor(const std::string& id) const {
@@ -1336,7 +906,7 @@ void ExtensionsBar::SetAssistantState(AssistantState state) {
   if (auto* button = views::AsViewClass<AssistantButton>(assistant_button_.get())) button->SetState(state);
 }
 void ExtensionsBar::Rebuild() {
-  if (callbacks_.private_mode && fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  if (callbacks_.private_mode) fingerprint_toolbar_->Close();
   DestroyAssistantPanel();
   RemoveAllChildViews();
   buttons_.clear();
@@ -1351,19 +921,15 @@ void ExtensionsBar::Rebuild() {
     auto palette = base::BindRepeating(&ExtensionsBar::palette, base::Unretained(this));
     AddChildView(std::make_unique<PrivateModeBadge>(palette));
     if (profile_) {
-      const bool enabled = profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
-      fingerprint_button_ = AddChildView(std::make_unique<FingerprintButton>(
-          base::BindRepeating(&ExtensionsBar::ToggleFingerprintPanel, base::Unretained(this)), palette));
-      static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(enabled);
-      fingerprint_button_->SetTooltipText(enabled ? T(u"Ochrona przed fingerprintingiem w trybie prywatnym: włączona")
-                                                : T(u"Ochrona przed fingerprintingiem w trybie prywatnym: wyłączona"));
+      fingerprint_button_ =
+          AddChildView(fingerprint_toolbar_->CreateButton(/*private_mode=*/true));
     }
     PreferredSizeChanged();
     SchedulePaint();
     return;
   }
   const bool protection = model && profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref);
-  if (!protection && fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  if (!protection) fingerprint_toolbar_->Close();
   const bool blocking = model && profile_->GetPrefs()->GetBoolean(kAdBlockingPref);
   if (!blocking && shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
   if (!model) { PreferredSizeChanged(); return; }
@@ -1380,9 +946,9 @@ void ExtensionsBar::Rebuild() {
     static_cast<ShieldButton*>(shield_button_.get())->SetCount(ShieldCount());
   }
   if (protection) {
-    fingerprint_button_ = AddChildView(std::make_unique<FingerprintButton>(
-        base::BindRepeating(&ExtensionsBar::ToggleFingerprintPanel, base::Unretained(this)), palette));
-    if (fingerprint_widget_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(true);
+    fingerprint_button_ =
+        AddChildView(fingerprint_toolbar_->CreateButton(/*private_mode=*/false));
+    fingerprint_toolbar_->Refresh();
   }
   size_t shown = 0;
   for (const auto& id : model->pinned_action_ids()) {
@@ -1586,49 +1152,12 @@ void ExtensionsBar::ObserveFingerprintProtection() {
   fingerprint_pref_.Add(kAdBlockingPref, base::BindRepeating(&ExtensionsBar::Rebuild, base::Unretained(this)));
   blocking_changed_ = ContentBlocking::Get().Observe(base::BindRepeating(&ExtensionsBar::RefreshShield, base::Unretained(this)));
   fingerprint_key_ = FingerprintProtection::ObserveSessionKey(profile_, base::BindRepeating(
-      [](ExtensionsBar* bar) { if (bar->fingerprint_panel_) bar->fingerprint_panel_->Refresh(); }, base::Unretained(this)));
+      [](ExtensionsBar* bar) { bar->fingerprint_toolbar_->Refresh(); },
+      base::Unretained(this)));
 }
 
 void ExtensionsBar::ToggleFingerprintPanel() {
-  if (fingerprint_widget_) { if (!fingerprint_widget_->IsClosed()) fingerprint_widget_->Close(); return; }
-  if (!profile_ || !fingerprint_button_ || !GetWidget()) return;
-  CloseMenus();
-  ClosePopup();
-  fingerprint_panel_ = std::make_unique<FingerprintPanel>(this, fingerprint_button_);
-  // Never delete a widget on its own closing stack.
-  fingerprint_widget_ = views::BubbleDialogDelegate::CreateBubble(fingerprint_panel_.get(), base::BindOnce(
-      [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {
-        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
-            base::BindOnce(&ExtensionsBar::DestroyFingerprintPanel, bar));
-      }, weak_factory_.GetWeakPtr()));
-  static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(true);
-  fingerprint_widget_->Show();
-}
-
-void ExtensionsBar::DestroyFingerprintPanel() {
-  fingerprint_widget_.reset();
-  fingerprint_panel_.reset();
-  if (fingerprint_button_) static_cast<FingerprintButton*>(fingerprint_button_.get())->SetOpen(
-      callbacks_.private_mode && profile_ && profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref));
-}
-
-void ExtensionsBar::NewFingerprint() {
-  if (!profile_) return;
-  FingerprintProtection::NewSessionKey(profile_);
-  if (fingerprint_panel_) fingerprint_panel_->Tremor();
-}
-
-void ExtensionsBar::TurnOffFingerprintProtection() {
-  // Private mode keeps its control available even while protection is off.
-  if (!profile_) return;
-  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
-  profile_->GetPrefs()->SetBoolean(kFingerprintProtectionPref,
-      callbacks_.private_mode && !profile_->GetPrefs()->GetBoolean(kFingerprintProtectionPref));
-}
-
-void ExtensionsBar::OpenPrivacySettings() {
-  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
-  if (callbacks_.open_privacy_settings) callbacks_.open_privacy_settings.Run();
+  fingerprint_toolbar_->Toggle();
 }
 
 void ExtensionsBar::ObservePageCount() {
@@ -1657,7 +1186,7 @@ void ExtensionsBar::ToggleShieldPanel() {
   if (!profile_ || !shield_button_ || !GetWidget()) return;
   CloseMenus();
   ClosePopup();
-  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  fingerprint_toolbar_->Close();
   shield_panel_ = std::make_unique<ShieldPanel>(this, shield_button_);
   // Never delete a widget on its own closing stack.
   shield_widget_ = views::BubbleDialogDelegate::CreateBubble(shield_panel_.get(), base::BindOnce(
@@ -1703,14 +1232,16 @@ void ExtensionsBar::RunShieldCommandForTesting(int command) {
   if (command == 2) OpenAdBlockingSettings();
 }
 
+views::Widget* ExtensionsBar::fingerprint_panel_for_testing() const {
+  return fingerprint_toolbar_->widget();
+}
+
 std::u16string ExtensionsBar::fingerprint_code_for_testing() const {
-  return fingerprint_panel_ ? fingerprint_panel_->code() : std::u16string();
+  return fingerprint_toolbar_->site_code_for_testing();
 }
 
 void ExtensionsBar::RunFingerprintCommandForTesting(int command) {
-  if (command == 0) NewFingerprint();
-  if (command == 1) TurnOffFingerprintProtection();
-  if (command == 2) OpenPrivacySettings();
+  fingerprint_toolbar_->RunCommandForTesting(command);
 }
 
 void ExtensionsBar::OnThemeChanged() {
@@ -1750,7 +1281,7 @@ void ExtensionsBar::ToggleAssistantPanel() {
   if (!assistant_state_.enabled || !assistant_button_ || !GetWidget()) return;
   CloseMenus(); ClosePopup();
   if (shield_widget_ && !shield_widget_->IsClosed()) shield_widget_->Close();
-  if (fingerprint_widget_ && !fingerprint_widget_->IsClosed()) fingerprint_widget_->Close();
+  fingerprint_toolbar_->Close();
   assistant_panel_ = std::make_unique<AssistantActions>(this, assistant_button_);
   assistant_widget_ = views::BubbleDialogDelegate::CreateBubble(assistant_panel_.get(), base::BindOnce(
     [](base::WeakPtr<ExtensionsBar> bar, views::Widget::ClosedReason) {

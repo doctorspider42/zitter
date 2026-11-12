@@ -6,7 +6,8 @@
 #endif
 #include <algorithm>
 #include "base/functional/callback_helpers.h"
-#include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/assistant_host.h"
+#include "chromium/prototype/workspace_shell.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -32,7 +33,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/uuid.h"
-#include "chrome/browser/profiles/profile.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -56,7 +57,6 @@
 
 namespace zitter::prototype {
 namespace {
-constexpr std::array<const char16_t*, 4> kProviderLabels = {u"OpenAI", u"Codex", u"Claude Code", u"Ollama"};
 // Letter tiles for pages take a stable color from their host.
 constexpr std::array<uint32_t, 6> kPageColors = {0xffff8a66, 0xff5cc8ff, 0xffffc35c, 0xffff7eb6, 0xff5fe0b8, 0xffb4a6ff};
 std::u16string Fold(std::u16string_view text) { return base::i18n::ToLower(text); }
@@ -87,7 +87,10 @@ std::string TraceOf(const std::string& tool, const base::DictValue& args, const 
   base::DictValue result;
   if (const auto* dict = value.GetIfDict()) {
     for (const auto [key, item] : *dict) {
-      if (key == "debug_document") continue;
+      if (key == "debug_document" || key == "page_confirmation") continue;
+      if (tool == "adblock_diagnose" && item.is_list()) {
+        result.Set(key, static_cast<int>(item.GetList().size())); continue;
+      }
       if (IsAssistantDebugTool(tool) && (key == "entries" || key == "matches") && item.is_list()) {
         result.Set(key, static_cast<int>(item.GetList().size())); continue;
       }
@@ -102,6 +105,7 @@ std::string TraceOf(const std::string& tool, const base::DictValue& args, const 
   else result.Set("value", clip(base::WriteJson(value).value_or(""), 300));
   auto shown = args.Clone();
   shown.Remove("_debug_document");
+  shown.Remove("_page_confirmation");
   if (const auto* text = shown.FindString("text")) shown.Set("text", clip(*text, 300));
   return base::WriteJson(base::DictValue().Set("tool", tool).Set("args", std::move(shown)).Set("result", std::move(result))).value_or("{}");
 }
@@ -220,103 +224,6 @@ std::u16string AssistantTaskSchedule(const AssistantTask& task) {
   if (task.days == 0x7f) days = T(u"Codziennie");
   return days + u" · " + clock;
 }
-base::DictValue AssistantPermissions::ToValue() const {
-  return base::DictValue().Set("tabs", tabs).Set("pages", pages).Set("actions", actions).Set("history", history).Set("web", web).Set("confirm_clicks", confirm_clicks);
-}
-std::u16string AssistantProviderLabel(std::string_view provider) {
-  for (size_t i = 0; i < kAssistantProviders.size(); ++i) if (provider == kAssistantProviders[i]) return kProviderLabels[i];
-  return base::UTF8ToUTF16(provider);
-}
-AssistantSettings::AssistantSettings()
-    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"openai", "gpt-6.1-sol"}, {"openai", "gpt-6.1-terra"}, {"openai", "gpt-6-astra"}, {"codex", "gpt-6.1-sol"}, {"codex", "gpt-6.1-terra"}, {"codex", "gpt-6-astra"}, {"codex", "gpt-6-luna"}}),
-      default_model("claude/sonnet") {}
-AssistantSettings::AssistantSettings(const AssistantSettings&) = default;
-AssistantSettings& AssistantSettings::operator=(const AssistantSettings&) = default;
-AssistantSettings::~AssistantSettings() = default;
-bool AssistantSettings::BackendEnabled(std::string_view provider) const {
-  for (size_t i = 0; i < kAssistantProviders.size(); ++i) if (provider == kAssistantProviders[i]) return backends[i];
-  return false;
-}
-bool AssistantSettings::BackendAvailable(std::string_view provider) const {
-  const auto found = std::ranges::find(kAssistantProviders, provider);
-  return found != kAssistantProviders.end() && available[found - kAssistantProviders.begin()];
-}
-void AssistantSettings::ApplyCliPaths(base::EnvironmentMap& environment) const {
-  if (!codex_path.empty())
-    environment[FILE_PATH_LITERAL("ZITTER_CODEX_PATH")] = base::FilePath::FromUTF8Unsafe(codex_path).value();
-  if (!claude_path.empty())
-    environment[FILE_PATH_LITERAL("ZITTER_CLAUDE_PATH")] = base::FilePath::FromUTF8Unsafe(claude_path).value();
-}
-std::vector<AssistantModel> AssistantSettings::PanelModels() const {
-  std::vector<AssistantModel> result;
-  for (const auto& model : models)
-    if (model.visible && BackendEnabled(model.provider) && BackendAvailable(model.provider))
-      result.push_back(model);
-  return result;
-}
-base::DictValue AssistantSettings::ToValue() const {
-  base::ListValue list, enabled_backends;
-  for (const auto& model : models) list.Append(base::DictValue().Set("provider", model.provider).Set("id", model.id).Set("visible", model.visible));
-  for (bool backend : backends) enabled_backends.Append(backend);
-  return base::DictValue().Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
-      .Set("catalog_version", 3).Set("codex_path", codex_path).Set("claude_path", claude_path)
-      .Set("ollama_configured", ollama_configured)
-      .Set("encrypted_api_key", encrypted_api_key).Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
-      .Set("confirm_background", confirm_background).Set("concurrency", concurrency);
-}
-AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
-  AssistantSettings result;
-  if (!value) return result;
-  if (const auto* key=value->FindString("encrypted_api_key")) result.encrypted_api_key=*key;
-  if (const auto* path = value->FindString("codex_path")) result.codex_path = *path;
-  if (const auto* path = value->FindString("claude_path")) result.claude_path = *path;
-  result.ollama_configured = value->FindBool("ollama_configured").value_or(false);
-  result.enabled = value->FindBool("enabled").value_or(true);
-  if (const auto* list = value->FindList("backends"); list && list->size() == result.backends.size())
-    for (size_t i = 0; i < list->size(); ++i) result.backends[i] = (*list)[i].GetIfBool().value_or(true);
-  if (const auto* list = value->FindList("models")) {
-    std::vector<AssistantModel> models;
-    for (const auto& entry : *list) {
-      if (!entry.is_dict()) continue;
-      const auto* provider = entry.GetDict().FindString("provider"); const auto* id = entry.GetDict().FindString("id");
-      if (!provider || !id || id->empty() || id->size() > 120 ||
-          std::ranges::find(kAssistantProviders, *provider) == kAssistantProviders.end()) continue;
-      models.push_back({*provider, *id, entry.GetDict().FindBool("visible").value_or(true)});
-      if (models.size() >= 32) break;
-    }
-    if (!models.empty()) result.models = std::move(models);
-  }
-  if (const auto* model = value->FindString("default_model")) result.default_model = *model;
-  if(value->FindInt("catalog_version").value_or(0)<2){
-    bool migrated=false;
-    for(auto& model:result.models)if(model.provider=="codex"&&model.id=="gpt-5.4"){model.id="gpt-6.1-sol";migrated=true;}
-    if(migrated)for(const char* id:{"gpt-6.1-terra","gpt-6-astra","gpt-6-luna"})
-      if(result.models.size()<32&&std::ranges::none_of(result.models,[&](const auto& m){return m.provider=="codex"&&m.id==id;}))result.models.push_back({"codex",id});
-    if(result.default_model=="codex/gpt-5.4")result.default_model="codex/gpt-6.1-sol";
-  }
-  if (value->FindInt("catalog_version").value_or(0) < 3) {
-    for (auto& model : result.models) {
-      if (model.provider == "openai" && model.id == "gpt-5.4") model.id = "gpt-6.1-sol";
-      if (model.provider == "openai" && model.id == "gpt-5.4-mini") model.id = "gpt-6.1-terra";
-      if (model.provider == "ollama" && model.id != "qwen3:8b") result.ollama_configured = true;
-    }
-    if (result.default_model == "openai/gpt-5.4") result.default_model = "openai/gpt-6.1-sol";
-    if (result.default_model == "openai/gpt-5.4-mini") result.default_model = "openai/gpt-6.1-terra";
-    for (const char* id : {"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"})
-      if (result.models.size() < 32 && std::ranges::none_of(result.models, [&](const auto& model) {
-            return model.provider == "openai" && model.id == id;
-          })) result.models.push_back({"openai", id});
-  }
-  if (const auto* permissions = value->FindDict("permissions")) {
-    auto flag = [&](const char* key, bool fallback) { return permissions->FindBool(key).value_or(fallback); };
-    result.defaults = {flag("tabs", false), flag("pages", false), flag("actions", false), flag("history", false), flag("web", true), flag("confirm_clicks", true)};
-  }
-  result.background = value->FindBool("background").value_or(true);
-  result.confirm_background = value->FindBool("confirm_background").value_or(true);
-  result.concurrency = std::clamp(value->FindInt("concurrency").value_or(12), 1, 12);
-  return result;
-}
-
 class AssistantMenuPresses final : public ui::EventObserver {
  public:
   explicit AssistantMenuPresses(base::RepeatingClosure pressed) : pressed_(std::move(pressed)) {}
@@ -335,7 +242,7 @@ AssistantPanel::Message::~Message() = default;
 AssistantPanel::Session::Session() = default;
 AssistantPanel::Session::~Session() = default;
 
-AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
+AssistantPanel::AssistantPanel(AssistantHost* host) : host_(host) {
   GetViewAccessibility().SetRole(ax::mojom::Role::kComplementary);
   GetViewAccessibility().SetName(T(u"Asystent AI"));
   SetBackground(CreateAssistantBackground());
@@ -390,7 +297,7 @@ AssistantPanel::AssistantPanel(WorkspaceWindow* window) : window_(window) {
   resize_handle_=AddChildView(CreateAssistantResizeGrip(this));
   resize_handle_->SetProperty(views::kViewIgnoredByLayoutKey,true);
   NewSession();SetVisible(false);
-  window_->LoadAssistantSessions(base::BindOnce(&AssistantPanel::SessionsLoaded,weak));
+  host_->LoadAssistantSessions(base::BindOnce(&AssistantPanel::SessionsLoaded,weak));
 }
 
 AssistantPanel::~AssistantPanel() {
@@ -399,12 +306,27 @@ AssistantPanel::~AssistantPanel() {
   // Overlays left in the shell call back only through weak pointers.
   for (auto& session : sessions_) session->loader.reset();
   if (process_.IsValid()) process_.Terminate(0, false);
-  // Scene nodes must be released before the scene registry.
+  // Drop view references before deleting the children. Their scene nodes
+  // must still be released before the scene registry.
+  viewport_ = nullptr;
+  header_ = conversation_ = background_ = nullptr;
+  subtitle_ = sessions_action_ = tasks_action_ = access_action_ = pin_action_ = nullptr;
+  composer_ = chips_view_ = tools_ = nullptr;
+  research_chip_ = background_chip_ = model_chip_ = send_ = stop_ = nullptr;
+  prompt_ = nullptr;
+  model_search_ = nullptr;
+  menu_view_ = menu_footer_ = nullptr;
+  menu_scroll_ = nullptr;
+  resize_handle_ = nullptr;
+  mention_rows_.clear();
+  draft_instruction_ = nullptr;
+  draft_time_ = nullptr;
+  live_answer_ = nullptr;
   RemoveAllChildViews();
 }
 void AssistantPanel::Show(bool from_edge) {
-  if (!window_->assistant_settings().enabled) return;
-  hide_timer_.Stop();SetVisible(true); window_->shell()->LayoutAssistant(pinned_); prompt_->RequestFocus();
+  if (!host_->assistant_settings().enabled) return;
+  hide_timer_.Stop();SetVisible(true); host_->shell()->LayoutAssistant(pinned_); prompt_->RequestFocus();
   unread_ = 0; NotifyBar();
   hover_check_.Stop();
   last_pointer_position_ = display::Screen::Get()->GetCursorScreenPoint();
@@ -422,7 +344,7 @@ void AssistantPanel::WatchPointer() {
     const auto point = display::Screen::Get()->GetCursorScreenPoint();
     const bool moved = point != self->last_pointer_position_;
     self->last_pointer_position_ = point;
-    if (self->HoverBounds().Contains(point) || self->window_->shell()->AssistantConsentContains(point)) {
+    if (self->HoverBounds().Contains(point) || self->host_->shell()->AssistantConsentContains(point)) {
       self->pointer_exit_armed_ = true; self->hide_timer_.Stop(); return;
     }
     if (self->resize_start_width_) { self->hide_timer_.Stop(); return; }
@@ -432,7 +354,7 @@ void AssistantPanel::WatchPointer() {
       self->hide_timer_.Start(FROM_HERE, base::Milliseconds(450), base::BindOnce([](base::WeakPtr<AssistantPanel> panel) {
         if (!panel || !panel->GetVisible()) return;
         const auto cursor = display::Screen::Get()->GetCursorScreenPoint();
-        if (!panel->HoverBounds().Contains(cursor) && !panel->window_->shell()->AssistantConsentContains(cursor))
+        if (!panel->HoverBounds().Contains(cursor) && !panel->host_->shell()->AssistantConsentContains(cursor))
           panel->Collapse();
       }, self->weak_factory_.GetWeakPtr()));
   }, base::Unretained(this)));
@@ -452,14 +374,14 @@ void AssistantPanel::Collapse() {
   // Hiding is presentation only. Drafts, open editors and pending questions
   // remain intact, and a running task keeps working in the background.
   if(pinned_||resize_start_width_)return;
-  hide_timer_.Stop();hover_check_.Stop();SetVisible(false);window_->shell()->LayoutAssistant(false);
+  hide_timer_.Stop();hover_check_.Stop();SetVisible(false);host_->shell()->LayoutAssistant(false);
 }
 void AssistantPanel::OnResize(int amount,bool done) {
   pointer_exit_armed_ = true; WatchPointer();
   hide_timer_.Stop();
   if(!resize_start_width_)resize_start_width_=width();
   preferred_width_=std::clamp(*resize_start_width_-(base::i18n::IsRTL()?-amount:amount),360,760);
-  PreferredSizeChanged();window_->shell()->LayoutAssistant(pinned_);
+  PreferredSizeChanged();host_->shell()->LayoutAssistant(pinned_);
   if(done)resize_start_width_.reset();
 }
 void AssistantPanel::SetPinned(bool pinned) {
@@ -469,7 +391,7 @@ void AssistantPanel::SetPinned(bool pinned) {
   pointer_exit_armed_ = true;
   WatchPointer();
   UpdateAssistantButton(pin_action_, pinned ? T(u"Odepnij") : T(u"Przypnij"),pinned);
-  window_->shell()->LayoutAssistant(pinned_);
+  host_->shell()->LayoutAssistant(pinned_);
 }
 AssistantPanel::Session* AssistantPanel::Find(const std::string& key, uint64_t epoch) {
   for (auto& session : sessions_) if (session->key == key) return session->epoch == epoch ? session.get() : nullptr;
@@ -477,7 +399,7 @@ AssistantPanel::Session* AssistantPanel::Find(const std::string& key, uint64_t e
 }
 void AssistantPanel::OpenSettings() {
   CloseMenu();
-  window_->shell()->OpenAssistantSettings();
+  host_->shell()->OpenAssistantSettings();
 }
 
 // Sessions ---------------------------------------------------------------
@@ -485,7 +407,7 @@ bool AssistantPanel::Started(const Session& session) {
   return session.busy || std::ranges::any_of(session.messages, [](const Message& m) { return m.kind == 1; });
 }
 void AssistantPanel::StartNewConversation() {
-  if (!window_->assistant_settings().enabled) return;
+  if (!host_->assistant_settings().enabled) return;
   const auto previous = selected().key;
   selected().composer_draft = prompt_->GetText();
   selected().composer_chips = chips_;
@@ -495,13 +417,32 @@ void AssistantPanel::StartNewConversation() {
   UpdatePageControl();
   prompt_->RequestFocus();
 }
+bool AssistantPanel::SwitchProfile() {
+  StopAll();
+  ResetRuntime();
+  const auto profile = host_->AssistantProfileId();
+  std::optional<size_t> newest;
+  for (size_t i = 0; i < sessions_.size(); ++i) {
+    if (sessions_[i]->profile == profile &&
+        (!newest || sessions_[i]->updated > sessions_[*newest]->updated)) {
+      newest = i;
+    }
+  }
+  if (newest) {
+    SelectSession(*newest);
+  } else {
+    StartNewConversation();
+  }
+  return selected().profile == profile;
+}
+
 void AssistantPanel::NewSession() { CreateSession(false); }
 void AssistantPanel::CreateSession(bool preserve_previous) {
   CloseMenu();
   // An untouched conversation is reused instead of piling up empty ones.
-  const auto profile = window_->AssistantProfileId();
+  const auto profile = host_->AssistantProfileId();
   for (size_t i = sessions_.size(); !preserve_previous && i-- > 0;) {
-    if (Started(*sessions_[i]) || !sessions_[i]->composer_draft.empty() || sessions_[i]->profile != profile || window_->AssistantHasBackground(sessions_[i]->key)) continue;
+    if (Started(*sessions_[i]) || !sessions_[i]->composer_draft.empty() || sessions_[i]->profile != profile || host_->AssistantHasBackground(sessions_[i]->key)) continue;
     if (i != selected_) { if (busy()) Stop(); selected_ = i; }
     chips_.clear(); RenderChips(); RenderConversation(); UpdateControls(); UpdatePageControl();
     if (prompt_) prompt_->RequestFocus();
@@ -513,17 +454,17 @@ void AssistantPanel::CreateSession(bool preserve_previous) {
     // Forget the least recently used idle conversation without a background page.
     auto idle = sessions_.end();
     for (auto it = sessions_.begin(); it != sessions_.end(); ++it)
-      if (!(*it)->busy && (*it)->composer_draft.empty() && !window_->AssistantHasBackground((*it)->key) && (idle == sessions_.end() || (*it)->updated < (*idle)->updated)) idle = it;
+      if (!(*it)->busy && (*it)->composer_draft.empty() && !host_->AssistantHasBackground((*it)->key) && (idle == sessions_.end() || (*it)->updated < (*idle)->updated)) idle = it;
     if (idle == sessions_.end()) { Append(selected(), "Session limit reached. Delete old conversations in the history."); return; }
     const size_t removed = idle - sessions_.begin();
     sessions_.erase(idle);
     if (selected_ >= removed && selected_ > 0) --selected_;
   }
-  const auto& settings = window_->assistant_settings();
+  const auto& settings = host_->assistant_settings();
   auto session = std::make_unique<Session>();
   session->key = base::Uuid::GenerateRandomV4().AsLowercaseString();
   session->id = base::Uuid::GenerateRandomV4().AsLowercaseString();
-  session->profile = window_->AssistantProfileId();
+  session->profile = host_->AssistantProfileId();
   session->permissions = settings.defaults;
   session->confirm_background = settings.confirm_background;
   session->updated = base::Time::Now();
@@ -537,7 +478,10 @@ void AssistantPanel::CreateSession(bool preserve_previous) {
 }
 void AssistantPanel::SelectSession(size_t index) {
   CloseMenu();
-  if (index >= sessions_.size() || index == selected_) return;
+  if (index >= sessions_.size() || index == selected_ ||
+      sessions_[index]->profile != host_->AssistantProfileId()) {
+    return;
+  }
   if (busy()) Stop();
   selected().composer_draft = prompt_->GetText();
   selected().composer_chips = chips_;
@@ -545,7 +489,7 @@ void AssistantPanel::SelectSession(size_t index) {
   const auto left = sessions_[selected_]->key;
   selected_ = index;
   if (auto it = std::ranges::find_if(sessions_, [&](const auto& s) { return s->key == left; });
-      it != sessions_.end() && !Started(**it) && (*it)->composer_draft.empty() && !window_->AssistantHasBackground(left)) {
+      it != sessions_.end() && !Started(**it) && (*it)->composer_draft.empty() && !host_->AssistantHasBackground(left)) {
     const size_t removed = it - sessions_.begin();
     sessions_.erase(it);
     if (selected_ > removed) --selected_;
@@ -560,7 +504,7 @@ void AssistantPanel::DeleteSession(std::string key) {
   auto it = std::ranges::find_if(sessions_, [&](const auto& s) { return s->key == key; });
   if (it == sessions_.end()) return;
   StopSession(**it);
-  window_->AssistantDiscardBackground(key);
+  host_->AssistantDiscardBackground(key);
   const size_t index = it - sessions_.begin();
   const bool was_selected = index == selected_;
   sessions_.erase(it);
@@ -569,7 +513,7 @@ void AssistantPanel::DeleteSession(std::string key) {
   else if (was_selected) {
     // The newest conversation of this profile takes its place, or a new one.
     selected_ = std::min(selected_, sessions_.size() - 1);
-    const auto profile = window_->AssistantProfileId();
+    const auto profile = host_->AssistantProfileId();
     std::optional<size_t> newest;
     for (size_t i = 0; i < sessions_.size(); ++i)
       if (sessions_[i]->profile == profile && (!newest || sessions_[i]->updated > sessions_[*newest]->updated)) newest = i;
@@ -606,13 +550,13 @@ void AssistantPanel::SaveSessions() {
   }
   base::ListValue tasks;
   for (const auto& task : tasks_) tasks.Append(task.ToValue());
-  window_->SaveAssistantSessions(base::DictValue().Set("version", 1).Set("sessions", std::move(list)).Set("tasks", std::move(tasks)));
+  host_->SaveAssistantSessions(base::DictValue().Set("version", 1).Set("sessions", std::move(list)).Set("tasks", std::move(tasks)));
 }
 void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
   loaded_ = true;
   std::vector<std::unique_ptr<Session>> restored;
   const auto* list = saved ? saved->FindList("sessions") : nullptr;
-  const auto& d = window_->assistant_settings().defaults;
+  const auto& d = host_->assistant_settings().defaults;
   if (list) for (const auto& item : *list) {
     const auto* entry = item.GetIfDict();
     if (!entry || restored.size() >= 200) continue;
@@ -688,6 +632,12 @@ void AssistantPanel::StopAll() { for (auto& session : sessions_) StopSession(*se
 void AssistantPanel::StopSession(Session& session) {
   const bool was_busy = session.busy;
   ++session.epoch; session.loader.reset();
+  if (session.confirmation &&
+      *session.confirmation->FindString("tool") == "adblock_add_rules") {
+    host_->AssistantTool("adblock_clear_preview",
+        session.confirmation->FindDict("args")->Clone(), session.permissions,
+        base::DoNothing(), false, session.background ? session.key : std::string());
+  }
   // Disconnecting the RPC aborts its provider request. Pending native callbacks
   // carry the old epoch, so cancellation cannot dispatch another mutation.
   session.busy = false; session.queue.clear(); session.results.clear(); session.confirmation.reset();
@@ -716,9 +666,9 @@ void AssistantPanel::RevokeAccess() {
   Append(selected(),base::UTF16ToUTF8(T(u"Dostęp odebrany. Zadania zatrzymane.")));
 }
 void AssistantPanel::SettingsChanged() {
-  const auto& settings = window_->assistant_settings();
+  const auto& settings = host_->assistant_settings();
   if (!settings.enabled) {
-    StopAll(); CloseMenu(); SetVisible(false); window_->shell()->LayoutAssistant(false);
+    StopAll(); CloseMenu(); SetVisible(false); host_->shell()->LayoutAssistant(false);
     UpdatePageControl(); return;
   }
   // Narrowing applies at once, also to running sessions; wider access waits for a new session.
@@ -745,7 +695,7 @@ void AssistantPanel::BackendAvailabilityChanged() {
   if (menu_ == Menu::kModel) BuildMenu();
 }
 void AssistantPanel::SyncSelectedModel() {
-  const auto& settings = window_->assistant_settings();
+  const auto& settings = host_->assistant_settings();
   auto& session = selected();
   if (session.messages.empty() && !session.busy) {
     const auto models = settings.PanelModels();
@@ -771,16 +721,23 @@ void AssistantPanel::CloseMenu() {
   if (menu_ == Menu::kMention && mention_at_) mention_dismissed_ = mention_at_;
   menu_ = Menu::kNone; mention_rows_.clear(); menu_footer_ = nullptr; model_search_ = nullptr; menu_scroll_ = nullptr;
   menu_monitor_.reset();
-  if (menu_view_) RemoveChildViewT(std::exchange(menu_view_, nullptr).get());
+  draft_instruction_ = nullptr; draft_time_ = nullptr;
+  if (menu_view_) {
+    auto old_menu = RemoveChildViewT(menu_view_.get());
+    menu_view_ = nullptr;
+  }
   UpdateAssistantButton(sessions_action_, T(u"Sesje"), false);
   UpdateAssistantButton(tasks_action_, T(u"Zadania zaplanowane"), false);
-  draft_instruction_ = nullptr; draft_time_ = nullptr;
   UpdateControls();
   InvalidateLayout(); scene_->Schedule();
 }
 void AssistantPanel::BuildMenu() {
-  if (menu_view_) RemoveChildViewT(std::exchange(menu_view_, nullptr).get());
   mention_rows_.clear(); menu_footer_ = nullptr; model_search_ = nullptr; menu_scroll_ = nullptr;
+  draft_instruction_ = nullptr; draft_time_ = nullptr;
+  if (menu_view_) {
+    auto old_menu = RemoveChildViewT(menu_view_.get());
+    menu_view_ = nullptr;
+  }
   if (menu_ == Menu::kNone) return;
   auto surface = CreateAssistantSurface(4);
   SetSidebarPanelLayout(surface.get(), true, gfx::Insets(6), 2);
@@ -824,7 +781,7 @@ views::View* AssistantPanel::ScrollList(views::View* body, int max_height) {
 }
 void AssistantPanel::BuildSessionsMenu(views::View* body) {
   auto weak = weak_factory_.GetWeakPtr();
-  const auto profile = window_->AssistantProfileId();
+  const auto profile = host_->AssistantProfileId();
   // This profile's conversations with something written, newest first.
   std::vector<size_t> order;
   for (size_t i = 0; i < sessions_.size(); ++i) if (sessions_[i]->profile == profile && (Started(*sessions_[i]) || !sessions_[i]->composer_draft.empty())) order.push_back(i);
@@ -916,7 +873,7 @@ void AssistantPanel::BuildSessionsMenu(views::View* body) {
     if (!self->confirm_clear_) { self->confirm_clear_ = true; self->BuildMenu(); return; }
     self->confirm_clear_ = false;
     // This profile's conversations; other profiles keep theirs.
-    const auto profile = self->window_->AssistantProfileId();
+    const auto profile = self->host_->AssistantProfileId();
     std::vector<std::string> keys;
     for (const auto& s : self->sessions_) if (s->profile == profile) keys.push_back(s->key);
     for (const auto& key : keys) self->DeleteSession(key);
@@ -946,7 +903,7 @@ void AssistantPanel::BuildAccessMenu(views::View* body) {
   clicks.disabled = p.confirm_clicks && started;
   clicks.detail = clicks.disabled ? T(u"Wyłączysz w nowej sesji") : T(u"Na widocznej karcie");
   body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::TogglePermission, weak, 5)), std::move(clicks)));
-  if (window_->assistant_settings().background && p.actions) {
+  if (host_->assistant_settings().background && p.actions) {
     AssistantRow background; background.title = T(u"Potwierdzaj kliknięcia w tle"); background.toggle = selected().confirm_background;
     background.disabled = selected().confirm_background && started;
     background.detail = background.disabled ? T(u"Wyłączysz w nowej sesji") : T(u"Zadanie czeka w panelu na zgodę");
@@ -984,7 +941,7 @@ void AssistantPanel::TogglePermission(int index) {
 }
 void AssistantPanel::BuildModelMenu(views::View* body) {
   auto weak = weak_factory_.GetWeakPtr();
-  const auto& settings = window_->assistant_settings();
+  const auto& settings = host_->assistant_settings();
   model_search_ = scene_->AddSearch(body, T(u"Szukaj modelu"), T(u"Szukaj modelu"));
   model_search_->SetText(model_query_);
   model_search_->SetCallbacks(base::BindRepeating([](AssistantPanel* self) {
@@ -1031,17 +988,17 @@ void AssistantPanel::BuildModelMenu(views::View* body) {
 }
 void AssistantPanel::BuildMentionMenu(views::View* body) {
   auto weak = weak_factory_.GetWeakPtr();
-  const auto& settings = window_->assistant_settings();
+  const auto& settings = host_->assistant_settings();
   const auto& session = selected();
   const auto query = Fold(mention_query_);
   struct Item { AssistantChip chip; std::u16string detail, badge, note; bool mono = true, disabled = false; };
   std::vector<Item> tabs, pins, tools;
   auto matches = [&](const std::u16string& a, const std::u16string& b) { return query.empty() || Fold(a).find(query) != std::u16string::npos || Fold(b).find(query) != std::u16string::npos; };
   auto taken = [&](const AssistantChip& chip) { return std::ranges::any_of(chips_, [&](const auto& c) { return c.kind == chip.kind && c.ref == chip.ref; }); };
-  const bool can_list = session.permissions.tabs && session.profile == window_->AssistantProfileId();
+  const bool can_list = session.permissions.tabs && session.profile == host_->AssistantProfileId();
   if (can_list) {
     AssistantPermissions list; list.tabs = true;
-    const auto context = window_->AssistantContext(list);
+    const auto context = host_->AssistantContext(list);
     const auto read_note = session.permissions.pages ? T(u"Asystent przeczyta treść i kontrolki tej karty.") : T(u"Bez uprawnienia do treści stron asystent zobaczy tylko tytuł i adres.");
     for (const auto* key : {"tabs", "pins"}) if (const auto* rows = context.FindList(key)) for (const auto& entry : *rows) {
       const auto& e = entry.GetDict();
@@ -1198,7 +1155,7 @@ void AssistantPanel::InsertChip(AssistantChip chip, bool from_mention) {
     mention_at_.reset(); mention_dismissed_.reset();
     prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(at));
   }
-  if (chip.kind == "background" && !(window_->assistant_settings().background && selected().permissions.actions)) return;
+  if (chip.kind == "background" && !(host_->assistant_settings().background && selected().permissions.actions)) return;
   if (std::ranges::none_of(chips_, [&](const auto& c) { return c.kind == chip.kind && c.ref == chip.ref; })) chips_.push_back(std::move(chip));
   if (menu_ == Menu::kMention) { menu_ = Menu::kNone; BuildMenu(); }
   RenderChips(); UpdateControls();
@@ -1241,7 +1198,8 @@ void AssistantPanel::Ask(std::u16string text) {
   Send(false);
 }
 std::u16string AssistantPanel::draft_for_testing() const { return std::u16string(prompt_->GetText()); }
-void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions, bool needs_web) {
+void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions,
+                                       bool needs_web, bool night_shift) {
   // Keep the previous conversation and composer intact, including running work.
   const auto previous = selected().key;
   selected().composer_draft = prompt_->GetText();
@@ -1249,7 +1207,9 @@ void AssistantPanel::PreparePageAction(std::u16string text, bool needs_actions, 
   CreateSession(true);
   if (selected().key == previous) return;
   prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(text.size()));
-  InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
+  selected().night_shift = night_shift;
+  if (!night_shift)
+    InsertChip({"tab", "@current", T(u"Bieżąca karta"), 0}, false);
   PromptChanged();
   const auto& access = selected().permissions;
   if (access.pages && (!needs_web || access.web) && (!needs_actions || access.actions) && !selected().provider.empty()) {
@@ -1270,6 +1230,9 @@ void AssistantPanel::ConfigureForTesting(std::string provider, std::string model
 bool AssistantPanel::ContainsForTesting(std::string_view text) const {
   return std::ranges::any_of(sessions_, [&](const auto& s) { return s->transcript.find(text) != std::string::npos; });
 }
+bool AssistantPanel::SelectedConversationContainsForTesting(std::string_view text) const {
+  return selected().transcript.find(text) != std::string::npos;
+}
 AssistantPermissions AssistantPanel::permissions_for_testing() const { return selected().permissions; }
 gfx::Rect AssistantPanel::menu_bounds_for_testing() const { return menu_view_ ? menu_view_->bounds() : gfx::Rect(); }
 gfx::Rect AssistantPanel::composer_bounds_for_testing() const { return composer_->bounds(); }
@@ -1281,7 +1244,7 @@ bool AssistantPanel::KeyForTesting(ui::KeyboardCode code, int flags) {
   return PromptKey(key);
 }
 size_t AssistantPanel::background_tasks_for_testing() const {
-  return static_cast<size_t>(std::ranges::count_if(sessions_, [&](const auto& s) { return s->background && (s->busy || window_->AssistantHasBackground(s->key)); }));
+  return static_cast<size_t>(std::ranges::count_if(sessions_, [&](const auto& s) { return s->background && (s->busy || host_->AssistantHasBackground(s->key)); }));
 }
 bool AssistantPanel::waiting_for_consent_for_testing() const {
   return std::ranges::any_of(sessions_, [](const auto& s) { return s->confirmation.has_value(); });
@@ -1294,7 +1257,7 @@ void AssistantPanel::SeedBackgroundForTesting() {
     auto session = std::make_unique<Session>();
     session->key = base::Uuid::GenerateRandomV4().AsLowercaseString();
     session->id = base::Uuid::GenerateRandomV4().AsLowercaseString();
-    session->profile = window_->AssistantProfileId();
+    session->profile = host_->AssistantProfileId();
     session->title = std::move(title);
     session->busy = session->background = true;
     session->status = T(u"Czytam stronę…");
@@ -1349,42 +1312,49 @@ void AssistantPanel::Send(bool background) {
     AnswerQuestion(session, base::UTF16ToUTF8(text));
     return;
   }
-  if (session.busy || window_->AssistantProfileId().empty()) return;
+  if (session.busy || host_->AssistantProfileId().empty()) return;
   const auto text = std::u16string(base::TrimWhitespace(prompt_->GetText(), base::TRIM_ALL));
   if (text.empty() && chips_.empty()) return;
   CloseMenu();
-  if (session.profile != window_->AssistantProfileId()) { Append(session, "This session belongs to another profile. Start a new session."); return; }
+  if (session.profile != host_->AssistantProfileId()) { Append(session, "This session belongs to another profile. Start a new session."); return; }
   if (session.provider.empty()) { Append(session, base::UTF16ToUTF8(T(u"Dodaj model w Ustawieniach → Asystent AI."))); return; }
-  const auto& settings = window_->assistant_settings();
-  const bool research = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });
+  const auto& settings = host_->assistant_settings();
+  if (!settings.BackendEnabled(session.provider)) {
+    Append(session, "This Assistant provider is disabled.");
+    return;
+  }
+  const bool research = !session.night_shift && std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });
   bool in_background = background || std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; });
-  if (in_background && !(settings.background && session.permissions.actions)) {
+  if (in_background && (session.night_shift || !(settings.background && session.permissions.actions))) {
     Append(session, base::UTF16ToUTF8(T(u"Praca w tle wymaga klikania i włączonej pracy w tle w Ustawieniach.")));
     return;
   }
   // References travel as text the model already knows: @current, @tab:, @pin:.
   std::string prompt = base::UTF16ToUTF8(text);
   std::string references;
-  for (const auto& chip : chips_) if (IsPage(chip)) references += (references.empty() ? "" : ", ") + chip.ref + " (" + base::UTF16ToUTF8(chip.title) + ")";
+  for (const auto& chip : chips_) if (!session.night_shift && IsPage(chip)) references += (references.empty() ? "" : ", ") + chip.ref + " (" + base::UTF16ToUTF8(chip.title) + ")";
   if (!references.empty()) prompt += (prompt.empty() ? "" : "\n\n") + std::string("Referenced pages: ") + references;
   if (prompt.empty()) prompt = research ? "Research this." : "Continue.";
-  if (in_background && !window_->AssistantHasBackground(session.key) && !window_->AssistantStartBackground(session.key, {}, GURL())) {
+  if (in_background && !host_->AssistantHasBackground(session.key) && !host_->AssistantStartBackground(session.key, {}, GURL())) {
     Append(session, base::UTF16ToUTF8(T(u"Nie udało się otworzyć karty w tle.")));
     return;
   }
-  in_background = in_background || (session.background && window_->AssistantHasBackground(session.key));
+  in_background = in_background || (session.background && host_->AssistantHasBackground(session.key));
   auto chips = std::exchange(chips_, {});
   session.composer_draft.clear(); session.composer_chips.clear();
   prompt_->SetText(u""); RenderChips();
   if (session.title.empty()) session.title = text.empty() ? chips.front().title : text.substr(0, 48);
   Append(session, "You: " + base::UTF16ToUTF8(text), chips);
   session.background = in_background;
+  const auto permissions = session.night_shift
+      ? AssistantPermissions{.pages = session.permissions.pages, .web = false}
+      : session.permissions;
   session.request = base::DictValue().Set("id", session.id).Set("prompt", prompt).Set("research", research).Set("background", in_background)
       .Set("concurrency", settings.concurrency)
       .Set("date", base::DictValue().Set("unix_ms", static_cast<double>(base::Time::Now().InMillisecondsSinceUnixEpoch()))
            .Set("utc_offset_minutes", TimelineUtcOffsetMinutes(base::Time::Now())))
       .Set("config", base::DictValue().Set("provider", session.provider).Set("model", session.model))
-      .Set("permissions", session.permissions.ToValue()).Set("context", window_->AssistantContext(session.permissions));
+      .Set("permissions", permissions.ToValue()).Set("context", host_->AssistantContext(permissions));
   base::ListValue history;
   for (size_t i = 0; i + 1 < session.messages.size(); ++i) {
     const auto& m = session.messages[i];
@@ -1399,7 +1369,7 @@ void AssistantPanel::StartTurn(Session& session) {
   session.status = session.background ? T(u"Pracuję w tle…") : T(u"Pracuję nad tym…");
   UpdateControls(); RenderBackground(); RenderConversation();
   if(process_.IsValid()){PollRuntime(session.key,session.epoch,0);return;}
-  window_->WithAssistantApiKey(base::BindOnce(&AssistantPanel::StartRuntime,weak_factory_.GetWeakPtr(),session.key,session.epoch));
+  host_->WithAssistantApiKey(base::BindOnce(&AssistantPanel::StartRuntime,weak_factory_.GetWeakPtr(),session.key,session.epoch));
 }
 void AssistantPanel::StartRuntime(std::string key,uint64_t epoch,std::string api_key){
   auto* current=Find(key,epoch);if(!current||!current->busy)return;
@@ -1417,7 +1387,7 @@ void AssistantPanel::StartRuntime(std::string key,uint64_t epoch,std::string api
     command.AppendSwitchASCII("token", token_);
     command.AppendSwitchASCII("parent", base::NumberToString(base::GetCurrentProcId()));
     base::LaunchOptions options;
-    window_->assistant_settings().ApplyCliPaths(options.environment);
+    host_->assistant_settings().ApplyCliPaths(options.environment);
 #if BUILDFLAG(IS_WIN)
     if(!api_key.empty())options.environment[L"ZITTER_OPENAI_API_KEY"]=base::UTF8ToWide(api_key);
 #else
@@ -1481,7 +1451,7 @@ void AssistantPanel::PollProgress() {
   progress_loader_ = network::SimpleURLLoader::Create(std::move(request), annotation);
   progress_loader_->AttachStringForUpload(base::WriteJson(base::DictValue().Set("id", session.id)).value_or("{}"), "application/json");
   progress_loader_->SetTimeoutDuration(base::Seconds(2));
-  auto factory = window_->AssistantProfile()->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess();
+  auto factory = host_->AssistantBrowserContext()->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess();
   progress_loader_->DownloadToString(factory.get(), base::BindOnce([](base::WeakPtr<AssistantPanel> self, std::string key, uint64_t epoch,
       std::optional<std::string> response) {
     if (!self) return;
@@ -1529,7 +1499,7 @@ void AssistantPanel::Request(Session& session, std::string path, base::DictValue
   if (path != "/health") session.loader->AttachStringForUpload(base::WriteJson(body).value_or("{}"), "application/json");
   session.loader->SetTimeoutDuration(path == "/health" ? base::Seconds(1) : base::Minutes(11));
   session.loader->SetAllowHttpErrorResults(true);
-  auto factory = window_->AssistantProfile()->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess();
+  auto factory = host_->AssistantBrowserContext()->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess();
   session.loader->DownloadToString(factory.get(), base::BindOnce([](base::WeakPtr<AssistantPanel> self, std::string key, uint64_t epoch,
       base::OnceCallback<void(base::DictValue)> done, std::optional<std::string> response) {
     if (!self) return;
@@ -1565,7 +1535,7 @@ void AssistantPanel::OnTurn(std::string key, uint64_t epoch, base::DictValue rep
 }
 void AssistantPanel::RunNext(Session& session) {
   if (!session.busy) return;
-  if (session.profile != window_->AssistantProfileId()) { StopSession(session); Append(session, "Stopped: active profile changed."); return; }
+  if (session.profile != host_->AssistantProfileId()) { StopSession(session); Append(session, "Stopped: active profile changed."); return; }
   if (session.index >= session.queue.size()) {
     Request(session, "/continue", base::DictValue().Set("id", session.id).Set("results", std::move(session.results)),
             base::BindOnce(&AssistantPanel::OnTurn, weak_factory_.GetWeakPtr(), session.key, session.epoch));
@@ -1577,6 +1547,18 @@ void AssistantPanel::RunNext(Session& session) {
     StopSession(session); Append(session, "Invalid browser tool request."); return;
   }
   const auto tool = *action.GetDict().FindString("tool");
+  const bool night_shift_tool = tool == "night_shift_inspect" ||
+                                tool == "night_shift_propose";
+  if (session.night_shift != night_shift_tool) {
+    const char* error = session.night_shift
+        ? "Only Night Shift tools are available in this turn."
+        : "Start this request from Night Shift.";
+    session.results.Append(base::DictValue().Set("tool", tool).Set(
+        "result", base::DictValue().Set("error", error)));
+    ++session.index;
+    RunNext(session);
+    return;
+  }
   if (tool == "list_tasks") {
     base::ListValue list;
     for (const auto& task : tasks_) if (task.profile == session.profile)
@@ -1697,8 +1679,12 @@ void AssistantPanel::RunNext(Session& session) {
   if (&session == &selected()) RenderConversation();
   UpdatePageControl(); RenderBackground();
   // Session consent lasts across turns, in memory only; background defaults also apply.
-  const bool confirmed = !IsAssistantDebugTool(tool) && (session.auto_confirm || (session.background && !session.confirm_background));
-  window_->AssistantTool(tool, action.GetDict().FindDict("args")->Clone(), session.permissions,
+  const bool confirmed = !IsAssistantDebugTool(tool) && tool != "adblock_add_rules" &&
+      tool != "adblock_diagnose" &&
+      (session.auto_confirm || (session.background && !session.confirm_background));
+  auto tool_args = action.GetDict().FindDict("args")->Clone();
+  tool_args.Remove("_page_confirmation");
+  host_->AssistantTool(tool, std::move(tool_args), session.permissions,
       base::BindOnce(&AssistantPanel::ToolFinished, weak_factory_.GetWeakPtr(), session.key, session.epoch),
       confirmed, session.background ? session.key : std::string());
 }
@@ -1715,6 +1701,8 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
     session->confirmation = session->queue[session->index].GetDict().Clone();
     if (const auto* document = value.GetDict().FindString("debug_document"))
       session->confirmation->FindDict("args")->Set("_debug_document", *document);
+    if (const auto* confirmation = value.GetDict().FindString("page_confirmation"))
+      session->confirmation->FindDict("args")->Set("_page_confirmation", *confirmation);
     const auto* label = value.GetDict().FindString("label");
     session->confirm_label = base::UTF8ToUTF16(label ? label->substr(0, 120) : "Click");
     session->confirm_key = value.GetDict().FindBool("key").value_or(false);
@@ -1728,7 +1716,7 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
     // A small prompt beside the element; without its bounds, above the capsule.
     const auto& args = *session->confirmation->FindDict("args");
     const auto* tab = args.FindString("tab"); const auto* element = args.FindString("element");
-    window_->AssistantElementBounds(tab ? *tab : "@current", element ? *element : "", base::BindOnce(
+    host_->AssistantElementBounds(tab ? *tab : "@current", element ? *element : "", base::BindOnce(
         [](base::WeakPtr<AssistantPanel> self, std::string key, uint64_t epoch, std::optional<gfx::Rect> anchor) {
           if (!self) return;
           auto* session = self->Find(key, epoch);
@@ -1743,12 +1731,21 @@ void AssistantPanel::ToolFinished(std::string key, uint64_t epoch, base::Value v
             }, self, key, epoch, choice));
           };
           const bool debug = IsAssistantDebugTool(*session->confirmation->FindString("tool"));
+          const bool one_time = debug ||
+              *session->confirmation->FindString("tool") == "adblock_add_rules" ||
+              *session->confirmation->FindString("tool") == "adblock_diagnose";
           auto bubble = CreateAssistantConsentBubble(!session->confirm_prompt.empty() ? session->confirm_prompt : session->confirm_key ? TF(u"Nacisnąć {}?", {session->confirm_label}) : TF(u"Kliknąć „{}”?", {session->confirm_label}),
               debug ? session->confirm_label : session->status == T(u"Czeka na zgodę") && !session->title.empty() ? session->title : T(u"Asystent prosi o zgodę"),
               base::BindRepeating(act, self, key, epoch, 1), base::BindRepeating(act, self, key, epoch, 0),
-              debug ? base::RepeatingClosure() : base::BindRepeating(act, self, key, epoch, 2));
+              one_time ? base::RepeatingClosure() : base::BindRepeating(act, self, key, epoch, 2));
           auto* allow = AssistantConsentAllowButton(bubble.get());
-          self->window_->shell()->SetAssistantConsent(std::move(bubble), anchor);
+          if (*session->confirmation->FindString("tool") == "adblock_add_rules" &&
+              session->confirmation->FindDict("args")->contains("_page_confirmation")) {
+            self->host_->AssistantTool("adblock_show_preview",
+                session->confirmation->FindDict("args")->Clone(), session->permissions,
+                base::DoNothing(), false, {});
+          }
+          self->host_->shell()->SetAssistantConsent(std::move(bubble), anchor);
           if (allow) allow->RequestFocus();
         }, weak_factory_.GetWeakPtr(), key, epoch));
     return;
@@ -1803,7 +1800,7 @@ void AssistantPanel::AnswerQuestion(Session& session, std::string answer) {
     } else {
       // Typed words are the user's own keyword.
       if (!std::ranges::contains(question->options, answer)) keyword = base::ToLowerASCII(std::string(base::TrimWhitespaceASCII(answer, base::TRIM_ALL)));
-      const bool added = window_->shell()->UpsertSearchProvider({*args.FindString("name"), keyword, address});
+      const bool added = host_->shell()->UpsertSearchProvider({*args.FindString("name"), keyword, address});
       result.Set("added", added);
       result.Set("keyword", keyword);
       if (!added) result.Set("error", "The keyword is taken or invalid (a-z, 0-9, up to 16). Ask for another one.");
@@ -1823,27 +1820,36 @@ void AssistantPanel::RunActionsForTesting(base::ListValue actions) {
 }
 void AssistantPanel::Consent(Session& session, bool allow) {
   if (!session.confirmation || !session.busy) return;
-  if (session.profile != window_->AssistantProfileId()) { StopSession(session); return; }
+  if (session.profile != host_->AssistantProfileId()) { StopSession(session); return; }
   auto action = std::move(*session.confirmation); session.confirmation.reset();
-  window_->shell()->SetAssistantConsent(nullptr, std::nullopt);
-  const bool debug = IsAssistantDebugTool(*action.FindString("tool"));
-  session.status = debug ? (allow ? ToolStatus(*action.FindString("tool")) : T(u"Pominięto debugowanie")) :
-      (allow ? T(u"Klikam na stronie…") : T(u"Pominięto kliknięcie"));
+  host_->shell()->SetAssistantConsent(nullptr, std::nullopt);
+  const auto& tool = *action.FindString("tool");
+  const bool debug = IsAssistantDebugTool(tool) || tool == "adblock_diagnose";
+  const bool save_rules = tool == "adblock_add_rules";
+  if (debug || save_rules) {
+    session.status = allow ? ToolStatus(tool)
+                           : save_rules ? T(u"Pominięto zapis reguł") : T(u"Pominięto debugowanie");
+  } else {
+    session.status = allow ? T(u"Klikam na stronie…") : T(u"Pominięto kliknięcie");
+  }
   UpdatePageControl(); RenderBackground();
   if (!allow) {
     if (!pinned_) WatchPointer();
     // Declined rules leave nothing outlined on the page.
-    if (*action.FindString("tool") == "adblock_add_rules")
-      window_->AssistantTool("adblock_clear_preview", action.FindDict("args")->Clone(), session.permissions, base::DoNothing(),
+    if (save_rules)
+      host_->AssistantTool("adblock_clear_preview", action.FindDict("args")->Clone(), session.permissions, base::DoNothing(),
                              false, session.background ? session.key : std::string());
-    session.results.Append(base::DictValue().Set("tool", *action.FindString("tool")).Set("result",
-        base::DictValue().Set("skipped", true).Set("detail", debug ? "The user declined this debugging action. Do not retry it." : "The user declined this click. Do not retry it; continue another way or ask.")));
+    const char* detail = save_rules ? "The user declined saving these ad blocking rules. Do not retry it."
+        : debug ? "The user declined this debugging action. Do not retry it."
+                : "The user declined this click. Do not retry it; continue another way or ask.";
+    session.results.Append(base::DictValue().Set("tool", tool).Set("result",
+        base::DictValue().Set("skipped", true).Set("detail", detail)));
     ++session.index; RunNext(session); return;
   }
   session.tool_running = true;
   RenderConversation();
   if (!pinned_) WatchPointer();
-  window_->AssistantTool(*action.FindString("tool"), action.FindDict("args")->Clone(), session.permissions,
+  host_->AssistantTool(tool, action.FindDict("args")->Clone(), session.permissions,
       base::BindOnce(&AssistantPanel::ToolFinished, weak_factory_.GetWeakPtr(), session.key, session.epoch), true,
       session.background ? session.key : std::string());
 }
@@ -1860,7 +1866,7 @@ bool AssistantPanel::HandleEscape() {
 bool AssistantPanel::working() const {
   return std::ranges::any_of(sessions_, [](const auto& s) { return s->busy; });
 }
-void AssistantPanel::NotifyBar() { window_->AssistantStateChanged(); }
+void AssistantPanel::NotifyBar() { host_->AssistantStateChanged(); }
 AssistantTask* AssistantPanel::FindTask(const std::string& id) {
   for (auto& task : tasks_) if (task.id == id) return &task;
   return nullptr;
@@ -1876,7 +1882,7 @@ bool AssistantPanel::SaveDraftForTesting(std::string instruction) {
 }
 void AssistantPanel::BuildTasksMenu(views::View* body) {
   auto weak = weak_factory_.GetWeakPtr();
-  const auto profile = window_->AssistantProfileId();
+  const auto profile = host_->AssistantProfileId();
   const auto active = std::ranges::count_if(tasks_, [&](const auto& t) { return t.profile == profile && t.active; });
   body->AddChildView(CreateAssistantEyebrow(T(u"Zadania zaplanowane"), TF(u"{} aktywne", {base::NumberToString16(active)})));
   AssistantRow add; add.title = T(u"Nowe zadanie"); add.detail = T(u"albo napisz w rozmowie „codziennie…”");
@@ -1931,8 +1937,8 @@ void AssistantPanel::OpenTaskEditor(const std::string& id) {
   if (const auto* existing = id.empty() ? nullptr : FindTask(id)) draft_ = *existing;
   else {
     AssistantTask fresh;
-    const auto& settings = window_->assistant_settings();
-    fresh.profile = window_->AssistantProfileId();
+    const auto& settings = host_->assistant_settings();
+    fresh.profile = host_->AssistantProfileId();
     fresh.permissions = settings.defaults; fresh.permissions.confirm_clicks = false;
     const auto& session = selected();
     fresh.provider = session.provider; fresh.model = session.model;
@@ -2025,9 +2031,9 @@ void AssistantPanel::BuildTaskEditor(views::View* body) {
     size_t at = 0;
     for (size_t i = 0; i < models.size(); ++i) if (models[i].provider == t.provider && models[i].id == t.model) at = i + 1;
     t.provider = models[at % models.size()].provider; t.model = models[at % models.size()].id;
-  }, window_->assistant_settings().PanelModels()))), AssistantGlyph::kSpark, base::UTF8ToUTF16(d.model.empty() ? "—" : d.model)));
+  }, host_->assistant_settings().PanelModels()))), AssistantGlyph::kSpark, base::UTF8ToUTF16(d.model.empty() ? "—" : d.model)));
   list->AddChildView(CreateAssistantEyebrow(T(u"Uprawnienia zadania")));
-  const auto& defaults = window_->assistant_settings().defaults;
+  const auto& defaults = host_->assistant_settings().defaults;
   const std::tuple<int, std::u16string, std::u16string, bool, bool> grants[] = {
       {0, T(u"Karty i przypięte"), T(u"Lista otwartych kart"), d.permissions.tabs, defaults.tabs},
       {1, T(u"Treść stron"), T(u"Czytanie stron, które otworzy"), d.permissions.pages, defaults.pages},
@@ -2059,16 +2065,16 @@ void AssistantPanel::BuildTaskEditor(views::View* body) {
   SetSidebarPanelLayout(body, true, gfx::Insets(6), 4, menu_scroll_);
 }
 void AssistantPanel::CheckTasks(base::Time now) {
-  if (!loaded_ || !window_->assistant_settings().enabled) return;
+  if (!loaded_ || !host_->assistant_settings().enabled) return;
   std::vector<std::string> due;
   for (const auto& task : tasks_)
-    if (task.active && !task.next_run.is_null() && task.next_run <= now && task.profile == window_->AssistantProfileId()) due.push_back(task.id);
+    if (task.active && !task.next_run.is_null() && task.next_run <= now && task.profile == host_->AssistantProfileId()) due.push_back(task.id);
   for (const auto& id : due) RunTask(id);
 }
 void AssistantPanel::RunTask(const std::string& id) {
   auto* task = FindTask(id);
-  const auto& settings = window_->assistant_settings();
-  if (!task || !settings.enabled || task->profile != window_->AssistantProfileId()) return;
+  const auto& settings = host_->assistant_settings();
+  if (!task || !settings.enabled || task->profile != host_->AssistantProfileId()) return;
   if (std::ranges::any_of(sessions_, [&](const auto& s) { return s->task_id == id && s->busy; })) return;
   auto owned = std::make_unique<Session>();
   auto& session = *owned;
@@ -2095,8 +2101,12 @@ void AssistantPanel::RunTask(const std::string& id) {
   sessions_.push_back(std::move(owned));
   Message banner; banner.kind = 3; banner.state = 7; banner.text = id;
   session.messages.push_back(std::move(banner));
-  if (session.provider.empty()) { Append(session, base::UTF16ToUTF8(T(u"Dodaj model w Ustawieniach → Asystent AI."))); TaskFinished(session, false); return; }
-  if (background && !window_->AssistantStartBackground(session.key, {}, GURL())) { Append(session, base::UTF16ToUTF8(T(u"Nie udało się otworzyć karty w tle."))); TaskFinished(session, false); return; }
+  if (!settings.BackendEnabled(session.provider)) {
+    Append(session, base::UTF16ToUTF8(T(u"Dodaj model w Ustawieniach → Asystent AI.")));
+    TaskFinished(session, false);
+    return;
+  }
+  if (background && !host_->AssistantStartBackground(session.key, {}, GURL())) { Append(session, base::UTF16ToUTF8(T(u"Nie udało się otworzyć karty w tle."))); TaskFinished(session, false); return; }
   session.background = background;
   Append(session, "You: " + task->instruction);
   session.request = base::DictValue().Set("id", session.id)
@@ -2105,7 +2115,7 @@ void AssistantPanel::RunTask(const std::string& id) {
       .Set("date", base::DictValue().Set("unix_ms", static_cast<double>(base::Time::Now().InMillisecondsSinceUnixEpoch()))
            .Set("utc_offset_minutes", TimelineUtcOffsetMinutes(base::Time::Now())))
       .Set("config", base::DictValue().Set("provider", session.provider).Set("model", session.model))
-      .Set("permissions", session.permissions.ToValue()).Set("context", window_->AssistantContext(session.permissions))
+      .Set("permissions", session.permissions.ToValue()).Set("context", host_->AssistantContext(session.permissions))
       .Set("history", base::ListValue());
   StartTurn(session);
   ScheduleSave(); NotifyBar(); RenderBackground();
@@ -2121,23 +2131,23 @@ void AssistantPanel::TaskFinished(Session& session, bool ok) {
 // Background --------------------------------------------------------------
 void AssistantPanel::MoveToBackground() {
   auto& session = selected();
-  if (!session.busy || session.background || !window_->assistant_settings().background || !session.permissions.actions) return;
+  if (!session.busy || session.background || !host_->assistant_settings().background || !session.permissions.actions) return;
   // Without page actions yet, the task gets a fresh invisible tab; otherwise
   // the tab it works in moves (or, as the space's only tab, is copied).
   const bool touched = !session.target.empty();
-  if (!window_->AssistantStartBackground(session.key, touched ? session.target : std::string(), GURL())) {
+  if (!host_->AssistantStartBackground(session.key, touched ? session.target : std::string(), GURL())) {
     Append(session, base::UTF16ToUTF8(T(u"Nie udało się otworzyć karty w tle.")));
     return;
   }
   session.background = true; session.page_control = false;
-  window_->shell()->SetAssistantConsent(nullptr, std::nullopt);
+  host_->shell()->SetAssistantConsent(nullptr, std::nullopt);
   Append(session, base::UTF16ToUTF8(touched ? T(u"Kończę w tle. Ta karta jest znowu Twoja.") : T(u"Kończę w tle, w osobnej niewidocznej karcie.")));
   UpdatePageControl(); RenderBackground(); UpdateControls();
 }
 void AssistantPanel::TakeOver(std::string key) {
   for (auto& s : sessions_) if (s->key == key) {
     if (s->busy) { StopSession(*s); Append(*s, base::UTF16ToUTF8(T(u"Przejęto kartę. Zadanie zatrzymane."))); }
-    window_->AssistantTakeOver(key);
+    host_->AssistantTakeOver(key);
     s->background = false;
     RenderBackground(); UpdatePageControl();
     return;
@@ -2145,7 +2155,7 @@ void AssistantPanel::TakeOver(std::string key) {
 }
 void AssistantPanel::Dismiss(std::string key) {
   for (auto& s : sessions_) if (s->key == key) { if (s->busy) StopSession(*s); s->background = false; }
-  window_->AssistantDiscardBackground(key);
+  host_->AssistantDiscardBackground(key);
   RenderBackground();
 }
 void AssistantPanel::RenderBackground() {
@@ -2168,7 +2178,7 @@ void AssistantPanel::RenderBackground() {
   size_t shown = 0, running = 0;
   for (const auto& s : sessions_) if (s->background && s->busy) ++running;
   for (const auto& s : sessions_) {
-    if (!s->background || (!s->busy && !window_->AssistantHasBackground(s->key))) continue;
+    if (!s->background || (!s->busy && !host_->AssistantHasBackground(s->key))) continue;
     if (shown++ == 0) background_->AddChildView(CreateAssistantEyebrow(T(u"W tle"), running == 1 ? T(u"1 zadanie") : TF(u"{} zadania", {base::NumberToString16(running)})));
     if (shown > 4) continue;
     const auto title = s->title.empty() ? T(u"Zadanie w tle") : s->title;
@@ -2187,25 +2197,25 @@ void AssistantPanel::RenderBackground() {
       SetSidebarPanelLayout(actions, false, gfx::Insets(), 6, spacer, true);
       continue;
     }
-    const bool page = window_->AssistantHasBackground(s->key);
+    const bool page = host_->AssistantHasBackground(s->key);
     const int state = s->busy ? 0 : s->finished ? 2 : 3;
     const auto status = s->busy ? s->status : s->finished ? T(u"Gotowe · przejmij kartę, żeby zobaczyć") : T(u"Zatrzymane");
     background_->AddChildView(CreateAssistantTaskRow(mark, title, status, state,
         page ? later(weak, s->key, 3) : base::RepeatingClosure(), s->busy ? later(weak, s->key, 5) : later(weak, s->key, 4)));
   }
   background_->SetVisible(shown > 0);
-  window_->shell()->SetAssistantAttention(std::ranges::any_of(sessions_, [](const auto& s) { return s->background && s->confirmation.has_value(); }));
+  host_->shell()->SetAssistantAttention(std::ranges::any_of(sessions_, [](const auto& s) { return s->background && s->confirmation.has_value(); }));
   InvalidateLayout(); scene_->Schedule();
 }
 
 // Page control on the visible tab: spectral edge, capsule, consent bubble.
 void AssistantPanel::UpdatePageControl() {
-  auto* shell = window_->shell();
+  auto* shell = host_->shell();
   const auto& session = selected();
   const bool active = session.busy && !session.background && session.page_control;
   shell->SetAssistantActivity(active);
   if (!active) { shell->SetAssistantCapsule(nullptr); shell->SetAssistantConsent(nullptr, std::nullopt); return; }
-  const bool movable = window_->assistant_settings().background && session.permissions.actions;
+  const bool movable = host_->assistant_settings().background && session.permissions.actions;
   shell->SetAssistantCapsule(CreateAssistantCapsule(session.confirmation ? T(u"Czeka na Twoją zgodę") : T(u"Asystent działa"),
       movable ? base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<AssistantPanel> self) {
@@ -2216,6 +2226,7 @@ void AssistantPanel::UpdatePageControl() {
 
 // Rendering ---------------------------------------------------------------
 void AssistantPanel::RenderConversation() {
+  live_answer_ = nullptr;
   conversation_->RemoveAllChildViews();
   const auto& session=selected();
   const auto& messages=session.messages;
@@ -2228,7 +2239,7 @@ void AssistantPanel::RenderConversation() {
           // The page itself goes in as a chip when tabs may be listed.
           if(self->selected().permissions.tabs){
             AssistantPermissions list;list.tabs=true;
-            const auto context=self->window_->AssistantContext(list);
+            const auto context=self->host_->AssistantContext(list);
             if(const auto* tabs=context.FindList("tabs"))for(const auto& entry:*tabs)if(entry.GetDict().FindBool("current").value_or(false)){
               const auto title=base::UTF8ToUTF16(*entry.GetDict().FindString("title"));const GURL url(*entry.GetDict().FindString("url"));
               self->InsertChip({"tab","@current",title.empty()?base::UTF8ToUTF16(url.host()):title,kPageColors[base::PersistentHash(url.host())%kPageColors.size()]},false);
@@ -2332,10 +2343,9 @@ void AssistantPanel::RenderConversation() {
     }
     if(message.kind==0&&!message.text.empty()){
       card->AddChildView(CreateAssistantMarkdown(base::UTF8ToUTF16(message.text),base::BindRepeating([](base::WeakPtr<AssistantPanel> self,const GURL& url){
-        if(self&&url.SchemeIsHTTPOrHTTPS())self->window_->NavigateFromBar(url,true);},weak_factory_.GetWeakPtr())));
+        if(self&&url.SchemeIsHTTPOrHTTPS())self->host_->NavigateFromBar(url,true);},weak_factory_.GetWeakPtr())));
     } else if(!message.text.empty()){card->AddChildView(CreateAssistantPlainText(base::UTF8ToUTF16(message.text)));}
   }
-  live_answer_=nullptr;
   if(session.busy&&!messages.empty()) {
     if(session.background){
       conversation_->AddChildView(CreateAssistantActivity(T(u"Pracuję w tle. Postęp i prośby o zgodę są wyżej, w sekcji W tle."),0));
@@ -2363,11 +2373,13 @@ void AssistantPanel::UpdateControls() {
   NotifyBar();
   if (sessions_.empty() || !send_) return;
   const auto& session = selected();
-  const auto& settings = window_->assistant_settings();
+  const auto& settings = host_->assistant_settings();
   const bool idle = !session.busy;
   send_->SetVisible(idle); stop_->SetVisible(!idle); send_->SetEnabled(idle && !session.provider.empty());
   stop_->SetEnabled(!idle);
   prompt_->SetEnabled(idle || session.asking);
+  // A disabled text field can retain its caret timer until focus changes.
+  prompt_->SetCursorEnabled(idle || session.asking);
   if (session.asking) { send_->SetVisible(true); send_->SetEnabled(true); stop_->SetVisible(false); }
   prompt_->SetPlaceholderText(session.asking ? T(u"Wybierz odpowiedź albo napisz własną…") : T(u"Zapytaj Zittera… @ wstawia kartę albo narzędzie"));
   const bool research = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });

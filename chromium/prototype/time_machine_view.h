@@ -100,6 +100,7 @@ class TimeMachineView final : public views::View, public ui::CompositorAnimation
     float slot = 0, slot_velocity = 0, appear = 0, appear_velocity = 0, delay = 0;
     bool leaving = false;
   };
+  void RemoveCard(CardMotion& card);
   void Update(bool animate);
   int64_t first_ms() const;
   int FrontIndex() const;

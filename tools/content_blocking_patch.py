@@ -24,7 +24,7 @@ ALLOWED_SITES = 'zitter.ad_blocking_allowed_sites'
 RULES = 'zitter.ad_blocking_rules'
 RULE_MISSES = 'zitter.ad_blocking_rule_misses'
 LISTS = 'zitter.ad_blocking_lists'
-EDITS = [
+CHROME_PREF_EDITS = [
     ('chrome/browser/prefs/browser_prefs.cc',
      '  AccessibilityUIMessageHandler::RegisterProfilePrefs(registry);\n',
      '  // Zitter: built-in ad blocking, its per-site switch and own rules.\n'
@@ -38,6 +38,8 @@ EDITS = [
     ('chrome/browser/prefs/browser_prefs.cc',
      f'  registry->RegisterDictionaryPref("{RULE_MISSES}");\n',
      f'  registry->RegisterDictionaryPref("{LISTS}");\n'),
+]
+CONTENT_EDITS = [
     # Scriptlets: the browser's per-tab list of "host\nscript" entries...
     ('third_party/blink/public/common/renderer_preferences/renderer_preferences.h',
      '  std::string accept_languages;\n',
@@ -57,6 +59,8 @@ EDITS = [
     ('third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc',
      '  if (!data.ReadAcceptLanguages(&out->accept_languages))\n    return false;\n',
      '  if (!data.ReadZitterPageScripts(&out->zitter_page_scripts))\n    return false;\n'),
+]
+CHROME_RENDERER_EDITS = [
     # ...run by the renderer at document start, before any page script.
     ('chrome/renderer/chrome_content_renderer_client.cc',
      '#include "chrome/renderer/chrome_content_renderer_client.h"\n',
@@ -71,6 +75,7 @@ EDITS = [
      '    "chrome_content_renderer_client.h",\n',
      '    "zitter_page_scripts.cc",\n    "zitter_page_scripts.h",\n'),
 ]
+EDITS = [*CHROME_PREF_EDITS, *CONTENT_EDITS, *CHROME_RENDERER_EDITS]
 # Zitter's own renderer sources: chromium/renderer/<name> -> chrome/renderer/<name>.
 OWNED = ['zitter_page_scripts.h', 'zitter_page_scripts.cc']
 OWNED_MARKER = b'Copyright 2026 Zitter contributors'
@@ -106,10 +111,10 @@ def _inside(root, target):
     return target
 
 
-def prepare(checkout):
+def prepare(checkout, *, include_chrome=True, previous_plan=None):
     """Plan every write (path -> (old bytes or None, new bytes or None)) without touching the checkout."""
     root = Path(checkout).resolve()
-    plan = {}
+    plan = dict(previous_plan or {})
     vendor = _inside(root, root / VENDOR)
     if vendor.exists() and not (vendor / MARKER).exists():
         raise ValueError(f'Refusing to replace an unowned directory: {vendor}')
@@ -122,16 +127,17 @@ def prepare(checkout):
         for path in vendor.rglob('*'):
             if path.is_file() and path.relative_to(vendor).as_posix() not in wanted:
                 plan[path] = (path.read_bytes(), None)
-    for name in OWNED:
+    for name in OWNED if include_chrome else ():
         target = _inside(root, root / 'chrome/renderer' / name)
         old = target.read_bytes() if target.exists() else None
         if old is not None and OWNED_MARKER not in old:
             raise ValueError(f'Refusing to replace an unowned file: {target}')
         plan[target] = (old, (ROOT / 'chromium/renderer' / name).read_bytes())
-    for path, anchor, addition in EDITS:
+    edits = EDITS if include_chrome else CONTENT_EDITS
+    for path, anchor, addition in edits:
         target = _inside(root, root / path)
         # Several edits of one file build on each other.
-        old, current = plan.get(target, (target.read_bytes(),) * 2)
+        old, current = plan[target] if target in plan else (target.read_bytes(),) * 2
         plan[target] = (old, _insert(current.decode('utf-8'), anchor, addition, path).encode('utf-8'))
     for path, before, after in REPLACEMENTS:
         target = _inside(root, root / path)

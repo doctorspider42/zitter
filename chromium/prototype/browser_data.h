@@ -2,6 +2,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_BROWSER_DATA_H_
 
 #include <array>
+#include <cstdint>
 #include <string>
 #include <optional>
 #include <vector>
@@ -64,6 +65,7 @@ struct PaletteResult {
   std::string command_id;
   std::string target_workspace_id;
   int command_page_id = 0;
+  uint64_t command_tab_id = 0;
   bool operator==(const PaletteResult&) const = default;
 };
 

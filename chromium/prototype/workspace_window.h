@@ -26,7 +26,9 @@
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "ui/views/widget/widget_observer.h"
+#include "chromium/prototype/assistant_host.h"
 #include "chromium/prototype/assistant_panel.h"
+#include "chromium/prototype/before_unload_batch.h"
 #include "chromium/prototype/workspace_shell.h"
 #include "zitter/application/workspace_controller.h"
 
@@ -61,12 +63,14 @@ class HistoryPanel;
 class RssPanel;
 class PasswordsPanel;
 class AdBlockingRulesPanel;
+class PagePrinter;
 class ExtensionsBar;
 struct BrowsingImportData;
 
 // Intentionally a substrate probe, not a replacement BrowserWindowInterface.
 // The window owns profile keep-alives; WebViews own their WebContents.
 class WorkspaceWindow final : public WorkspaceRuntime,
+                              private AssistantHost,
                               public ui::AcceleratorTarget,
                               public ui::SelectFileDialog::Listener,
                               public content::BrowsingDataRemover::Observer,
@@ -150,7 +154,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   // Creates the panel hidden, so its scheduled tasks run.
   void EnsureAssistant();
   // The panel's state changed: the toolbar button follows it.
-  void AssistantStateChanged();
+  void AssistantStateChanged() override;
   // The toolbar button: shows or hides the panel.
   void ToggleAssistantFromBar();
   // Opens the assistant and sends `prompt` (the shield's "block more").
@@ -162,41 +166,43 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void OpenAdBlockingRules();
   AdBlockingRulesPanel* ad_blocking_rules_panel() const { return ad_blocking_rules_panel_.get(); }
   Profile* AssistantProfile() const;
-  std::string AssistantProfileId() const;
-  base::DictValue AssistantContext(const AssistantPermissions& permissions);
+  content::BrowserContext* AssistantBrowserContext() const override;
+  std::string AssistantProfileId() const override;
+  base::DictValue AssistantContext(const AssistantPermissions& permissions) override;
   // `background` names a session's invisible page: @current and new pages
   // resolve to it, and mutations of the user's visible tabs are refused.
   void AssistantTool(std::string tool, base::DictValue args, AssistantPermissions permissions,
                      base::OnceCallback<void(base::Value)> done, bool user_confirmed = false,
-                     std::string background = {});
-  const AssistantSettings& assistant_settings() const { return assistant_settings_; }
+                     std::string background = {}) override;
+  const AssistantSettings& assistant_settings() const override;
   void SetAssistantSettings(AssistantSettings settings);
   // Settings rows for backends and models (Settings → Asystent AI).
   base::DictValue AssistantSettingsForShell();
   void WriteAssistantSettings(base::DictValue value);
-  void WithAssistantApiKey(base::OnceCallback<void(std::string)> callback);
+  void WithAssistantApiKey(base::OnceCallback<void(std::string)> callback) override;
   void CheckAssistantConnection(std::string provider, bool discover = false);
   // Invisible pages of the assistant profile share its cookies and logins.
   // Starting from a visible tab moves that tab, with its page state, away from the user.
-  bool AssistantStartBackground(const std::string& key, const std::string& from_tab, const GURL& url);
-  bool AssistantHasBackground(const std::string& key) const { return assistant_background_.contains(key); }
+  bool AssistantStartBackground(const std::string& key, const std::string& from_tab, const GURL& url) override;
+  bool AssistantHasBackground(const std::string& key) const override;
   // Puts the page back among the user's tabs and selects it.
-  bool AssistantTakeOver(const std::string& key);
-  void AssistantDiscardBackground(const std::string& key);
+  bool AssistantTakeOver(const std::string& key) override;
+  void AssistantDiscardBackground(const std::string& key) override;
   // The element's bounds in screen coordinates, for a consent bubble beside it.
   views::WebView* AssistantTabView(std::string id);
   // Saved assistant conversations, beside the workspace configuration.
-  void LoadAssistantSessions(base::OnceCallback<void(std::optional<base::DictValue>)> done);
-  void SaveAssistantSessions(base::DictValue sessions);
+  void LoadAssistantSessions(base::OnceCallback<void(std::optional<base::DictValue>)> done) override;
+  void SaveAssistantSessions(base::DictValue sessions) override;
   base::FilePath assistant_sessions_path() const { return data_directory_.AppendASCII("ZitterAssistantSessions.json"); }
   // The assistant's stable id for a tab (@tab:<id>), made on first use.
   std::string AssistantTargetFor(views::View* view);
-  void AssistantElementBounds(std::string tab, std::string element, base::OnceCallback<void(std::optional<gfx::Rect>)> done);
+  void AssistantElementBounds(std::string tab, std::string element, base::OnceCallback<void(std::optional<gfx::Rect>)> done) override;
   content::WebContents* assistant_background_for_testing(const std::string& key) const;
   AssistantPanel* assistant() const { return assistant_; }
   void ShowSitePanel();
   DownloadPanel* downloads() const { return downloads_.get(); }
   void EnsureDownloads();
+  void SetDownloadProfile(Profile* profile);
   void DownloadCompleted(std::string guid, std::u16string name);
   BrowserPreferences ReadPreferences() const;
   std::u16string DownloadDirectory() const;
@@ -237,8 +243,8 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool workspace_favicons_pending_for_testing() const { return !favicon_refreshing_.empty(); }
   ExtensionsBar* extensions_bar() const { return extensions_bar_; }
   bool OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split = false);
-  WorkspaceShell* shell() const { return shell_.get(); }
-  bool NavigateFromBar(const GURL& url, bool new_tab);
+  WorkspaceShell* shell() const override;
+  bool NavigateFromBar(const GURL& url, bool new_tab) override;
   void SelectTab(size_t index);
   void CloseTab(size_t index);
   void CloseActiveTab();
@@ -373,20 +379,13 @@ class WorkspaceWindow final : public WorkspaceRuntime,
 
   std::vector<content::WebContents*> WorkspacePages(std::string_view id, bool peek = true, bool any_peek = false) const;
   bool GuardPages(std::vector<content::WebContents*> pages, base::OnceClosure action);
-  void ContinueLifecycle(bool proceed);
+  bool LifecycleScopeIsCurrent() const;
   void FinishLifecycle(bool proceed);
   void ArmCloseHandler();
   void CommitClose();
-  struct LifecyclePage {
-    base::WeakPtr<content::WebContents> page;
-    int entry_id = 0;
-    bool checked = false;
-    size_t navigation_generation = 0;
-  };
-  std::vector<LifecyclePage> lifecycle_pages_;
+  BeforeUnloadBatch before_unload_batch_;
   std::vector<base::WeakPtr<content::WebContents>> lifecycle_topology_;
   base::WeakPtr<content::WebContents> lifecycle_source_page_;
-  size_t lifecycle_index_ = 0;
   bool lifecycle_pending_ = false;
   bool lifecycle_approved_ = false;
   std::string lifecycle_workspace_;

@@ -17,6 +17,9 @@ enum class SafeBrowsingKeyFileStatus {
 // not prove that a list update has succeeded.
 SafeBrowsingKeyFileStatus ReadSafeBrowsingKeyFile(
     const base::FilePath& path, std::string* key);
+// Reads Zitter's configured or default private key file without modifying the
+// process environment. Call on a sequence that permits blocking file I/O.
+std::string LoadSafeBrowsingKeyFile();
 void ConfigureSafeBrowsingKey();
 
 // Must run before ContentMain creates FeatureList or any profile services.

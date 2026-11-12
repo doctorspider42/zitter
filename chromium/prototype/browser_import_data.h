@@ -2,6 +2,7 @@
 #define ZITTER_CHROMIUM_PROTOTYPE_BROWSER_IMPORT_DATA_H_
 
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,6 +13,8 @@
 #include "net/cookies/canonical_cookie.h"
 
 class Profile;
+namespace history { class HistoryService; }
+namespace network::mojom { class CookieManager; }
 namespace zitter::prototype {
 struct ImportedProfileData {
   std::string profile_id;
@@ -36,6 +39,18 @@ struct BrowsingImportResult {
   size_t skipped = 0;
   bool failed = false;
 };
+struct BrowsingImportDestination {
+  base::RepeatingCallback<history::HistoryService*()> history_service;
+  base::RepeatingCallback<network::mojom::CookieManager*()> cookie_manager;
+};
+using BrowsingImportDestinations = std::map<std::string, BrowsingImportDestination>;
+
+// Destinations are resolved by source mapping ID at each step. Callbacks can
+// keep the destination alive or return null after it has closed.
+void WriteBrowsingImportDataToServices(
+    std::shared_ptr<BrowsingImportData> data,
+    BrowsingImportDestinations destinations,
+    base::OnceCallback<void(BrowsingImportResult)> callback);
 // Writes through the destination's services, including its own cookie encryption.
 void WriteBrowsingImportData(std::shared_ptr<BrowsingImportData> data,
     std::vector<Profile*> destinations,

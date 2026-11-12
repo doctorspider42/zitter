@@ -128,6 +128,13 @@ class OverlayTests(unittest.TestCase):
         self.assertIn('"Zitter Safe Storage"', patched)
         self.assertIn('"Zitter"', patched)
         self.assertEqual(patched, overlay.patch_keychain(patched))
+        lab = overlay.patch_keychain(source, "Zitter Content Lab")
+        self.assertIn('"Zitter Content Lab Safe Storage"', lab)
+        self.assertIn('"Zitter Content Lab";', lab)
+        self.assertNotIn('"Zitter Safe Storage"', lab)
+        self.assertEqual(lab, overlay.patch_keychain(lab, "Zitter Content Lab"))
+        with self.assertRaises(ValueError):
+            overlay.patch_keychain(patched, "Zitter Content Lab")
         with self.assertRaises(ValueError):
             overlay.patch_keychain('unknown upstream layout')
 

@@ -24,6 +24,9 @@ namespace views { class DialogDelegate; class Widget; class View; }
 
 namespace zitter::prototype {
 class PanelScene;
+class PageDialogs;
+
+PageDialogs* AttachChromePageDialogs(content::WebContents* contents);
 
 // Chromium's per-page clients, with native Zitter password consent UI and a
 // history adapter for pages outside Chrome's BrowserWindow/TabStripModel.

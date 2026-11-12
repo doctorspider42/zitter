@@ -14,6 +14,7 @@ import ast
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -188,14 +189,33 @@ def main():
             actual_links.extend(matched)
         else:
             unmatched.append(binary['path'])
-    targets = {target} if windows else {target, '//chrome:chrome_framework'}
-    for link in actual_links:
-        p = Path(link['ninja'])
-        targets.add('//' + p.parent.relative_to('obj').as_posix() + ':' + p.stem)
+    standalone_content = target == '//zitter_content:zitter_content'
+    targets = {target}
+    if not standalone_content:
+        if not windows:
+            targets.add('//chrome:chrome_framework')
+        for link in actual_links:
+            p = Path(link['ninja'])
+            targets.add('//' + p.parent.relative_to('obj').as_posix() + ':' + p.stem)
     def scan(target):
-        result = subprocess.run([sys.executable, str(src / 'tools/licenses/licenses.py'), 'list',
-                                 '--gn-out-dir', str(out), '--gn-target', target, '--target-os', 'win' if windows else 'mac',
-                                 '--shipped-only', '--verbose', '--enable-warnings'], capture_output=True, text=True)
+        command = [sys.executable, str(src / 'tools/licenses/licenses.py'), 'list',
+                   '--gn-out-dir', str(out), '--gn-target', target, '--target-os', 'win' if windows else 'mac',
+                   '--shipped-only', '--verbose', '--enable-warnings']
+        with tempfile.TemporaryDirectory(prefix='zitter-license-gn-') as temporary:
+            env = None
+            if standalone_content:
+                gn = src / 'buildtools' / ('win/gn.exe' if windows else 'mac/gn')
+                shim = Path(temporary) / 'gn.py'
+                # The upstream scanner creates a scratch output, so its desc
+                # call cannot inherit the original output's GN root target.
+                shim.write_text(
+                    'import subprocess, sys\n'
+                    f'raise SystemExit(subprocess.call([{str(gn)!r}, '
+                    "'--root-target=//zitter_content:zitter_content', *sys.argv[1:]]))\n",
+                    encoding='utf-8',
+                )
+                env = dict(os.environ, LICENSES_GN_PATH=str(shim))
+            result = subprocess.run(command, capture_output=True, text=True, env=env)
         if result.returncode:
             raise RuntimeError(target + ': ' + result.stdout + result.stderr)
         return target, parse_metadata(result.stdout + result.stderr)

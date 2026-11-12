@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>Unsaved draft probe</title>
+<h1>Unsaved draft probe</h1>
+<label>Draft <textarea rows="4" cols="42"></textarea></label>
+<p>Type a different draft in each workspace. The page keeps it in memory.</p>
+<script>
+const draft = document.querySelector('textarea');
+function beforeUnload(event) {
+  event.preventDefault();
+  event.returnValue = '';
+}
+draft.addEventListener('input', () => {
+  if (draft.value) {
+    window.addEventListener('beforeunload', beforeUnload);
+  } else {
+    window.removeEventListener('beforeunload', beforeUnload);
+  }
+});
+</script>

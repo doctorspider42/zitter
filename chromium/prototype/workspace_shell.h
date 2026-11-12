@@ -7,13 +7,14 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include "ui/gfx/image/image.h"
 #include "zitter/core/workspace_model.h"
 #include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/editor_control.h"
 #include "chromium/prototype/sidebar_tree.h"
 #include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/browser_tools.h"
-#include "chromium/prototype/page_printing.h"
+#include "chromium/prototype/print_options.h"
 #include <optional>
 #include <string>
 #include <string_view>
@@ -28,6 +29,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/image/image_skia.h"
 #include "ui/events/event_handler.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/menus/simple_menu_model.h"
@@ -38,10 +40,13 @@
 #include "url/gurl.h"
 #include "build/build_config.h"
 
+class PrefService;
+
 namespace zitter::sidebar { struct Item; struct Timeline; struct SidebarPinTree; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; class KeyEvent; }
 namespace gfx { class Canvas; }
 namespace views {
+class ImageView;
 class DialogDelegate;
 class Button;
 class Combobox;
@@ -56,6 +61,8 @@ class Widget;
 }
 
 namespace zitter::prototype {
+
+inline constexpr std::array kWorkspaceZoomPercentages = {75, 90, 100, 110, 125, 150, 175, 200};
 class WorkspaceSwipeState;
 class PanelViewport;
 class ProfileFormState;
@@ -77,12 +84,21 @@ enum class ThemeMode { kSystem, kLight, kDark };
 enum class SearchEngine { kDuckDuckGo, kGoogle, kBing };
 
 enum class PageCommand { kBack, kForward, kReload };
+struct PageMenuItem {
+  std::u16string title;
+  base::RepeatingClosure run;
+  std::vector<PageMenuItem> children;
+  bool enabled = true;
+  bool separator = false;
+};
 struct PageMenuNavigation {
   GURL url;
   bool can_go_back = false;
   bool can_go_forward = false;
   bool can_reload = false;
   base::RepeatingCallback<void(PageCommand)> run;
+  base::RepeatingClosure save_link;
+  std::vector<PageMenuItem> extension_items;
 };
 
 struct ShellTab {
@@ -135,6 +151,17 @@ class WorkspaceShell final : public ui::EventHandler,
  public:
   struct Callbacks {
     bool private_mode = false;
+    bool can_create_profile = true;
+    bool can_reassign_workspace = true;
+    bool can_export_pdf = false;
+    bool can_preview_pdf = false;
+    bool show_extension_enablement = false;
+    base::RepeatingClosure install_extension;
+    base::RepeatingCallback<void(std::string)> uninstall_extension;
+    base::RepeatingCallback<void(std::string)> open_extension_options;
+    base::RepeatingCallback<void(std::string)> open_extension_popup;
+    std::vector<std::pair<std::string, std::u16string>> extension_preferences;
+    raw_ptr<PrefService> locale_preferences = nullptr;
     Callbacks();
     Callbacks(Callbacks&&);
     Callbacks& operator=(Callbacks&&);
@@ -155,6 +182,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(const GURL&, bool)> navigate;
     base::RepeatingCallback<void(size_t)> select_tab;
     base::RepeatingCallback<void(size_t)> close_tab;
+    base::RepeatingCallback<bool(size_t)> tab_muted;
+    base::RepeatingCallback<void(size_t, bool)> set_tab_muted;
     base::RepeatingCallback<bool(size_t)> duplicate_tab;
     base::RepeatingCallback<bool(std::string)> duplicate_pin;
     base::RepeatingCallback<bool(size_t, std::string)> move_tab_to_workspace;
@@ -262,6 +291,8 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* ad_blocking_list_for_testing() const { return ad_blocking_list_; }
   views::View* ad_blocking_rules_for_testing() const { return ad_blocking_rules_; }
   views::View* assistant_models_for_testing() const { return assistant_models_list_; }
+  EditorControl* assistant_add_model_for_testing() const { return assistant_add_model_; }
+  views::View* assistant_add_button_for_testing() const { return assistant_add_button_; }
   // A view at the right end of the header band, owned by the window's root
   // (design: Extensions). Its preferred width is honored up to the page commands.
   views::View* SetHeaderTrailing(std::unique_ptr<views::View> view);
@@ -298,6 +329,12 @@ class WorkspaceShell final : public ui::EventHandler,
   ui::SimpleMenuModel* link_menu() const { return link_menu_.get(); }
   void Detach();
   void Update(ShellState state);
+  std::optional<uint32_t> favicon_pixel_for_testing(const std::string& url) const {
+    auto it = state_.favicons.find(url);
+    if (it == state_.favicons.end() || it->second.empty())
+      return std::nullopt;
+    return it->second.front();
+  }
   void OpenAddress(bool new_tab);
   void OpenCommandPalette();
   // `complete` is false for the quick first answer (tabs, pins); the loader
@@ -319,18 +356,34 @@ class WorkspaceShell final : public ui::EventHandler,
   // Closing the window would cancel |count| downloads; |answer| gets whether
   // to quit anyway. Outside macOS, where AppController asks.
   void ConfirmQuitWithDownloads(int count, base::OnceCallback<void(bool)> answer);
+  views::Widget* quit_dialog_for_testing() const { return quit_dialog_.get(); }
   // A destructive confirmation over `parent` (design: Dialog): `detail` muted,
   // `warning` in `danger`, `action` the danger button; waiting is the default.
   void ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
                      std::u16string action, base::OnceCallback<void(bool)> answer);
   views::Widget* danger_dialog_for_testing() const { return danger_dialog_.get(); }
+  views::View* install_extension_for_testing() const { return install_extension_button_; }
+  views::View* extension_popup_for_testing(const std::string& id) const {
+    return extension_popup_buttons_.at("extension_popup." + id);
+  }
+  views::View* extension_options_for_testing(const std::string& id) const {
+    return extension_options_buttons_.at("extension_options." + id);
+  }
+  views::View* extension_remove_for_testing(const std::string& key) const {
+    return extension_remove_buttons_.at(key);
+  }
   // Design: Wyczyść dane przeglądania — a period, the basic kinds and, under
   // „Zaawansowane”, downloads, passwords (in danger), forms, site settings and
   // Time Machine. `profile` names whose data it is.
-  void ShowClearDataDialog(views::Widget* parent, std::u16string profile);
+  void ShowClearDataDialog(
+      views::Widget* parent, std::u16string profile,
+      base::RepeatingCallback<void(BrowsingDataSelection)> basic_clear = {},
+      bool allow_time_machine = false, bool allow_site_settings = false,
+      bool allow_download_history = false, bool allow_passwords = false);
   views::Widget* clear_data_dialog_for_testing() const { return clear_dialog_.get(); }
   // 0 history, 1 cookies, 2 cache, 3 downloads, 4 passwords, 5 forms, 6 site settings, 7 Time Machine.
   void SetClearDataChoiceForTesting(size_t kind, bool checked);
+  void SetClearDataPeriodForTesting(size_t index);
   void SetClearDataAdvancedForTesting(bool advanced) { SetClearDataAdvanced(advanced); }
   void ShowAbout(std::string version = {});
   void ShowUpdateReady(std::string version, base::RepeatingClosure install = {},
@@ -392,6 +445,13 @@ class WorkspaceShell final : public ui::EventHandler,
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
   void OpenGeneralSettings();
+  bool ExtensionActionAppearanceForTesting(const std::string& id,
+                                           std::u16string_view badge) const;
+  void SetExtensionActionAppearance(const std::string& id,
+                                    gfx::Image icon,
+                                    std::u16string badge, SkColor color);
+  void AddExtensionPreference(const std::string& key,
+                              const std::u16string& title);
   // The |z⟩ menu (design: Menu Zitter): the macOS menu bar's commands on
   // Windows, below |anchor|.
   void ShowAppMenu(views::View* anchor);
@@ -411,6 +471,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool SetDefaultSearchProvider(std::string keyword);
   GURL ResolveInput(std::string text, std::u16string* provider_name = nullptr) const;
   const BrowserTools& browser_tools() const { return tools_; }
+  void RankCommandResults(std::vector<PaletteResult>& results) const;
   void RecordCommandUse(std::string id, std::string target);
   bool tools_ready() const { return tools_ready_; }
   views::Widget* tools_widget() const { return tools_widget_.get(); }
@@ -483,6 +544,7 @@ class WorkspaceShell final : public ui::EventHandler,
   size_t workspace_swipe_metal_frame_count() const;
   bool workspace_swipe_contains_scene_text(std::string_view text) const;
   views::Widget* general_widget() const { return general_widget_.get(); }
+  views::Widget* about_widget_for_testing() const { return about_dialog_.get(); }
   void SetPreferencesStatus(std::u16string text, bool error = false);
   // Rust forms own outcome copy/tone; `native` is the Views fallback text.
   // outcome is sidebar::PreferenceOutcome; general updates only the settings status.
@@ -577,6 +639,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void OpenWorkspaceSettings();
   bool settings_visible() const;
   void SetConfigurationError(bool error);
+  void CancelPendingWorkspaceRemoval() { pending_removal_.reset(); }
+  void ReportWorkspaceNameSaved(bool saved);
   void OpenProfiles(std::string profile_id = {}, std::string workspace_id = {});
   void OpenImport(std::optional<ImportBrowser> browser = std::nullopt);
   // The first-run wizard (design: Pierwsze uruchomienie, Windows): welcome,
@@ -618,6 +682,7 @@ class WorkspaceShell final : public ui::EventHandler,
   bool import_panel_contains_scene_text(std::string_view text) const;
   bool import_choices_metal_visible() const;
   void SelectImportBrowserForTesting(size_t index);
+  void SubmitImportForTesting() { SubmitImport(); }
   bool import_source_metal_visible() const;
   void SetImportOptionCheckedForTesting(size_t option,bool checked);
   views::View* import_panel_for_testing() const{return import_root_;}
@@ -637,11 +702,16 @@ class WorkspaceShell final : public ui::EventHandler,
   enum class ClearDataEvent { kBusy, kNothingSelected, kHistoryForbidden, kClearing, kCleared, kFailed };
   void ReportClearData(ClearDataEvent event, const std::u16string& profile);
   struct ClearDataCopy { bool valid = false; std::u16string title, description, confirm, cancel; };
-  ClearDataCopy ClearDataConfirmCopy(const std::u16string& profile, int period, bool history, bool cookies, bool cache) const;
+  ClearDataCopy ClearDataConfirmCopy(const std::u16string& profile, int period,
+                                     bool history, bool cookies, bool cache,
+                                     bool time_machine = false) const;
   void SetProfileStatus(ProfileStatusEvent event);
   void SetProfileStatus(std::u16string message);
   views::Widget* profiles_widget() const { return profiles_widget_.get(); }
   EditorControl* profile_name_input() const { return profile_name_input_; }
+  bool SubmitProfileCreationForTesting() { return SubmitRustProfileAction(0); }
+  void StartProfileRenameForTesting(std::string id) { StartProfileRename(std::move(id)); }
+  bool SubmitProfileRenameForTesting() { return SubmitRustProfileAction(1); }
   views::View* managed_profile_picker() const { return profile_list_; }
   EditorControl* profile_rename_input() const { return profile_rename_input_; }
   std::optional<size_t> profile_picker_selection(bool managed) const;
@@ -669,6 +739,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void DownloadStarted(std::u16string name);
   // A transfer finished: the ring trembles once and shows ✓ for a moment.
   void DownloadFinished();
+  // Clear the active profile's transient download UI before changing profiles.
+  void ResetDownloadPresentation();
   // Where the downloads list opens from: the ring or the pill (empty: neither).
   gfx::Rect downloads_anchor_in_screen() const;
   // Design: Monit o zapisanie hasła — the address pill the save offer opens
@@ -708,6 +780,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void UndoToast();
   views::Widget* toast_widget() const { return toast_widget_.get(); }
   std::u16string toast_text_for_testing() const;
+  views::View* toast_undo_for_testing() const;
   bool appearance_metal_visible(bool emoji) const;
   bool form_actions_contains_scene_text(bool profiles,std::string_view text) const;
   size_t form_action_canvases_visible_for_testing(bool profiles) const;
@@ -722,6 +795,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // One emoji grapheme shown instead of the workspace dot; empty clears it.
   void SetWorkspaceEmoji(std::string_view id, std::u16string emoji);
   std::u16string workspace_emoji(std::string_view id) const;
+  std::pair<SkColor, std::u16string> WorkspaceDraftAppearance() const;
   EditorControl* emoji_input() const { return emoji_input_; }
   bool appearance_ready() const { return appearance_ready_; }
   bool appearance_saved() const { return pending_writes_ == 0; }
@@ -731,6 +805,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* tab_button(size_t index) const;
   views::View* pin_button(std::string_view id) const;
   bool row_has_favicon_for_testing(views::View* row) const;
+  bool row_has_audio_badge_for_testing(views::View* row) const;
   std::u16string row_monogram_for_testing(views::View* row) const;
   bool sidebar_heading_visible_for_testing() const;
   uint64_t sidebar_node_id_for_testing(views::View* row) const;
@@ -791,6 +866,9 @@ class WorkspaceShell final : public ui::EventHandler,
   EditorControl* address_input() const { return address_; }
   // Application key policy; the platform input method owns composing keys.
   bool HandleAddressKey(const ui::KeyEvent& event);
+  views::View* navigation_button_for_testing(PageCommand command) const {
+    return nav_buttons_[static_cast<size_t>(command)];
+  }
   bool HandlePreferenceEditorKey(EditorControl* sender,const ui::KeyEvent& event);
   bool HandleToolsEditorKey(EditorControl* sender,const ui::KeyEvent& event);
   EditorControl* provider_input(size_t index) const {
@@ -908,6 +986,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::Widget> toast_widget_;
   std::unique_ptr<views::WidgetDelegate> scrim_delegate_;
   std::unique_ptr<views::Widget> scrim_widget_;
+  raw_ptr<views::View> install_extension_button_ = nullptr;
   raw_ptr<views::View> toast_ = nullptr;  // ToastView
   base::OnceClosure toast_undo_;
   base::OneShotTimer toast_timer_;
@@ -1108,7 +1187,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ApplyAppearance(bool refresh_theme = true);
   bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
   void RefreshWorkspaceHeading();
-  void RestorePageFocus();
+  void RestorePageFocus(std::optional<size_t> pane = std::nullopt);
   void RunSuggestion(size_t index);
   void ShowAddressError();
   void OnWidgetBoundsChanged(views::Widget*, const gfx::Rect&) override;
@@ -1162,6 +1241,18 @@ class WorkspaceShell final : public ui::EventHandler,
   struct PreferenceGroup { raw_ptr<views::View> card; std::vector<raw_ptr<views::View>> rows; };
   std::vector<PreferenceGroup> preference_groups_;
   std::map<std::string, raw_ptr<views::View>> preference_toggles_;
+  std::map<std::string, raw_ptr<views::View>> extension_remove_buttons_;
+  std::map<std::string, raw_ptr<views::View>> extension_options_buttons_;
+  std::map<std::string, raw_ptr<views::View>> extension_popup_buttons_;
+  struct ExtensionActionAppearance {
+    gfx::Image icon;
+    std::u16string badge;
+    SkColor color;
+  };
+  std::map<std::string, ExtensionActionAppearance> extension_action_appearance_;
+  std::map<std::string, raw_ptr<views::ImageView>> extension_action_icons_;
+  std::map<std::string, raw_ptr<views::Label>> extension_action_badges_;
+
   std::map<std::string, raw_ptr<views::View>> preference_pickers_;
   std::map<std::string, raw_ptr<EditorControl>> preference_textfields_;
   std::map<std::string, raw_ptr<views::View>> preference_save_buttons_;
@@ -1174,6 +1265,7 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> assistant_backends_list_ = nullptr, assistant_models_list_ = nullptr;
   raw_ptr<views::View> assistant_add_backend_ = nullptr, assistant_add_button_ = nullptr;
   raw_ptr<EditorControl> assistant_add_model_ = nullptr;
+  std::vector<std::string> assistant_add_providers_;
   std::string assistant_preferences_snapshot_;
   views::ViewTracker welcome_assistant_backends_;
   std::string welcome_assistant_snapshot_;
@@ -1217,11 +1309,14 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> peek_toolbar_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> peek_delegate_;
   std::unique_ptr<views::Widget> peek_widget_;
+  std::vector<std::unique_ptr<ui::SimpleMenuModel>> extension_page_menus_;
+  std::map<int, base::RepeatingClosure> extension_page_actions_;
   std::unique_ptr<ui::SimpleMenuModel> link_menu_;
   std::unique_ptr<ui::SimpleMenuModel> route_menu_;
   std::unique_ptr<views::MenuRunner> link_menu_runner_;
   GURL context_url_;
   GURL page_menu_url_;
+  base::RepeatingClosure page_menu_save_link_;
   std::string link_source_workspace_;
   std::vector<Workspace> route_workspaces_;
   std::unique_ptr<views::DialogDelegate> rust_folder_dialog_delegate_;

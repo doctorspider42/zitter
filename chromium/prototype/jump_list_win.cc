@@ -23,7 +23,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
-#include "chrome/common/chrome_switches.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/workspace_frame_win.h"
 #include "url/gurl.h"
@@ -42,8 +41,11 @@ ComPtr<IShellLinkW> Link(const std::wstring& command, const std::u16string& titl
   base::CommandLine arguments(base::CommandLine::NO_PROGRAM);
   arguments.AppendSwitchNative(kZitterCommandSwitch, command);
   const auto* current = base::CommandLine::ForCurrentProcess();
-  if (current->HasSwitch(switches::kUserDataDir))
-    arguments.AppendSwitchPath(switches::kUserDataDir, current->GetSwitchValuePath(switches::kUserDataDir));
+  if (current->HasSwitch(windows::kUserDataDirSwitch)) {
+    arguments.AppendSwitchPath(
+        windows::kUserDataDirSwitch,
+        current->GetSwitchValuePath(windows::kUserDataDirSwitch));
+  }
   link->SetPath(exe.value().c_str());
   link->SetArguments(arguments.GetArgumentsString().c_str());
   link->SetIconLocation(exe.value().c_str(), 0);
@@ -177,7 +179,9 @@ bool ForwardCommandToRunningZitter(const base::CommandLine& command_line) {
   for (const auto& command : commands) if (command.size() > kMaxWorkspaceCommandBytes) return false;
   base::FilePath exe;
   if (!base::PathService::Get(base::FILE_EXE, &exe)) return false;
-  Search search{exe.value(), WorkspaceCommandProfileProperty(command_line.GetSwitchValuePath(switches::kUserDataDir))};
+  Search search{exe.value(), WorkspaceCommandProfileProperty(
+                                 command_line.GetSwitchValuePath(
+                                     windows::kUserDataDirSwitch))};
   ::EnumWindows(&FindTarget, reinterpret_cast<LPARAM>(&search));
   if (!search.found) return false;
   DWORD process_id = 0;

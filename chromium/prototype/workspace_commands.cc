@@ -49,10 +49,6 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
       result.url = page->GetVisibleURL();
       result.command_page_id = sessions::SessionTabHelper::IdForTab(page).id();
     }
-    for (const auto& shortcut : shell_->browser_tools().shortcuts) if (shortcut.id == result.command_id) {
-      const auto chord = DisplayShortcut(shortcut.accelerator);
-      if (!chord.empty()) result.detail += u" · " + base::UTF8ToUTF16(chord);
-    }
     results.push_back(std::move(result));
   };
   auto has_closed = [&] {
@@ -77,21 +73,7 @@ std::vector<PaletteResult> WorkspaceWindow::CommandResults(std::u16string query)
     if (!only && entry.id == "reload_workspace_icons") continue;
     bind(std::string(entry.id), base::UTF8ToUTF16(std::string(entry.title)), base::UTF8ToUTF16(std::string(entry.detail)), std::string(entry.target));
   }
-  const auto now = base::Time::Now();
-  const auto& tools = shell_->browser_tools();
-  // Score each candidate once, rather than repeating lookups and decay in
-  // every sort comparison on the UI sequence. Equal scores retain catalogue order.
-  std::vector<std::pair<double, PaletteResult>> ranked;
-  ranked.reserve(results.size());
-  for (auto& result : results) {
-    const double score = tools.CommandScore(result.command_id, result.target_workspace_id, now);
-    ranked.emplace_back(score, std::move(result));
-  }
-  std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
-    return a.first > b.first;
-  });
-  results.clear();
-  for (auto& entry : ranked) results.push_back(std::move(entry.second));
+  shell_->RankCommandResults(results);
   if (!only && query.empty() && results.size() > 6) results.resize(6);
   return results;
 }

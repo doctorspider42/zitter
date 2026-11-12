@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Night Shift settings</title>
+    <link rel="stylesheet" href="settings.css">
+    <script type="module" src="settings.js"></script>
+</head>
+<body class="ns-settings">
+    <main>
+        <section class="column">
+            <header class="title">
+                <span class="mark"><img src="moon.png" width="22" height="22" alt=""></span>
+                <span class="heading">
+                    <h1>Night Shift</h1>
+                    <small data-text="subtitle">Dark pages where there are none</small>
+                </span>
+                <input id="enabled" class="switch" type="checkbox" role="switch" data-label="enable" disabled>
+            </header>
+
+            <section class="group" id="scope-group">
+                <h2 data-text="where">Where it runs</h2>
+                <p class="hint" data-text="whereHint">One setting for all of Zitter.</p>
+                <div class="segmented" role="radiogroup" data-label="scope">
+                    <button type="button" role="radio" id="scope-all" data-text="allProfiles">All profiles</button>
+                    <button type="button" role="radio" id="scope-some" data-text="someProfiles">Selected</button>
+                </div>
+                <div class="profiles" id="profiles"></div>
+                <p class="hint" id="scope-note"></p>
+            </section>
+
+            <section class="group" id="site-tuning" hidden>
+                <h2 data-text="siteLook">Site appearance</h2>
+                <p class="hint" id="site-tuning-host"></p>
+                <div class="sliders">
+                    <label class="slider" for="site-brightness"><span data-text="brightness">Brightness</span><input id="site-brightness" type="range" min="75" max="125" value="100"><output for="site-brightness"></output></label>
+                    <label class="slider" for="site-contrast"><span data-text="contrast">Contrast</span><input id="site-contrast" type="range" min="75" max="125" value="100"><output for="site-contrast"></output></label>
+                </div>
+                <button type="button" id="site-tuning-reset" class="quiet" data-text="reset">Reset to defaults</button>
+                <div class="group" id="site-repair" hidden>
+                    <h2 data-text="repairTitle">Assistant proposal</h2>
+                    <p class="hint" id="site-repair-label"></p>
+                    <p class="hint" data-text="repairHint">The preview appears in the site tab.</p>
+                    <div class="segmented">
+                        <button type="button" id="site-repair-before" data-text="repairBefore">Before</button>
+                        <button type="button" id="site-repair-preview" data-text="repairPreview">Preview</button>
+                    </div>
+                    <div class="segmented">
+                        <button type="button" id="site-repair-discard" data-text="repairDiscard">Discard</button>
+                        <button type="button" id="site-repair-save" data-text="repairSave">Save for this site</button>
+                    </div>
+                </div>
+                <button type="button" id="site-repair-undo" class="quiet" data-text="repairUndo" hidden>Undo last repair</button>
+            </section>
+
+            <section class="group">
+                <h2 data-text="sites">Sites with their own settings</h2>
+                <div class="sites" id="sites"></div>
+                <p class="hint" id="sites-empty" data-text="sitesEmpty">Tune a site from the Night Shift button in the toolbar.</p>
+            </section>
+        </section>
+
+        <section class="column look">
+            <section class="group">
+                <h2 data-text="look">Default look</h2>
+                <p class="hint" data-text="lookHint">For every site without its own settings.</p>
+            </section>
+            <div class="preview" aria-hidden="true">
+                <div class="before"><i></i><i></i><i></i><b></b></div>
+                <div class="after" id="preview"><i></i><i></i><i></i><b></b></div>
+            </div>
+            <div class="sliders">
+                <label class="slider" for="brightness"><span data-text="brightness">Brightness</span><input id="brightness" type="range" min="75" max="125" value="100"><output for="brightness"></output></label>
+                <label class="slider" for="contrast"><span data-text="contrast">Contrast</span><input id="contrast" type="range" min="75" max="125" value="100"><output for="contrast"></output></label>
+                <label class="slider" for="sepia"><span data-text="sepia">Sepia</span><input id="sepia" type="range" min="0" max="50" value="0"><output for="sepia"></output></label>
+                <label class="slider" for="grayscale"><span data-text="grayscale">Grayscale</span><input id="grayscale" type="range" min="0" max="100" value="0"><output for="grayscale"></output></label>
+            </div>
+            <label class="row" for="force">
+                <span><strong data-text="force">Also on sites with their own dark mode</strong><small data-text="forceHint">By default a site's own theme stays</small></span>
+                <input id="force" class="switch" type="checkbox" role="switch">
+            </label>
+            <footer>
+                <button type="button" id="reset" class="quiet" data-text="reset">Reset to defaults</button>
+                <small data-text="instant">Changes apply right away</small>
+            </footer>
+        </section>
+    </main>
+    <p class="status" role="status"></p>
+</body>
+</html>

@@ -14,6 +14,7 @@
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chromium/prototype/assistant_settings.h"
 #if BUILDFLAG(IS_WIN)
 #include "base/win/scoped_handle.h"
 #endif
@@ -25,7 +26,7 @@
 namespace network { class SimpleURLLoader; }
 namespace views { class EventMonitor; class ScrollView; class Textarea; }
 namespace zitter::prototype {
-class WorkspaceWindow;
+class AssistantHost;
 class EditorControl;
 class PanelScene;
 class PanelViewport;
@@ -34,42 +35,6 @@ inline bool IsAssistantDebugTool(std::string_view tool) {
   return tool == "debug_console" || tool == "debug_dom" ||
          tool == "debug_edit_dom" || tool == "debug_hard_reload";
 }
-struct AssistantPermissions {
-  bool tabs = false, pages = false, actions = false, history = false, web = true;
-  bool confirm_clicks = true;
-  base::DictValue ToValue() const;
-  bool operator==(const AssistantPermissions&) const = default;
-};
-// Backends in their stable order: openai, codex, claude, ollama.
-inline constexpr std::array<const char*, 4> kAssistantProviders = {"openai", "codex", "claude", "ollama"};
-std::u16string AssistantProviderLabel(std::string_view provider);
-struct AssistantModel { std::string provider, id; bool visible = true; };
-// App-wide assistant settings (Settings → Asystent AI). Sessions copy the
-// permission defaults when they start; narrowing applies to running sessions.
-struct AssistantSettings {
-  AssistantSettings();
-  AssistantSettings(const AssistantSettings&);
-  AssistantSettings& operator=(const AssistantSettings&);
-  ~AssistantSettings();
-  bool enabled = true;
-  std::array<bool, 4> backends{true, true, true, true};
-  std::array<bool, 4> available{};
-  std::string codex_path, claude_path;
-  bool ollama_configured = false;
-  std::vector<AssistantModel> models;
-  std::string encrypted_api_key;  // OS-encrypted, base64 encoded; never sent to the UI.
-  std::string default_model;  // "<provider>/<id>"
-  AssistantPermissions defaults;
-  bool background = true, confirm_background = true;
-  int concurrency = 12;
-  bool BackendEnabled(std::string_view provider) const;
-  bool BackendAvailable(std::string_view provider) const;
-  void ApplyCliPaths(base::EnvironmentMap& environment) const;
-  // Visible models of enabled backends, in settings order.
-  std::vector<AssistantModel> PanelModels() const;
-  base::DictValue ToValue() const;
-  static AssistantSettings FromValue(const base::DictValue* value);
-};
 // A page or tool inserted into a message (after @, or from the composer's buttons).
 struct AssistantChip {
   std::string kind;  // "tab", "pin", "research" or "background".
@@ -105,12 +70,13 @@ std::u16string AssistantTaskSchedule(const AssistantTask& task);
 class AssistantPanel final : public views::View, public views::ResizeAreaDelegate, public views::TextfieldController {
  public:
   enum class Menu { kNone, kSessions, kAccess, kModel, kMention, kTasks, kTaskEditor };
-  explicit AssistantPanel(WorkspaceWindow* window);
+  explicit AssistantPanel(AssistantHost* host);
   ~AssistantPanel() override;
   // An unpinned panel follows pointer departure regardless of how it opens.
   // Keyboard opening stays visible until the mouse moves; edge opening arms immediately.
   void Show(bool from_edge = false);
   void StartNewConversation();
+  bool SwitchProfile();
   // Stops the selected conversation; background tasks keep running.
   void Stop();
   void StopAll();
@@ -137,10 +103,13 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // is busy or waiting for an answer keeps its work and only shows.
   void Ask(std::u16string text);
   // Prepares a fresh page-scoped draft without changing permission grants.
-  void PreparePageAction(std::u16string text, bool needs_actions, bool needs_web);
+  void PreparePageAction(std::u16string text, bool needs_actions, bool needs_web,
+                         bool night_shift = false);
   void SendForTesting(std::string text, bool background = false);
   void ConfigureForTesting(std::string provider, std::string model, AssistantPermissions permissions);
   bool ContainsForTesting(std::string_view text) const;
+  bool SelectedConversationContainsForTesting(std::string_view text) const;
+  bool HasLiveAnswerForTesting() const { return live_answer_ != nullptr; }
   AssistantPermissions permissions_for_testing() const;
   void ToggleMenuForTesting(Menu menu) { ToggleMenu(menu); }
   Menu open_menu_for_testing() const { return menu_; }
@@ -205,6 +174,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     std::vector<AssistantChip> composer_chips;
     // In-memory consent for this conversation; never persisted.
     bool auto_confirm = false;
+    bool night_shift = false;
     // Runtime of the current turn.
     bool busy = false, background = false, finished = false, page_control = false;
     uint64_t epoch = 0;
@@ -303,7 +273,7 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void SyncSelectedModel();
   void UpdatePageControl();
   void OpenSettings();
-  raw_ptr<WorkspaceWindow> window_;
+  raw_ptr<AssistantHost> host_;
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<PanelViewport> viewport_ = nullptr;
   raw_ptr<views::View> header_ = nullptr, conversation_ = nullptr, background_ = nullptr;

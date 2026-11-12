@@ -192,11 +192,15 @@ bool InitializeAssistantICU() {
 #if BUILDFLAG(IS_MAC)
   if (!base::PathExists(data) && executable.BaseName().value() == "MacOS" &&
       executable.DirName().BaseName().value() == "Contents") {
-    data = executable.DirName()
-               .AppendASCII("Frameworks")
-               .AppendASCII("Chromium Framework.framework")
-               .AppendASCII("Resources")
-               .AppendASCII("icudtl.dat");
+    const auto frameworks = executable.DirName().AppendASCII("Frameworks");
+    for (const char* framework :
+         {"Chromium Framework.framework", "Zitter Content Lab Framework.framework"}) {
+      data = frameworks.AppendASCII(framework)
+                 .AppendASCII("Resources")
+                 .AppendASCII("icudtl.dat");
+      if (base::PathExists(data))
+        break;
+    }
   }
 #endif
   base::File file(data, base::File::FLAG_OPEN | base::File::FLAG_READ |

@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -15,7 +16,6 @@
 #include "components/password_manager/core/browser/password_store/stored_credential.h"
 #include "url/gurl.h"
 
-class Profile;
 namespace device_reauth { class DeviceAuthenticator; }
 namespace views { class Widget; class View; class DialogDelegate; }
 namespace zitter::prototype {
@@ -32,9 +32,15 @@ class PasswordsPanel final : public password_manager::PasswordStoreConsumer,
   enum class Page { kList, kCheckup, kNever, kDetail, kAdd };
   using Confirm = base::RepeatingCallback<void(views::Widget* parent, std::u16string title, std::u16string detail,
                                                std::u16string warning, std::u16string action, base::OnceCallback<void(bool)> answer)>;
+  using AuthenticatorFactory = base::RepeatingCallback<
+      std::unique_ptr<device_reauth::DeviceAuthenticator>(views::Widget*)>;
   PasswordsPanel();
   ~PasswordsPanel() override;
-  void Show(Profile* profile, views::Widget* parent);
+  void Show(scoped_refptr<password_manager::PasswordStoreInterface> store,
+            std::u16string profile_label,
+            views::Widget* parent,
+            AuthenticatorFactory authenticator_factory,
+            bool activate = true);
   views::Widget* widget() const { return widget_.get(); }
   void SetOpenCallback(base::RepeatingCallback<void(GURL)> open) { open_ = std::move(open); }
   void SetConfirmCallback(Confirm confirm) { confirm_ = std::move(confirm); }
@@ -54,6 +60,7 @@ class PasswordsPanel final : public password_manager::PasswordStoreConsumer,
   bool loaded_for_testing() const { return loaded_; }
   std::vector<std::u16string> listed_for_testing() const;
   bool revealed_for_testing() const { return revealed_; }
+  bool scene_contains_for_testing(std::string_view text) const;
   int issues_for_testing(int kind) const;  // 0 leaked, 1 reused, 2 weak.
   size_t never_count_for_testing() const { return blocked_.size(); }
   Page page() const { return page_; }
@@ -74,14 +81,16 @@ class PasswordsPanel final : public password_manager::PasswordStoreConsumer,
   std::vector<size_t> Listed() const;
   Issues IssuesOf(const password_manager::StoredCredential& credential) const;
   void Authenticated(bool copy, bool success);
-  raw_ptr<Profile> profile_ = nullptr;
+  void CancelAuthentication();
   scoped_refptr<password_manager::PasswordStoreInterface> store_;
   std::vector<password_manager::StoredCredential> credentials_, blocked_;
   bool loaded_ = false, revealed_ = false, skip_auth_ = false, editing_ = false;
   Page page_ = Page::kList;
   std::u16string query_;
   std::optional<size_t> detail_;
+  AuthenticatorFactory authenticator_factory_;
   std::unique_ptr<device_reauth::DeviceAuthenticator> authenticator_;
+  bool authentication_pending_ = false;
   base::RepeatingCallback<void(GURL)> open_;
   Confirm confirm_;
   base::RepeatingClosure import_;
@@ -94,6 +103,7 @@ class PasswordsPanel final : public password_manager::PasswordStoreConsumer,
   std::array<raw_ptr<views::View>, 3> tabs_ = {};
   // The Add and Edit fields live as long as their page.
   std::vector<raw_ptr<EditorControl>> fields_;
+  base::WeakPtrFactory<PasswordsPanel> authentication_weak_{this};
   base::WeakPtrFactory<PasswordsPanel> weak_factory_{this};
 };
 }  // namespace zitter::prototype

@@ -69,6 +69,17 @@ std::u16string BrowsingProfileName(Profile* profile) {
       return entry->GetLocalProfileName();
   return base::UTF8ToUTF16(profile->GetPrefs()->GetString(prefs::kProfileName));
 }
+
+PageDialogs* AttachChromePageDialogs(content::WebContents* contents) {
+  if (auto* dialogs = PageDialogs::FromWebContents(contents))
+    return dialogs;
+  return PageDialogs::Attach(
+      contents,
+      base::BindRepeating([](content::BrowserContext* context) {
+        return BrowsingProfileName(Profile::FromBrowserContext(context));
+      }));
+}
+
 namespace {
 using FormManager = password_manager::PasswordFormManagerForUI;
 

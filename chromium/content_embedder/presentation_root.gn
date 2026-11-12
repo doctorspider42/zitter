@@ -1,0 +1,20 @@
+# Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+# Staged as //zitter/BUILD.gn for the standalone Content application.
+
+import("chromium/assistant/assistant_runtime.gni")
+import("chromium/prototype/workspace_presentation.gni")
+
+zitter_workspace_presentation("workspace_presentation") {
+}
+
+zitter_assistant_runtime("zitter_assistant") {
+  if (is_mac && is_component_build) {
+    ldflags = [ "-Wl,-rpath,@loader_path/../Frameworks/Runtime" ]
+  }
+}
+
+executable("assistant_cli_fixture") {
+  testonly = true
+  sources = [ "tests/fixtures/assistant_cli.cc" ]
+  deps = [ "//base" ]
+}

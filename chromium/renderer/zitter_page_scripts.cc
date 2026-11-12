@@ -1,5 +1,5 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-#include "chrome/renderer/zitter_page_scripts.h"
+#include "zitter_page_scripts.h"
 
 #include <string>
 #include <string_view>
@@ -15,6 +15,17 @@
 #include "url/gurl.h"
 
 namespace zitter {
+namespace {
+
+bool MatchesHost(std::string_view host, std::string_view site) {
+  if (host.ends_with('.'))
+    host.remove_suffix(1);
+  return host == site ||
+         (host.size() > site.size() && host.ends_with(site) &&
+          host[host.size() - site.size() - 1] == '.');
+}
+
+}  // namespace
 
 void RunPageScripts(content::RenderFrame* render_frame) {
   auto* frame = render_frame ? render_frame->GetWebFrame() : nullptr;
@@ -26,13 +37,22 @@ void RunPageScripts(content::RenderFrame* render_frame) {
   const GURL url = frame->GetDocument().Url();
   std::string host = url.SchemeIsHTTPOrHTTPS() ? std::string(url.host()) : frame->GetSecurityOrigin().Host().Utf8();
   if (host.empty()) return;
+  const std::string top_host = frame->Top()->GetSecurityOrigin().Host().Utf8();
+  for (const auto& entry : scripts) {
+    // An exception applies to the page and its child frames, even when a
+    // scriptlet was registered for a parent domain or a third-party host.
+    const auto newline = entry.find('\n');
+    if (entry.starts_with('!') && newline > 1 && newline != std::string::npos) {
+      const auto site = std::string_view(entry).substr(1, newline - 1);
+      if (MatchesHost(host, site) || MatchesHost(top_host, site))
+        return;
+    }
+  }
   for (const auto& entry : scripts) {
     const auto newline = entry.find('\n');
-    if (newline == std::string::npos) continue;
+    if (newline == std::string::npos || entry.starts_with('!')) continue;
     const std::string_view site(entry.data(), newline);
-    const bool match = site == "*" || host == site ||
-        (host.size() > site.size() && host.ends_with(site) && host[host.size() - site.size() - 1] == '.');
-    if (!match) continue;
+    if (site != "*" && !MatchesHost(host, site)) continue;
     // The page's own world, so the scriptlets see and wrap what its code uses.
     frame->ExecuteScript(blink::WebScriptSource(blink::WebString::FromUtf8(std::string_view(entry).substr(newline + 1))));
   }

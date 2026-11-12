@@ -17,6 +17,7 @@ constexpr wchar_t kProductName[] = L"Zitter";
 
 constexpr const wchar_t* kAppId = kDevBuild ? kDevAppId : kStableAppId;
 constexpr char kDevChannelSwitch[] = "zitter-dev-channel";
+constexpr char kUserDataDirSwitch[] = "user-data-dir";
 constexpr char kCleanProfileSwitch[] = "zitter-dev-clean-profile";
 constexpr wchar_t kCleanProfileArgument[] = L"--zitter-dev-clean-profile";
 

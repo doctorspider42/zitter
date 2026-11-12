@@ -8,6 +8,7 @@
 #include <shellapi.h>
 
 #include <set>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/functional/bind.h"
@@ -15,7 +16,6 @@
 #include "base/no_destructor.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
-#include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/insets.h"
@@ -49,8 +49,11 @@ std::set<WorkspaceTreeHost*>& Hosts() {
 
 class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
  public:
-  WorkspaceTreeHost(views::internal::NativeWidgetDelegate* widget, views::DesktopNativeWidgetAura* native_widget)
-      : views::DesktopWindowTreeHostWin(widget, native_widget) {
+  WorkspaceTreeHost(views::internal::NativeWidgetDelegate* widget,
+                    views::DesktopNativeWidgetAura* native_widget,
+                    base::RepeatingClosure session_ending)
+      : views::DesktopWindowTreeHostWin(widget, native_widget),
+        session_ending_(std::move(session_ending)) {
     Hosts().insert(this);
   }
   ~WorkspaceTreeHost() override { Hosts().erase(this); }
@@ -85,8 +88,8 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
     return true;
   }
   bool PreHandleMSG(UINT message, WPARAM w_param, LPARAM l_param, LRESULT* result) override {
-    // As Chrome's frame: save the session before Windows logs off or shuts down.
-    if (message == WM_ENDSESSION && w_param) chrome::SessionEnding();
+    if (message == WM_ENDSESSION && w_param && session_ending_)
+      session_ending_.Run();
     if (HandleSnapLayouts(message, w_param, l_param, result)) return true;
     if (message == WM_COPYDATA && command_handler_) {
       const auto* data = reinterpret_cast<const COPYDATASTRUCT*>(l_param);
@@ -167,6 +170,7 @@ class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
 
   // Clears itself when the button goes away.
   views::ViewTracker maximize_;
+  const base::RepeatingClosure session_ending_;
   base::RepeatingCallback<void(std::string)> command_handler_;
   std::wstring profile_property_;
   bool tracking_ = false;
@@ -187,10 +191,13 @@ class NonActivatingPanelHost final : public views::DesktopWindowTreeHostWin {
 };
 }  // namespace
 
-void ConfigureWorkspaceNativeWidget(views::Widget* widget, views::Widget::InitParams& params) {
+void ConfigureWorkspaceNativeWidget(views::Widget* widget,
+                                    views::Widget::InitParams& params,
+                                    base::RepeatingClosure session_ending) {
   auto* native_widget = new views::DesktopNativeWidgetAura(widget);
   params.native_widget = native_widget;
-  params.desktop_window_tree_host = new WorkspaceTreeHost(widget, native_widget);
+  params.desktop_window_tree_host =
+      new WorkspaceTreeHost(widget, native_widget, std::move(session_ending));
 }
 
 void ConfigureNonActivatingPanel(views::Widget* widget, views::Widget::InitParams& params) {

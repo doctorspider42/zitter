@@ -10,18 +10,13 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "build/build_config.h"
-#include "chrome/browser/history/history_service_factory.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/keep_alive/scoped_profile_keep_alive.h"
-#include "chrome/browser/profiles/keep_alive/profile_keep_alive_types.h"
 #include "chromium/prototype/i18n.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
-#include "components/keyed_service/core/service_access_type.h"
-#include "content/public/browser/storage_partition.h"
 #include "crypto/aes_cbc.h"
 #include "crypto/hash.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_util.h"
@@ -163,20 +158,38 @@ bool ReadCookies(const base::FilePath& profile, ImportedProfileData& data,
 
 struct Writer : public std::enable_shared_from_this<Writer> {
   std::shared_ptr<BrowsingImportData> data;
-  std::vector<std::unique_ptr<ScopedProfileKeepAlive>> profiles;
+  BrowsingImportDestinations destinations;
   base::OnceCallback<void(BrowsingImportResult)> callback;
   BrowsingImportResult result;
   size_t profile_index = 0, cookie_index = 0;
   std::set<net::CanonicalCookie> existing;
-  network::mojom::CookieManager* manager() {
-    return profiles[profile_index]->profile()->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess();
+  const BrowsingImportDestination& destination() const {
+    return destinations.at(data->profiles[profile_index].profile_id);
+  }
+  network::mojom::CookieManager* manager() const {
+    const auto& lookup = destination().cookie_manager;
+    return lookup ? lookup.Run() : nullptr;
+  }
+  void FinishProfile(bool failed) {
+    result.failed |= failed;
+    existing.clear();
+    ++profile_index;
+    NextProfile();
+  }
+  base::OnceClosure OnCookieDisconnect() {
+    return base::BindOnce(&Writer::FinishProfile, shared_from_this(), true);
   }
   void NextProfile() {
-    if (profile_index == profiles.size()) { std::move(callback).Run(result); return; }
-    if (!profiles[profile_index]) { result.failed = true; ++profile_index; NextProfile(); return; }
+    while (profile_index < data->profiles.size() &&
+           !destinations.contains(data->profiles[profile_index].profile_id)) {
+      result.failed = true;
+      ++profile_index;
+    }
+    if (profile_index == data->profiles.size()) { std::move(callback).Run(result); return; }
     auto& rows = data->profiles[profile_index].history;
-    auto* service = HistoryServiceFactory::GetForProfile(profiles[profile_index]->profile(), ServiceAccessType::EXPLICIT_ACCESS);
     if (rows.empty()) { Cookies(); return; }
+    const auto& lookup = destination().history_service;
+    auto* service = lookup ? lookup.Run() : nullptr;
     if (!service) { result.failed = true; Cookies(); return; }
     service->ScheduleDBTaskForUI(base::BindOnce(
         [](history::URLRows rows, base::OnceCallback<void(size_t, size_t, bool)> done,
@@ -210,13 +223,18 @@ struct Writer : public std::enable_shared_from_this<Writer> {
   }
   void Cookies() {
     cookie_index = 0;
-    if (data->profiles[profile_index].cookies.empty()) { ++profile_index; NextProfile(); return; }
-    manager()->GetAllCookies(base::BindOnce([](std::shared_ptr<Writer> self, const std::vector<net::CanonicalCookie>& cookies) {
+    if (data->profiles[profile_index].cookies.empty()) { FinishProfile(false); return; }
+    auto* cookie_manager = manager();
+    if (!cookie_manager) { FinishProfile(true); return; }
+    cookie_manager->GetAllCookies(mojo::WrapCallbackWithDropHandler(base::BindOnce(
+        [](std::shared_ptr<Writer> self, const std::vector<net::CanonicalCookie>& cookies) {
       self->existing = {cookies.begin(), cookies.end()};
       self->NextCookie();
-    }, shared_from_this()));
+    }, shared_from_this()), OnCookieDisconnect()));
   }
   void NextCookie() {
+    auto* cookie_manager = manager();
+    if (!cookie_manager) { FinishProfile(true); return; }
     auto& cookies = data->profiles[profile_index].cookies;
     while (cookie_index < cookies.size()) {
       const auto& cookie = cookies[cookie_index++];
@@ -224,18 +242,18 @@ struct Writer : public std::enable_shared_from_this<Writer> {
       if (existing.contains(cookie)) {
         ++result.skipped; continue;
       }
-      manager()->SetCanonicalCookie(cookie, net::cookie_util::SimulatedCookieSource(cookie, cookie.SourceScheme() == net::CookieSourceScheme::kNonSecure ? "http" : "https"),
-          net::CookieOptions::MakeAllInclusive(), base::BindOnce(
+      cookie_manager->SetCanonicalCookie(cookie, net::cookie_util::SimulatedCookieSource(cookie, cookie.SourceScheme() == net::CookieSourceScheme::kNonSecure ? "http" : "https"),
+          net::CookieOptions::MakeAllInclusive(), mojo::WrapCallbackWithDropHandler(base::BindOnce(
               [](std::shared_ptr<Writer> self, net::CanonicalCookie cookie, net::CookieAccessResult access) {
                 if (access.status.IsInclude()) { ++self->result.cookies; self->existing.insert(cookie); }
                 else { ++self->result.skipped; }
                 self->NextCookie();
-              }, shared_from_this(), cookie));
+              }, shared_from_this(), cookie), OnCookieDisconnect()));
       return;
     }
-    manager()->FlushCookieStore(base::BindOnce([](std::shared_ptr<Writer> self) {
-      self->existing.clear(); ++self->profile_index; self->NextProfile();
-    }, shared_from_this()));
+    cookie_manager->FlushCookieStore(mojo::WrapCallbackWithDropHandler(
+        base::BindOnce(&Writer::FinishProfile, shared_from_this(), false),
+        OnCookieDisconnect()));
   }
 };
 }  // namespace
@@ -261,15 +279,15 @@ std::shared_ptr<BrowsingImportData> ReadBrowsingImportData(const ArcImport& sour
   if (key) std::fill(key->begin(), key->end(), 0);
   return result;
 }
-void WriteBrowsingImportData(std::shared_ptr<BrowsingImportData> data,
-    std::vector<Profile*> destinations, base::OnceCallback<void(BrowsingImportResult)> callback) {
+void WriteBrowsingImportDataToServices(
+    std::shared_ptr<BrowsingImportData> data,
+    BrowsingImportDestinations destinations,
+    base::OnceCallback<void(BrowsingImportResult)> callback) {
   auto writer = std::make_shared<Writer>();
   writer->data = std::move(data);
   writer->result.skipped = writer->data->skipped;
   writer->callback = std::move(callback);
-  for (auto* profile : destinations)
-    writer->profiles.push_back(profile ? ScopedProfileKeepAlive::TryAcquire(profile, ProfileKeepAliveOrigin::kBrowserWindow) : nullptr);
-  CHECK_EQ(writer->profiles.size(), writer->data->profiles.size());
+  writer->destinations = std::move(destinations);
   writer->NextProfile();
 }
 }  // namespace zitter::prototype

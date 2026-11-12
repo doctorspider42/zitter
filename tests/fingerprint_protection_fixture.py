@@ -10,8 +10,12 @@ with mock.patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / '
 
 def seed(checkout):
     anchors = {}
-    for path, anchor, _ in patch.EDITS:
-        anchors.setdefault(path, []).append(anchor)
+    additions = {}
+    for path, anchor, addition in (*patch.EDITS, patch.PUBLIC_STATE_EDIT):
+        previous = additions.setdefault(path, [])
+        if not any(anchor in text for text in previous):
+            anchors.setdefault(path, []).append(anchor)
+        previous.append(addition)
     for path, parts in anchors.items():
         target = checkout / path
         if target.exists():

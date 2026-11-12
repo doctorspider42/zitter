@@ -26,13 +26,13 @@ class ScopedKeepAlive;
 class ScopedProfileKeepAlive;
 class BrowserCollection;
 namespace base { class FilePath; }
-namespace network { class SimpleURLLoader; }
 namespace zitter::prototype { class WorkspaceWindow; }
 
 namespace zitter {
 class AppPerformanceProbe;
 class UiLab;
 class WindowsUpdater;
+class MacUpdater;
 // Lives inside Chromium's regular browser startup/shutdown, never a test runner.
 // On macOS the app shell keeps Chrome's app-level entry points (Dock, menu,
 // links from other apps) away from stock Browser windows. Should an unknown
@@ -64,23 +64,14 @@ class Runtime final : public ChromeBrowserMainExtraParts,
   using UpdateCheckDone =
       base::OnceCallback<void(std::u16string, GURL)>;
   void CheckForUpdates(UpdateCheckDone done);
+#endif
+#if BUILDFLAG(IS_WIN)
   void ConfigureUpdates(bool check, bool download);
   void CheckInBackground();
   base::OneShotTimer update_startup_timer_;
   base::RepeatingTimer update_timer_;
   bool auto_download_updates_ = false;
-#endif
-#if BUILDFLAG(IS_WIN)
   void CheckWindowsUpdate(bool download, UpdateCheckDone done);
-#endif
-#if BUILDFLAG(IS_MAC)
-  struct MacInstaller;
-  void StartMacCheck(UpdateCheckDone done, bool background);
-  void PrepareMacInstaller(MacInstaller installer);
-  void DownloadMacInstaller(MacInstaller installer, bool already_cached);
-  void MacInstallerDownloaded(MacInstaller installer, base::FilePath temporary);
-  void MacInstallerReady(MacInstaller installer, bool verified);
-  void MacUpdateChecked(std::optional<std::string> body);
 #endif
   void OpenPrivateWindow();
   void ClosePrivateWindow(prototype::WorkspaceWindow* window);
@@ -104,12 +95,7 @@ class Runtime final : public ChromeBrowserMainExtraParts,
 #endif
 #if BUILDFLAG(IS_MAC)
   std::unique_ptr<UiLab> ui_lab_;
-  std::unique_ptr<network::SimpleURLLoader> update_loader_;
-  std::vector<UpdateCheckDone> update_checks_;
-  std::unique_ptr<network::SimpleURLLoader> update_download_;
-  bool background_update_check_ = false;
-  bool preparing_mac_installer_ = false;
-  std::string downloaded_mac_version_;
+  std::unique_ptr<MacUpdater> mac_updater_;
 #endif
   base::ScopedObservation<BrowserCollection, BrowserCollectionObserver> browsers_{this};
   // Stock windows awaiting closure; dropped if they close first.

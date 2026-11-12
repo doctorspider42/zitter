@@ -19,12 +19,20 @@
 #include "content/public/common/isolated_world_ids.h"
 #include "chromium/prototype/site_data.h"
 #include "chromium/prototype/passwords_panel.h"
+#include "chrome/browser/device_reauth/chrome_device_authenticator_factory.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
+#include "chrome/browser/download/download_prefs.h"
+#include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
+#include "chrome/browser/platform_util.h"
+#include "components/device_reauth/device_authenticator.h"
 #include "content/public/browser/download_request_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "chromium/prototype/ad_blocking_rules_panel.h"
 #include "chromium/prototype/content_blocking.h"
 #include "chromium/prototype/fingerprint_protection.h"
 #include "chromium/prototype/page_services.h"
+#include "chromium/prototype/page_printing.h"
 #include "chrome/browser/printing/print_view_manager.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/browser/printing/print_view_manager_common.h"
@@ -50,6 +58,7 @@
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "chromium/prototype/arc_importer.h"
 
+#include "chromium/prototype/workspace_favicon_links.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/favicon/core/favicon_service.h"
@@ -168,6 +177,7 @@
 #include <windows.h>
 
 #include "chrome/app/chrome_dll_resource.h"
+#include "chrome/browser/lifetime/application_lifetime_desktop.h"
 #include "chromium/prototype/workspace_frame_win.h"
 #include "chromium/prototype/jump_list_win.h"
 #include "chromium/prototype/password_csv_import.h"
@@ -240,26 +250,11 @@ constexpr ContentPreference kContentPreferences[] = {
     {"microphone", ContentSettingsType::MEDIASTREAM_MIC, CONTENT_SETTING_ASK},
     {"clipboard", ContentSettingsType::CLIPBOARD_READ_WRITE, CONTENT_SETTING_ASK},
 };
-constexpr std::array kZoomPercentages = {75, 90, 100, 110, 125, 150, 175, 200};
 constexpr std::array kFontSizes = {12, 14, 16, 18, 20, 24};
 constexpr std::array kMinimumFontSizes = {0, 10, 12, 14, 16, 18};
 
 // WebView owns the delegate of its WebContents. Extend that delegate rather
 // than replacing it and losing WebView's sizing/focus/lifecycle behavior.
-// Native reader tabs use an inert opaque-origin document solely as the existing
-// tab/navigation identity. No renderer bindings, profile data or feed text cross
-// this boundary. Only browser-created loads can set the virtual internal URL.
-void LoadWorkspaceTab(content::WebContents* page, const GURL& url,
-                      ui::PageTransition transition) {
-  content::NavigationController::LoadURLParams params(url);
-  params.transition_type = transition;
-  if (IsRssTabUrl(url)) {
-    params.url = GURL("data:text/html,<meta http-equiv=Content-Security-Policy content=\"default-src 'none'\"><title>RSS</title>");
-    params.load_type = content::NavigationController::LOAD_TYPE_DATA;
-    params.virtual_url_for_special_cases = url;
-  }
-  page->GetController().LoadURLWithParams(params);
-}
 class WorkspaceWebView final : public views::WebView, public views::FocusChangeListener {
   METADATA_HEADER(WorkspaceWebView, views::WebView)
 
@@ -340,7 +335,7 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
   void MountReader() {
     if (rss_ || !GetWidget()) return;
     rss_ = std::make_unique<RssPanel>();
-    rss_->Show(Profile::FromBrowserContext(GetWebContents()->GetBrowserContext()), this, rss_open_);
+    rss_->Show(*RssReader::For(Profile::FromBrowserContext(GetWebContents()->GetBrowserContext())), this, rss_open_);
     rss_->view()->AddPreTargetHandler(&reader_input_);
     holder()->SetVisible(false);
     set_lock_child_ax_tree_id_override(true);
@@ -566,7 +561,7 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
   }
   void BeforeUnloadFired(bool) override {}
   content::JavaScriptDialogManager* GetJavaScriptDialogManager(content::WebContents* source) override {
-    return PageDialogs::Attach(source);
+    return AttachChromePageDialogs(source);
   }
   void BeforeUnloadFired(content::WebContents* source, bool proceed, bool* fire_unload) override {
     auto* dialogs = PageDialogs::FromWebContents(source);
@@ -898,7 +893,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!is_private()) MarkStartup("workspace_begin");
   // The UI language is fixed for the run, before any text is built.
-  ApplyUiLanguage(g_browser_process->GetApplicationLocale());
+  ApplyUiLanguage(g_browser_process->GetApplicationLocale(),
+                  g_browser_process->local_state());
   configuration_path_ = data_directory_.AppendASCII("ZitterWorkspaces.json");
   clock_ = base::DefaultClock::GetInstance();
   timeline_ = std::make_unique<TimelineStore>();
@@ -907,6 +903,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   CHECK(!private_profile_ || private_profile_->IsOffTheRecord());
   WorkspaceShell::Callbacks callbacks;
   callbacks.private_mode = is_private();
+  callbacks.locale_preferences = g_browser_process->local_state();
   callbacks.preview_import = base::BindRepeating([](WorkspaceWindow* window, BrowserImportOptions options) {
     window->PreviewBrowserImport(options);
   }, base::Unretained(this));
@@ -1085,7 +1082,8 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
 #if BUILDFLAG(IS_MAC)
   params.native_widget = CreateWorkspaceNativeWidget(widget_.get());
 #elif BUILDFLAG(IS_WIN)
-  ConfigureWorkspaceNativeWidget(widget_.get(), params);
+  ConfigureWorkspaceNativeWidget(widget_.get(), params,
+                                 base::BindRepeating(&chrome::SessionEnding));
   // The titlebar-less window still has an icon: taskbar, Alt+Tab, system menu.
   // Zitter's icon in chrome.dll's resource slot, linked into zitter.exe.
   if (auto icons = IconUtil::CreateImageFamilyFromIconResource(::GetModuleHandle(nullptr), IDR_MAINFRAME)) {
@@ -1372,7 +1370,7 @@ void WorkspaceWindow::PreparePage(content::WebContents* page, std::string source
   }, weak_factory_.GetWeakPtr()));
   FingerprintProtection::Attach(page);
   ContentBlockingTabHelper::Attach(page);
-  PageDialogs::Attach(page);
+  AttachChromePageDialogs(page);
   PageMediaAccess::Attach(page);
   // Design: Prośba o dostęp — under the address pill, folding into its icon.
   PageMediaAccess::FromWebContents(page)->SetPromptAnchor(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) {
@@ -1589,8 +1587,7 @@ void WorkspaceWindow::UpdateShell() {
     state.loading = host.view->GetWebContents()->ShouldShowLoadingUI();
     // The panel watches the active profile even while closed, so a finished
     // download shows its toast (design: Downloads).
-    EnsureDownloads();
-    downloads_->SetProfile(host.profile);
+    SetDownloadProfile(host.profile);
     extensions_bar_->SetContext(host.profile, host.view->GetWebContents());
     extension_tabs_->Sync();
     // The page on screen changed: chrome.tabs.onActivated for its profile.
@@ -1746,7 +1743,7 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
   read("minimum_font_size", prefs::kWebKitMinimumFontSize,
        index(kMinimumFontSizes, service->GetInteger(prefs::kWebKitMinimumFontSize)));
   if (auto* zoom = profile->GetZoomLevelPrefs())
-    read("zoom", prefs::kPartitionDefaultZoomLevel, index(kZoomPercentages, static_cast<int>(std::lround(zoom->GetDefaultZoomFactor() * 100))));
+    read("zoom", prefs::kPartitionDefaultZoomLevel, index(kWorkspaceZoomPercentages, static_cast<int>(std::lround(zoom->GetDefaultZoomFactor() * 100))));
   if (is_private()) for (auto& [key, value] : result)
     value.editable = key == "fingerprint_protection" && value.editable;
   return result;
@@ -1863,8 +1860,8 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
         entry.type, value ? entry.enabled : CONTENT_SETTING_BLOCK);
     return true;
   }
-  if (key == "zoom" && value >= 0 && value < static_cast<int>(std::size(kZoomPercentages))) {
-    profile->GetZoomLevelPrefs()->SetDefaultZoomLevelPref(blink::ZoomFactorToZoomLevel(kZoomPercentages[value] / 100.0));
+  if (key == "zoom" && value >= 0 && value < static_cast<int>(std::size(kWorkspaceZoomPercentages))) {
+    profile->GetZoomLevelPrefs()->SetDefaultZoomLevelPref(blink::ZoomFactorToZoomLevel(kWorkspaceZoomPercentages[value] / 100.0));
     return true;
   }
   if (key == "fixed_font_size" && value >= 0 && value < static_cast<int>(std::size(kFontSizes))) {
@@ -1924,14 +1921,36 @@ void WorkspaceWindow::DownloadCompleted(std::string guid, std::u16string name) {
     if (window && window->downloads_) window->downloads_->Act(guid, DownloadPanel::Action::kReveal);
   }, weak_factory_.GetWeakPtr(), std::move(guid)), T(u"Pokaż"));
 }
+void WorkspaceWindow::SetDownloadProfile(Profile* profile) {
+  EnsureDownloads();
+  if (!profile) {
+    downloads_->SetSource(nullptr, {});
+    return;
+  }
+  downloads_->SetSource(
+      profile->GetDownloadManager(), BrowsingProfileName(profile),
+      base::BindRepeating([](Profile* owner) {
+        return DownloadPrefs::FromBrowserContext(owner)->DownloadPath();
+      }, base::Unretained(profile)),
+      base::BindRepeating([](Profile* owner) {
+        platform_util::OpenItem(
+            owner, DownloadPrefs::FromBrowserContext(owner)->DownloadPath(),
+            platform_util::OPEN_FOLDER, base::DoNothing());
+      }, base::Unretained(profile)),
+      base::BindOnce([](Profile* owner) {
+        DownloadCoreServiceFactory::GetForBrowserContext(owner)->InitializeHistory(
+            DownloadCoreService::DownloadHistoryLoadTrigger::kDownloadBubble);
+      }, base::Unretained(profile)),
+      DownloadPanel::FileActions::kOpenRevealAndDelete);
+}
 void WorkspaceWindow::ShowDownloads() {
   auto* page = peek_contents() ? peek_contents() : contents(active_id());
   if (!page) return;
   // The ring or pill it was opened from, before overlays (the sidebar) close.
   const auto anchor = shell_->downloads_anchor_in_screen();
   shell_->CloseOverlays(true);
-  EnsureDownloads();
-  downloads_->Show(Profile::FromBrowserContext(page->GetBrowserContext()), widget_.get(), anchor);
+  SetDownloadProfile(Profile::FromBrowserContext(page->GetBrowserContext()));
+  downloads_->Show(widget_.get(), anchor);
 }
 // Design: Historia — Zitter's own window over the active profile's history,
 // with the tabs closed in this run beside it.
@@ -2001,14 +2020,8 @@ void WorkspaceWindow::ShowRss() {
     auto* view = static_cast<WorkspaceWebView*>(host.tabs[index].get());
     view->MountReader();
     auto* panel = view->rss();
-    if (source && source != view->web_contents() && source->GetLastCommittedURL().SchemeIsHTTPOrHTTPS() && source->GetPrimaryMainFrame()) {
-      panel->BeginDiscovery();
-      source->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
-        u"Array.from(document.querySelectorAll('link[rel~=alternate i]')).filter(x=>['application/rss+xml','application/atom+xml'].includes(x.type.toLowerCase().split(';')[0].trim())).slice(0,10).map(x=>x.href)",
-        base::BindOnce([](base::WeakPtr<RssPanel> panel, size_t generation, content::WeakDocumentPtr document, base::Value result) {
-          if (panel && panel->discovery_generation() == generation && document.AsRenderFrameHostIfValid()) panel->DiscoverFromPage(std::move(result));
-        }, panel->GetWeakPtr(), panel->discovery_generation(), source->GetPrimaryMainFrame()->GetWeakDocumentPtr()), content::ISOLATED_WORLD_ID_CONTENT_END);
-    }
+    if (source && source != view->web_contents())
+      panel->DiscoverFromPage(*source);
     SelectTab(index);
     return;
   }
@@ -2053,7 +2066,9 @@ void WorkspaceWindow::ShowHistory() {
       if (window) window->RunShortcut("timeline");
     }, weak_factory_.GetWeakPtr()));
   }
-  history_panel_->Show(profile, widget_.get());
+  history_panel_->Show(
+      HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS),
+      BrowsingProfileName(profile), widget_.get());
 }
 // Design: Menedżer haseł — Zitter's own window over the active profile's
 // password store.
@@ -2075,7 +2090,17 @@ void WorkspaceWindow::ShowPasswords() {
     }, base::Unretained(this)));
     passwords_panel_->SetImportCallback(base::BindRepeating([](base::WeakPtr<WorkspaceWindow> window) { if (window) window->shell_->OpenImport(); }, weak_factory_.GetWeakPtr()));
   }
-  passwords_panel_->Show(profile, widget_.get());
+  passwords_panel_->Show(
+      ProfilePasswordStoreFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS),
+      BrowsingProfileName(profile), widget_.get(),
+      base::BindRepeating(
+          [](Profile* profile, views::Widget* widget) {
+            return ChromeDeviceAuthenticatorFactory::GetForProfile(
+                profile, widget->GetNativeWindow(),
+                device_reauth::DeviceAuthParams(
+                    base::Seconds(60), device_reauth::DeviceAuthSource::kPasswordManager));
+          },
+          base::Unretained(profile)));
 }
 std::string WorkspaceWindow::WorkspaceForUrl(const GURL& url) const {
   if (!url.SchemeIsHTTPOrHTTPS()) return {};
@@ -2482,58 +2507,6 @@ void WorkspaceWindow::CloseWorkspaceTab(std::string_view workspace_id, size_t in
 // A tab moves to another space of the same profile (the tabs API's window
 // spans them all). Its page, history and storage stay; it leaves any split and
 // its pin, as a closed tab would.
-namespace {
-
-bool IsWorkspaceFaviconUrl(const GURL& icon) {
-  return icon.SchemeIsHTTPOrHTTPS() || icon.SchemeIs(url::kDataScheme);
-}
-
-// Inspect markup without running scripts or loading other page resources.
-std::vector<GURL> WorkspaceIconCandidates(std::string_view html, const GURL& page_url) {
-  static const base::NoDestructor<RE2> tag(
-      R"re((?is)<!--.*?-->|<(?:script|style|title|textarea)\b[^>]*>.*?</(?:script|style|title|textarea)\s*>|<(link|base)\b((?:"[^"]*"|'[^']*'|[^'">])*)>)re");
-  static const base::NoDestructor<RE2> attribute(
-      R"re(([^\s=/"'<>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+)))?)re");
-  constexpr size_t kMaxDeclaredIcons = 6;
-  std::vector<std::string> paths;
-  GURL base_url = page_url;
-  bool has_base = false;
-  std::string_view name, attributes;
-  while (RE2::FindAndConsume(&html, *tag, &name, &attributes)) {
-    if (name.empty()) continue;
-    std::string_view key, quoted, single_quoted, unquoted, href, rel;
-    while (RE2::FindAndConsume(&attributes, *attribute, &key, &quoted, &single_quoted, &unquoted)) {
-      const auto value = !quoted.empty() ? quoted : !single_quoted.empty() ? single_quoted : unquoted;
-      if (base::EqualsCaseInsensitiveASCII(key, "href") && href.empty()) href = value;
-      if (base::EqualsCaseInsensitiveASCII(key, "rel") && rel.empty()) rel = value;
-    }
-    if (href.empty()) continue;
-    std::string path = base::UTF16ToUTF8(base::UnescapeForHTML(base::UTF8ToUTF16(href)));
-    if (base::EqualsCaseInsensitiveASCII(name, "base")) {
-      if (!has_base) {
-        const GURL candidate = page_url.Resolve(path);
-        if (candidate.SchemeIsHTTPOrHTTPS()) base_url = candidate;
-        has_base = true;
-      }
-    } else if (paths.size() < kMaxDeclaredIcons) {
-      const auto lower_rel = base::ToLowerASCII(rel);
-      const auto relations = base::SplitStringPiece(lower_rel, base::kWhitespaceASCII,
-                                                     base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
-      if (std::ranges::find(relations, "icon") != relations.end())
-        paths.push_back(std::move(path));
-    }
-  }
-  std::vector<GURL> icons;
-  for (const auto& path : paths) {
-    GURL url = base_url.Resolve(path);
-    if (IsWorkspaceFaviconUrl(url) && std::ranges::find(icons, url) == icons.end())
-      icons.push_back(std::move(url));
-  }
-  return icons;
-}
-
-}  // namespace
-
 bool WorkspaceWindow::ReloadWorkspaceFavicons(std::string workspace) {
   if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ || closing_ || !model_.Find(workspace)) return false;
   if (workspace != active_id() && (!Select(workspace) || active_id() != workspace)) return false;

@@ -1,6 +1,11 @@
 # Installed at //zitter/BUILD.gn in a Chromium src checkout.
 import("//testing/test.gni")
 import("//build/rust/rust_static_library.gni")
+import("chromium/assistant/assistant_runtime.gni")
+import("chromium/prototype/workspace_presentation.gni")
+
+zitter_workspace_presentation("workspace_presentation") {
+}
 
 if (is_win) {
   declare_args() {
@@ -9,62 +14,7 @@ if (is_win) {
   }
 }
 
-# Native assistant core. Uses Chromium's vendored crates and toolchain only.
-config("assistant_includes") {
-  include_dirs = [ "." ]
-}
-
-rust_static_library("assistant_engine") {
-  public_configs = [ ":assistant_includes" ]
-  crate_root = "chromium/assistant/runtime.rs"
-  sources = [ crate_root ]
-  inputs = [
-    "chromium/assistant/system.txt",
-    "chromium/assistant/help.txt",
-  ]
-  cxx_bindings = [ crate_root ]
-  allow_unsafe = true
-  build_native_rust_unit_tests = true
-  deps = [
-    ":assistant_transport",
-    "//third_party/rust/serde_json/v1:lib",
-  ]
-}
-
-source_set("assistant_transport") {
-  public_configs = [ ":assistant_includes" ]
-  sources = [
-    "chromium/assistant/native_cli.cc",
-    "chromium/assistant/native_http.cc",
-    "chromium/assistant/native_transport.cc",
-    "chromium/assistant/native_transport.h",
-  ]
-  deps = [
-    ":assistant_cli_path",
-    "//base",
-    "//crypto",
-    "//net",
-    "//third_party/re2",
-    "//third_party/rust/cxx/v1:lib",
-    "//url",
-  ]
-}
-
-source_set("assistant_cli_path") {
-  sources = [ "chromium/assistant/native_cli_path.h" ]
-  public_deps = [ "//base" ]
-}
-
-executable("zitter_assistant") {
-  sources = [ "chromium/assistant/native_main.cc" ]
-  deps = [
-    ":assistant_engine",
-    ":assistant_transport",
-    "//base",
-    "//base:i18n",
-    "//net",
-    "//url",
-  ]
+zitter_assistant_runtime("zitter_assistant") {
 }
 
 executable("assistant_cli_fixture") {
@@ -73,53 +23,12 @@ executable("assistant_cli_fixture") {
   deps = [ "//base" ]
 }
 
-# The Rust UI: scene, layout, controls and editor state. Portable on purpose.
-rust_static_library("sidebar_scene") {
-  crate_root = "chromium/prototype/sidebar_scene.rs"
-  sources = [
-    crate_root,
-    "chromium/prototype/design.rs",
-    "chromium/prototype/design_tokens.rs",
-    "chromium/prototype/i18n.rs",
-    "chromium/prototype/i18n_en_native.rs",
-    "chromium/prototype/i18n_en_scene.rs",
-    "chromium/prototype/i18n_en_shell.rs",
-    "chromium/prototype/sidebar_editor.rs",
-    "chromium/prototype/timeline.rs",
-  ]
-  cxx_bindings = [ crate_root ]
-  allow_unsafe = true
-  build_native_rust_unit_tests = true
-}
-
-# Built-in ad blocking (docs/ad-blocking.md): Brave's adblock-rust (MPL-2.0),
-# vendored unmodified by tools/vendor_adblock.py, behind a small cxx bridge.
-rust_static_library("content_blocking_engine") {
-  crate_root = "chromium/prototype/adblock.rs"
-  sources = [ crate_root ]
-  # Zitter's scriptlets and redirect bodies, compiled in with include_str!.
-  inputs = [
-    "chromium/prototype/adblock_resources.js",
-    "chromium/prototype/adblock_zitter_list.txt",
-  ]
-  cxx_bindings = [ crate_root ]
-  allow_unsafe = true
-  build_native_rust_unit_tests = true
-  deps = [ "//third_party/rust/zitter_vendor:adblock" ]
-}
-
 if (is_mac) {
   action("ui_lab_shader") {
     script = "chromium/app/compile_ui_lab_metal.py"
     sources = [ "chromium/app/ui_lab.metal" ]
     outputs = [ "$target_gen_dir/chromium/app/ui_lab_shader.h" ]
     args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir) ]
-  }
-  action("sidebar_shader") {
-    script = "chromium/app/compile_ui_lab_metal.py"
-    sources = [ "chromium/prototype/sidebar.metal" ]
-    outputs = [ "$target_gen_dir/chromium/prototype/sidebar_shader.h" ]
-    args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "--namespace", "zitter::sidebar" ]
   }
   rust_static_library("ui_lab_scene") {
     crate_root = "chromium/app/ui_lab_scene.rs"
@@ -168,57 +77,16 @@ test("zitter_prototype") {
   }
 }
 
-source_set("core") {
-  sources = [
-    "zitter/application/workspace_controller.cc",
-    "zitter/application/workspace_controller.h",
-    "zitter/core/browser_state.h",
-    "zitter/core/command_history.cc",
-    "zitter/core/command_history.h",
-    "zitter/core/mouse_gesture.h",
-    "zitter/core/pin_tree.cc",
-    "zitter/core/pin_tree.h",
-    "zitter/core/workspace_model.cc",
-    "zitter/core/workspace_model.h",
-    "zitter/ports/workspace_runtime.h",
-  ]
-  include_dirs = [ "." ]
-}
-
-if (!is_mac) {
-  # Text layout, paragraph shaping and the editor fallback painter on
-  # gfx::RenderText; macOS has them in sidebar_metal.mm on CoreText.
-  source_set("text_services") {
-    sources = [
-      "chromium/prototype/editor_text_layout.h",
-      "chromium/prototype/text_services_skia.cc",
-    ]
-    include_dirs = [ ".", target_gen_dir ]
-    public_deps = [ ":sidebar_scene", "//base", "//base:i18n", "//cc/paint", "//skia", "//ui/gfx" ]
-  }
-}
-
 source_set("shell") {
   public_configs = [ ":shell_includes" ]
   sources = [
-    "chromium/prototype/assistant_panel.cc",
-    "chromium/prototype/assistant_panel.h",
-    "chromium/prototype/assistant_visuals.cc",
-    "chromium/prototype/assistant_visuals.h",
     "chromium/prototype/workspace_assistant.cc",
     "chromium/app/startup_timing.h",
     "chromium/prototype/workspace_window.cc",
     "chromium/prototype/password_csv_import.cc",
     "chromium/prototype/password_csv_import.h",
     "chromium/prototype/workspace_window.h",
-    "chromium/prototype/i18n.cc",
-    "chromium/prototype/i18n.h",
-    "chromium/prototype/browser_data.h",
-    "chromium/prototype/browser_tools.h",
-    "chromium/prototype/browser_tools.cc",
     "chromium/prototype/workspace_time_machine.cc",
-    "chromium/prototype/time_machine_view.cc",
-    "chromium/prototype/time_machine_view.h",
     "chromium/prototype/timeline_store.h",
     "chromium/prototype/workspace_commands.cc",
     "chromium/prototype/workspace_preconnect.cc",
@@ -227,8 +95,6 @@ source_set("shell") {
     "chromium/prototype/workspace_browser_settings.cc",
     "chromium/prototype/link_navigation.h",
     "chromium/prototype/link_navigation.cc",
-    "chromium/prototype/page_dialogs.h",
-    "chromium/prototype/page_dialogs.cc",
     "chromium/prototype/workspace_lifecycle.cc",
     "chromium/prototype/page_media_access.h",
     "chromium/prototype/page_media_access.cc",
@@ -238,57 +104,36 @@ source_set("shell") {
     "chromium/prototype/extension_tab_events.h",
     "chromium/prototype/extensions_bar.cc",
     "chromium/prototype/extensions_bar.h",
-    "chromium/prototype/download_panel.h",
-    "chromium/prototype/download_panel.cc",
-    "chromium/prototype/history_panel.cc",
-    "chromium/prototype/rss_reader.cc",
-    "chromium/prototype/rss_reader.h",
-    "chromium/prototype/rss_panel.cc",
-    "chromium/prototype/history_panel.h",
-    "chromium/prototype/passwords_panel.cc",
-    "chromium/prototype/passwords_panel.h",
+    "chromium/prototype/rss_chrome.cc",
     "chromium/prototype/site_data.cc",
     "chromium/prototype/site_data.h",
     "chromium/prototype/fingerprint_protection.h",
     "chromium/prototype/fingerprint_protection.cc",
     "chromium/prototype/content_blocking.h",
     "chromium/prototype/content_blocking.cc",
-    "chromium/prototype/ad_blocking_rules_panel.h",
-    "chromium/prototype/ad_blocking_rules_panel.cc",
     "chromium/prototype/image_link_preview.h",
     "chromium/prototype/image_link_preview.cc",
     "chromium/prototype/page_services.h",
     "chromium/prototype/page_services.cc",
     "chromium/prototype/page_printing.h",
     "chromium/prototype/page_printing.cc",
-    "chromium/prototype/arc_importer.h",
-    "chromium/prototype/arc_importer.cc",
-    "chromium/prototype/browser_import_data.h",
-    "chromium/prototype/browser_import_data.cc",
-    "chromium/prototype/sidebar_layout.cc",
-    "chromium/prototype/sidebar_layout.h",
-    "chromium/prototype/sidebar_tree.cc",
-    "chromium/prototype/sidebar_tree.h",
-    "chromium/prototype/clean_url.cc",
-    "chromium/prototype/clean_url.h",
-    "chromium/prototype/workspace_shell.cc",
-    "chromium/prototype/editor_control.h",
-    "chromium/prototype/editor_text_layout.h",
-    "chromium/prototype/scene_editor.cc",
-    "chromium/prototype/sidebar_metal.h",
-    "chromium/prototype/sidebar_raster.cc",
-    "chromium/prototype/workspace_shell.h",
+    "chromium/prototype/browser_import_chrome.cc",
   ]
   include_dirs = [ ".", target_gen_dir ]
   public_deps = [
+    ":adblock_browser_support",
     ":assistant_cli_path",
-    ":assistant_page_script",
+    ":assistant_page_tools",
     ":content_blocking_engine",
     ":brave_clean_urls_json",
     ":content_blocking_probe_script",
-    ":content_blocking_script",
     ":core",
+    ":devtools_console",
+    ":fingerprint_session",
+    ":print_options",
+    ":rss_reader",
     ":sidebar_scene",
+    ":workspace_session_codec",
     "//base",
     "//base:i18n",
     "//build:buildflag_header_h",
@@ -336,6 +181,8 @@ source_set("shell") {
     "//services/network/public/mojom",
     "//third_party/blink/public/common",
     "//chrome/browser/password_manager",
+    "//chrome/browser/device_reauth",
+    "//components/device_reauth",
     "//components/os_crypt/async/browser",
     "//components/os_crypt/async/common",
     "//chrome/browser/ui/autofill",
@@ -376,38 +223,21 @@ source_set("shell") {
     "//url",
   ]
   if (is_mac) {
-    sources += [
-      "chromium/prototype/sidebar_metal.mm",
-      "chromium/prototype/browser_import_key_mac.mm",
-      "chromium/prototype/workspace_frame_mac.h",
-      "chromium/prototype/workspace_frame_mac.mm",
-      "chromium/prototype/workspace_keyboard_mac.h",
-      "chromium/prototype/workspace_keyboard_mac.mm",
-    ]
     frameworks = [ "Metal.framework", "QuartzCore.framework", "AppKit.framework", "CoreText.framework" ]
-    public_deps += [ ":sidebar_shader",
+    public_deps += [
       "//components/remote_cocoa/app_shim",
       "//components/remote_cocoa/common:mojo",
     ]
+  }
+  if (is_mac || is_win) {
+    public_deps += [ ":workspace_presentation" ]
   } else {
+    sources += workspace_presentation_sources + [ "chromium/prototype/i18n_pref_service.cc" ]
     public_deps += [ ":text_services", "//ui/base/emoji" ]
   }
   if (is_win) {
-    sources += [
-      "chromium/prototype/jump_list_win.cc",
-      "chromium/prototype/jump_list_win.h",
-      "chromium/prototype/workspace_frame_win.cc",
-      "chromium/prototype/workspace_frame_win.h",
-    ]
-    libs = [ "dwmapi.lib", "propsys.lib", "shell32.lib" ]
+    deps = [ "//chrome/browser/lifetime" ]
   }
-}
-
-action("assistant_page_script") {
-  script = "chromium/assistant/embed.py"
-  sources = [ "chromium/assistant/page.js" ]
-  outputs = [ "$target_gen_dir/assistant_page_script.h" ]
-  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir) ]
 }
 
 action("content_blocking_probe_script") {
@@ -415,20 +245,6 @@ action("content_blocking_probe_script") {
   sources = [ "chromium/prototype/content_blocking_probe.js" ]
   outputs = [ "$target_gen_dir/content_blocking_probe_script.h" ]
   args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingProbeScript" ]
-}
-
-action("brave_clean_urls_json") {
-  script = "chromium/assistant/embed.py"
-  sources = [ "third_party/brave_clean_urls/clean-urls.json" ]
-  outputs = [ "$target_gen_dir/brave_clean_urls_json.h" ]
-  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kBraveCleanUrlsJson" ]
-}
-
-action("content_blocking_script") {
-  script = "chromium/assistant/embed.py"
-  sources = [ "chromium/prototype/content_blocking.js" ]
-  outputs = [ "$target_gen_dir/content_blocking_script.h" ]
-  args = [ rebase_path(sources[0], root_build_dir), rebase_path(outputs[0], root_build_dir), "kContentBlockingScript" ]
 }
 
 group("assistant_runtime") {
@@ -651,6 +467,10 @@ if (is_mac || is_linux || is_win) {
       sources += [
         "chromium/app/app_shell_mac.h",
         "chromium/app/app_shell_mac.mm",
+        "chromium/app/mac_release_metadata.cc",
+        "chromium/app/mac_release_metadata.h",
+        "chromium/app/updater_mac.cc",
+        "chromium/app/updater_mac.h",
         "//chrome/app/chrome_crash_reporter_client_mac.mm",
         "//chrome/app/chrome_main_mac.h",
         "//chrome/app/chrome_main_mac.mm",
@@ -696,8 +516,4 @@ if (is_mac || is_linux || is_win) {
       data_deps += [ ":design_fonts" ]
     }
   }
-}
-
-config("shell_includes") {
-  include_dirs = [ "." ]
 }
