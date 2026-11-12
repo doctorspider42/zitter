@@ -166,6 +166,7 @@
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/models/simple_combobox_model.h"
 #include "ui/color/color_provider_key.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/geometry/rect.h"
@@ -423,15 +424,17 @@ class NightShiftSettingsObserver final
                              GURL settings_url,
                              base::RepeatingCallback<void(base::DictValue)> apply,
                              base::RepeatingCallback<void(bool)> open_action,
-                             base::RepeatingClosure site_changed)
+                             base::RepeatingClosure site_changed,
+                             base::RepeatingCallback<void(int)> resize)
       : content::WebContentsObserver(page),
         content::WebContentsUserData<NightShiftSettingsObserver>(*page),
         settings_url_(std::move(settings_url)),
         apply_(std::move(apply)), open_action_(std::move(open_action)),
-        site_changed_(std::move(site_changed)) {}
+        site_changed_(std::move(site_changed)), resize_(std::move(resize)) {}
 
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
     constexpr std::string_view kApply = "apply=";
+    constexpr std::string_view kPanelHeight = "panel-height=";
     if (!navigation->IsInPrimaryMainFrame() || !navigation->HasCommitted() ||
         !navigation->IsSameDocument() || navigation->IsErrorPage()) {
       return;
@@ -450,6 +453,14 @@ class NightShiftSettingsObserver final
       site_changed_.Run();
       return;
     }
+    if (resize_ && url.ref().starts_with(kPanelHeight)) {
+      int height;
+      if (base::StringToInt(url.ref().substr(kPanelHeight.size()), &height) &&
+          height > 0) {
+        resize_.Run(height);
+      }
+      return;
+    }
     if (!url.ref().starts_with(kApply) || url.ref().size() > 64 * 1024)
       return;
     auto settings = base::JSONReader::ReadDict(
@@ -463,6 +474,7 @@ class NightShiftSettingsObserver final
   const base::RepeatingCallback<void(base::DictValue)> apply_;
   const base::RepeatingCallback<void(bool)> open_action_;
   const base::RepeatingClosure site_changed_;
+  const base::RepeatingCallback<void(int)> resize_;
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
@@ -16076,7 +16088,7 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
       return false;
     NightShiftSettingsObserver::CreateForWebContents(
         web_contents(), url, std::move(apply), base::RepeatingCallback<void(bool)>(),
-        std::move(site_changed));
+        std::move(site_changed), base::RepeatingCallback<void(int)>());
     shell_->CloseOverlays(true);
     widget_->Activate();
     return true;
@@ -16104,7 +16116,8 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
   panel.set_close_on_deactivate(true);
 
   auto view = std::make_unique<LabWebView>(&context);
-  view->SetPreferredSize(gfx::Size(296, document ? 380 : 145));
+  constexpr int kPanelWidth = 296;
+  view->SetPreferredSize(gfx::Size(kPanelWidth, document ? 340 : 120));
   auto* page = view->GetWebContents(url);
   SetNightShiftSettingsDestination(*page, url);
   NightShiftSettingsObserver::CreateForWebContents(
@@ -16124,7 +16137,27 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
         }
       }, weak_factory_.GetWeakPtr(),
       document ? document->GetWeakDocumentPtr() : content::WeakDocumentPtr()),
-      std::move(site_changed));
+      std::move(site_changed),
+      base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, int height) {
+        if (!lab || !lab->night_shift_widget_ ||
+            lab->night_shift_widget_->IsClosed()) {
+          return;
+        }
+        const auto work_area = display::Screen::Get()
+                                   ->GetDisplayNearestWindow(lab->widget_->GetNativeWindow())
+                                   .work_area();
+        const auto anchor = lab->night_shift_button_->GetBoundsInScreen();
+        // Leave room for the bubble frame on either side of the anchor.
+        const int available = std::max(work_area.bottom() - anchor.bottom(),
+                                       anchor.y() - work_area.y()) - 16;
+        const gfx::Size size(kPanelWidth,
+                             std::clamp(height, 1, std::max(1, available)));
+        auto* contents = lab->night_shift_panel_->GetContentsView();
+        if (contents->GetPreferredSize() != size) {
+          contents->SetPreferredSize(size);
+          lab->night_shift_panel_->SizeToContents();
+        }
+      }, weak_factory_.GetWeakPtr()));
   panel.SetContentsView(std::move(view));
   night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(&panel);
   night_shift_widget_->SetColorModeOverride(widget_->color_mode_override());

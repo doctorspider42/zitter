@@ -167,6 +167,11 @@ input { accent-color: var(--accent); }
 
 :root[data-presentation="panel"],
 :root[data-presentation="panel"] .ns-settings .look { background: var(--surface); }
+:root[data-presentation="panel"] .ns-settings { min-height: 0; }
+:root[data-presentation="panel"] .ns-settings > .status {
+    margin: 0;
+    padding: 0 12px 10px;
+}
 :root[data-presentation="panel"] .ns-settings main {
     margin: 0;
     border: 0;

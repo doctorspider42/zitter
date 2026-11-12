@@ -438,3 +438,14 @@ try {
     status.textContent = copy.loadFailed;
     console.error(error);
 }
+
+if (quickPanel) {
+    let lastHeight = 0;
+    new ResizeObserver(() => {
+        const height = Math.ceil(document.body.getBoundingClientRect().height);
+        if (height > 0 && height !== lastHeight) {
+            lastHeight = height;
+            history.replaceState(null, "", "#panel-height=" + height);
+        }
+    }).observe(document.body);
+}
