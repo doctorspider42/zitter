@@ -565,6 +565,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Zarządzaj rozszerzeniami", "Manage extensions"),
     ("Usuń z Zittera…", "Remove from Zitter…"),
     ("Ten profil nie ma rozszerzeń", "This profile has no extensions"),
+    ("Zainstaluj z tej strony", "Install from this page"),
     ("Dodaj je z Chrome Web Store", "Add them from the Chrome Web Store"),
     ("Więcej: {}", "More: {}"),
     ("Drukuj w oknie systemowym", "Print using the system dialog"),

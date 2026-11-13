@@ -127,6 +127,7 @@
 #include "content/public/common/url_constants.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/base/url_util.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/permission_request_description.h"
@@ -417,6 +418,10 @@ class WorkspacePasswordCsvImport final : public ui::SelectFileDialog::Listener,
 };
 
 namespace {
+
+constexpr char kWebStoreBag[] =
+    "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
+std::string WebStoreListingId(const GURL& url);
 
 constexpr char kExtensionsPuzzle[] =
     "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.5 0 0 0 0 3H12v2H3v-2h1.5a1.5 1.5 0 0 0 0-3H3z";
@@ -1466,15 +1471,40 @@ struct WorkspaceLab::GitHubRefresh {
   std::unique_ptr<network::SimpleURLLoader> loader;
 };
 
+class WorkspaceLab::ImportedFaviconObserver final : public content::WebContentsObserver {
+ public:
+  ImportedFaviconObserver(content::WebContents& page, base::OnceCallback<void(bool)> ready)
+      : WebContentsObserver(&page), ready_(base::BindPostTaskToCurrentDefault(std::move(ready))) {}
+
+ private:
+  void DidFinishNavigation(content::NavigationHandle* navigation) override {
+    if (ready_ && navigation->IsInPrimaryMainFrame())
+      std::move(ready_).Run(navigation->HasCommitted() && !navigation->IsErrorPage());
+  }
+
+  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus status) override {
+    if (ready_)
+      std::move(ready_).Run(false);
+  }
+
+  base::OnceCallback<void(bool)> ready_;
+};
+
 struct WorkspaceLab::PendingBrowserImport {
   struct Space {
     Workspace workspace;
     std::string source;
     std::u16string emoji;
   };
+  struct ImportedData {
+    std::shared_ptr<prototype::BrowsingImportData> browsing;
+    std::vector<prototype::ImportedFavicon> favicons;
+  };
   std::vector<ContentProfileInfo> profiles;
   std::vector<std::unique_ptr<ProfileContext>> contexts;
   std::vector<Space> spaces;
+  prototype::ImportedFaviconTargets favicon_targets;
+  std::vector<prototype::ImportedFavicon> favicons;
   base::DictValue session;
   prototype::BrowsingImportResult result;
   bool browsing_data = false;
@@ -1999,6 +2029,18 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     extension_toolbar_divider_ = trailing->AddChildView(
         std::make_unique<ContentToolbarDivider>(palette));
     extension_toolbar_divider_->SetVisible(false);
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(kRestoreWorkspaceExtensions)) {
+      web_store_install_button_ = trailing->AddChildView(
+          std::make_unique<ContentToolbarButton>(
+              kWebStoreBag, prototype::T(u"Zainstaluj z tej strony"),
+              base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+                if (!lab || !lab->web_contents())
+                  return;
+                auto& frame = *lab->web_contents()->GetPrimaryMainFrame();
+                lab->InstallFromWebStore(frame, WebStoreListingId(frame.GetLastCommittedURL()), {});
+              }, weak), palette));
+      web_store_install_button_->SetVisible(false);
+    }
     extensions_toolbar_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
         kExtensionsPuzzle, prototype::T(u"Rozszerzenia"),
         base::BindRepeating(&WorkspaceLab::ShowExtensionsToolbarMenu, weak), palette));
@@ -2014,6 +2056,17 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,
                                    views::Widget::InitParams::TYPE_WINDOW);
   params.bounds = gfx::Rect(80, 80, 1100, 740);
+  if (!session_path_.empty() && !private_owner_) {
+    if (const auto* placement = session.FindDict("window_placement")) {
+      params.bounds = gfx::Rect(*placement->FindInt("x"), *placement->FindInt("y"),
+                               *placement->FindInt("width"), *placement->FindInt("height"));
+      const auto work_area = display::Screen::Get()
+                                 ->GetDisplayMatching(params.bounds).work_area();
+      params.bounds.AdjustToFit(work_area);
+      restore_window_fullscreen_ = placement->FindBool("fullscreen").value_or(false);
+      restore_window_maximized_ = placement->FindBool("maximized").value_or(false);
+    }
+  }
   params.delegate = delegate_.get();
   const auto permission_probe = base::CommandLine::ForCurrentProcess()
       ->GetSwitchValueASCII(kSitePermissionProbe);
@@ -2993,6 +3046,8 @@ bool WorkspaceLab::ApplyBrowserImport() {
     if (favorites.empty())
       continue;
     for (auto& pin : favorites) {
+      if (pin.url.SchemeIsHTTPOrHTTPS())
+        job->favicon_targets[source_id].insert(pin.url);
       pin.id = "pin-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
       pin.profile_pin = true;
     }
@@ -3023,6 +3078,8 @@ bool WorkspaceLab::ApplyBrowserImport() {
             continue;
           pin.parent_id = parent->second;
         }
+        if (!pin.folder && pin.url.SchemeIsHTTPOrHTTPS())
+          job->favicon_targets[space.profile_id].insert(pin.url);
         std::string id = "pin-" + base::Uuid::GenerateRandomV4().AsLowercaseString();
         if (pin.folder)
           folders.emplace(pin.id, id);
@@ -3041,6 +3098,7 @@ bool WorkspaceLab::ApplyBrowserImport() {
                             false);
     return false;
   }
+  auto favicon_sources = source.sources;
   std::erase_if(source.sources, [&](const auto& entry) {
     return !new_sources.contains(entry.destination_id);
   });
@@ -3066,7 +3124,10 @@ bool WorkspaceLab::ApplyBrowserImport() {
   session_writer_->PostTaskAndReplyWithResult(
       FROM_HERE,
       base::BindOnce([](const base::FilePath& path, prototype::ArcImport source,
-                        std::vector<ContentProfileInfo> profiles, bool fixture) {
+                        std::vector<ContentProfileInfo> profiles, bool fixture,
+                        std::vector<prototype::ImportSourceProfile> favicon_sources,
+                        prototype::ImportedFaviconTargets favicon_targets)
+          -> PendingBrowserImport::ImportedData {
         prototype::ImportCookieKeyReader key_reader;
         if (fixture) {
           key_reader = base::BindOnce(
@@ -3076,18 +3137,26 @@ bool WorkspaceLab::ApplyBrowserImport() {
         }
         auto data = prototype::ReadBrowsingImportData(source, std::move(key_reader));
         if (!data->error.empty())
-          return data;
+          return {std::move(data), {}};
+        auto favicons = prototype::ReadImportedFavicons(
+            favicon_sources, favicon_targets, source.options.browser);
         std::vector<base::ScopedTempDir> directories;
         for (const auto& profile : profiles) {
           if (!PrepareProfileDirectories(path, profile, directories))
-            return std::shared_ptr<prototype::BrowsingImportData>();
+            return {};
         }
         for (auto& directory : directories)
           (void)directory.Take();
-        return data;
+        return {std::move(data), std::move(favicons)};
       }, session_path_, std::move(source), browser_import_->profiles,
-         fixture_without_keychain),
-      base::BindOnce(&WorkspaceLab::ImportDirectoriesReady, weak_factory_.GetWeakPtr()));
+         fixture_without_keychain, std::move(favicon_sources), browser_import_->favicon_targets),
+      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab,
+                       PendingBrowserImport::ImportedData result) {
+        if (!lab)
+          return;
+        lab->browser_import_->favicons = std::move(result.favicons);
+        lab->ImportDirectoriesReady(std::move(result.browsing));
+      }, weak_factory_.GetWeakPtr()));
   return true;
 }
 
@@ -3160,6 +3229,27 @@ void WorkspaceLab::FinishBrowserImport(bool ok, std::string error) {
       startup_import_pending_ = false;
     for (size_t i = 0; i < job->profiles.size(); ++i)
       PublishProfile(std::move(job->profiles[i]), std::move(job->contexts[i]));
+    for (const auto& icon : job->favicons) {
+      const auto profile = std::ranges::find(profiles_, icon.profile_id,
+                                             &ContentProfileInfo::import_source);
+      if (profile == profiles_.end())
+        continue;
+      auto* service = contexts_[profile - profiles_.begin()]->GetFaviconService();
+      if (!service)
+        continue;
+      service->SetFavicons({icon.page_url}, icon.icon_url,
+                           favicon_base::IconType::kFavicon,
+                           gfx::Image::CreateFrom1xBitmap(icon.bitmap));
+      job->favicon_targets[icon.profile_id].erase(icon.page_url);
+    }
+    for (auto& [source, urls] : job->favicon_targets) {
+      const auto profile = std::ranges::find(profiles_, source, &ContentProfileInfo::import_source);
+      if (profile != profiles_.end() && !urls.empty()) {
+        auto& pending = imported_favicon_urls_[profile->id];
+        pending.merge(urls);
+      }
+    }
+    PumpImportedFavicons();
     profile_favorites_ = ReadContentProfileFavorites(
         job->session, ReadContentWorkspaces(job->session).value()).value();
     for (auto& space : job->spaces) {
@@ -3266,6 +3356,7 @@ WorkspaceLab::~WorkspaceLab() {
   fingerprint_button_ = nullptr;
   assistant_toolbar_button_ = nullptr;
   extensions_toolbar_button_ = nullptr;
+  web_store_install_button_ = nullptr;
   pinned_extension_toolbar_ = nullptr;
   extension_toolbar_divider_ = nullptr;
   webauthn_probe_.reset();
@@ -3380,6 +3471,10 @@ void WorkspaceLab::StartWorkspace() {
   } else {
     widget_->Show();
   }
+  if (std::exchange(restore_window_maximized_, false))
+    widget_->Maximize();
+  if (std::exchange(restore_window_fullscreen_, false))
+    widget_->SetFullscreen(true);
   if (private_owner_) {
     SelectWorkspace(std::string(kWorkspaceIds[0]));
     shell_->OpenAddress(false);
@@ -8958,6 +9053,14 @@ void WorkspaceLab::AttachPageServices(content::WebContents& page,
                      : base::DictValue();
         }, weak_factory_.GetWeakPtr()));
   }
+  if (!private_owner_ && base::CommandLine::ForCurrentProcess()->HasSwitch(
+                             kRestoreWorkspaceExtensions)) {
+    AttachWebStoreInstall(page, base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, content::RenderFrameHost& frame,
+           const std::string& id, base::OnceCallback<void(bool)> done) {
+          return lab && lab->InstallFromWebStore(frame, id, std::move(done));
+        }, weak_factory_.GetWeakPtr()));
+  }
   prototype::LinkNavigation::Attach(&page, base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, content::NavigationHandle& navigation) {
         return lab && lab->RouteNavigation(navigation);
@@ -10115,6 +10218,66 @@ void WorkspaceLab::SwitchTo(size_t index) {
   RefreshShell();
 }
 
+void WorkspaceLab::PumpImportedFavicons() {
+  if (imported_favicon_page_ || imported_favicon_urls_.empty())
+    return;
+  auto next = imported_favicon_urls_.extract(imported_favicon_urls_.begin());
+  const auto profile = std::ranges::find(profiles_, next.key(), &ContentProfileInfo::id);
+  CHECK(profile != profiles_.end());
+  auto* context = contexts_[profile - profiles_.begin()].get();
+  content::WebContents::CreateParams params(context);
+  params.initially_hidden = true;
+  imported_favicon_page_ = content::WebContents::Create(params);
+  imported_favicon_observer_ = std::make_unique<ImportedFaviconObserver>(
+      *imported_favicon_page_, base::BindOnce(
+          &WorkspaceLab::StartImportedFaviconRefresh, weak_factory_.GetWeakPtr(),
+          next.key(), std::move(next.mapped())));
+  imported_favicon_page_->GetController().LoadURL(
+      GURL("about:blank"), content::Referrer(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL, {});
+}
+
+void WorkspaceLab::StartImportedFaviconRefresh(std::string profile,
+                                               std::set<GURL> urls, bool loaded) {
+  if (!loaded) {
+    FinishImportedFaviconRefresh();
+    return;
+  }
+  std::map<GURL, GURL> pages;
+  for (const auto& url : urls)
+    pages.try_emplace(url);
+  imported_favicon_refresh_ = std::make_unique<WorkspaceFaviconRefresh>(
+      *imported_favicon_page_, std::move(pages),
+      base::BindRepeating(
+          [](base::WeakPtr<WorkspaceLab> lab, const std::string& profile, const GURL& page,
+             const GURL& icon, const gfx::Image& image) {
+            if (!lab)
+              return;
+            const auto owner = std::ranges::find(lab->profiles_, profile, &ContentProfileInfo::id);
+            if (owner == lab->profiles_.end())
+              return;
+            if (auto* service = lab->contexts_[owner - lab->profiles_.begin()]->GetFaviconService())
+              service->SetFavicons({page}, icon, favicon_base::IconType::kFavicon, image);
+            if (lab->favicon_profile_ == profile) {
+              if (auto cached = lab->cached_favicons_.find(page); cached != lab->cached_favicons_.end()) {
+                lab->favicon_tasks_.TryCancel(cached->second.task);
+                cached->second.task = base::CancelableTaskTracker::kBadTaskId;
+                cached->second.pixels = FaviconPixels(image);
+              }
+              lab->RefreshShell();
+            }
+          }, weak_factory_.GetWeakPtr(), std::move(profile)),
+      base::BindPostTaskToCurrentDefault(base::BindOnce(
+          &WorkspaceLab::FinishImportedFaviconRefresh, weak_factory_.GetWeakPtr())));
+  imported_favicon_refresh_->Start();
+}
+
+void WorkspaceLab::FinishImportedFaviconRefresh() {
+  imported_favicon_refresh_.reset();
+  imported_favicon_observer_.reset();
+  imported_favicon_page_.reset();
+  PumpImportedFavicons();
+}
+
 bool WorkspaceLab::RefreshWorkspaceFavicons() {
   auto* source = web_contents();
   if (!CanEditWorkspace() || !model_.active() || !source ||
@@ -10287,6 +10450,11 @@ void WorkspaceLab::RefreshExtensionActionAppearance() {
 void WorkspaceLab::RefreshShell() {
   if (!web_contents() || !model_.active())
     return;
+  if (web_store_install_button_) {
+    auto* frame = web_contents()->GetPrimaryMainFrame();
+    web_store_install_button_->SetVisible(
+        !frame->IsErrorDocument() && !WebStoreListingId(frame->GetLastCommittedURL()).empty());
+  }
   ScheduleGitHubRefresh();
   RefreshNightShiftButton();
   if (assistant_ && assistant_profile_ != AssistantProfileId()) {
@@ -11280,6 +11448,14 @@ void WorkspaceLab::OnDownloadShutdownAnswered(bool close) {
 base::DictValue WorkspaceLab::CaptureSession() const {
   base::DictValue session;
   session.Set("active_workspace", model_.active()->id);
+  const auto bounds = widget_->GetRestoredBounds();
+  if (!bounds.IsEmpty()) {
+    session.Set("window_placement", base::DictValue()
+        .Set("x", bounds.x()).Set("y", bounds.y())
+        .Set("width", bounds.width()).Set("height", bounds.height())
+        .Set("maximized", widget_->IsMaximized())
+        .Set("fullscreen", fullscreen_page_ ? window_was_fullscreen_ : widget_->IsFullscreen()));
+  }
   if (startup_import_pending_)
     session.Set("startup_import_pending", true);
   if (!removed_workspaces_.empty())
@@ -16227,15 +16403,10 @@ void WorkspaceLab::CheckManagedExtensionsForProbe(ManagedProbePhase phase,
 
 namespace {
 
-std::string WebStoreListingId(std::string_view listing) {
-  listing = base::TrimWhitespaceASCII(listing, base::TRIM_ALL);
-  if (crx_file::id_util::IdIsValid(listing))
-    return std::string(listing);
-  if (listing.size() > 2048)
-    return {};
-  const GURL url(listing);
+std::string WebStoreListingId(const GURL& url) {
   if (!url.SchemeIs("https") || url.host() != "chromewebstore.google.com" ||
-      url.has_username() || url.has_password() || url.has_port()) {
+      url.has_username() || url.has_password() || url.has_port() ||
+      url.spec().size() > 2048) {
     return {};
   }
   const auto segments = base::SplitStringPiece(url.path(), "/", base::KEEP_WHITESPACE,
@@ -16249,11 +16420,24 @@ std::string WebStoreListingId(std::string_view listing) {
 
 }  // namespace
 
-bool WorkspaceLab::InstallFromWebStore(std::string_view listing) {
-  const auto id = WebStoreListingId(listing);
-  if (id.empty() || extension_install_ || web_store_update_ || !CanEditWorkspace() ||
-      !ExtensionDialogOwner() ||
-      (extension_picker_ && extension_picker_->IsRunning(ExtensionDialogOwner()->GetNativeWindow()))) {
+bool WorkspaceLab::IsActiveWebStoreListing(const content::WeakDocumentPtr& document,
+                                           const std::string& id) {
+  auto* page = web_contents();
+  auto* frame = document.AsRenderFrameHostIfValid();
+  return page && frame && frame == page->GetPrimaryMainFrame() &&
+         !frame->IsErrorDocument() && WebStoreListingId(frame->GetLastCommittedURL()) == id;
+}
+
+bool WorkspaceLab::InstallFromWebStore(content::RenderFrameHost& frame,
+                                       const std::string& id,
+                                       base::OnceCallback<void(bool)> done) {
+  const auto document = frame.GetWeakDocumentPtr();
+  auto* dialog_owner = ExtensionDialogOwner();
+  if (private_owner_ || id.empty() || !IsActiveWebStoreListing(document, id) ||
+      extension_install_ || web_store_update_ || shell_->HasDangerDialog() ||
+      !CanEditWorkspace() || !widget_->IsVisible() ||
+      (extension_picker_ && dialog_owner &&
+       extension_picker_->IsRunning(dialog_owner->GetNativeWindow()))) {
     return false;
   }
   const auto index = WorkspaceProfileIndex(active_index_);
@@ -16266,18 +16450,21 @@ bool WorkspaceLab::InstallFromWebStore(std::string_view listing) {
   const auto current = std::ranges::find(installed, id, &extensions::Extension::id);
   const auto version = current == installed.end() ? "0.0.0.0"
                                                  : (*current)->version().GetString();
+  if (done)
+    done = mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(done), false);
   extension_install_profile_ = index;
   SetExtensionManagerStatus(prototype::T(u"Pobieram i weryfikuję podpis ze sklepu…"));
   extension_install_ = WorkspaceExtensionInstall::FromWebStore(
       profile.GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
       id, version, profile.GetPath(), std::move(installed),
-      base::BindOnce(&WorkspaceLab::OnExtensionReview, weak_factory_.GetWeakPtr(), index));
+      base::BindOnce(&WorkspaceLab::OnExtensionReview, weak_factory_.GetWeakPtr(),
+                     index, document, id, std::move(done)));
   return true;
 }
 
 void WorkspaceLab::CheckWebStoreUpdates() {
   if (private_owner_ || smoke_ || session_probe_url_.is_valid() || web_store_update_ ||
-      extension_install_ || !CanEditWorkspace()) {
+      extension_install_ || shell_->HasDangerDialog() || !CanEditWorkspace()) {
     return;
   }
   web_store_updates_.clear();
@@ -16362,7 +16549,7 @@ views::Widget* WorkspaceLab::ExtensionDialogOwner() const {
     return settings;
   if (const auto* page = web_contents()) {
     const auto& url = page->GetLastCommittedURL();
-    if (url == GURL(prototype::kExtensionsTabUrl) || !WebStoreListingId(url.spec()).empty())
+    if (url == GURL(prototype::kExtensionsTabUrl) || !WebStoreListingId(url).empty())
       return widget_.get();
   }
   return nullptr;
@@ -16669,24 +16856,24 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
             lab->CloseExtensionsToolbarMenu();
             lab->OpenExtensionsManager();
           }, weak))->SetRing(true);
-  constexpr char kStore[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
   if (web_contents() && base::CommandLine::ForCurrentProcess()->HasSwitch(
                             kRestoreWorkspaceExtensions)) {
     const auto listing = web_contents()->GetLastCommittedURL();
-    if (!WebStoreListingId(listing.spec()).empty()) {
-      auto* install = add_row(kStore, prototype::T(u"Zainstaluj z tej strony"),
+    if (!WebStoreListingId(listing).empty()) {
+      auto* install = add_row(kWebStoreBag, prototype::T(u"Zainstaluj z tej strony"),
           prototype::kFooterHeight,
           base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, GURL listing) {
             if (!lab || !lab->web_contents() ||
                 lab->web_contents()->GetLastCommittedURL() != listing)
               return;
             lab->CloseExtensionsToolbarMenu();
-            lab->InstallFromWebStore(listing.spec());
+            lab->InstallFromWebStore(*lab->web_contents()->GetPrimaryMainFrame(),
+                                     WebStoreListingId(listing), {});
           }, weak, listing));
       install->SetEnabled(!extension_install_ && !web_store_update_);
     }
   }
-  add_row(kStore, u"Chrome Web Store", prototype::kFooterHeight,
+  add_row(kWebStoreBag, u"Chrome Web Store", prototype::kFooterHeight,
           base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
             if (!lab)
               return;
@@ -17151,17 +17338,24 @@ void WorkspaceLab::FileSelected(const ui::SelectedFileInfo& file, int index) {
       file.path(), contexts_[extension_install_profile_]->GetPath(),
       GetConfiguredExtensions(*contexts_[extension_install_profile_]),
       base::BindOnce(&WorkspaceLab::OnExtensionReview,
-                     weak_factory_.GetWeakPtr(), extension_install_profile_));
+                     weak_factory_.GetWeakPtr(), extension_install_profile_,
+                     content::WeakDocumentPtr(), std::string(),
+                     base::OnceCallback<void(bool)>()));
 }
 
 void WorkspaceLab::FileSelectionCanceled() {}
 
 void WorkspaceLab::OnExtensionReview(size_t profile,
-                                    std::optional<base::DictValue> review) {
+                                     content::WeakDocumentPtr store_document,
+                                     std::string store_id,
+                                     base::OnceCallback<void(bool)> done,
+                                     std::optional<base::DictValue> review) {
   auto install = std::move(extension_install_);
-  auto* settings = ExtensionDialogOwner();
+  auto* settings = store_id.empty() ? ExtensionDialogOwner() : widget_.get();
   if (!settings || !settings->IsVisible() || !CanEditWorkspace() ||
-      WorkspaceProfileIndex(active_index_) != profile) {
+      WorkspaceProfileIndex(active_index_) != profile ||
+      (!store_id.empty() && (!IsActiveWebStoreListing(store_document, store_id) ||
+                             shell_->HasDangerDialog()))) {
     SetExtensionManagerStatus({});
     return;
   }
@@ -17311,9 +17505,11 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
       base::BindOnce(
           [](base::WeakPtr<WorkspaceLab> lab, size_t profile, bool is_update,
              std::string id, std::unique_ptr<WorkspaceExtensionInstall> install,
-             bool accepted) {
+             content::WeakDocumentPtr store_document, std::string store_id,
+             base::OnceCallback<void(bool)> done, bool accepted) {
             if (!lab || !lab->CanEditWorkspace() ||
-                lab->WorkspaceProfileIndex(lab->active_index_) != profile) {
+                lab->WorkspaceProfileIndex(lab->active_index_) != profile ||
+                (!store_id.empty() && !lab->IsActiveWebStoreListing(store_document, store_id))) {
               return;
             }
             const bool probe = base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -17331,10 +17527,10 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
                   prototype::T(u"Trwa usuwanie tego rozszerzenia."), true);
               return;
             }
-            lab->InstallReviewedExtension(profile, *install, is_update);
+            lab->InstallReviewedExtension(profile, *install, is_update, std::move(done));
           },
           weak_factory_.GetWeakPtr(), profile, is_update, *review->FindString("id"),
-          std::move(install)));
+          std::move(install), store_document, std::move(store_id), std::move(done)));
   const auto& command = *base::CommandLine::ForCurrentProcess();
   if (!command.HasSwitch(kExtensionInstallUiProbe))
     return;
@@ -17354,7 +17550,8 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
 }
 
 void WorkspaceLab::InstallReviewedExtension(
-    size_t profile, WorkspaceExtensionInstall& install, bool is_update) {
+    size_t profile, WorkspaceExtensionInstall& install, bool is_update,
+    base::OnceCallback<void(bool)> done) {
   auto extension = install.Publish();
   const bool probe = base::CommandLine::ForCurrentProcess()->HasSwitch(
       kExtensionInstallUiProbe);
@@ -17395,8 +17592,14 @@ void WorkspaceLab::InstallReviewedExtension(
                                    prototype::TF(u"Skrypty użytkownika: {}", {title}));
   }
   if (!managed_extensions_.back()->Start(base::BindOnce(
-          &WorkspaceLab::OnInstalledExtension, weak_factory_.GetWeakPtr(),
-          profile, id)) && !managed_extensions_.back()->failed()) {
+          [](base::WeakPtr<WorkspaceLab> lab, size_t profile, std::string id,
+             base::OnceCallback<void(bool)> done, bool active) {
+            if (lab)
+              lab->OnInstalledExtension(profile, std::move(id), active);
+            if (done)
+              std::move(done).Run(active);
+          }, weak_factory_.GetWeakPtr(), profile, id, std::move(done))) &&
+      !managed_extensions_.back()->failed()) {
     OnInstalledExtension(profile, id, false);
   }
 }

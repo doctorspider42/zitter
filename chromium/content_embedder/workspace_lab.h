@@ -793,7 +793,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::map<ExtensionManagerIconKey, std::string> extension_manager_icons_;
   std::u16string extension_manager_status_;
   bool extension_manager_error_ = false;
-  bool InstallFromWebStore(std::string_view listing);
+  bool InstallFromWebStore(content::RenderFrameHost& frame,
+                           const std::string& id,
+                           base::OnceCallback<void(bool)> done);
+  bool IsActiveWebStoreListing(const content::WeakDocumentPtr& document,
+                               const std::string& id);
   void CheckWebStoreUpdates();
   void CheckNextWebStoreUpdate();
   void OnWebStoreUpdate(std::string profile_id, std::optional<base::DictValue> review);
@@ -819,9 +823,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ConfirmUninstallExtension(std::string id);
   void FileSelected(const ui::SelectedFileInfo& file, int index) override;
   void FileSelectionCanceled() override;
-  void OnExtensionReview(size_t profile, std::optional<base::DictValue> review);
+  void OnExtensionReview(size_t profile, content::WeakDocumentPtr store_document,
+                         std::string store_id, base::OnceCallback<void(bool)> done,
+                         std::optional<base::DictValue> review);
   void InstallReviewedExtension(size_t profile, WorkspaceExtensionInstall& install,
-                                bool is_update);
+                                bool is_update, base::OnceCallback<void(bool)> done = {});
   void OnInstalledExtension(size_t profile, std::string id, bool active);
   void CheckLiveExtensionInstall(const std::string& id,
                                  bool navigated,
@@ -953,6 +959,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   raw_ptr<views::View> fingerprint_button_ = nullptr;
   raw_ptr<views::View> assistant_toolbar_button_ = nullptr;
   raw_ptr<views::View> extensions_toolbar_button_ = nullptr;
+  raw_ptr<views::View> web_store_install_button_ = nullptr;
   std::unique_ptr<views::BubbleDialogDelegate> extensions_toolbar_menu_;
   std::unique_ptr<views::Widget> extensions_toolbar_menu_widget_;
   raw_ptr<views::View> night_shift_button_ = nullptr;
@@ -986,6 +993,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   base::WeakPtr<content::WebContents> find_page_;
   base::WeakPtr<content::WebContents> fullscreen_page_;
   bool window_was_fullscreen_ = false;
+  bool restore_window_fullscreen_ = false;
+  bool restore_window_maximized_ = false;
   base::ScopedObservation<views::Widget, views::WidgetObserver>
       fullscreen_observation_{this};
   base::ScopedObservation<find_in_page::FindTabHelper,
@@ -1052,6 +1061,14 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::string favicon_profile_;
   std::pair<std::string, std::string> favicon_refresh_scope_;
   std::unique_ptr<WorkspaceFaviconRefresh> favicon_refresh_;
+  class ImportedFaviconObserver;
+  std::map<std::string, std::set<GURL>> imported_favicon_urls_;
+  std::unique_ptr<content::WebContents> imported_favicon_page_;
+  std::unique_ptr<ImportedFaviconObserver> imported_favicon_observer_;
+  std::unique_ptr<WorkspaceFaviconRefresh> imported_favicon_refresh_;
+  void PumpImportedFavicons();
+  void StartImportedFaviconRefresh(std::string profile, std::set<GURL> urls, bool loaded);
+  void FinishImportedFaviconRefresh();
   std::map<GURL, CachedFavicon> cached_favicons_;
   base::CancelableTaskTracker favicon_tasks_;
   base::CancelableTaskTracker address_history_tasks_;

@@ -388,6 +388,7 @@ class WorkspaceShell final : public ui::EventHandler,
   // `warning` in `danger`, `action` the danger button; waiting is the default.
   void ConfirmDanger(views::Widget* parent, std::u16string title, std::u16string detail, std::u16string warning,
                      std::u16string action, base::OnceCallback<void(bool)> answer);
+  bool HasDangerDialog() const { return !!danger_dialog_; }
   views::Widget* danger_dialog_for_testing() const { return danger_dialog_.get(); }
   views::View* install_extension_for_testing() const { return install_extension_button_; }
   views::View* extension_popup_for_testing(const std::string& id) const {

@@ -29,7 +29,8 @@ class WorkspaceFaviconRefresh {
                                                const GURL& icon,
                                                const gfx::Image& image)>;
   WorkspaceFaviconRefresh(content::WebContents& source,
-                          std::map<GURL, GURL> pages, Publish publish);
+                          std::map<GURL, GURL> pages, Publish publish,
+                          base::OnceClosure done = {});
   ~WorkspaceFaviconRefresh();
 
   void Start();
@@ -45,6 +46,7 @@ class WorkspaceFaviconRefresh {
   scoped_refptr<network::SharedURLLoaderFactory> factory_;
   std::map<GURL, GURL> pages_;
   Publish publish_;
+  base::OnceClosure done_;
   GURL page_;
   GURL known_icon_;
   std::vector<GURL> candidates_;

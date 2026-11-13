@@ -582,11 +582,17 @@ if (is_mac) {
     public_deps = [ "//zitter:zitter_assistant" ]
   }
 
+  bundle_data("app_icon") {
+    sources = [ "Zitter.icns" ]
+    outputs = [ "{{bundle_resources_dir}}/{{source_file_part}}" ]
+  }
+
   mac_app_bundle("lab_app") {
     output_name = product
     info_plist_target = ":app_plist"
     sources = launch_sources
     deps = launch_deps + [
+             ":app_icon",
              ":assistant_bundle",
              ":framework_bundle",
            ]

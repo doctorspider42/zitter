@@ -42,14 +42,14 @@ std::unique_ptr<network::SimpleURLLoader> MakeIconLoader(const GURL& url) {
     semantics {
       sender: "Zitter Content Workspace icon refresh"
       description: "Fetches markup and icons for tabs and pinned pages."
-      trigger: "The user selects Refresh all favicons in Command Center."
+      trigger: "The user imports bookmarks or selects Refresh all favicons."
       data: "The page URL, without cookies or authentication."
       destination: WEBSITE
     }
     policy {
       cookies_allowed: NO
-      setting: "This request only occurs when the user runs the command."
-      policy_exception_justification: "User initiated icon refresh."
+      setting: "The user chooses whether to import bookmarks or refresh icons."
+      policy_exception_justification: "User initiated bookmark import or icon refresh."
     })");
   auto loader = network::SimpleURLLoader::Create(std::move(request), annotation);
   loader->SetTimeoutDuration(base::Seconds(10));
@@ -59,12 +59,13 @@ std::unique_ptr<network::SimpleURLLoader> MakeIconLoader(const GURL& url) {
 }  // namespace
 
 WorkspaceFaviconRefresh::WorkspaceFaviconRefresh(
-    content::WebContents& source, std::map<GURL, GURL> pages, Publish publish)
+    content::WebContents& source, std::map<GURL, GURL> pages, Publish publish,
+    base::OnceClosure done)
     : source_(source.GetWeakPtr()),
       factory_(source.GetBrowserContext()->GetDefaultStoragePartition()
                    ->GetURLLoaderFactoryForBrowserProcess()),
       pages_(std::move(pages)),
-      publish_(std::move(publish)) {}
+      publish_(std::move(publish)), done_(std::move(done)) {}
 
 WorkspaceFaviconRefresh::~WorkspaceFaviconRefresh() = default;
 
@@ -75,6 +76,8 @@ void WorkspaceFaviconRefresh::Start() {
 void WorkspaceFaviconRefresh::FetchNextPage() {
   if (!source_ || !source_->GetPrimaryMainFrame()->IsRenderFrameLive() ||
       pages_.empty()) {
+    if (done_)
+      std::move(done_).Run();
     return;
   }
   auto next = pages_.extract(pages_.begin());
@@ -109,8 +112,11 @@ void WorkspaceFaviconRefresh::OnMarkup(std::optional<std::string> markup) {
 }
 
 void WorkspaceFaviconRefresh::FetchNextIcon() {
-  if (!source_ || !source_->GetPrimaryMainFrame()->IsRenderFrameLive())
+  if (!source_ || !source_->GetPrimaryMainFrame()->IsRenderFrameLive()) {
+    if (done_)
+      std::move(done_).Run();
     return;
+  }
   if (candidate_ == candidates_.size()) {
     FetchNextPage();
     return;
@@ -149,8 +155,11 @@ void WorkspaceFaviconRefresh::OnIconBytes(GURL icon,
 }
 
 void WorkspaceFaviconRefresh::DecodeIcon(GURL icon, const GURL& data) {
-  if (!source_ || !source_->GetPrimaryMainFrame()->IsRenderFrameLive())
+  if (!source_ || !source_->GetPrimaryMainFrame()->IsRenderFrameLive()) {
+    if (done_)
+      std::move(done_).Run();
     return;
+  }
   source_->DownloadImage(
       data, /*is_favicon=*/true, gfx::Size(32, 32), 64, /*bypass_cache=*/true,
       base::BindOnce(

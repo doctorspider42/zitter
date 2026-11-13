@@ -49,7 +49,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_restrictions.h"
+#include "components/crx_file/id_util.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/version_info/version_info.h"
 #include "components/prefs/in_memory_pref_store.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
@@ -2202,6 +2204,50 @@ class LabCookiesGetFunction final : public ExtensionFunction {
   }
 };
 
+extensions::api::management::ExtensionInfo BuildManagementInfo(
+    const extensions::Extension& extension, bool enabled) {
+  const auto* caller = &extension;
+  namespace management = extensions::api::management;
+  management::ExtensionInfo info;
+  info.id = caller->id();
+  info.name = caller->name();
+  info.short_name = caller->short_name();
+  info.description = extensions::DescriptionInfo::GetDescription(*caller);
+  info.version = caller->VersionString();
+  if (const auto& version_name = extensions::VersionNameInfo::GetVersionName(*caller);
+      !version_name.empty())
+    info.version_name = version_name;
+  info.may_disable = true;
+  info.enabled = enabled;
+  info.disabled_reason = management::ExtensionDisabledReason::kNone;
+  info.is_app = false;
+  info.type = management::ExtensionType::kExtension;
+  info.offline_enabled = extensions::OfflineEnabledInfo::IsOfflineEnabled(caller);
+  info.options_url = extensions::OptionsPageInfo::GetOptionsPage(caller).spec();
+  if (const auto homepage = extensions::ManifestURL::GetHomepageURL(caller);
+      homepage.is_valid())
+    info.homepage_url = homepage.spec();
+  // Settings installs verified CRX files. The unpacked manifest location
+  // used internally for validation is not how the user installed the CRX.
+  info.install_type = management::ExtensionInstallType::kNormal;
+  info.launch_type = management::LaunchType::kNone;
+  const auto& permissions = caller->permissions_data()->active_permissions();
+  const auto apis = permissions.GetAPIsAsStrings();
+  info.permissions.assign(apis.begin(), apis.end());
+  info.host_permissions = permissions.explicit_hosts().ToStringVector();
+  const auto& icons = extensions::IconsInfo::GetIcons(caller).map();
+  if (!icons.empty()) {
+    info.icons.emplace();
+    for (const auto& [size, path] : icons) {
+      management::IconInfo icon;
+      icon.size = size;
+      icon.url = caller->GetResourceURL(path).spec();
+      info.icons->push_back(std::move(icon));
+    }
+  }
+  return info;
+}
+
 class LabManagementGetSelfFunction final : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("management.getSelf", MANAGEMENT_GETSELF)
@@ -2221,49 +2267,12 @@ class LabManagementGetSelfFunction final : public ExtensionFunction {
       return RespondNow(Error("Extension metadata is unavailable in this profile."));
     }
 
-    namespace management = extensions::api::management;
-    management::ExtensionInfo info;
-    info.id = caller->id();
-    info.name = caller->name();
-    info.short_name = caller->short_name();
-    info.description = extensions::DescriptionInfo::GetDescription(*caller);
-    info.version = caller->VersionString();
-    if (const auto& version_name = extensions::VersionNameInfo::GetVersionName(*caller);
-        !version_name.empty())
-      info.version_name = version_name;
-    info.may_disable = true;
-    info.enabled = true;
-    info.disabled_reason = management::ExtensionDisabledReason::kNone;
-    info.is_app = false;
-    info.type = management::ExtensionType::kExtension;
-    info.offline_enabled = extensions::OfflineEnabledInfo::IsOfflineEnabled(caller);
-    info.options_url = extensions::OptionsPageInfo::GetOptionsPage(caller).spec();
-    if (const auto homepage = extensions::ManifestURL::GetHomepageURL(caller);
-        homepage.is_valid())
-      info.homepage_url = homepage.spec();
-    // Settings installs verified CRX files. The unpacked manifest location
-    // used internally for validation is not how the user installed the CRX.
-    info.install_type = management::ExtensionInstallType::kNormal;
-    info.launch_type = management::LaunchType::kNone;
-    const auto& permissions = caller->permissions_data()->active_permissions();
-    const auto apis = permissions.GetAPIsAsStrings();
-    info.permissions.assign(apis.begin(), apis.end());
-    info.host_permissions = permissions.explicit_hosts().ToStringVector();
-    const auto& icons = extensions::IconsInfo::GetIcons(caller).map();
-    if (!icons.empty()) {
-      info.icons.emplace();
-      for (const auto& [size, path] : icons) {
-        management::IconInfo icon;
-        icon.size = size;
-        icon.url = caller->GetResourceURL(path).spec();
-        info.icons->push_back(std::move(icon));
-      }
-    }
+    const auto info = BuildManagementInfo(*caller, true);
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(
             "zitter-content-extension-publisher-overlay-probe")) {
       std::puts("Zitter Content served publisher extension metadata to its caller");
     }
-    return RespondNow(ArgumentList(management::GetSelf::Results::Create(info)));
+    return RespondNow(ArgumentList(extensions::api::management::GetSelf::Results::Create(info)));
   }
 };
 
@@ -2624,10 +2633,210 @@ class LabActionSetBadgeBackgroundColorFunction final : public LabActionFunction 
   }
 };
 
+constexpr char kWebStoreInstallKey = 0;
+
+struct WebStoreInstallHandler : base::SupportsUserData::Data {
+  explicit WebStoreInstallHandler(WebStoreInstall callback)
+      : callback(std::move(callback)) {}
+  WebStoreInstall callback;
+};
+
+class LabWebStoreFunction : public ExtensionFunction {
+ protected:
+  ~LabWebStoreFunction() override = default;
+
+  WebStoreInstallHandler* GetHandler() {
+    auto* frame = render_frame_host();
+    auto* page = GetSenderWebContents();
+    if (!frame || !page || page->GetPrimaryMainFrame() != frame ||
+        !frame->IsActive() || frame->IsErrorDocument() ||
+        frame->GetLastCommittedOrigin() !=
+            url::Origin::Create(GURL("https://chromewebstore.google.com"))) {
+      return nullptr;
+    }
+    return static_cast<WebStoreInstallHandler*>(
+        page->GetUserData(&kWebStoreInstallKey));
+  }
+
+  bool IsInstalled(const std::string& id) {
+    return std::ranges::contains(GetConfiguredExtensions(*browser_context()),
+                                 id, &extensions::Extension::id);
+  }
+};
+
+class LabWebStoreGetStatus final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.getExtensionStatus",
+                             WEBSTOREPRIVATE_GETEXTENSIONSTATUS)
+ private:
+  ~LabWebStoreGetStatus() override = default;
+
+  ResponseAction Run() override {
+    if (args().empty() || !args()[0].is_string() ||
+        !crx_file::id_util::IdIsValid(args()[0].GetString())) {
+      return RespondNow(Error("Invalid extension ID."));
+    }
+    const auto& id = args()[0].GetString();
+    if (!GetHandler())
+      return RespondNow(WithArguments("blocked_by_policy"));
+    if (!IsInstalled(id))
+      return RespondNow(WithArguments("installable"));
+    const auto* registry = extensions::ExtensionRegistry::Get(browser_context());
+    return RespondNow(WithArguments(
+        registry->enabled_extensions().Contains(id) ? "enabled" : "disabled"));
+  }
+};
+
+class LabWebStoreBeginInstall final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.beginInstallWithManifest3",
+                             WEBSTOREPRIVATE_BEGININSTALLWITHMANIFEST3)
+ private:
+  ~LabWebStoreBeginInstall() override = default;
+
+  ResponseAction Run() override {
+    const auto* id = args().size() == 1 && args()[0].is_dict()
+                         ? args()[0].GetDict().FindString("id") : nullptr;
+    auto* handler = GetHandler();
+    if (!id || !crx_file::id_util::IdIsValid(*id) || !handler)
+      return RespondNow(Error("Invalid Web Store install request."));
+    if (IsInstalled(*id))
+      return RespondNow(Error("This extension is already installed."));
+    if (!render_frame_host()->ConsumeTransientUserActivation())
+      return RespondNow(Error("A user gesture is required."));
+    if (!handler->callback.Run(*render_frame_host(), *id,
+            base::BindOnce(&LabWebStoreBeginInstall::OnFinished,
+                           base::RetainedRef(this)))) {
+      return RespondNow(Error("Could not start the extension installation."));
+    }
+    return did_respond() ? AlreadyResponded() : RespondLater();
+  }
+
+  void OnFinished(bool installed) {
+    if (installed) {
+      Respond(WithArguments(""));
+    } else {
+      Respond(ErrorWithArgumentsDoNotUse(base::ListValue().Append("user_cancelled"),
+                                        "The extension was not installed."));
+    }
+  }
+};
+
+class LabWebStoreCompleteInstall final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.completeInstall",
+                             WEBSTOREPRIVATE_COMPLETEINSTALL)
+ private:
+  ~LabWebStoreCompleteInstall() override = default;
+
+  ResponseAction Run() override {
+    // Zitter installs the verified package as part of the native review.
+    if (!GetHandler() || args().size() != 1 || !args()[0].is_string() ||
+        !IsInstalled(args()[0].GetString())) {
+      return RespondNow(Error("No completed extension installation."));
+    }
+    return RespondNow(NoArguments());
+  }
+};
+
+class LabWebStoreGetVersion final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.getFullChromeVersion",
+                             WEBSTOREPRIVATE_GETFULLCHROMEVERSION)
+ private:
+  ~LabWebStoreGetVersion() override = default;
+
+  ResponseAction Run() override {
+    return RespondNow(WithArguments(base::DictValue().Set(
+        "version_number", std::string(version_info::GetVersionNumber()))));
+  }
+};
+
+class LabWebStoreIsIncognito final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.isInIncognitoMode",
+                             WEBSTOREPRIVATE_ISININCOGNITOMODEFUNCTION)
+ private:
+  ~LabWebStoreIsIncognito() override = default;
+
+  ResponseAction Run() override {
+    return RespondNow(WithArguments(browser_context()->IsOffTheRecord()));
+  }
+};
+
+class LabWebStoreGetMV2Status final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.getMV2DeprecationStatus",
+                             WEBSTOREPRIVATE_GETMV2DEPRECATIONSTATUS)
+ private:
+  ~LabWebStoreGetMV2Status() override = default;
+
+  ResponseAction Run() override {
+    return RespondNow(WithArguments("hard_disable"));
+  }
+};
+
+class LabWebStoreGetInstalled final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("management.getAll", MANAGEMENT_GETALL)
+
+ private:
+  ~LabWebStoreGetInstalled() override = default;
+
+  ResponseAction Run() override {
+    std::vector<extensions::api::management::ExtensionInfo> installed;
+    if (GetHandler()) {
+      const auto* registry = extensions::ExtensionRegistry::Get(browser_context());
+      for (const auto& item : GetConfiguredExtensions(*browser_context())) {
+        auto info = BuildManagementInfo(*item,
+                                        registry->enabled_extensions().Contains(item->id()));
+        info.permissions.clear();
+        info.host_permissions.clear();
+        installed.push_back(std::move(info));
+      }
+    }
+    return RespondNow(ArgumentList(
+        extensions::api::management::GetAll::Results::Create(installed)));
+  }
+};
+
+class LabWebStoreGetReferrerChain final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.getReferrerChain",
+                             WEBSTOREPRIVATE_GETREFERRERCHAIN)
+
+ private:
+  ~LabWebStoreGetReferrerChain() override = default;
+
+  ResponseAction Run() override { return RespondNow(WithArguments("")); }
+};
+
+class LabWebStoreGetPromotion final : public LabWebStoreFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("webstorePrivate.shouldShowEnterprisePromotionBanner",
+                             WEBSTOREPRIVATE_SHOULDSHOWENTERPRISEPROMOTIONBANNER)
+
+ private:
+  ~LabWebStoreGetPromotion() override = default;
+
+  ResponseAction Run() override {
+    return RespondNow(WithArguments("PROMOTION_TYPE_UNSPECIFIED"));
+  }
+};
+
 class LabBrowserExtensionAPIProvider final
     : public extensions::ExtensionsBrowserAPIProvider {
  public:
   void RegisterExtensionFunctions(ExtensionFunctionRegistry* registry) override {
+    registry->RegisterFunction<LabWebStoreGetStatus>();
+    registry->RegisterFunction<LabWebStoreGetInstalled>();
+    registry->RegisterFunction<LabWebStoreGetReferrerChain>();
+    registry->RegisterFunction<LabWebStoreGetPromotion>();
+    registry->RegisterFunction<LabWebStoreBeginInstall>();
+    registry->RegisterFunction<LabWebStoreCompleteInstall>();
+    registry->RegisterFunction<LabWebStoreGetVersion>();
+    registry->RegisterFunction<LabWebStoreIsIncognito>();
+    registry->RegisterFunction<LabWebStoreGetMV2Status>();
     registry->RegisterFunction<LabManagementGetSelfFunction>();
     registry->RegisterFunction<LabPrivacyGetFunction>();
     registry->RegisterFunction<LabPrivacySetFunction>();
@@ -3574,6 +3783,11 @@ void PrepareExtensionRegistryProbe(
   extensions::OffscreenDocumentManager::GetFactory();
   extensions::UserScriptWorldConfigurationManager::GetFactory();
   extensions::EnsureExtensionURLLoaderFactoryShutdownNotifierFactoryBuilt();
+}
+
+void AttachWebStoreInstall(content::WebContents& page, WebStoreInstall install) {
+  page.SetUserData(&kWebStoreInstallKey,
+                   std::make_unique<WebStoreInstallHandler>(std::move(install)));
 }
 
 std::vector<scoped_refptr<const extensions::Extension>> GetConfiguredExtensions(

@@ -1057,6 +1057,17 @@ def encrypted_source_cookie(name, *, domain="import.test"):
     return b"v10" + encrypted
 
 
+def session_without_window_placement(session):
+    placement = session.get("window_placement")
+    if (not isinstance(placement, dict)
+            or set(placement) != {"x", "y", "width", "height", "fullscreen", "maximized"}
+            or any(type(placement[key]) is not int for key in ("x", "y", "width", "height"))
+            or any(placement[key] <= 0 for key in ("width", "height"))
+            or any(type(placement[key]) is not bool for key in ("fullscreen", "maximized"))):
+        raise SystemExit(f"Missing or invalid window placement: {placement}")
+    return {key: value for key, value in session.items() if key != "window_placement"}
+
+
 def seed_browser_import(root, *, encrypted=False):
     source = root / "BrowserImportFixture"
     source.mkdir()
@@ -4544,7 +4555,7 @@ if (location.pathname === '/extension-content/live-install') {
                             raise SystemExit(f"Unexpected source Keychain access during {phase}")
                     saved = json.loads(session_file.read_text(encoding="utf-8"))
                     if phase.startswith("reject"):
-                        if (saved != expected_session or list(root.glob("profile-*"))
+                        if (session_without_window_placement(saved) != expected_session or list(root.glob("profile-*"))
                                 or (not windows and list((root / "NetworkProfiles").iterdir()))):
                             raise SystemExit("Rejected import published its profiles or directories")
                         broken_history.write_bytes(valid_history)
@@ -5296,7 +5307,8 @@ for index in 0..<document.pageCount {
                     workspace["tabs"][workspace["active"]] = {
                         "url": origin + path, "title": "Workspace navigation fixture",
                     }
-                if json.loads(session_file.read_text(encoding="utf-8")) != expected_session:
+                if session_without_window_placement(
+                        json.loads(session_file.read_text(encoding="utf-8"))) != expected_session:
                     raise SystemExit("Navigation changed the saved workspace layout")
                 print("Back and Forward survived live workspace switches")
                 return
@@ -5315,7 +5327,8 @@ for index in 0..<document.pageCount {
                 expected_requests.extend([(CLOSED_TAB_PATH, "work")] * closed_tab_loads)
                 if server.requests != expected_requests:
                     raise SystemExit(f"Unexpected closed-tab requests: {server.requests}")
-                if json.loads(session_file.read_text(encoding="utf-8")) != expected_session:
+                if session_without_window_placement(
+                        json.loads(session_file.read_text(encoding="utf-8"))) != expected_session:
                     raise SystemExit("Closed-tab metadata escaped into the saved session")
                 print("Recently closed tabs stayed within their workspace")
                 return
@@ -5799,7 +5812,8 @@ for index in 0..<document.pageCount {
                     ])
                 if server.requests != expected_requests:
                     raise SystemExit(f"Unexpected requests: {server.requests}")
-                if json.loads(session_file.read_text(encoding="utf-8")) != expected_session:
+                if session_without_window_placement(
+                        json.loads(session_file.read_text(encoding="utf-8"))) != expected_session:
                     raise SystemExit("Saved workspace session changed its tabs or selection")
                 for profile in PROFILES:
                     if clear_now and profile == "workspace-work":

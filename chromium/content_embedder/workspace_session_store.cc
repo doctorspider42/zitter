@@ -59,12 +59,27 @@ bool IsValidSession(const base::DictValue& session) {
                                          session.contains("shift_click_peek") +
                                          session.contains("assistant") +
                                          session.contains("night_shift") +
-                                         session.contains("startup_import_pending")) {
+                                         session.contains("startup_import_pending") +
+                                         session.contains("window_placement")) {
     return false;
   }
   if (session.contains("startup_import_pending") &&
       !session.FindBool("startup_import_pending").value_or(false)) {
     return false;
+  }
+  if (session.contains("window_placement")) {
+    const auto* placement = session.FindDict("window_placement");
+    if (!placement || placement->size() != 6 ||
+        !placement->FindBool("fullscreen") || !placement->FindBool("maximized") ||
+        placement->FindInt("width").value_or(0) <= 0 ||
+        placement->FindInt("height").value_or(0) <= 0) {
+      return false;
+    }
+    for (const auto* key : {"x", "y", "width", "height"}) {
+      const auto value = placement->FindInt(key);
+      if (!value || *value < -100000 || *value > 100000)
+        return false;
+    }
   }
   if (session.contains("night_shift") && !session.FindDict("night_shift"))
     return false;

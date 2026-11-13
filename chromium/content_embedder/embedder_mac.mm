@@ -152,6 +152,12 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 }
 - (void)finishLaunching {
   [super finishLaunching];
+  NSURL* iconURL = [NSBundle.mainBundle URLForResource:@"Zitter" withExtension:@"icns"];
+  if (iconURL) {
+    NSImage* icon = [[NSImage alloc] initWithContentsOfURL:iconURL];
+    if (icon)
+      self.applicationIconImage = icon;
+  }
   if (self.delegate == self)
     [self installExternalUrlEvents];
 }

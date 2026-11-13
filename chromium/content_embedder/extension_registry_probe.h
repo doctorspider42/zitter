@@ -89,6 +89,9 @@ bool WorkspaceExtensionHasRulesForTesting(content::BrowserContext& context,
 bool WorkspaceExtensionHasOffscreenForTesting(content::BrowserContext& context,
                                                const std::string& id);
 void AttachExtensionWebContents(content::WebContents& contents);
+using WebStoreInstall = base::RepeatingCallback<bool(
+    content::RenderFrameHost&, const std::string&, base::OnceCallback<void(bool)>)>;
+void AttachWebStoreInstall(content::WebContents& page, WebStoreInstall install);
 void SetNightShiftSettingsDestination(content::WebContents& contents, const GURL& url);
 void SetWorkspaceSidePanelDestination(content::WebContents& contents, const GURL& url);
 bool ToggleWorkspaceSidePanelOnAction(content::WebContents& contents, const std::string& id);
