@@ -73,6 +73,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/storage_partition_config.h"
 #include "chromium/prototype/workspace_window.h"
+#include "chromium/prototype/workspace_urls.h"
 #include "chromium/prototype/image_link_preview.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/extensions_bar.h"
@@ -5722,6 +5723,25 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DomainRoutingAndPersistence) {
   ASSERT_TRUE(window_->RemoveWorkspace());
   EXPECT_TRUE(window_->WorkspaceForUrl(target).empty());
   EXPECT_TRUE(window_->link_rules().empty());
+}
+
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, OpensLocalHtmlInActiveSpace) {
+  base::ScopedTempDir directory;
+  ASSERT_TRUE(directory.CreateUniqueTempDir());
+  const auto path = directory.GetPath().AppendASCII("Local page #1.HTML");
+  ASSERT_TRUE(base::WriteFile(path, "<title>Local HTML fixture</title>"));
+  const auto url = ExternalOpenArgument(path);
+  ASSERT_TRUE(window_->Select("work"));
+  const auto tabs = window_->tab_count("work");
+  ASSERT_TRUE(window_->OpenExternalUrl(url));
+  auto* page = window_->contents("work");
+  ASSERT_TRUE(content::WaitForLoadStop(page));
+  EXPECT_EQ("work", window_->active_id());
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));
+  EXPECT_EQ(url, page->GetLastCommittedURL());
+  EXPECT_EQ(u"Local HTML fixture", page->GetTitle());
+  EXPECT_FALSE(window_->OpenExternalUrl(GURL("file://server/share/page.html")));
+  EXPECT_FALSE(window_->OpenExternalUrl(GURL("file:///tmp/document.txt")));
 }
 
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, RoutingLeavesFormsFramesAndRedirects) {

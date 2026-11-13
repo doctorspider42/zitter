@@ -6363,8 +6363,7 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
 }
 
 void WorkspaceLab::OpenExternalUrl(GURL url) {
-  if (smoke_ || private_owner_ || !url.is_valid() || !url.SchemeIsHTTPOrHTTPS() ||
-      url.has_username() || url.has_password()) {
+  if (smoke_ || private_owner_ || !prototype::IsExternalOpenUrl(url)) {
     return;
   }
   if (!model_.active()) {
@@ -6372,7 +6371,12 @@ void WorkspaceLab::OpenExternalUrl(GURL url) {
       startup_external_urls_.push_back(std::move(url));
     return;
   }
-  if (!OpenLink(url, model_.active()->id, /*new_tab=*/true, /*split=*/false))
+  if (!CanEditWorkspace())
+    return;
+  const bool opened = prototype::IsLocalHtmlUrl(url)
+      ? Navigate(url, /*new_tab=*/true)
+      : OpenLink(url, model_.active()->id, /*new_tab=*/true, /*split=*/false);
+  if (!opened)
     return;
   if (widget_->IsMinimized())
     widget_->Restore();
@@ -6384,7 +6388,8 @@ bool WorkspaceLab::Navigate(const GURL& url, bool new_tab) {
   if (smoke_ || saving_session_ || before_unload_batch_.pending() ||
       !web_contents() ||
       !url.is_valid() ||
-      (!url.SchemeIsHTTPOrHTTPS() && !prototype::IsRssTabUrl(url)) ||
+      (!url.SchemeIsHTTPOrHTTPS() && !prototype::IsRssTabUrl(url) &&
+       !prototype::IsLocalHtmlUrl(url)) ||
       url.has_username() || url.has_password()) {
     return false;
   }

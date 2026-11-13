@@ -22,7 +22,9 @@ using PageDialogScene=PanelScene;
 std::unique_ptr<views::DialogDelegate> CreateSceneDialogDelegate();
 std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<views::View> body,bool control,bool modal=true);
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
-std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget);
+views::View* AddPageDialogCheckbox(views::View* parent, std::u16string label);
+bool IsPageDialogCheckboxChecked(views::View* checkbox);
+std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget, bool primary_action);
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents);
 views::View* DialogActionButton(views::Widget* widget,bool accept);
 bool PageDialogActionsVisibleForTesting(views::View* actions,std::string_view text);
@@ -41,11 +43,16 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   ~PageDialogs() override;
   void CheckBeforeUnload(base::OnceCallback<void(bool)> done);
   void ConfirmFormResubmission();
+  void ConfirmExternalProtocol(std::u16string origin, std::u16string scheme,
+                               bool can_remember,
+                               base::OnceCallback<void(bool)> launch);
   bool checking_before_unload() const { return checking_; }
   size_t navigation_generation() const { return navigation_generation_; }
   views::Widget* dialog() const { return dialog_.get(); }
   // The open page dialog, for the assistant: its kind and message.
-  bool dialog_open() const { return !!dialog_callback_ && !repost_dialog_; }
+  bool dialog_open() const {
+    return !!dialog_callback_ && !repost_dialog_ && !external_protocol_dialog_;
+  }
   bool leave_dialog_open() const { return unload_dialog_; }
   bool repost_dialog_open() const { return repost_dialog_; }
   content::JavaScriptDialogType dialog_type() const { return dialog_type_; }
@@ -69,10 +76,12 @@ class PageDialogs final : public content::JavaScriptDialogManager,
 
  private:
   friend class content::WebContentsUserData<PageDialogs>;
-  enum class DialogKind { kScript, kLeave, kRepost };
+  enum class DialogKind { kScript, kLeave, kRepost, kExternalProtocol };
   PageDialogs(content::WebContents* contents, ProfileLabel profile_label);
   void Show(content::RenderFrameHost*, content::JavaScriptDialogType,
-      const std::u16string&, const std::u16string&, DialogKind, DialogClosedCallback);
+      const std::u16string&, const std::u16string&, DialogKind, DialogClosedCallback,
+      std::u16string_view external_origin = {},
+      std::u16string_view external_scheme = {}, bool can_remember = false);
   void Answer(bool accepted);
   void PostPromptAction(bool accepted);
   void FinishCheck(bool proceed);
@@ -87,6 +96,7 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   std::unique_ptr<PageDialogScene> scene_;
   raw_ptr<PanelViewport> viewport_ = nullptr;
   raw_ptr<views::View> body_ = nullptr;
+  raw_ptr<views::View> remember_protocol_ = nullptr;
   raw_ptr<EditorControl> prompt_ = nullptr;
   raw_ptr<content::RenderFrameHost> requesting_frame_ = nullptr;
   const ProfileLabel profile_label_;
@@ -99,6 +109,7 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   bool checking_ = false;
   bool unload_dialog_ = false;
   bool repost_dialog_ = false;
+  bool external_protocol_dialog_ = false;
   content::JavaScriptDialogType dialog_type_ = content::JAVASCRIPT_DIALOG_TYPE_ALERT;
   std::u16string dialog_message_;
   base::WeakPtrFactory<PageDialogs> weak_factory_{this};

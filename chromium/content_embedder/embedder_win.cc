@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
 #include <windows.h>
+#include <shellapi.h>
 
 #include <array>
 #include <cstdio>
@@ -25,9 +26,12 @@
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/task/thread_pool.h"
 #include "base/values.h"
 #include "base/win/dark_mode_support.h"
 #include "base/win/win_util.h"
+#include "chromium/prototype/workspace_urls.h"
 #include "components/prefs/pref_service.h"
 #include "components/services/quarantine/quarantine_impl.h"
 #include "content/public/app/content_main.h"
@@ -72,6 +76,19 @@
 #include "workspace_timeline.h"
 
 namespace zitter::content_embedder {
+
+void LaunchExternalProtocol(const GURL& url) {
+  base::ThreadPool::CreateCOMSTATaskRunner({base::MayBlock()})
+      ->PostTask(FROM_HERE, base::BindOnce([](GURL target) {
+        base::FilePath system_dir;
+        if (!base::PathService::Get(base::DIR_SYSTEM, &system_dir))
+          return;
+        const std::wstring quoted = L"\"" + base::UTF8ToWide(target.spec()) + L"\"";
+        ShellExecuteW(nullptr, L"open", quoted.c_str(), nullptr,
+                      system_dir.value().c_str(), SW_SHOWNORMAL);
+      }, url));
+}
+
 namespace {
 
 constexpr char kSmokeTest[] = "zitter-content-smoke-test";
@@ -215,6 +232,9 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
       return;
     }
     if (workspace_) {
+      for (const auto& arg : base::CommandLine::ForCurrentProcess()->GetArgs())
+        workspace_->OpenExternalUrl(
+            prototype::ExternalOpenArgument(base::FilePath(arg)));
       workspace_->Start(base::BindOnce(
           &WindowsLabMainParts::FinishWorkspace, weak_factory_.GetWeakPtr()));
     } else if (download_probe_) {

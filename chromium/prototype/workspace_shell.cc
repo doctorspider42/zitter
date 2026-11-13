@@ -4392,7 +4392,7 @@ void RegisterKeys(views::Widget* widget, ui::AcceleratorTarget* target,
 #endif
 }
 
-// Typed text → destination, or an invalid GURL for anything but HTTP(S).
+// Typed text → web destination or search.
 GURL ResolveTyped(const std::string& text, SearchEngine engine) {
   GURL url(text);
   const bool bare_address = text.find('.') != std::string::npos ||
@@ -4418,7 +4418,14 @@ bool SceneActionPressedForTesting(views::View* view){
 bool PageDialogActionsVisibleForTesting(views::View* actions,std::string_view text){
   auto* group=views::AsViewClass<SceneActionGroup>(actions);return group&&group->contains_text(text);
 }
-std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
+views::View* AddPageDialogCheckbox(views::View* parent, std::u16string label) {
+  auto* group = parent->AddChildView(std::make_unique<SceneCheckboxGroup>(0));
+  return group->AddChoice({}, std::move(label));
+}
+bool IsPageDialogCheckboxChecked(views::View* checkbox) {
+  return CheckValue(checkbox);
+}
+std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget, bool primary_action){
   auto* delegate=widget->widget_delegate()->AsDialogDelegate();
   auto group=std::make_unique<SceneActionGroup>(false,views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_RELATED_BUTTON_HORIZONTAL),true,true);
   auto add=[&](ui::mojom::DialogButton type){
@@ -4427,7 +4434,7 @@ std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget){
     // Dialog: „Anuluj” is quiet; the action is primary, or danger strong when the
     // dialog defaults to Cancel because the action destroys something.
     if(type==ui::mojom::DialogButton::kCancel)button->SetQuiet();
-    else if(delegate->GetDefaultDialogButton()==static_cast<int>(ui::mojom::DialogButton::kCancel))button->SetDangerStrong();
+    else if(!primary_action&&delegate->GetDefaultDialogButton()==static_cast<int>(ui::mojom::DialogButton::kCancel))button->SetDangerStrong();
     else button->SetPrimary();
     button->SetID(static_cast<int>(type));button->SetProperty(views::kElementIdentifierKey,type==ui::mojom::DialogButton::kOk?views::DialogClientView::kOkButtonElementId:views::DialogClientView::kCancelButtonElementId);button->SetGroup(6666);button->SetEnabled(delegate->IsDialogButtonEnabled(type));button->SetDefault(delegate->GetIsDefault(type));
     button->SetCallback(base::BindRepeating([](base::WeakPtr<views::Widget> widget,views::View* button,ui::mojom::DialogButton type,const ui::Event& event){
@@ -11572,6 +11579,9 @@ GURL WorkspaceShell::ResolveInput(std::string text, std::u16string* provider_nam
       return SearchDestination(provider, query);
     }
   }
+  const GURL local = ExternalOpenArgument(base::FilePath::FromUTF8Unsafe(text));
+  if (IsLocalHtmlUrl(local))
+    return local;
   const GURL resolved = ResolveTyped(text, search_engine_);
   GURL direct(text);
   const bool query = text.find_first_of(" \t") != std::string::npos || (!direct.has_scheme() && text.find('.') == std::string::npos && !text.starts_with("localhost") && !text.starts_with("[::1]"));

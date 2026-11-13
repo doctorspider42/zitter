@@ -1470,6 +1470,8 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
   registry->RegisterDictionaryPref(Permissions::kPopupPrefs);
   registry->RegisterDictionaryPref(Permissions::kClipboardRuleTimes);
   registry->RegisterDictionaryPref(Permissions::kPopupRuleTimes);
+  registry->RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
+  registry->RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
   registry->RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
   PrefServiceFactory factory;
   factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(path));
@@ -1813,6 +1815,8 @@ void ProfileContext::InitializeNewWorkspacePreferences() {
   site->RegisterDictionaryPref(Permissions::kPopupPrefs);
   site->RegisterDictionaryPref(Permissions::kClipboardRuleTimes);
   site->RegisterDictionaryPref(Permissions::kPopupRuleTimes);
+  site->RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
+  site->RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
   site->RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
   site_permissions().SetSitePermissionPreferences(
       preferences(kContentSitePermissionPrefs, std::move(site)));

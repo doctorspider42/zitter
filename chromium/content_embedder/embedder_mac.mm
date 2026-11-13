@@ -55,6 +55,7 @@
 #include "chromium/prototype/fingerprint_session.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/workspace_shell.h"
+#include "chromium/prototype/workspace_urls.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "components/prefs/pref_service.h"
 #include "components/os_crypt/common/os_crypt_switches.h"
@@ -73,6 +74,7 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
 #include "net/base/net_errors.h"
+#include "net/base/apple/url_conversions.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -172,8 +174,7 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 - (void)application:(NSApplication*)application openURLs:(NSArray<NSURL*>*)urls {
   for (NSURL* value in urls) {
     GURL url(base::SysNSStringToUTF8(value.absoluteString));
-    if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() ||
-        url.has_username() || url.has_password()) {
+    if (!zitter::prototype::IsExternalOpenUrl(url)) {
       continue;
     }
     if (_externalUrlHandler) {
@@ -429,6 +430,17 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 @end
 
 namespace zitter::content_embedder {
+
+void LaunchExternalProtocol(const GURL& url) {
+  NSURL* target = net::NSURLWithGURL(url);
+  NSWorkspace* workspace = NSWorkspace.sharedWorkspace;
+  if (target && [workspace URLForApplicationToOpenURL:target]) {
+    [workspace openURL:target
+         configuration:[NSWorkspaceOpenConfiguration configuration]
+     completionHandler:nil];
+  }
+}
+
 namespace {
 
 constexpr char kProduct[] = "Zitter Content Lab";
@@ -525,7 +537,9 @@ bool UsesPreparedWorkspaceOnLaunch(const base::CommandLine& command) {
           .infoDictionary[@"ZitterUsePreparedWorkspace"] isEqual:@YES] ||
       !std::ranges::all_of(args, [](const auto& value) {
         // Content registers URL schemes after BasicStartupComplete.
-        return value.starts_with("http://") || value.starts_with("https://");
+        return value.starts_with("http://") || value.starts_with("https://") ||
+               prototype::IsLocalHtmlUrl(
+                   prototype::ExternalOpenArgument(base::FilePath(value)));
       })) {
     return false;
   }
@@ -920,7 +934,8 @@ class LabMainParts final : public content::BrowserMainParts,
           setExternalUrlHandler:base::BindRepeating(
               &WorkspaceLab::OpenExternalUrl, base::Unretained(workspace_.get()))];
       for (const auto& arg : base::CommandLine::ForCurrentProcess()->GetArgs())
-        workspace_->OpenExternalUrl(GURL(arg));
+        workspace_->OpenExternalUrl(
+            prototype::ExternalOpenArgument(base::FilePath(arg)));
     }
     if (ordinary_prepared_startup_ && !install_file_keychain_fixture_) {
       auto* shell = workspace_->shell();
@@ -1162,9 +1177,8 @@ class LabMainParts final : public content::BrowserMainParts,
 
   bool OpenOrdinaryPreparedWorkspace() {
     for (const auto& value : base::CommandLine::ForCurrentProcess()->GetArgs()) {
-      const GURL url(value);
-      if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() ||
-          url.has_username() || url.has_password()) {
+      if (!prototype::IsExternalOpenUrl(
+              prototype::ExternalOpenArgument(base::FilePath(value)))) {
         LOG(ERROR) << "Invalid URL argument for Content Workspace startup";
         return false;
       }

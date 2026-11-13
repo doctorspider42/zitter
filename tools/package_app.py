@@ -279,6 +279,12 @@ def package(out, destination, binary="zitter", register=True, identity=None, thi
         "NSCameraUsageDescription": "Zitter udostępnia kamerę stronom internetowym wyłącznie po Twojej zgodzie.",
         "NSMicrophoneUsageDescription": "Zitter udostępnia mikrofon stronom internetowym wyłącznie po Twojej zgodzie.",
         "NSPrincipalClass": "BrowserCrApplication",
+        "CFBundleDocumentTypes": [{
+            "CFBundleTypeName": "HTML document",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.html", "public.xhtml"],
+        }],
         "CFBundleURLTypes": [{
             "CFBundleURLName": "dev.zitter.browser.web",
             "CFBundleTypeRole": "Viewer",

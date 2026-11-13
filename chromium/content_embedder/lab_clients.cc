@@ -46,6 +46,11 @@
 #include "base/no_destructor.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_util.h"
+#include "base/strings/escape.h"
+#include "base/strings/utf_string_conversions.h"
+#include "chromium/prototype/page_dialogs.h"
+#include "content/public/browser/frame_tree_node_id.h"
+#include "services/network/public/cpp/web_sandbox_flags.h"
 #include "chromium/prototype/link_navigation.h"
 #include "chromium/prototype/adblock_network.h"
 #include "chromium/renderer/zitter_page_scripts.h"
@@ -922,6 +927,76 @@ bool LabBrowserClientBase::CanCreateWindow(
   auto* profile = static_cast<ProfileContext*>(opener->GetBrowserContext());
   return profile->site_permissions().GetPopupSetting(origin) ==
          ProfilePermissionController::PopupSetting::kAllow;
+}
+
+bool LabBrowserClientBase::HandleExternalProtocol(
+    const GURL& url,
+    base::RepeatingCallback<content::WebContents*()> web_contents_getter,
+    content::FrameTreeNodeId,
+    content::NavigationUIData*,
+    bool is_primary_main_frame,
+    bool is_in_fenced_frame_tree,
+    network::mojom::WebSandboxFlags sandbox_flags,
+    ui::PageTransition,
+    bool,
+    const std::optional<url::Origin>& initiating_origin,
+    content::RenderFrameHost* initiator_document,
+    const net::IsolationInfo&,
+    mojo::PendingRemote<network::mojom::URLLoaderFactory>*) {
+  // Restrict handoff to top-level web navigations. The confirmation is also
+  // required for sign-in redirects, which may have no remaining user gesture.
+  constexpr std::string_view kBlocked[] = {
+      "about", "afp", "applescript", "blob", "chrome", "chrome-extension",
+      "chrome-untrusted", "chromium", "data", "devtools", "disk", "disks",
+      "file", "filesystem", "ftp", "google-chrome", "hcp", "ie.http", "intent",
+      "javascript", "mk", "ms-help", "nntp", "res", "shell", "vbscript",
+      "view-source", "vnd.ms.radio", "zitter"};
+  using Sandbox = network::mojom::WebSandboxFlags;
+  if (!url.is_valid() || url.SchemeIsHTTPOrHTTPS() ||
+      url.scheme().size() < 2 || url.scheme().size() > 64 ||
+      url.spec().size() > 8192 || std::ranges::contains(kBlocked, url.scheme()) ||
+      !is_primary_main_frame || is_in_fenced_frame_tree ||
+      (sandbox_flags & Sandbox::kTopNavigationToCustomProtocols) !=
+          Sandbox::kNone ||
+      !initiating_origin || !initiating_origin->GetURL().SchemeIsHTTPOrHTTPS()) {
+    return false;
+  }
+  auto* page = web_contents_getter.Run();
+  if (!page || page->GetVisibility() != content::Visibility::VISIBLE ||
+      (initiator_document &&
+                (!initiator_document->IsActive() ||
+                 !initiator_document->IsInPrimaryMainFrame()))) {
+    return false;
+  }
+  auto* dialogs = prototype::PageDialogs::FromWebContents(page);
+  if (!dialogs)
+    return false;
+  const GURL escaped(base::EscapeExternalHandlerValue(url.spec()));
+  if (!escaped.is_valid())
+    return false;
+  auto& permissions =
+      static_cast<ProfileContext*>(page->GetBrowserContext())->site_permissions();
+  if (permissions.IsExternalProtocolAllowed(*initiating_origin, url.scheme())) {
+    LaunchExternalProtocol(escaped);
+    return true;
+  }
+  dialogs->ConfirmExternalProtocol(
+      base::UTF8ToUTF16(initiating_origin->Serialize()),
+      base::UTF8ToUTF16(url.scheme()),
+      permissions.CanRememberExternalProtocol(*initiating_origin),
+      base::BindOnce(
+          [](base::WeakPtr<content::WebContents> page, url::Origin origin,
+             GURL target, bool remember) {
+            if (!page)
+              return;
+            if (remember) {
+              static_cast<ProfileContext*>(page->GetBrowserContext())
+                  ->site_permissions().AllowExternalProtocol(origin, target.scheme());
+            }
+            LaunchExternalProtocol(target);
+          },
+          page->GetWeakPtr(), *initiating_origin, escaped));
+  return true;
 }
 
 void LabBrowserClientBase::CreateThrottlesForNavigation(

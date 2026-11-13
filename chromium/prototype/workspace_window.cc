@@ -2302,7 +2302,11 @@ content::WebContents* WorkspaceWindow::OpenProfileTab(Profile* profile, const GU
   }
   return nullptr;
 }
-bool WorkspaceWindow::OpenExternalUrl(const GURL& url) { return url.SchemeIsHTTPOrHTTPS() && OpenLink(url, active_id(), true); }
+bool WorkspaceWindow::OpenExternalUrl(const GURL& url) {
+  if (!IsExternalOpenUrl(url)) return false;
+  return IsLocalHtmlUrl(url) ? NavigateFromBar(url, true)
+                             : OpenLink(url, active_id(), true);
+}
 bool WorkspaceWindow::RunExternalCommand(std::string command) {
   if (!widget_) return false;
   const GURL requested_url(command.starts_with("url:") ? command.substr(4) : "");
@@ -3550,7 +3554,7 @@ bool WorkspaceWindow::NavigateFromBar(const GURL& url, bool new_tab) {
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, GURL url, bool fresh) {
     if (w) w->NavigateFromBar(url, fresh);
   }, weak_factory_.GetWeakPtr(), url, new_tab))) return true;
-  if (!url.is_valid() || !IsWorkspaceTabUrl(url)) return false;
+  if (!url.is_valid() || (!IsWorkspaceTabUrl(url) && !IsLocalHtmlUrl(url))) return false;
   if (const auto target = WorkspaceForUrl(url); !target.empty() && target != active_id())
     return OpenLink(url, active_id(), true);
   pending_profile_action_.Reset();

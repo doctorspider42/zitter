@@ -31,6 +31,9 @@ class LabContentClient final : public content::ContentClient {
 
 class NavigationReputation;
 
+// Implemented by each platform's Content embedder.
+void LaunchExternalProtocol(const GURL& url);
+
 class LabBrowserClientBase : public content::ContentBrowserClient {
  public:
   LabBrowserClientBase();
@@ -140,6 +143,20 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
       WindowOpenDisposition disposition,
       const blink::mojom::WindowFeatures& features, bool user_gesture,
       bool opener_suppressed, bool* no_javascript_access) override;
+  bool HandleExternalProtocol(
+      const GURL& url,
+      base::RepeatingCallback<content::WebContents*()> web_contents_getter,
+      content::FrameTreeNodeId frame_tree_node_id,
+      content::NavigationUIData* navigation_data,
+      bool is_primary_main_frame,
+      bool is_in_fenced_frame_tree,
+      network::mojom::WebSandboxFlags sandbox_flags,
+      ui::PageTransition page_transition,
+      bool has_user_gesture,
+      const std::optional<url::Origin>& initiating_origin,
+      content::RenderFrameHost* initiator_document,
+      const net::IsolationInfo& isolation_info,
+      mojo::PendingRemote<network::mojom::URLLoaderFactory>* out_factory) override;
   void CreateThrottlesForNavigation(
       content::NavigationThrottleRegistry& registry) override;
   void OnWebContentsCreated(content::WebContents* contents) override;

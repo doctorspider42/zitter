@@ -12,6 +12,7 @@
 #include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chromium/prototype/i18n.h"
+#include "chromium/prototype/workspace_urls.h"
 #include "url/gurl.h"
 
 namespace {
@@ -24,10 +25,7 @@ std::vector<GURL>& PendingUrls() {
 
 void OpenOrQueue(NSURL* ns_url) {
   GURL url(base::SysNSStringToUTF8(ns_url.absoluteString));
-  if (!url.SchemeIsHTTPOrHTTPS()) {
-    LOG(WARNING) << "Zitter opens only HTTP(S) links from other apps";
-    return;
-  }
+  if (!zitter::prototype::IsExternalOpenUrl(url)) return;
   if (g_delegate) {
     g_delegate->OpenUrl(url);
   } else {

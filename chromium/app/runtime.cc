@@ -1,4 +1,6 @@
 #include "chromium/app/runtime.h"
+
+#include "chromium/prototype/workspace_urls.h"
 #include <algorithm>
 #include <utility>
 #include "chromium/app/performance_probe.h"
@@ -144,12 +146,7 @@ void Runtime::WindowReady() {
   }
 #endif
   for (const auto& arg : base::CommandLine::ForCurrentProcess()->GetArgs()) {
-#if BUILDFLAG(IS_WIN)
-    GURL url(base::WideToUTF8(arg));
-#else
-    GURL url(arg);
-#endif
-    if (url.SchemeIsHTTPOrHTTPS()) window_->OpenExternalUrl(url);
+    window_->OpenExternalUrl(prototype::ExternalOpenArgument(base::FilePath(arg)));
   }
   window_->widget()->Activate();
 #if BUILDFLAG(IS_WIN)

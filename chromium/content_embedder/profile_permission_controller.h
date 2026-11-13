@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "base/time/time.h"
@@ -38,6 +39,13 @@ class ProfilePermissionController final
   static constexpr char kPopupDefaultPref[] = "zitter.popups_allowed";
   static constexpr char kPopupRuleTimes[] = "zitter.popup_permission_times";
   static constexpr size_t kMaxPopupRules = 256;
+
+  static constexpr char kExternalProtocolPrefs[] = "zitter.external_protocol_permissions";
+  static constexpr char kExternalProtocolRuleTimes[] = "zitter.external_protocol_permission_times";
+  bool CanRememberExternalProtocol(const url::Origin& origin) const;
+  bool IsExternalProtocolAllowed(const url::Origin& origin,
+                                 std::string_view scheme) const;
+  void AllowExternalProtocol(const url::Origin& origin, std::string_view scheme);
 
   static bool IsPopupOriginEligible(const url::Origin& origin);
   bool GetPopupDefault() const;

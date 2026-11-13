@@ -43,7 +43,11 @@ namespace {
 class SceneDialogClient final : public views::DialogClientView {
   METADATA_HEADER(SceneDialogClient,views::DialogClientView)
  public:
-  SceneDialogClient(views::Widget* widget,views::View* body):views::DialogClientView(widget,body){actions_=AddChildView(CreatePageDialogActions(widget));}
+  SceneDialogClient(views::Widget* widget, views::View* body,
+                    bool primary_action)
+      : views::DialogClientView(widget, body), primary_action_(primary_action) {
+    actions_ = AddChildView(CreatePageDialogActions(widget, primary_action_));
+  }
   views::View* Button(bool accept) const{return actions_->GetViewByID(static_cast<int>(accept?ui::mojom::DialogButton::kOk:ui::mojom::DialogButton::kCancel));}
   void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{
     // Skip the base's private native-button allocator; preserve ClientView's
@@ -53,7 +57,7 @@ class SceneDialogClient final : public views::DialogClientView {
   }
   void OnDialogChanged() override{
     auto* focused=GetFocusManager()->GetFocusedView();const int id=focused&&actions_->Contains(focused)?focused->GetID():0;
-    auto* previous=actions_.get();actions_=AddChildView(CreatePageDialogActions(GetWidget()));RemoveChildViewT(previous);PreferredSizeChanged();
+    auto* previous=actions_.get();actions_=AddChildView(CreatePageDialogActions(GetWidget(), primary_action_));RemoveChildViewT(previous);PreferredSizeChanged();
     if(id)if(auto* replacement=actions_->GetViewByID(id);replacement&&replacement->GetEnabled())replacement->RequestFocus();
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{auto size=views::DialogClientView::CalculatePreferredSize(available);size.Enlarge(0,actions_->GetPreferredSize().height());size.set_width(std::max(size.width(),actions_->GetPreferredSize().width()));return size;}
@@ -64,24 +68,33 @@ class SceneDialogClient final : public views::DialogClientView {
     for(auto& child:result.child_layouts)if(child.child_view==contents_view())child.bounds.set_height(std::max(0,child.bounds.height()-row_height));
     result.child_layouts.emplace_back(actions_.get(),true,gfx::Rect(0,std::max(0,bounds.height().value()-row_height),bounds.width().value(),row_height),bounds);return result;
   }
- private:raw_ptr<views::View> actions_=nullptr;
+ private:
+  const bool primary_action_;
+  raw_ptr<views::View> actions_ = nullptr;
 };
 BEGIN_METADATA(SceneDialogClient)
 END_METADATA
 class PageDialogDelegate final : public views::DialogDelegate {
  public:
-  views::ClientView* CreateClientView(views::Widget* widget) override{return new SceneDialogClient(widget,TransferOwnershipOfContentsView());}
+  explicit PageDialogDelegate(bool primary_action = false)
+      : primary_action_(primary_action) {}
+  views::ClientView* CreateClientView(views::Widget* widget) override {
+    return new SceneDialogClient(widget, TransferOwnershipOfContentsView(),
+                                 primary_action_);
+  }
   views::View* GetInitiallyFocusedView() override{
     if(HasConfiguredInitiallyFocusedView())return views::WidgetDelegate::GetInitiallyFocusedView();
     const int button=GetDefaultDialogButton();if(!button)return nullptr;auto* client=static_cast<SceneDialogClient*>(GetDialogClientView());return client?client->Button(button==static_cast<int>(ui::mojom::DialogButton::kOk)):nullptr;
   }
+ private:
+  const bool primary_action_;
 };
 }  // namespace
 std::unique_ptr<views::DialogDelegate> CreateSceneDialogDelegate(){
   return std::make_unique<PageDialogDelegate>();
 }
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents){
-  return new SceneDialogClient(widget,contents);
+  return new SceneDialogClient(widget, contents, false);
 }
 views::View* DialogActionButton(views::Widget* widget,bool accept){
   if(!widget)return nullptr;
@@ -153,9 +166,37 @@ void PageDialogs::ConfirmFormResubmission() {
           entry->GetUniqueID()));
 }
 
+void PageDialogs::ConfirmExternalProtocol(std::u16string origin,
+                                          std::u16string scheme,
+                                          bool can_remember,
+                                          base::OnceCallback<void(bool)> launch) {
+  if (!web_contents() || dialog_callback_ || checking_ ||
+      web_contents()->GetVisibility() != content::Visibility::VISIBLE) {
+    return;
+  }
+  auto* frame = web_contents()->GetPrimaryMainFrame();
+  Show(frame, content::JAVASCRIPT_DIALOG_TYPE_CONFIRM,
+       {}, {}, DialogKind::kExternalProtocol,
+       base::BindOnce(
+           [](base::WeakPtr<PageDialogs> dialogs, size_t navigation,
+              base::OnceCallback<void(bool)> launch, bool accepted,
+              const std::u16string& remember) {
+             if (accepted && dialogs && dialogs->web_contents() &&
+                 dialogs->navigation_generation() == navigation &&
+                 dialogs->web_contents()->GetVisibility() ==
+                     content::Visibility::VISIBLE) {
+               std::move(launch).Run(!remember.empty());
+             }
+           },
+           weak_factory_.GetWeakPtr(), navigation_generation_, std::move(launch)),
+       origin, scheme, can_remember);
+}
+
 void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialogType type,
     const std::u16string& message, const std::u16string& initial,
-    DialogKind kind, DialogClosedCallback callback) {
+    DialogKind kind, DialogClosedCallback callback,
+    std::u16string_view external_origin, std::u16string_view external_scheme,
+    bool can_remember) {
   if (!web_contents() || !frame || !frame->IsActive() || !web_contents()->GetTopLevelNativeWindow()) {
     std::move(callback).Run(false, {}); return;
   }
@@ -164,8 +205,9 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
   const auto generation=++dialog_generation_;
   requesting_frame_ = frame; unload_dialog_ = unload; dialog_callback_ = std::move(callback);
   repost_dialog_ = repost;
+  external_protocol_dialog_ = kind == DialogKind::kExternalProtocol;
   dialog_type_ = type; dialog_message_ = message.substr(0, 2000);
-  std::unique_ptr<views::DialogDelegate> dialog=std::make_unique<PageDialogDelegate>();
+  std::unique_ptr<views::DialogDelegate> dialog=std::make_unique<PageDialogDelegate>(external_protocol_dialog_);
   dialog->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
   auto* body = dialog->SetContentsView(std::make_unique<views::View>());body_=body;
   scene_=CreatePageDialogScene(body);
@@ -179,15 +221,41 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
     accept = T(u"Wyślij ponownie");
     default_cancel = true;
   }
+  if (external_protocol_dialog_) {
+    title = T(u"Otworzyć aplikację?");
+    accept = T(u"Otwórz aplikację");
+    default_cancel = true;
+  }
   dialog->SetTitle(title);
   dialog->SetModalType(ui::mojom::ModalType::kWindow);
   dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk)|(show_cancel?static_cast<int>(ui::mojom::DialogButton::kCancel):0));
   dialog->SetButtonLabel(ui::mojom::DialogButton::kOk,accept);dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel,cancel);
   dialog->SetDefaultButton(static_cast<int>(default_cancel?ui::mojom::DialogButton::kCancel:ui::mojom::DialogButton::kOk));
-  SetSidebarPanelLayout(body,true,gfx::Insets(20),12);
-  body->AddChildView(scene_->MakeText(identity_text,false,true,0));
-  PanelViewport* viewport=nullptr;auto scroll=CreatePanelViewport(&viewport,scene_->ViewportChangedCallback(),{0,220,false,true});viewport_=viewport;body->AddChildView(std::move(scroll));
-  {auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();viewport->SetPanelContents(std::move(copy));}
+  constexpr int kExternalWidth = 400;
+  if (external_protocol_dialog_) {
+    constexpr int kPadding = 24;
+    constexpr int kTextWidth = kExternalWidth - 2 * kPadding;
+    SetSidebarPanelLayout(body, true, gfx::Insets::TLBR(12, kPadding, 16, kPadding), 12);
+    auto add_text = [&](views::View* parent, std::u16string text, uint32_t style) {
+      auto* view = parent->AddChildView(
+          scene_->MakeText(std::move(text), true, false, kTextWidth));
+      scene_->SetTextStyle(view, style, PageDialogScene::Tone::kInk);
+    };
+    add_text(body, T(u"Strona chce przejść do aplikacji poza Zitterem."), 5);
+    auto* details = body->AddChildView(std::make_unique<views::View>());
+    SetSidebarPanelLayout(details, true, gfx::Insets(), 4);
+    add_text(details, TF(u"Strona · {}", {external_origin}), 8);
+    add_text(details, TF(u"Protokół · {}:", {external_scheme}), 8);
+    add_text(body, identity_text, 6);
+    if (can_remember)
+      remember_protocol_ = AddPageDialogCheckbox(body, T(u"Zawsze zezwalaj"));
+    dialog->set_fixed_width(kExternalWidth);
+  } else {
+    SetSidebarPanelLayout(body,true,gfx::Insets(20),12);
+    body->AddChildView(scene_->MakeText(identity_text,false,true,0));
+    PanelViewport* viewport=nullptr;auto scroll=CreatePanelViewport(&viewport,scene_->ViewportChangedCallback(),{0,220,false,true});viewport_=viewport;body->AddChildView(std::move(scroll));
+    {auto copy=scene_->MakeText(message_text,true,false,440);copy->SizeToPreferredSize();viewport->SetPanelContents(std::move(copy));}
+  }
   if (is_prompt) {
     prompt_ = AddEditor(body);
     prompt_->GetViewAccessibility().SetName(T(u"Odpowiedź dla strony"));prompt_->SetText(initial);
@@ -198,7 +266,12 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
     },weak_factory_.GetWeakPtr(),generation));
     dialog->SetInitiallyFocusedView(prompt_->view());
   }
-  body->SetPreferredSize(gfx::Size(480,std::max(280,body->GetHeightForWidth(480))));
+  if (external_protocol_dialog_) {
+    body->SetPreferredSize(gfx::Size(kExternalWidth,
+                                    body->GetHeightForWidth(kExternalWidth)));
+  } else {
+    body->SetPreferredSize(gfx::Size(480, std::max(280, body->GetHeightForWidth(480))));
+  }
   dialog->SetAcceptCallbackWithClose(base::BindRepeating([](base::WeakPtr<PageDialogs> manager,size_t generation){
     if(!manager||manager->dialog_generation_!=generation)return true;
     if(manager->prompt_input()&&manager->prompt_->IsIMEComposing())return false;
@@ -225,7 +298,8 @@ void PageDialogs::Show(content::RenderFrameHost* frame, content::JavaScriptDialo
 }
 bool PageDialogs::HandleJavaScriptDialog(content::WebContents* contents, bool accept,
     const std::u16string* override_text) {
-  if (contents != web_contents() || !dialog_callback_ || repost_dialog_) return false;
+  if (contents != web_contents() || !dialog_callback_ || repost_dialog_ ||
+      external_protocol_dialog_) return false;
   if(!dialog_){Answer(false);return false;}
   if(prompt_&&override_text)prompt_->SetText(*override_text);
   else if(prompt_&&accept)prompt_->ConfirmCompositionText(false);
@@ -250,9 +324,15 @@ void PageDialogs::Answer(bool accepted) {
   auto callback = std::move(dialog_callback_);
   auto* field=prompt_input();
   if(field){field->SetCallbacks({},{});if(!accepted)field->ClearCompositionText();}
-  const std::u16string text = field && accepted ? std::u16string(field->GetText()) : std::u16string();
+  std::u16string text;
+  if (accepted && field)
+    text = field->GetText();
+  if (accepted && remember_protocol_ && IsPageDialogCheckboxChecked(remember_protocol_))
+    text = u"remember";
+  remember_protocol_ = nullptr;
   prompt_ = nullptr; requesting_frame_ = nullptr; unload_dialog_ = false;
   repost_dialog_ = false;
+  external_protocol_dialog_ = false;
   scene_.reset();viewport_=nullptr;body_=nullptr;dialog_.reset();delegate_.reset();
   // Renderer callbacks can destroy pages. Never run them on a button's stack.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce(std::move(callback), accepted, text));

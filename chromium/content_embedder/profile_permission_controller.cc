@@ -78,10 +78,9 @@ bool CanReadClipboard(content::RenderFrameHost* frame,
              network::mojom::PermissionsPolicyFeature::kClipboardRead);
 }
 
-bool WriteOriginSetting(PrefService* prefs, const char* pref, const char* times_pref,
-                        base::DictValue& private_rules, const url::Origin& origin,
+bool WriteSiteSetting(PrefService* prefs, const char* pref, const char* times_pref,
+                        base::DictValue& private_rules, const std::string& key,
                         std::optional<int> setting, size_t max_rules) {
-  const auto key = origin.Serialize();
   auto update = [&](base::DictValue& rules) {
     if (!setting) {
       rules.Remove(key);
@@ -173,6 +172,7 @@ void ProfilePermissionController::ClearSitePermissions(base::Time begin,
   };
   const auto clipboard = clear(kClipboardPrefs, kClipboardRuleTimes);
   clear(kPopupPrefs, kPopupRuleTimes);
+  clear(kExternalProtocolPrefs, kExternalProtocolRuleTimes);
   site_permission_prefs_->CommitPendingWrite();
   for (const auto& key : clipboard)
     NotifyClipboardPermissionChanged(url::Origin::Create(GURL(key)));
@@ -202,8 +202,8 @@ bool ProfilePermissionController::SetClipboardSetting(
 
   const auto stored = setting == ClipboardSetting::kAsk
                           ? std::nullopt : std::make_optional(static_cast<int>(setting));
-  if (!WriteOriginSetting(site_permission_prefs_.get(), kClipboardPrefs, kClipboardRuleTimes,
-                          private_clipboard_rules_, origin, stored, kMaxClipboardRules)) {
+  if (!WriteSiteSetting(site_permission_prefs_.get(), kClipboardPrefs, kClipboardRuleTimes,
+                          private_clipboard_rules_, origin.Serialize(), stored, kMaxClipboardRules)) {
     return false;
   }
   NotifyClipboardPermissionChanged(origin);
@@ -244,15 +244,39 @@ ProfilePermissionController::GetPopupSetting(const url::Origin& origin) const {
   return GetPopupDefault() ? PopupSetting::kAllow : PopupSetting::kBlock;
 }
 
+bool ProfilePermissionController::CanRememberExternalProtocol(
+    const url::Origin& origin) const {
+  return !context_->IsOffTheRecord() && CanClearSitePermissions() &&
+         origin.GetURL().SchemeIsHTTPOrHTTPS() &&
+         network::IsOriginPotentiallyTrustworthy(origin);
+}
+
+bool ProfilePermissionController::IsExternalProtocolAllowed(
+    const url::Origin& origin, std::string_view scheme) const {
+  return CanRememberExternalProtocol(origin) &&
+         site_permission_prefs_->GetDict(kExternalProtocolPrefs)
+             .FindInt(origin.Serialize() + " " + std::string(scheme)) == 1;
+}
+
+void ProfilePermissionController::AllowExternalProtocol(
+    const url::Origin& origin, std::string_view scheme) {
+  if (!CanRememberExternalProtocol(origin))
+    return;
+  base::DictValue unused_private_rules;
+  WriteSiteSetting(site_permission_prefs_.get(), kExternalProtocolPrefs,
+                   kExternalProtocolRuleTimes, unused_private_rules,
+                   origin.Serialize() + " " + std::string(scheme), 1, 256);
+}
+
 bool ProfilePermissionController::SetPopupSetting(
     const url::Origin& origin, std::optional<PopupSetting> setting) {
   if (!CanEditSitePermissions() || !IsPopupOriginEligible(origin) ||
       (setting && *setting != PopupSetting::kAllow && *setting != PopupSetting::kBlock)) {
     return false;
   }
-  return WriteOriginSetting(
+  return WriteSiteSetting(
       site_permission_prefs_.get(), kPopupPrefs, kPopupRuleTimes,
-      private_popup_rules_, origin,
+      private_popup_rules_, origin.Serialize(),
       setting ? std::make_optional(static_cast<int>(*setting)) : std::nullopt,
       kMaxPopupRules);
 }

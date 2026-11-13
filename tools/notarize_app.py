@@ -125,6 +125,12 @@ def configure_production_identity_trial(app, *, content_release=False):
                 info["ZitterUsePreparedWorkspace"] = True
                 if content_release:
                     info.update(CFBundleName="Zitter", CFBundleDisplayName="Zitter")
+                    info["CFBundleDocumentTypes"] = [{
+                        "CFBundleTypeName": "HTML document",
+                        "CFBundleTypeRole": "Viewer",
+                        "LSHandlerRank": "Alternate",
+                        "LSItemContentTypes": ["public.html", "public.xhtml"],
+                    }]
                     info["CFBundleURLTypes"] = [{
                         "CFBundleTypeRole": "Viewer",
                         "CFBundleURLName": "dev.zitter.browser.web",
