@@ -97,6 +97,7 @@ struct PageMenuItem {
   std::vector<PageMenuItem> children;
   bool enabled = true;
   bool separator = false;
+  std::optional<bool> checked;
 };
 struct PageMenuNavigation {
   GURL url;
@@ -107,6 +108,7 @@ struct PageMenuNavigation {
   base::RepeatingClosure save_link;
   base::RepeatingClosure copy_image;
   GURL image_url;
+  std::vector<PageMenuItem> editing_items;
   std::vector<PageMenuItem> extension_items;
 };
 
@@ -1401,6 +1403,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::Widget> peek_widget_;
   std::vector<std::unique_ptr<ui::SimpleMenuModel>> extension_page_menus_;
   std::map<int, base::RepeatingClosure> extension_page_actions_;
+  std::set<int> checked_page_menu_commands_;
   std::unique_ptr<ui::SimpleMenuModel> link_menu_;
   std::unique_ptr<ui::SimpleMenuModel> route_menu_;
   std::unique_ptr<views::MenuRunner> link_menu_runner_;

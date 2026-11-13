@@ -61,6 +61,8 @@
 #include "chromium/prototype/workspace_urls.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/context_menu_params.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "components/os_crypt/common/os_crypt_switches.h"
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
@@ -447,6 +449,67 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 @end
 
 namespace zitter::content_embedder {
+
+std::vector<prototype::PageMenuItem> MacSpellingMenuItems(
+    const content::WeakDocumentPtr& document,
+    const content::ContextMenuParams& params) {
+  NSSpellChecker* checker = NSSpellChecker.sharedSpellChecker;
+  NSString* active = checker.language;
+  const auto active_language = base::SysNSStringToUTF16(active);
+  const bool automatic = checker.automaticallyIdentifiesLanguages;
+  NSLocale* locale = [NSLocale localeWithLocaleIdentifier:
+      prototype::UiLanguageIsEnglish() ? @"en" : @"pl"];
+  prototype::PageMenuItem languages{.title = prototype::T(u"Język sprawdzania pisowni")};
+  for (NSString* code in checker.availableLanguages) {
+    NSString* name = [locale displayNameForKey:NSLocaleIdentifier value:code];
+    const auto language = base::SysNSStringToUTF16(code);
+    languages.children.push_back({
+        .title = base::SysNSStringToUTF16(name ?: code),
+        .run = base::BindRepeating([](const std::u16string& language) {
+          NSSpellChecker* spell_checker = NSSpellChecker.sharedSpellChecker;
+          if ([spell_checker setLanguage:base::SysUTF16ToNSString(language)])
+            spell_checker.automaticallyIdentifiesLanguages = NO;
+        }, language),
+        .checked = !automatic && language == active_language});
+  }
+  std::ranges::sort(languages.children, {}, &prototype::PageMenuItem::title);
+  languages.children.insert(languages.children.begin(), {
+      .title = prototype::T(u"Automatycznie"),
+      .run = base::BindRepeating([] {
+        NSSpellChecker.sharedSpellChecker.automaticallyIdentifiesLanguages = YES;
+      }),
+      .checked = automatic});
+
+  std::vector<prototype::PageMenuItem> items;
+  const auto& word = params.misspelled_word.empty() ? params.selection_text
+                                                    : params.misspelled_word;
+  if (!word.empty() && word.size() <= 100 &&
+      word.find_first_of(u" \r\n\t") == std::u16string::npos) {
+    NSString* text = base::SysUTF16ToNSString(word);
+    const NSRange range = [checker checkSpellingOfString:text startingAt:0
+        language:automatic ? nil : active wrap:NO inSpellDocumentWithTag:0 wordCount:nullptr];
+    if (range.location == 0 && range.length == text.length) {
+      NSArray<NSString*>* guesses = [checker guessesForWordRange:range inString:text
+          language:automatic ? nil : active inSpellDocumentWithTag:0];
+      for (NSString* guess in guesses) {
+        items.push_back({
+            .title = base::SysNSStringToUTF16(guess),
+            .run = base::BindRepeating([](const content::WeakDocumentPtr& document,
+                                          const std::u16string& correction) {
+              auto* frame = document.AsRenderFrameHostIfValid();
+              auto* page = frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
+              if (frame && frame->IsActive() && page && page->GetFocusedFrame() == frame)
+                page->Replace(correction);
+            }, document, base::SysNSStringToUTF16(guess))});
+        if (items.size() == 5)
+          break;
+      }
+    }
+  }
+  if (!languages.children.empty())
+    items.push_back(std::move(languages));
+  return items;
+}
 
 void LaunchExternalProtocol(const GURL& url) {
   NSURL* target = net::NSURLWithGURL(url);

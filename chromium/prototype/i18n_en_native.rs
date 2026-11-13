@@ -299,6 +299,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Zezwolić na odczyt schowka?", "Allow clipboard access?"),
     ("Zezwól dla witryny", "Allow for this site"),
     ("Brak powiadomień", "No notifications"),
+    ("Język sprawdzania pisowni", "Spelling language"),
+    ("Automatycznie", "Automatic"),
     ("{} chce wysyłać powiadomienia.", "{} wants to send notifications."),
     ("Udostępnij", "Share"),
     ("Co udostępnić?", "What would you like to share?"),

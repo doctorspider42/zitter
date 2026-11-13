@@ -108,6 +108,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/context_menu_params.h"
+#include "third_party/blink/public/common/context_menu_data/edit_flags.h"
 #include "content/public/browser/context_factory.h"
 #include "content/public/browser/download_manager.h"
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
@@ -245,6 +246,11 @@ CONTENT_EXPORT bool ZitterGoThroughHistory(NavigationController& controller,
 }  // namespace content
 
 namespace zitter::content_embedder {
+#if BUILDFLAG(IS_MAC)
+std::vector<prototype::PageMenuItem> MacSpellingMenuItems(
+    const content::WeakDocumentPtr& document, const content::ContextMenuParams& params);
+#endif
+
 class WorkspacePasswordClear final : public password_manager::PasswordStoreConsumer {
  public:
   WorkspacePasswordClear(password_manager::PasswordStoreInterface& store,
@@ -6796,6 +6802,45 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
           }, weak_factory_.GetWeakPtr(), page->GetWeakPtr()),
       .copy_image = prototype::MakeCopyImageAction(frame, params),
       .image_url = prototype::PageMenuImageUrl(params)};
+  if (params.is_editable) {
+    struct EditCommand {
+      std::u16string_view label;
+      int flag;
+      void (content::WebContents::*run)();
+    };
+    constexpr EditCommand commands[] = {
+        {u"Cofnij", blink::kCanUndo, &content::WebContents::Undo},
+        {u"Ponów", blink::kCanRedo, &content::WebContents::Redo},
+        {u"Wytnij", blink::kCanCut, &content::WebContents::Cut},
+        {u"Kopiuj", blink::kCanCopy, &content::WebContents::Copy},
+        {u"Wklej", blink::kCanPaste, &content::WebContents::Paste},
+        {u"Zaznacz wszystko", blink::kCanSelectAll, &content::WebContents::SelectAll},
+    };
+    const auto document = frame.GetWeakDocumentPtr();
+    for (const auto& command : commands) {
+      navigation.editing_items.push_back({
+          .title = prototype::T(command.label),
+          .run = base::BindRepeating(
+              [](const content::WeakDocumentPtr& document,
+                 void (content::WebContents::*run)()) {
+                auto* frame = document.AsRenderFrameHostIfValid();
+                auto* page = frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
+                if (frame && frame->IsActive() && page && page->GetFocusedFrame() == frame)
+                  (page->*run)();
+              }, document, command.run),
+          .enabled = (params.edit_flags & command.flag) != 0});
+    }
+#if BUILDFLAG(IS_MAC)
+    if (params.form_control_type != blink::mojom::FormControlType::kInputPassword) {
+      auto spelling = MacSpellingMenuItems(document, params);
+      if (!spelling.empty()) {
+        navigation.editing_items.push_back({.separator = true});
+        for (auto& item : spelling)
+          navigation.editing_items.push_back(std::move(item));
+      }
+    }
+#endif
+  }
   if (!preview && !private_owner_) {
     navigation.extension_items = WorkspaceExtensionPageMenu(frame, params);
     auto& document = *page->GetPrimaryMainFrame();

@@ -7581,6 +7581,7 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
   extension_page_menus_.clear();
   extension_page_actions_.clear();
+  checked_page_menu_commands_.clear();
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
   page_menu_url_ = page ? page->url : GURL();
   page_menu_save_link_ = page ? page->save_link : base::RepeatingClosure();
@@ -7677,32 +7678,44 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
     link_menu_->AddItemWithIcon(19010, T(u"Zbadaj element"), MenuIcon(vector_icons::kCodeIcon));
   if (source)
     link_menu_->AddItemWithIcon(kViewSource, T(u"Pokaż źródło strony"), MenuIcon(kMenuSourceIcon));
-  if (navigation && !navigation->extension_items.empty()) {
-    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+  if (navigation && (!navigation->editing_items.empty() || !navigation->extension_items.empty())) {
     int command = 31000;
     const auto add_item = [&](ui::SimpleMenuModel& model, const PageMenuItem& item) {
       if (item.separator) {
         model.AddSeparator(ui::NORMAL_SEPARATOR);
         return;
       }
-      model.AddItem(command, item.title);
+      if (item.checked.has_value()) {
+        model.AddCheckItem(command, item.title);
+        if (*item.checked)
+          checked_page_menu_commands_.insert(command);
+      } else {
+        model.AddItem(command, item.title);
+      }
       model.SetEnabledAt(model.GetItemCount() - 1, item.enabled);
       if (item.enabled)
         extension_page_actions_.emplace(command, item.run);
       ++command;
     };
-    for (const auto& item : navigation->extension_items) {
-      if (item.children.empty()) {
-        add_item(*link_menu_, item);
-        continue;
+    const auto add_group = [&](const std::vector<PageMenuItem>& items) {
+      if (items.empty())
+        return;
+      link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+      for (const auto& item : items) {
+        if (item.children.empty()) {
+          add_item(*link_menu_, item);
+          continue;
+        }
+        auto submenu = std::make_unique<DesignMenuModel>(this);
+        for (const auto& child : item.children)
+          add_item(*submenu, child);
+        link_menu_->AddSubMenu(command++, item.title, submenu.get());
+        link_menu_->SetEnabledAt(link_menu_->GetItemCount() - 1, item.enabled);
+        extension_page_menus_.push_back(std::move(submenu));
       }
-      auto submenu = std::make_unique<DesignMenuModel>(this);
-      for (const auto& child : item.children)
-        add_item(*submenu, child);
-      link_menu_->AddSubMenu(command++, item.title, submenu.get());
-      link_menu_->SetEnabledAt(link_menu_->GetItemCount() - 1, item.enabled);
-      extension_page_menus_.push_back(std::move(submenu));
-    }
+    };
+    add_group(navigation->editing_items);
+    add_group(navigation->extension_items);
   }
   if (navigation) {
     auto menu = static_cast<DesignMenuModel*>(link_menu_.get())->CreateViewMenu();
@@ -8536,6 +8549,7 @@ sidebar::WorkspaceMenuState WorkspaceShell::RustWorkspaceMenuState() const {
   return WorkspaceMenuStateFor(state_, context_workspace_id_, menu_profiles_, workspace_color(context_workspace_id_), workspace_emoji(context_workspace_id_));
 }
 bool WorkspaceShell::IsCommandIdChecked(int command_id) const {
+  if (checked_page_menu_commands_.contains(command_id)) return true;
   if (command_id >= 19020 && command_id <= 19022) return tools_.developer_mode == std::array<std::string,3>{"off","auto","on"}[command_id - 19020];
   if (metal_sidebar_ && sidebar::workspace_menu_command(command_id, menu_profiles_.size()))
     return sidebar::workspace_menu_checked(command_id, RustWorkspaceMenuState());
