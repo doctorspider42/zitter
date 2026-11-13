@@ -2733,8 +2733,6 @@ class LabExtensionSystem final : public extensions::ExtensionSystem {
   void InitForRegularProfile(bool extensions_enabled) override {
     if (!extensions_enabled || is_ready())
       return;
-    store_factory_ = base::MakeRefCounted<value_store::ValueStoreFactoryImpl>(
-        context_->GetPath());
     state_store_ = std::make_unique<extensions::StateStore>(
         &*context_, store_factory_, extensions::StateStore::BackendType::STATE,
         /*deferred_load=*/false);
@@ -2786,7 +2784,7 @@ class LabExtensionSystem final : public extensions::ExtensionSystem {
  private:
   const raw_ref<BrowserContext> context_;
   base::OneShotEvent ready_;
-  scoped_refptr<value_store::ValueStoreFactory> store_factory_;
+  const scoped_refptr<value_store::ValueStoreFactory> store_factory_;
   std::unique_ptr<extensions::StateStore> state_store_;
   std::unique_ptr<extensions::StateStore> dynamic_user_scripts_store_;
   std::unique_ptr<extensions::QuotaService> quota_service_;
@@ -2794,7 +2792,11 @@ class LabExtensionSystem final : public extensions::ExtensionSystem {
 };
 
 LabExtensionSystem::LabExtensionSystem(BrowserContext& context)
-    : context_(context) {}
+    : context_(context),
+      // StorageFrontend can capture the factory before the first extension is
+      // activated. It keeps that reference for the lifetime of the profile.
+      store_factory_(base::MakeRefCounted<value_store::ValueStoreFactoryImpl>(
+          context.GetPath())) {}
 LabExtensionSystem::~LabExtensionSystem() = default;
 
 class LabExtensionSystemFactory final : public extensions::ExtensionSystemProvider {

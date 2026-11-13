@@ -9523,3 +9523,29 @@ rules after an invalid list, a redirect, and a missing include. The
 verifier compared the cached bytes and checked legacy rollback. Publisher
 roots were checked separately over HTTPS. Native Windows runtime and a
 native Chrome-host regression build remain open.
+
+### macOS parity with Zitter 0.4.3–0.4.10
+
+The Chrome-backed macOS build opened the browser import panel on a fresh
+profile. The full welcome wizard and its password CSV option were Windows
+only. The Content macOS app now shares the wizard, including assistant setup,
+browser import and the starter space's name and color. On macOS the default
+browser step directs the user to System Settings. Imported browser spaces are
+added alongside the existing spaces. A completed wizard does not appear on
+subsequent launches. The wizard and the password manager both offer CSV
+import. The parser runs in a sandboxed utility process, and the active
+profile stores the new logins without replacing existing entries.
+
+The seven browser sources (Arc, Chrome, Edge, Brave, Firefox, Opera and
+Vivaldi), clean address copying, workspace favicon refresh, page zoom and
+Night Shift settings are wired into Content. The macOS updater continues to
+use a signed DMG; the Windows installer, taskbar integration and installer
+update flow remain platform specific.
+
+The startup import regression check uses an isolated profile and synthetic
+browser data. It imports with Night Shift enabled, when publishing a profile
+writes to the new profile's extension storage, and checks that the imported
+profiles and spaces survive restart. It also checks that CSV import skips a
+duplicate and a non-web URL and stores the accepted login encrypted. The
+production bundle verifier checks that the app declares and contains the
+Zitter icon.

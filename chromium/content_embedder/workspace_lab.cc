@@ -113,6 +113,8 @@
 #include "components/password_manager/core/browser/password_store/password_store_consumer.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_store/stored_credential.h"
+#include "components/password_manager/core/common/password_manager_constants.h"
+#include "components/password_manager/services/csv_password/csv_password_parser_service.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/favicon/core/favicon_service_impl.h"
 #include "components/favicon_base/favicon_types.h"
@@ -280,6 +282,138 @@ class WorkspacePasswordClear final : public password_manager::PasswordStoreConsu
   const base::Time end_;
   base::OnceCallback<void(bool)> done_;
   base::WeakPtrFactory<WorkspacePasswordClear> weak_factory_{this};
+};
+
+// A single import tied to the profile and picker that initiated it.
+class WorkspacePasswordCsvImport final : public ui::SelectFileDialog::Listener,
+                                         public password_manager::PasswordStoreConsumer {
+ public:
+  WorkspacePasswordCsvImport(password_manager::PasswordStoreInterface& store,
+                             base::OnceCallback<void(std::u16string)> done)
+      : store_(base::WrapRefCounted(&store)), done_(std::move(done)) {}
+
+  ~WorkspacePasswordCsvImport() override {
+    if (dialog_)
+      dialog_->ListenerDestroyed();
+  }
+
+  bool pending() const { return !!done_; }
+
+  void Start(gfx::NativeWindow owner) {
+    dialog_ = ui::SelectFileDialog::Create(this, nullptr);
+    ui::SelectFileDialog::FileTypeInfo types;
+    types.extensions = {{FILE_PATH_LITERAL("csv")}};
+    dialog_->SelectFile(ui::SelectFileDialog::SELECT_OPEN_FILE,
+                        prototype::T(u"Wybierz plik CSV z hasłami"), {},
+                        &types, 1, FILE_PATH_LITERAL("csv"), owner);
+  }
+
+  void FileSelected(const ui::SelectedFileInfo& file, int) override {
+    base::ThreadPool::PostTaskAndReplyWithResult(
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+        base::BindOnce([](const base::FilePath& path) -> std::optional<std::string> {
+          std::string data;
+          if (!base::ReadFileToStringWithMaxSize(path, &data, 1000 * 1024))
+            return std::nullopt;
+          return data;
+        }, file.path()),
+        base::BindOnce(&WorkspacePasswordCsvImport::Parse, weak_factory_.GetWeakPtr()));
+  }
+
+  void FileSelectionCanceled() override { Finish({}); }
+
+ private:
+  void Fail() { Finish(prototype::T(u"Nie udało się zaimportować pliku CSV.")); }
+
+  void Parse(std::optional<std::string> csv) {
+    if (!csv || !base::IsStringUTF8(*csv)) {
+      Fail();
+      return;
+    }
+    parser_ = password_manager::LaunchCSVPasswordParser();
+    parser_.set_disconnect_handler(
+        base::BindOnce(&WorkspacePasswordCsvImport::Fail, weak_factory_.GetWeakPtr()));
+    parser_->ParseCSV(std::move(*csv), base::BindOnce(
+        &WorkspacePasswordCsvImport::Parsed, weak_factory_.GetWeakPtr()));
+  }
+
+  void Parsed(password_manager::mojom::CSVPasswordSequencePtr sequence) {
+    parser_.reset();
+    if (!sequence || sequence->csv_passwords.empty() ||
+        sequence->csv_passwords.size() > password_manager::constants::kMaxPasswordsPerCSVFile) {
+      Fail();
+      return;
+    }
+    sequence_ = std::move(sequence);
+    store_->GetAllLogins(weak_factory_.GetWeakPtr());
+  }
+
+  void OnGetPasswordStoreResultsOrErrorFrom(
+      password_manager::PasswordStoreInterface* store,
+      base::expected<std::vector<password_manager::StoredCredential>,
+                     password_manager::PasswordStoreBackendError> results) override {
+    if (store != store_.get() || !results) {
+      Fail();
+      return;
+    }
+    namespace pm = password_manager;
+    std::set<std::pair<std::string, std::u16string>> existing;
+    for (const auto& login : *results)
+      existing.emplace(login.signon_realm, login.username_value);
+    std::vector<pm::StoredCredential> additions;
+    const auto now = base::Time::Now();
+    for (const auto& row : sequence_->csv_passwords) {
+      const auto& url = row.GetURL();
+      if (row.GetParseStatus() != pm::CSVPassword::Status::kOK || !url ||
+          !url->SchemeIsHTTPOrHTTPS() || url->has_username() ||
+          url->has_password() || row.GetPassword().empty() ||
+          url->spec().size() > pm::constants::kMaxUrlLengthForImport ||
+          row.GetUsername().size() > pm::constants::kMaxUsernameLengthForImport ||
+          row.GetPassword().size() > pm::constants::kMaxPasswordLengthForImport ||
+          row.GetNote().size() > pm::constants::kMaxPasswordNoteLength) {
+        continue;
+      }
+      pm::StoredCredential login;
+      login.url = *url;
+      login.signon_realm = url->DeprecatedGetOriginAsURL().spec();
+      login.username_value = base::UTF8ToUTF16(row.GetUsername());
+      if (!existing.emplace(login.signon_realm, login.username_value).second)
+        continue;
+      login.password_value = pm::PasswordString(base::UTF8ToUTF16(row.GetPassword()));
+      login.type = pm::PasswordForm::Type::kImported;
+      login.date_created = login.date_password_modified = now;
+      if (!row.GetNote().empty())
+        login.notes.emplace_back(base::UTF8ToUTF16(row.GetNote()), now);
+      additions.push_back(std::move(login));
+    }
+    const size_t count = additions.size();
+    const size_t skipped = sequence_->csv_passwords.size() - count;
+    sequence_.reset();
+    auto complete = base::BindOnce([](base::WeakPtr<WorkspacePasswordCsvImport> import,
+                                      size_t count, size_t skipped) {
+      if (import) {
+        import->Finish(prototype::TF(u"Zaimportowano haseł: {}. Pominięto: {}.",
+                                    {base::NumberToString16(count), base::NumberToString16(skipped)}));
+      }
+    }, weak_factory_.GetWeakPtr(), count, skipped);
+    if (additions.empty())
+      std::move(complete).Run();
+    else
+      store_->AddLogins(std::move(additions), std::move(complete));
+  }
+
+  void Finish(std::u16string status) {
+    parser_.reset();
+    sequence_.reset();
+    std::move(done_).Run(std::move(status));
+  }
+
+  const scoped_refptr<password_manager::PasswordStoreInterface> store_;
+  base::OnceCallback<void(std::u16string)> done_;
+  scoped_refptr<ui::SelectFileDialog> dialog_;
+  mojo::Remote<password_manager::mojom::CSVPasswordParser> parser_;
+  password_manager::mojom::CSVPasswordSequencePtr sequence_;
+  base::WeakPtrFactory<WorkspacePasswordCsvImport> weak_factory_{this};
 };
 
 namespace {
@@ -1927,7 +2061,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       }, weak));
   ArmCloseHandler();
   shell_->Attach(widget_.get(), this);
-  if (private_owner_ || smoke_ ||
+  if (private_owner_ || smoke_ || !startup_import_probe_.empty() ||
       base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-content-workspace-theme")) {
     shell_->SetThemeMode(dark_ ? prototype::ThemeMode::kDark
                                : prototype::ThemeMode::kLight);
@@ -2627,6 +2761,131 @@ bool WorkspaceLab::CanImportBrowser() const {
   return !smoke_ && !private_owner_ && os_crypt_ && !session_path_.empty();
 }
 
+void WorkspaceLab::ImportPasswordsCsv(
+    gfx::NativeWindow owner, base::OnceCallback<void(std::u16string)> done) {
+  auto* store = model_.active() && !private_owner_
+                    ? WorkspaceProfile(active_index_)->GetPasswordStore()
+                    : nullptr;
+  if (!store || !CanEditWorkspace() ||
+      (password_csv_import_ && password_csv_import_->pending())) {
+    std::move(done).Run(prototype::T(u"Nie udało się zaimportować pliku CSV."));
+    return;
+  }
+  password_csv_import_ = std::make_unique<WorkspacePasswordCsvImport>(*store, std::move(done));
+  password_csv_import_->Start(owner);
+}
+
+void WorkspaceLab::ShowWelcome() {
+#if BUILDFLAG(IS_MAC)
+  session_writer_->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce([](bool fixture) {
+        std::vector<prototype::WorkspaceShell::WelcomeSetup::Source> sources;
+        if (fixture) {
+          sources.push_back({prototype::ImportBrowser::kChrome, {}});
+          return sources;
+        }
+        for (const auto browser : {prototype::ImportBrowser::kArc,
+                                   prototype::ImportBrowser::kChrome,
+                                   prototype::ImportBrowser::kEdge,
+                                   prototype::ImportBrowser::kBrave,
+                                   prototype::ImportBrowser::kFirefox,
+                                   prototype::ImportBrowser::kOpera,
+                                   prototype::ImportBrowser::kVivaldi}) {
+          const auto path = prototype::DefaultBrowserDirectory(browser);
+          if (!path.empty() && base::DirectoryExists(path))
+            sources.push_back({browser, {}});
+        }
+        return sources;
+      }, !startup_import_probe_.empty()),
+      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab,
+                        std::vector<prototype::WorkspaceShell::WelcomeSetup::Source> sources) {
+        if (!lab || !lab->startup_import_pending_ || lab->saving_session_ ||
+            !lab->done_)
+          return;
+        const auto* active = lab->model_.active();
+        const std::string id = active->id;
+        prototype::WorkspaceShell::WelcomeSetup setup;
+        setup.sources = std::move(sources);
+        setup.space_name = base::UTF8ToUTF16(active->name);
+        setup.space_color = lab->shell_->workspace_color(id);
+        setup.assistant_enabled = lab->assistant_host_settings_.enabled;
+        setup.set_assistant_enabled = base::BindRepeating(
+            [](base::WeakPtr<WorkspaceLab> lab, bool enabled) {
+              if (lab)
+                lab->WriteAssistantPreference("assistant_enabled", enabled);
+            }, lab);
+        setup.import_browser = base::BindRepeating(&WorkspaceLab::ImportFromWelcome, lab);
+        setup.import_passwords = base::BindRepeating(&WorkspaceLab::ImportPasswordsCsv, lab);
+        lab->shell_->ShowWelcome(std::move(setup), base::BindOnce(
+            [](base::WeakPtr<WorkspaceLab> lab, std::string id,
+               prototype::WorkspaceShell::WelcomeResult result) {
+              if (!lab)
+                return;
+              lab->DismissBrowserImport();
+              if (result.space_color)
+                lab->shell_->SetWorkspaceColor(id, *result.space_color);
+              const auto index = lab->WorkspaceIndex(id);
+              if (index && !result.space_name.empty())
+                lab->UpdateWorkspace(id, base::UTF16ToUTF8(result.space_name),
+                                     lab->model_.workspaces()[*index].profile_id);
+            }, lab, id));
+        if (lab->startup_import_probe_.empty())
+          return;
+        auto* welcome = lab->shell_->welcome_widget_for_testing();
+        if (!welcome || !welcome->IsVisible()) {
+          LOG(ERROR) << "The first-run wizard did not open";
+          lab->Finish(false);
+          return;
+        }
+        if (lab->startup_import_probe_ == "csv") {
+          auto* store = lab->WorkspaceProfile(lab->active_index_)->GetPasswordStore();
+          CHECK(store);
+          lab->password_csv_import_ = std::make_unique<WorkspacePasswordCsvImport>(
+              *store, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, std::u16string status) {
+                if (!lab)
+                  return;
+                if (status != prototype::TF(u"Zaimportowano haseł: {}. Pominięto: {}.", {u"1", u"2"})) {
+                  LOG(ERROR) << "Unexpected password CSV import result";
+                  lab->Finish(false);
+                  return;
+                }
+                // Do not destroy the import object inside its own callback.
+                base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+                    FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+                      if (!lab)
+                        return;
+                      lab->shell_->welcome_widget_for_testing()->Close();
+                      std::puts("Zitter Content startup import probe passed");
+                      lab->RequestClose();
+                    }, lab));
+              }, lab));
+          lab->password_csv_import_->FileSelected(ui::SelectedFileInfo(
+              lab->session_path_.DirName().AppendASCII("PasswordsFixture.csv")), 0);
+          return;
+        }
+        if (lab->startup_import_probe_ == "apply") {
+          lab->shell_->ImportFromWelcomeForTesting(prototype::ImportBrowser::kChrome);
+          return;
+        }
+        if (lab->startup_import_probe_ == "skip")
+          welcome->Close();
+        std::puts("Zitter Content startup import probe passed");
+        lab->RequestClose();
+      }, weak_factory_.GetWeakPtr()));
+#endif
+}
+
+void WorkspaceLab::ImportFromWelcome(
+    prototype::BrowserImportOptions options,
+    base::OnceCallback<void(bool, std::u16string)> done) {
+  if (!CanImportBrowser() || !CanEditWorkspace() || welcome_import_done_) {
+    std::move(done).Run(false, prototype::T(u"Nie można teraz rozpocząć importu. Spróbuj ponownie."));
+    return;
+  }
+  welcome_import_done_ = std::move(done);
+  PreviewBrowserImport(options);
+}
+
 void WorkspaceLab::InvalidateBrowserImport() {
   ++browser_import_generation_;
   browser_import_preview_.reset();
@@ -2643,6 +2902,8 @@ void WorkspaceLab::DismissBrowserImport() {
 void WorkspaceLab::PreviewBrowserImport(prototype::BrowserImportOptions options) {
   using Report = prototype::WorkspaceShell::ImportStatusReport;
   if (!CanImportBrowser() || !CanEditWorkspace()) {
+    if (welcome_import_done_)
+      std::move(welcome_import_done_).Run(false, prototype::T(u"Nie można teraz rozpocząć importu. Spróbuj ponownie."));
     shell_->SetImportStatus(prototype::T(u"Nie można teraz rozpocząć importu. Spróbuj ponownie."),
                             false);
     return;
@@ -2664,7 +2925,7 @@ void WorkspaceLab::PreviewBrowserImport(prototype::BrowserImportOptions options)
       base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, size_t generation,
                         prototype::ArcImport preview) {
         if (!lab || generation != lab->browser_import_generation_ ||
-            !lab->shell_->import_visible()) {
+            (!lab->shell_->import_visible() && !lab->welcome_import_done_)) {
           return;
         }
         Report report;
@@ -2677,6 +2938,13 @@ void WorkspaceLab::PreviewBrowserImport(prototype::BrowserImportOptions options)
         if (report.error.empty())
           lab->browser_import_preview_ = std::move(preview);
         lab->shell_->SetImportStatus(report, report.error.empty());
+        if (lab->welcome_import_done_ &&
+            (!lab->browser_import_preview_ || !lab->ApplyBrowserImport())) {
+          auto done = std::move(lab->welcome_import_done_);
+          std::move(done).Run(false, report.error.empty()
+              ? prototype::T(u"Nie można teraz rozpocząć importu. Spróbuj ponownie.")
+              : base::UTF8ToUTF16(report.error));
+        }
       }, weak_factory_.GetWeakPtr(), generation));
 }
 
@@ -2687,7 +2955,8 @@ bool WorkspaceLab::ApplyBrowserImport() {
   auto source = *browser_import_preview_;
   auto job = std::make_unique<PendingBrowserImport>();
   job->session = CaptureSession();
-  job->session.Remove("startup_import_pending");
+  if (!welcome_import_done_)
+    job->session.Remove("startup_import_pending");
   std::erase_if(source.spaces, [&](const auto& space) {
     return std::ranges::any_of(imported_workspace_sources_, [&](const auto& item) {
       return item.second == space.id;
@@ -2887,7 +3156,8 @@ void WorkspaceLab::FinishBrowserImport(bool ok, std::string error) {
   using Report = prototype::WorkspaceShell::ImportStatusReport;
   auto job = std::move(browser_import_);
   if (ok) {
-    startup_import_pending_ = false;
+    if (!welcome_import_done_)
+      startup_import_pending_ = false;
     for (size_t i = 0; i < job->profiles.size(); ++i)
       PublishProfile(std::move(job->profiles[i]), std::move(job->contexts[i]));
     profile_favorites_ = ReadContentProfileFavorites(
@@ -2914,11 +3184,30 @@ void WorkspaceLab::FinishBrowserImport(bool ok, std::string error) {
   report.cookies = job->result.cookies;
   report.data_skipped = job->result.skipped;
   shell_->SetImportStatus(report, false);
+  if (welcome_import_done_) {
+    auto done = std::move(welcome_import_done_);
+    std::move(done).Run(ok, ok
+        ? prototype::TF(u"Zaimportowano przestrzeni: {}.", {base::NumberToString16(report.added_spaces)})
+        : report.error.empty() ? prototype::T(u"Import się nie powiódł.")
+                               : base::UTF8ToUTF16(report.error));
+  }
+  if (startup_import_probe_ == "apply") {
+    if (!ok || report.added_profiles != 2 || report.added_spaces != 2) {
+      LOG(ERROR) << "Startup import did not commit the fixture profiles";
+      Finish(false);
+      return;
+    }
+    shell_->welcome_widget_for_testing()->Close();
+    std::puts("Zitter Content startup import probe passed");
+    RequestClose();
+    return;
+  }
   if (std::exchange(close_after_catalogue_save_, false))
     RequestClose();
 }
 
 WorkspaceLab::~WorkspaceLab() {
+  password_csv_import_.reset();
   if (extension_shortcut_target_ && widget_ && widget_->GetFocusManager())
     widget_->GetFocusManager()->UnregisterAccelerators(extension_shortcut_target_.get());
   fullscreen_observation_.Reset();
@@ -3292,18 +3581,18 @@ void WorkspaceLab::StartWorkspace() {
           base::Seconds(30));
     }
   }
-  if (startup_import_pending_ && CanImportBrowser())
-    shell_->OpenImport();
-  if (!startup_import_probe_.empty()) {
-    const bool expect_import = startup_import_probe_ != "reopen";
-    if (shell_->import_visible() != expect_import) {
-      LOG(ERROR) << "Unexpected Content startup import panel visibility";
+  if (startup_import_pending_ && CanImportBrowser()) {
+    if (startup_import_probe_ == "reopen") {
+      LOG(ERROR) << "The first-run wizard was offered after completion";
       Finish(false);
       return;
     }
-    if (startup_import_probe_ == "skip") {
-      DismissBrowserImport();
-      shell_->CloseOverlays();
+    ShowWelcome();
+  } else if (!startup_import_probe_.empty()) {
+    if (startup_import_probe_ != "reopen") {
+      LOG(ERROR) << "The first-run wizard was not offered";
+      Finish(false);
+      return;
     }
     std::puts("Zitter Content startup import probe passed");
     RequestClose();
@@ -3778,6 +4067,16 @@ bool WorkspaceLab::OpenPasswords() {
   shell_->CloseOverlays(true);
   if (!passwords_panel_) {
     passwords_panel_ = std::make_unique<prototype::PasswordsPanel>();
+    passwords_panel_->SetImportCallback(base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab) {
+          if (!lab || !lab->passwords_panel_->widget())
+            return;
+          lab->ImportPasswordsCsv(lab->passwords_panel_->widget()->GetNativeWindow(), base::BindOnce(
+              [](base::WeakPtr<WorkspaceLab> lab, std::u16string status) {
+                if (lab && !status.empty())
+                  lab->shell_->ShowToast(std::move(status), {}, {});
+              }, lab));
+        }, weak_factory_.GetWeakPtr()));
     passwords_panel_->SetOpenCallback(base::BindRepeating(
         [](base::WeakPtr<WorkspaceLab> lab, GURL url) {
           if (lab)
@@ -8004,6 +8303,7 @@ void WorkspaceLab::OpenPin(std::string id) {
 
 bool WorkspaceLab::CanEditWorkspace() const {
   return !saving_session_ && !saving_catalogue_ && !before_unload_batch_.pending() &&
+         !(password_csv_import_ && password_csv_import_->pending()) &&
          !download_close_prompt_pending_ && !clearing_profile_ &&
          !replacing_timeline_;
 }
@@ -10909,6 +11209,7 @@ void WorkspaceLab::RequestClose() {
     close_after_catalogue_save_ = true;
     return;
   }
+  password_csv_import_.reset();
   CancelPermissionPrompt();
   media_access_->Stop();
   if (pending_download_deletions_) {

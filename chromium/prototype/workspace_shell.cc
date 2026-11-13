@@ -624,7 +624,7 @@ class PageMenuNavigationButton final : public views::ImageButton {
 };
 BEGIN_METADATA(PageMenuNavigationButton)
 END_METADATA
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 // The first-run wizard's view stops reporting (defined with it, below).
 void AbandonWelcome(views::View* contents);
 #endif
@@ -5121,12 +5121,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* import_header = import_panel->AddChildView(std::make_unique<views::View>());
   auto* import_title = import_text(import_header,import_copy[0],kInk,4,gfx::Font::Weight::SEMIBOLD);
   SetSidebarPanelLayout(import_header, false, gfx::Insets(), 8, import_title);
-  auto dismiss_import = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (!shell || shell->import_applying_) return;
-    shell->callbacks_.dismiss_import.Run();
-    shell->CloseOverlays();
-    shell->RestorePageFocus();
-  }, weak);
   auto* import_controls=import_header->AddChildView(std::make_unique<ScenePreferenceControls>(true));dismiss_import_=import_controls->AddControl({},import_copy[1]);BindFormCommand(dismiss_import_,sidebar::FormCommand::ImportDismiss);
   import_text(import_panel.get(),import_copy[2],kMuted,-1,gfx::Font::Weight::NORMAL,true);
   import_text(import_panel.get(),import_copy[3],kSubtle,-1);
@@ -5603,7 +5597,7 @@ void WorkspaceShell::Detach() {
   clear_tabs_.fill(nullptr);
   quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset(); clear_dialog_.reset(); clear_dialog_delegate_.reset();
   CloseSitePanel();
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
   // The wizard closing with the window reports nothing: the window is going.
   if (welcome_delegate_) AbandonWelcome(welcome_delegate_->GetContentsView());
   welcome_widget_.reset(); welcome_delegate_.reset();
@@ -7309,6 +7303,11 @@ constexpr gfx::PathElement kMenuSourcePath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,M
 constexpr gfx::VectorIconRep kMenuSourceRep[]={{kMenuSourcePath}};
 constexpr gfx::VectorIcon kMenuSpacesIcon(kMenuSpacesRep,1,"zitter_menu_spaces");
 constexpr gfx::VectorIcon kMenuSourceIcon(kMenuSourceRep,1,"zitter_menu_source");
+// An arrow into a tray: data coming in from another browser.
+constexpr gfx::PathElement kMenuImportPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,2.5f,V_LINE_TO,9.5f,MOVE_TO,5,6.5f,LINE_TO,8,9.5f,LINE_TO,11,6.5f,
+    MOVE_TO,2.5f,9.5f,V_LINE_TO,13.5f,H_LINE_TO,13.5f,V_LINE_TO,9.5f};
+constexpr gfx::VectorIconRep kMenuImportRep[]={{kMenuImportPath}};
+constexpr gfx::VectorIcon kMenuImportIcon(kMenuImportRep,1,"zitter_menu_import");
 #if !BUILDFLAG(IS_MAC)
 // The |z⟩ menu's row icons (design: Main, Menu Zitter), 16 px at `.zt-icon`'s 1.6 stroke.
 constexpr gfx::PathElement kMenuAddressPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,CIRCLE,7,7,4,MOVE_TO,10,10,LINE_TO,13,13};
@@ -7322,11 +7321,6 @@ constexpr gfx::PathElement kMenuFindPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOV
     CIRCLE,9.5f,9.5f,3,MOVE_TO,11.7f,11.7f,LINE_TO,14,14};
 constexpr gfx::PathElement kMenuPrintPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,4.5f,6,V_LINE_TO,2.5f,H_LINE_TO,11.5f,V_LINE_TO,6,
     MOVE_TO,4.5f,11.5f,H_LINE_TO,2.5f,V_LINE_TO,6.5f,H_LINE_TO,13.5f,V_LINE_TO,11.5f,H_LINE_TO,11.5f,MOVE_TO,4.5f,9.5f,H_LINE_TO,11.5f,V_LINE_TO,13.5f,H_LINE_TO,4.5f,CLOSE};
-// An arrow into a tray: data coming in from another browser.
-constexpr gfx::PathElement kMenuImportPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,2.5f,V_LINE_TO,9.5f,MOVE_TO,5,6.5f,LINE_TO,8,9.5f,LINE_TO,11,6.5f,
-    MOVE_TO,2.5f,9.5f,V_LINE_TO,13.5f,H_LINE_TO,13.5f,V_LINE_TO,9.5f};
-constexpr gfx::VectorIconRep kMenuImportRep[]={{kMenuImportPath}};
-constexpr gfx::VectorIcon kMenuImportIcon(kMenuImportRep,1,"zitter_menu_import");
 constexpr gfx::VectorIconRep kMenuFindRep[]={{kMenuFindPath}};
 constexpr gfx::VectorIconRep kMenuPrintRep[]={{kMenuPrintPath}};
 constexpr gfx::VectorIcon kMenuFindIcon(kMenuFindRep,1,"zitter_menu_find");
@@ -13792,7 +13786,7 @@ void WorkspaceShell::ConfirmDanger(views::Widget* parent, std::u16string title, 
   PreparePanelText(prompt->GetRootView());
   prompt->Show();
 }
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 namespace {
 // Design: Pierwsze uruchomienie — `.zt-btn` in its four looks, 32 px tall.
 class WelcomeButton final : public views::Button {
@@ -14104,14 +14098,14 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     StrokeRound(canvas, main_->bounds(), 12, p.line);
   }
   void Abandon() { done_.Reset(); }
+  void ImportForTesting(ImportBrowser browser) { ImportFromRow(browser); }
   // Closing the window keeps what the steps set so far.
   void Finish() {
     if (!done_) return;
     WorkspaceShell::WelcomeResult result;
-    if (name_field_) {
-      result.space_name = std::u16string(base::TrimWhitespace(name_field_->GetText(), base::TRIM_ALL));
-      if (result.space_name.empty()) result.space_name = setup_.space_name;
-    }
+    const auto name = name_field_ ? name_field_->GetText() : std::u16string_view(setup_name_);
+    result.space_name = std::u16string(base::TrimWhitespace(name, base::TRIM_ALL));
+    if (result.space_name.empty()) result.space_name = setup_.space_name;
     if (color_ != setup_.space_color) result.space_color = color_;
     std::move(done_).Run(std::move(result));
   }
@@ -14159,7 +14153,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   views::Label* Body(views::View* parent, std::u16string text, int size = 13, bool muted = false) {
     auto* label = Text(parent, std::move(text), DesignFont(2, size, 400, false), false);
     label->SetMultiLine(true);
-    label->SetMaximumWidthSingleLine(560);
+    label->SetMaximumWidth(560);
     if (!muted) { std::erase(muted_labels_, label); ink_labels_.push_back(label); }
     return label;
   }
@@ -14172,7 +14166,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 
   void ShowStep(size_t step) {
     if (import_busy_) return;
+#if BUILDFLAG(IS_WIN)
     if (step == 4 && !imported_sources_.empty()) step = 3;
+#endif
     const auto import_scroll_offset = import_scroll_
         ? import_scroll_->GetVisibleRect().origin() : gfx::Point();
     if (step != 3) selected_import_.reset();
@@ -14197,7 +14193,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         layout->set_main_axis_alignment(views::BoxLayout::MainAxisAlignment::kCenter);
         Headline(page_, T(u"Gdzie dziś?"), 72);
         Body(page_, T(u"Przestrzenie oddzielają pracę od reszty życia. Każda ma swój kolor, karty i profil. Przejdź przez krótką konfigurację."), 15)
-            ->SetMaximumWidthSingleLine(420);
+            ->SetMaximumWidth(420);
         auto* dots = page_->AddChildView(std::make_unique<views::View>());
         dots->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
         for (const auto& preset : Presets()) {
@@ -14210,6 +14206,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
       case 1: {
         Headline(page_, T(u"Domyślna przeglądarka"), 48);
         Body(page_, T(u"Otwieraj linki w Zitter i wracaj do swojej ostatniej przestrzeni."), 15);
+#if BUILDFLAG(IS_MAC)
+        Body(page_, T(u"W Ustawieniach systemowych wybierz Biurko i Dock, a następnie ustaw Zitter jako domyślną przeglądarkę."), 13, true);
+#else
         if (IsZitterDefaultBrowser()) {
           auto* done = Body(page_, T(u"Zitter jest już domyślną przeglądarką."));
           std::erase(ink_labels_, done);
@@ -14220,6 +14219,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
               base::BindRepeating(&OpenDefaultAppsSettings), T(u"Ustaw Zitter jako domyślną"), WelcomeButton::Look::kPrimary));
           Body(page_, T(u"Jeśli zobaczysz listę aplikacji, wybierz Zitter. W Windows 10 wybierz Zitter w sekcji „Przeglądarka sieci Web”."), 12, true);
         }
+#endif
         break;
       }
       case 2: {
@@ -14283,7 +14283,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         } else {
           Body(page_, T(u"Zaimportuj dane z wybranych przeglądarek, a potem przejdź dalej."), 13, true);
           import_scroll_ = page_->AddChildView(std::make_unique<views::ScrollView>(
-              views::ScrollView::ScrollWithLayers::kDisabled));
+              views::ScrollView::ScrollWithLayers::kEnabled));
           import_scroll_->ClipHeightTo(0, 600);
           import_scroll_->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
           import_scroll_->SetVerticalScrollBar(std::make_unique<views::OverlayScrollBar>(
@@ -14291,12 +14291,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
           import_scroll_->SetDrawOverflowIndicator(false);
           layout->SetFlexForView(import_scroll_, 1);
           import_scroll_->SetBackgroundColor(Palette(this, color_).bg_base);
-          // A permanent contents layer keeps the viewport clip alive while
-          // checkbox focus and ink layers come and go.
-          auto list = std::make_unique<views::View>();
-          list->SetPaintToLayer();
-          list->layer()->SetFillsBoundsOpaquely(false);
-          auto* sources = import_scroll_->SetContents(std::move(list));
+          // Let ScrollView own the permanent layer that clips focus ink.
+          auto* sources = import_scroll_->SetContents(std::make_unique<views::View>());
+          sources->layer()->SetFillsBoundsOpaquely(false);
           sources->SetLayoutManager(std::make_unique<views::BoxLayout>(
               views::BoxLayout::Orientation::kVertical,
               gfx::Insets::TLBR(0, 0, 0, import_scroll_->vertical_scroll_bar()->GetThickness()), 2));
@@ -14326,7 +14323,11 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
           swatch->SetPicked((preset.color | 0xFF000000) == (color_ | 0xFF000000));
           swatches_.push_back(swatch);
         }
+#if BUILDFLAG(IS_MAC)
+        Text(page_, T(u"Przestrzenie przełączysz na pasku bocznym."), DesignFont(2, 13, 400, false), false);
+#else
         Text(page_, T(u"Przestrzenie przełączasz klawiszami Alt+1, Alt+2 albo Ctrl+Alt+→."), DesignFont(2, 13, 400, false), false);
+#endif
         break;
       }
     }
@@ -14334,7 +14335,11 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     auto* row = footer_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::TLBR(16, 0, 0, 0), 8));
     row->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
     footer_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Palette(this, color_).line));
+#if BUILDFLAG(IS_WIN)
     const bool has_imports = !imported_sources_.empty();
+#else
+    const bool has_imports = false;
+#endif
     steps_[4]->SetVisible(!has_imports);
     auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1),
         base::NumberToString16(has_imports ? 4 : 5)}), DesignFont(2, 12, 500, false), false);
@@ -14343,13 +14348,19 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
       footer_->AddChildView(std::make_unique<WelcomeButton>(
           base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), step - 1),
           T(u"Wstecz"), WelcomeButton::Look::kQuiet));
+    const bool defer_default_browser =
+#if BUILDFLAG(IS_WIN)
+        step == 1 && !IsZitterDefaultBrowser();
+#else
+        false;
+#endif
     const std::u16string next = step == 0 ? T(u"Zaczynamy")
         : step == 4 ? T(u"Otwórz Zitter")
-        : step == 1 && !IsZitterDefaultBrowser() ? T(u"Nie teraz") : T(u"Kontynuuj");
+        : defer_default_browser ? T(u"Nie teraz") : T(u"Kontynuuj");
     footer_->AddChildView(std::make_unique<WelcomeButton>(
         base::BindRepeating(&WelcomeView::Next, base::Unretained(this)), next,
         step == 0 ? WelcomeButton::Look::kZing
-                  : step == 1 && !IsZitterDefaultBrowser() ? WelcomeButton::Look::kQuiet
+                  : defer_default_browser ? WelcomeButton::Look::kQuiet
                                                           : WelcomeButton::Look::kPrimary));
     // Steps: done ones checked, the current one in the accent.
     Recolor();
@@ -14431,6 +14442,10 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         ? T(u"Przypięte karty, foldery i Ulubione") : T(u"Zakładki i foldery"),
         &BrowserImportOptions::bookmarks);
     AddImportOption(choices, T(u"Historia przeglądania"), &BrowserImportOptions::history);
+#if BUILDFLAG(IS_MAC)
+    if (BrowserSupportsCookieImport(selected_import_->browser))
+      AddImportOption(choices, T(u"Ciasteczka i sesje witryn"), &BrowserImportOptions::cookies);
+#endif
     confirm_import_ = action;
     UpdateImportConfirmation();
   }
@@ -14501,7 +14516,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         }, base::Unretained(this), base::Unretained(checkbox), option));
   }
   void UpdateImportConfirmation() {
-    confirm_import_->SetEnabled(selected_import_->bookmarks || selected_import_->history);
+    confirm_import_->SetEnabled(selected_import_->bookmarks || selected_import_->history || selected_import_->cookies);
   }
   void SetImportBusy(bool busy) {
     import_busy_ = busy;
@@ -14513,7 +14528,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   }
   void ImportSource(BrowserImportOptions options) {
     if (import_busy_ || imported_sources_.contains(options.browser) ||
-        (!options.bookmarks && !options.history)) return;
+        (!options.bookmarks && !options.history && !options.cookies)) return;
     selected_import_.reset();
     import_status_.clear();
     importing_source_ = options.browser;
@@ -14532,7 +14547,11 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 
   void Next() {
     if (import_busy_) return;
-    if (step_ == 4 || (step_ == 3 && !imported_sources_.empty())) {
+    if (step_ == 4
+#if BUILDFLAG(IS_WIN)
+        || (step_ == 3 && !imported_sources_.empty())
+#endif
+    ) {
       if (GetWidget()) GetWidget()->Close();
     } else {
       ShowStep(step_ + 1);
@@ -14578,6 +14597,11 @@ void AbandonWelcome(views::View* contents) {
   if (auto* welcome = views::AsViewClass<WelcomeView>(contents)) welcome->Abandon();
 }
 }  // namespace
+
+void WorkspaceShell::ImportFromWelcomeForTesting(ImportBrowser browser) {
+  if (welcome_delegate_)
+    views::AsViewClass<WelcomeView>(welcome_delegate_->GetContentsView())->ImportForTesting(browser);
+}
 
 void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(WelcomeResult)> done) {
   if (!widget_ || welcome_widget_) return;

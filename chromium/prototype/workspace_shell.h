@@ -697,6 +697,7 @@ class WorkspaceShell final : public ui::EventHandler,
     std::optional<SkColor> space_color;
   };
   void ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(WelcomeResult)> done);
+  void ImportFromWelcomeForTesting(ImportBrowser browser);
   views::Widget* welcome_widget_for_testing() const { return welcome_widget_.get(); }
   // Import service stage/counts; wording comes from Rust (or the Views formatter).
   struct ImportStatusReport {

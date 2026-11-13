@@ -124,7 +124,13 @@ def configure_production_identity_trial(app, *, content_release=False):
             if path == app / "Contents/Info.plist":
                 info["ZitterUsePreparedWorkspace"] = True
                 if content_release:
-                    info.update(CFBundleName="Zitter", CFBundleDisplayName="Zitter")
+                    resources = app / "Contents/Resources"
+                    resources.mkdir(exist_ok=True)
+                    icon = Path(__file__).resolve().parents[1] / "assets/icon/Zitter.icns"
+                    shutil.copyfile(icon, resources / icon.name)
+                    info.pop("CFBundleIconName", None)
+                    info.update(CFBundleName="Zitter", CFBundleDisplayName="Zitter",
+                                CFBundleIconFile=icon.name)
                     info["CFBundleDocumentTypes"] = [{
                         "CFBundleTypeName": "HTML document",
                         "CFBundleTypeRole": "Viewer",

@@ -1086,15 +1086,20 @@ class LabMainParts final : public content::BrowserMainParts,
         (!install_file_keychain_fixture_ || !startup_import_probe_.empty()) &&
         (workspace_session_.empty() ||
          workspace_session_.FindBool("startup_import_pending").value_or(false));
+    bool dark = command_line.GetSwitchValueASCII("zitter-content-workspace-theme") == "dark";
+    bool metal = command_line.GetSwitchValueASCII("zitter-rust-raster") == "metal";
+    if (!startup_import_probe_.empty()) {
+      auto env = base::Environment::Create();
+      dark = env->GetVar("ZITTER_CONTENT_STARTUP_IMPORT_THEME") == "dark";
+      metal = env->GetVar("ZITTER_CONTENT_STARTUP_IMPORT_RENDERER") == "metal";
+    }
     workspace_ = std::make_unique<WorkspaceLab>(
         WorkspaceSettingsPath(root), directory_.GetPath(),
         durable ? WorkspaceSessionPath(root) : base::FilePath(),
         std::move(workspace_session_), std::move(workspace_timeline_),
         workspace_probe_url_, *context_,
         personal_context_.get(),
-        command_line.GetSwitchValueASCII("zitter-content-workspace-theme") ==
-            "dark",
-        command_line.GetSwitchValueASCII("zitter-rust-raster") == "metal",
+        dark, metal,
         workspace_smoke_, nullptr, additional_profiles_, os_crypt_,
         std::move(user_download_directory), std::move(download_safe_browsing_key),
         offer_startup_import, startup_import_probe_);
@@ -1196,7 +1201,8 @@ class LabMainParts final : public content::BrowserMainParts,
       startup_import_probe_ = base::Environment::Create()
           ->GetVar("ZITTER_CONTENT_STARTUP_IMPORT_PROBE").value_or("");
       if (!startup_import_probe_.empty() && startup_import_probe_ != "keep" &&
-          startup_import_probe_ != "skip" && startup_import_probe_ != "reopen") {
+          startup_import_probe_ != "skip" && startup_import_probe_ != "reopen" &&
+          startup_import_probe_ != "apply" && startup_import_probe_ != "csv") {
         LOG(ERROR) << "Invalid isolated Content startup import phase";
         return false;
       }

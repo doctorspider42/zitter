@@ -158,6 +158,7 @@ class WorkspaceExtensionInstall;
 
 class WorkspaceFaviconRefresh;
 class WorkspacePasswordClear;
+class WorkspacePasswordCsvImport;
 
 class WorkspaceLab final : private WorkspaceRuntime,
                            private prototype::AssistantHost,
@@ -443,6 +444,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PublishProfile(ContentProfileInfo profile, std::unique_ptr<ProfileContext> context);
   void ConfigureProfileForWorkspace(ProfileContext& profile);
   bool CanImportBrowser() const;
+  void ImportPasswordsCsv(gfx::NativeWindow owner,
+                          base::OnceCallback<void(std::u16string)> done);
+  void ShowWelcome();
+  void ImportFromWelcome(prototype::BrowserImportOptions options,
+                         base::OnceCallback<void(bool, std::u16string)> done);
   void PreviewBrowserImport(prototype::BrowserImportOptions options);
   void InvalidateBrowserImport();
   void DismissBrowserImport();
@@ -883,6 +889,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool replacing_timeline_ = false;
   bool clear_data_failed_ = false;
   std::unique_ptr<WorkspacePasswordClear> password_clear_;
+  std::unique_ptr<WorkspacePasswordCsvImport> password_csv_import_;
   const GURL session_probe_url_;
   GURL private_adblock_probe_url_;
   const bool dark_;
@@ -926,6 +933,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   size_t browser_import_generation_ = 0;
   bool startup_import_pending_ = false;
   const std::string startup_import_probe_;
+  base::OnceCallback<void(bool, std::u16string)> welcome_import_done_;
   std::unique_ptr<PrivateSession> private_session_;
   size_t pending_private_windows_ = 0;
   base::RepeatingCallback<bool(std::string)> native_menu_probe_;

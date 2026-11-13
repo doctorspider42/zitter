@@ -356,6 +356,9 @@ def main():
                 if (info.get("CFBundleIdentifier") != BUNDLE_ID or
                         info.get("ZitterUsePreparedWorkspace") is not True):
                     raise ValueError("Expected production Content identity and ordinary startup")
+                if (info.get("CFBundleIconFile") != "Zitter.icns" or
+                        not (app / "Contents/Resources/Zitter.icns").is_file()):
+                    raise ValueError("The signed Content app must bundle and declare the Zitter icon")
                 schemes = {scheme for entry in info.get("CFBundleURLTypes", [])
                            for scheme in entry.get("CFBundleURLSchemes", [])}
                 if not {"http", "https"} <= schemes:

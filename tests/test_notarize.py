@@ -74,6 +74,8 @@ class NotarizationTests(unittest.TestCase):
             self.assertEqual(values["CFBundleIdentifier"], packager.BUNDLE_ID)
             self.assertEqual(values["CFBundleName"], "Zitter")
             self.assertEqual(values["CFBundleDisplayName"], "Zitter")
+            self.assertEqual(values["CFBundleIconFile"], "Zitter.icns")
+            self.assertEqual((app / "Contents/Resources/Zitter.icns").read_bytes()[:4], b"icns")
             self.assertEqual(values["CFBundleExecutable"], "Zitter Content Lab")
             self.assertEqual(values["CFBundleURLTypes"], [{
                 "CFBundleTypeRole": "Viewer",

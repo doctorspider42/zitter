@@ -35,6 +35,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/password_manager/services/csv_password/csv_password_parser_impl.h"
 #include "content/public/browser/service_process_host.h"
 #include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -292,6 +293,10 @@ std::optional<ExtractedExtensionFiles> ExtractExtensionFixture(
 }
 
 void LabUtilityClient::RegisterMainThreadServices(mojo::ServiceFactory& services) {
+  services.Add(+[](mojo::PendingReceiver<password_manager::mojom::CSVPasswordParser> receiver) {
+    CHECK(sandbox::policy::Sandbox::IsProcessSandboxed());
+    return std::make_unique<password_manager::CSVPasswordParserImpl>(std::move(receiver));
+  });
 #if BUILDFLAG(ENABLE_PRINTING) && BUILDFLAG(ENABLE_PDF)
   RegisterPdfPreviewService(services);
 #endif
