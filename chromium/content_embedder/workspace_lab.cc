@@ -1632,6 +1632,9 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     views_delegate_ = std::make_unique<LabViewsDelegate>();
   prototype::ApplyUiLanguage("en-US");
   prototype::WorkspaceShell::Callbacks callbacks;
+#if BUILDFLAG(IS_WIN)
+  callbacks.show_web_notifications = !private_owner_;
+#endif
   callbacks.private_mode = private_owner_ != nullptr;
   if (!private_owner_ && IsManagedExtensionSession()) {
     for (const auto& context : contexts_) {
@@ -2813,11 +2816,47 @@ void WorkspaceLab::PublishProfile(ContentProfileInfo profile,
 }
 
 void WorkspaceLab::ConfigureProfileForWorkspace(ProfileContext& profile) {
+#if BUILDFLAG(IS_WIN)
+  if (!profile.IsOffTheRecord()) {
+    auto profile_id = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, base::WeakPtr<content::BrowserContext> owner) {
+          if (lab && owner) {
+            for (size_t i = 0; i < lab->contexts_.size(); ++i) {
+              if (lab->contexts_[i].get() == owner.get())
+                return lab->profiles_[i].id;
+            }
+          }
+          return std::string();
+        }, weak_factory_.GetWeakPtr(), profile.GetWeakPtr());
+    profile.SetWebNotificationPresenter(
+        base::BindRepeating(
+            [](base::WeakPtr<WorkspaceLab> lab, base::RepeatingCallback<std::string()> profile_id,
+               const std::string& id, const GURL& origin, std::u16string title,
+               std::u16string body, base::RepeatingClosure click) {
+              if (!lab || !lab->shell_)
+                return;
+              auto owner = profile_id.Run();
+              if (owner.empty())
+                return;
+              lab->shell_->ShowWebNotification(
+                  std::move(owner), id, base::UTF8ToUTF16(url::Origin::Create(origin).Serialize()),
+                  std::move(title), std::move(body), std::move(click));
+            }, weak_factory_.GetWeakPtr(), profile_id),
+        base::BindRepeating(
+            [](base::WeakPtr<WorkspaceLab> lab, base::RepeatingCallback<std::string()> profile_id,
+               const std::string& id) {
+              if (lab && lab->shell_)
+                lab->shell_->RemoveWebNotification(profile_id.Run(), id);
+            }, weak_factory_.GetWeakPtr(), profile_id));
+  }
+#endif
   if (!profile.IsOffTheRecord() && !user_download_directory_.empty())
     profile.EnableUserDownloads(user_download_directory_,
                                 download_safe_browsing_key_);
   profile.site_permissions().SetClipboardReadPrompt(base::BindRepeating(
       &WorkspaceLab::ShowClipboardReadPrompt, weak_factory_.GetWeakPtr()));
+  profile.site_permissions().SetNotificationPrompt(base::BindRepeating(
+      &WorkspaceLab::ShowNotificationPrompt, weak_factory_.GetWeakPtr()));
 }
 
 bool WorkspaceLab::CanImportBrowser() const {
@@ -3344,8 +3383,10 @@ WorkspaceLab::~WorkspaceLab() {
   web_store_update_.reset();
   private_session_.reset();
   if (!private_owner_) {
-    for (const auto& context : contexts_)
+    for (const auto& context : contexts_) {
       context->site_permissions().SetClipboardReadPrompt({});
+      context->site_permissions().SetNotificationPrompt({});
+    }
   }
   FinishPermissionPrompt(false);
   extension_popup_view_ = nullptr;
@@ -4783,6 +4824,10 @@ void WorkspaceLab::OpenSitePanel() {
             summary.permissions.push_back(
                 {"clipboard", static_cast<int>(current->GetClipboardSetting(origin))});
           }
+          if (current->CanUseNotifications(origin)) {
+            summary.permissions.push_back(
+                {"notifications", current->NotificationSetting(origin)});
+          }
           summary.permissions.push_back({
               .key = "popups",
               .setting = static_cast<int>(current->GetPopupSetting(origin)),
@@ -4808,6 +4853,8 @@ void WorkspaceLab::OpenSitePanel() {
           return current->SetClipboardSetting(
               origin, setting ? std::optional(static_cast<Permissions::ClipboardSetting>(setting)) : std::nullopt);
         }
+        if (key == "notifications")
+          return current->SetNotificationSetting(origin, setting);
         if (key == "media-stream-camera" || key == "media-stream-mic")
           return current->SetMediaSetting(origin, prototype::SiteDefaultKey(key), setting);
         if (key.starts_with("protocol:"))
@@ -4822,6 +4869,7 @@ void WorkspaceLab::OpenSitePanel() {
         if (auto* current = resolve.Run()) {
           current->SetClipboardSetting(origin, std::nullopt);
           current->SetPopupSetting(origin, std::nullopt);
+          current->SetNotificationSetting(origin, 0);
           current->SetMediaSetting(origin, "camera", 0);
           current->SetMediaSetting(origin, "microphone", 0);
           for (const auto& scheme : current->AllowedExternalProtocols(origin))
@@ -4904,6 +4952,27 @@ void WorkspaceLab::ShowClipboardReadPrompt(
                                          std::optional<size_t> accepted, bool) {
                          std::move(done).Run(accepted.has_value());
                        }, std::move(answer)));
+}
+
+void WorkspaceLab::ShowNotificationPrompt(
+    content::RenderFrameHost& frame,
+    base::OnceCallback<void(bool)> answer) {
+  auto* page = web_contents();
+  if (!page || page->GetPrimaryMainFrame() != &frame || !widget_ ||
+      !widget_->IsActive()) {
+    std::move(answer).Run(false);
+    return;
+  }
+  ShowPermissionPrompt(
+      prototype::T(u"Wysyłać powiadomienia?"),
+      prototype::TF(u"{} chce wysyłać powiadomienia.",
+                    {base::UTF8ToUTF16(frame.GetLastCommittedOrigin().Serialize())}),
+      prototype::T(u"Zezwól dla witryny"), PermissionPrompt::kNotification,
+      {}, 0, {}, base::BindOnce(
+          [](base::OnceCallback<void(bool)> done, std::optional<size_t> accepted, bool) {
+            std::move(done).Run(accepted.has_value());
+          },
+          std::move(answer)));
 }
 
 void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
@@ -7855,6 +7924,11 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
   if (permissions.CanEditSitePermissions()) {
     settings["popups"] = {.value = permissions.GetPopupDefault(), .editable = true};
     settings["site_default.popups"] = {.value = permissions.GetPopupDefault(), .editable = true, .text = "a"};
+    if (profile.GetPlatformNotificationService()) {
+      settings["site_default.notifications"] = {
+          .value = permissions.PromptByDefault("notifications"),
+          .editable = permissions.CanClearSitePermissions(), .text = "p"};
+    }
     for (const auto* key : {"media-stream-camera", "media-stream-mic", "clipboard"}) {
       settings[std::string(prototype::kSiteDefaultPrefix) + key] = {
           .value = permissions.PromptByDefault(prototype::SiteDefaultKey(key)),
@@ -7927,7 +8001,7 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
     return true;
   }
   if (key == "site_default.media-stream-camera" || key == "site_default.media-stream-mic" ||
-      key == "site_default.clipboard") {
+      key == "site_default.clipboard" || key == "site_default.notifications") {
     const auto category = std::string_view(key).substr(prototype::kSiteDefaultPrefix.size());
     return CanEditWorkspace() && profile.site_permissions().SetPromptByDefault(
         prototype::SiteDefaultKey(category), value == 1);

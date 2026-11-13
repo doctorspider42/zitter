@@ -4559,6 +4559,14 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
         base::BindRepeating(callbacks_.page_command, static_cast<PageCommand>(i)),
         commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},command_nodes[i]}));
   }
+  if (callbacks_.show_web_notifications) {
+    header->AddChildView(CreateSceneAction(
+        base::BindRepeating(&WorkspaceShell::ToggleWebNotifications, weak),
+        T(u"Powiadomienia"), GlyphButton::Glyph::kVector,
+        &vector_icons::kNotificationsIcon, header_visible,
+        base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader, weak), true,
+        {chrome_node_graph_, 4, {}, "header.notifications"}));
+  }
   for (auto& child : header->children()) child->SetPreferredSize(gfx::Size(kHeaderButtonSize, kHeaderButtonSize));
   auto* developer = root->AddChildView(std::make_unique<SceneActionGroup>(false, 0));
   developer->UseFrameBackground();
@@ -5612,6 +5620,10 @@ void WorkspaceShell::Detach() {
   provider_name_ = nullptr; provider_keyword_ = nullptr; provider_url_ = nullptr;
   tools_widget_.reset(); tools_delegate_.reset(); tools_form_.reset();
   toast_timer_.Stop(); toast_tremor_timer_.Stop(); toast_undo_.Reset(); toast_ = nullptr; toast_widget_.reset(); toast_delegate_.reset();
+  HideWebNotifications();
+  web_notification_contents_ = nullptr;
+  web_notification_widget_.reset();
+  web_notification_delegate_.reset();
   download_cue_timer_.Stop(); download_cue_hide_timer_.Stop(); downloads_done_timer_.Stop(); downloads_tremor_timer_.Stop(); downloads_spin_timer_.Stop(); download_cue_ = nullptr; download_cue_widget_.reset(); download_cue_delegate_.reset();
   remove_dialog_.reset(); remove_dialog_delegate_.reset(); drop_view_ = nullptr; drop_widget_.reset(); drop_delegate_.reset();
   find_view_ = nullptr; find_request_.Reset(); find_closed_.Reset(); find_page_bounds_.Reset();
@@ -5683,6 +5695,8 @@ void WorkspaceShell::Update(ShellState state) {
   const bool selected = state.workspace_id != previous_workspace;
   if (selected || !state.configuration_ready || state.profiles_busy)
     FinishSidebarRename(false);
+  if (state.profile_id != state_.profile_id)
+    HideWebNotifications();
   state_ = std::move(state);
   if (!widget_) return;
   // A removal that first asked a page (beforeunload) gets its toast once done.
@@ -11752,6 +11766,135 @@ void WorkspaceShell::PositionToast(){
   const auto size=toast_->GetPreferredSize();const int width=std::min(size.width(),std::max(200,bounds.right()-left-24));
   SetWidgetBounds(toast_widget_.get(),gfx::Rect((left+bounds.right()-width)/2,bounds.bottom()-20-size.height(),width,size.height()));
 }
+void WorkspaceShell::ShowWebNotification(
+    std::string profile, std::string id, std::u16string origin, std::u16string title,
+    std::u16string body, base::RepeatingClosure click) {
+  std::erase_if(web_notifications_, [&](const auto& item) {
+    return item.profile == profile && item.id == id;
+  });
+  if (web_notifications_.size() >= 20)
+    web_notifications_.pop_back();
+  web_notifications_.insert(web_notifications_.begin(),
+      {profile, id, std::move(origin), std::move(title), std::move(body), std::move(click)});
+  if (profile != state_.profile_id || !widget_ || !widget_->IsVisible())
+    return;
+  if (!web_drawer_) {
+    web_banner_ = std::move(id);
+    web_notification_timer_.Start(FROM_HERE, base::Seconds(8), this,
+                                  &WorkspaceShell::HideWebNotifications);
+  }
+  RenderWebNotifications();
+}
+
+void WorkspaceShell::RemoveWebNotification(const std::string& profile,
+                                            const std::string& id) {
+  std::erase_if(web_notifications_, [&](const auto& item) {
+    return item.profile == profile && item.id == id;
+  });
+  if (profile != state_.profile_id)
+    return;
+  if (web_drawer_)
+    RenderWebNotifications();
+  else if (web_banner_ == id)
+    HideWebNotifications();
+}
+
+void WorkspaceShell::ToggleWebNotifications() {
+  if (web_drawer_) {
+    HideWebNotifications();
+    return;
+  }
+  web_notification_timer_.Stop();
+  web_banner_.reset();
+  web_drawer_ = true;
+  RenderWebNotifications();
+}
+
+void WorkspaceShell::HideWebNotifications() {
+  web_notification_timer_.Stop();
+  web_banner_.reset();
+  web_drawer_ = false;
+  if (web_notification_widget_)
+    web_notification_widget_->Hide();
+}
+
+void WorkspaceShell::RenderWebNotifications() {
+  if (!web_notification_widget_) {
+    auto body = std::make_unique<views::View>();
+    web_notification_contents_ = body.get();
+    auto scroll = std::make_unique<views::ScrollView>();
+    scroll->SetContents(std::move(body));
+    CreatePanelWidget(std::move(scroll), web_notification_delegate_,
+                      web_notification_widget_, T(u"Powiadomienia"));
+  }
+  auto* body = web_notification_contents_.get();
+  body->RemoveAllChildViews();
+  body->SetBackground(views::CreateSolidBackground(Tone(root_, kCard)));
+  SetSidebarPanelLayout(body, true, gfx::Insets(14), 8);
+  const auto weak = weak_factory_.GetWeakPtr();
+  auto* controls = ActionGroup(body, false, 6);
+  if (web_drawer_) {
+    AddAction(controls, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+      if (!shell)
+        return;
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> current) {
+            if (!current || !current->web_drawer_)
+              return;
+            std::erase_if(current->web_notifications_, [&](const auto& item) {
+              return item.profile == current->state_.profile_id;
+            });
+            current->RenderWebNotifications();
+          }, shell));
+    }, weak), T(u"Wyczyść"));
+  }
+  AddAction(controls, base::BindRepeating(&WorkspaceShell::HideWebNotifications, weak),
+            T(u"Zamknij"));
+  if (web_drawer_)
+    PanelText(body, T(u"Powiadomienia"), kTitleText, kInk);
+
+  bool shown = false;
+  for (const auto& item : web_notifications_) {
+    if (item.profile != state_.profile_id || (!web_drawer_ && web_banner_ != item.id))
+      continue;
+    if (shown)
+      body->AddChildView(std::make_unique<SceneHairline>());
+    shown = true;
+    Label(body, item.origin, kMuted, SiteFont(11, 500, true))->SetMaximumWidthSingleLine(290);
+    Label(body, item.title, kInk, SiteFont(15, 700))->SetMaximumWidthSingleLine(290);
+    auto* message = Label(body, item.body, kMuted, SiteFont(13, 400));
+    message->SetMultiLine(true);
+    message->SetMaximumWidth(290);
+    message->SetMaxLines(3);
+    auto* actions = ActionGroup(body, false, 6);
+    AddAction(actions, base::BindRepeating(
+        [](base::WeakPtr<WorkspaceShell> shell, base::RepeatingClosure click) {
+          if (shell)
+            shell->HideWebNotifications();
+          click.Run();
+        }, weak, item.click), T(u"Otwórz"));
+  }
+  if (!shown)
+    Label(body, T(u"Brak powiadomień"), kMuted);
+  web_notification_widget_->SetColorModeOverride(widget_->color_mode_override());
+  PositionWebNotifications();
+  if (web_drawer_)
+    web_notification_widget_->Show();
+  else
+    web_notification_widget_->ShowInactive();
+}
+
+void WorkspaceShell::PositionWebNotifications() {
+  const auto area = widget_->GetClientAreaBoundsInScreen();
+  const int width = std::clamp(area.width() - 32, 1, 352);
+  const int height = std::clamp(web_notification_contents_->GetHeightForWidth(width),
+                                1, std::max(1, area.height() - 64));
+  const int y = web_drawer_ ? area.y() + kShellHeaderHeight + 8
+                            : area.bottom() - height - 16;
+  SetWidgetBounds(web_notification_widget_.get(),
+                  gfx::Rect(area.right() - width - 16, y, width, height));
+}
+
 void WorkspaceShell::PositionPanels() {
   if (!sidebar_widget_ || !address_widget_ || !settings_widget_) return;
   const auto bounds = widget_->GetClientAreaBoundsInScreen();
@@ -11767,6 +11910,8 @@ void WorkspaceShell::PositionPanels() {
   if(scrim_widget_)SetWidgetBounds(scrim_widget_.get(),bounds);
   if(time_machine_widget_)SetWidgetBounds(time_machine_widget_.get(),bounds);
   if(toast_widget_&&toast_widget_->IsVisible())PositionToast();
+  if (web_notification_widget_ && web_notification_widget_->IsVisible())
+    PositionWebNotifications();
   if(download_cue_widget_&&download_cue_widget_->IsVisible()&&static_cast<DownloadCueView*>(download_cue_.get())->pill())SetWidgetBounds(download_cue_widget_.get(),DownloadPillBounds());
   if (find_visible()) PositionFind();
   PositionPrint();
@@ -13109,10 +13254,14 @@ void WorkspaceShell::PollSidebar() {
       (time_machine_widget_ && time_machine_widget_->IsVisible()) ||
       (workspace_menu_runner_ && workspace_menu_runner_->IsRunning()) ||
       (link_menu_runner_ && link_menu_runner_->IsRunning()) ||
-      (add_menu_runner_ && add_menu_runner_->IsRunning());
+      (add_menu_runner_ && add_menu_runner_->IsRunning()) ||
+      (site_menu_runner_ && site_menu_runner_->IsRunning());
   auto safe = sidebar_widget_->GetWindowBoundsInScreen();
   safe.Inset(gfx::Insets::TLBR(-8, -8, -8, -28));
-  const bool inside = safe.Contains(display::Screen::Get()->GetCursorScreenPoint());
+  const auto cursor = display::Screen::Get()->GetCursorScreenPoint();
+  const bool inside = safe.Contains(cursor) ||
+      (site_panel_ && site_panel_->IsVisible() &&
+       site_panel_->GetWindowBoundsInScreen().Contains(cursor));
   if (inside) sidebar_hover_armed_ = true;
   if (blocked || inside) {
     sidebar_left_at_ = base::TimeTicks();
@@ -16664,6 +16813,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   }
   if (widget == settings_widget_.get()) settings_widget_->Hide();
   if(widget==sidebar_widget_.get()) {
+    if (site_panel_ && site_panel_->IsVisible()) return;
     bool hide=!pinned_&&!settings_visible();
     if(metal_sidebar_)hide=sidebar::sidebar_auto_hide(pinned_,settings_visible(),false,false);
     if(hide)HideSidebar();
@@ -16672,6 +16822,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
   if (widget == address_widget_.get()) VLOG(1) << "Palette visibility=" << visible;
   if (widget == sidebar_widget_.get() && !visible) {
+    if (site_panel_) CloseSitePanel();
     FinishSidebarRename(false);
     sidebar_hover_timer_.Stop(); sidebar_slide_timer_.Stop();
     sidebar_slide_value_ = 0; sidebar_slide_show_ = false;
@@ -16687,6 +16838,7 @@ void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visib
   if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
   if (widget == widget_ && !visible) {
+    HideWebNotifications();
     HidePeek();
     address_widget_->Hide(); sidebar_widget_->Hide(); settings_widget_->Hide();
     if (profiles_widget_) profiles_widget_->Hide();

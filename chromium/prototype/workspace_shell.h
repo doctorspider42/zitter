@@ -170,6 +170,7 @@ class WorkspaceShell final : public ui::EventHandler,
                              public ui::NativeThemeObserver {
  public:
   struct Callbacks {
+    bool show_web_notifications = false;
     bool private_mode = false;
     bool can_create_profile = true;
     bool can_reassign_workspace = true;
@@ -768,6 +769,10 @@ class WorkspaceShell final : public ui::EventHandler,
   // `action` names the button („Cofnij” when empty).
   void ShowToast(std::u16string lead, std::u16string noun, base::OnceClosure undo, std::u16string action = {});
   void HideToast();
+  void ShowWebNotification(std::string profile, std::string id, std::u16string origin,
+                           std::u16string title, std::u16string body,
+                           base::RepeatingClosure click);
+  void RemoveWebNotification(const std::string& profile, const std::string& id);
   // The address pill trembles once (a copied address).
   void TremorAddress();
   // Downloads (design: Downloads). The footer's Downloads icon turns into a ring
@@ -1103,6 +1108,25 @@ class WorkspaceShell final : public ui::EventHandler,
                              const std::vector<size_t>& split_tabs = {}, bool split = false);
   void ApplyPinnedFoldersCollapsed(bool collapsed);
   void PositionToast();
+  void ToggleWebNotifications();
+  void RenderWebNotifications();
+  void HideWebNotifications();
+  void PositionWebNotifications();
+  struct WebNotification {
+    std::string profile;
+    std::string id;
+    std::u16string origin;
+    std::u16string title;
+    std::u16string body;
+    base::RepeatingClosure click;
+  };
+  std::vector<WebNotification> web_notifications_;
+  std::optional<std::string> web_banner_;
+  bool web_drawer_ = false;
+  raw_ptr<views::View> web_notification_contents_ = nullptr;
+  std::unique_ptr<views::WidgetDelegate> web_notification_delegate_;
+  std::unique_ptr<views::Widget> web_notification_widget_;
+  base::OneShotTimer web_notification_timer_;
   void PositionFind();
   void PositionPrint();
   void TremorToast();

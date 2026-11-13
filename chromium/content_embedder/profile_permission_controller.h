@@ -75,6 +75,14 @@ class ProfilePermissionController final
   using ClipboardReadPrompt = base::RepeatingCallback<void(
       content::RenderFrameHost&, base::OnceCallback<void(bool)>)>;
   void SetClipboardReadPrompt(ClipboardReadPrompt prompt);
+  static constexpr char kNotificationPrefs[] = "zitter.notification_permissions";
+  static constexpr char kNotificationRuleTimes[] = "zitter.notification_permission_times";
+  static constexpr char kNotificationNextId[] = "zitter.notification_next_id";
+  bool CanUseNotifications(const url::Origin& origin) const;
+  int NotificationSetting(const url::Origin& origin) const;
+  bool SetNotificationSetting(const url::Origin& origin, int setting);
+  int64_t NextNotificationId();
+  void SetNotificationPrompt(ClipboardReadPrompt prompt);
 
   void OnPermissionStatusChangeSubscriptionAdded(
       content::PermissionController::SubscriptionId id) override;
@@ -109,6 +117,7 @@ class ProfilePermissionController final
 
  private:
   void NotifyClipboardPermissionChanged(std::optional<url::Origin> origin);
+  void NotifyNotificationPermissionChanged(std::optional<url::Origin> origin);
 
   std::unique_ptr<PrefService> site_permission_prefs_;
   base::DictValue private_clipboard_rules_;
@@ -117,6 +126,7 @@ class ProfilePermissionController final
   const raw_ref<content::BrowserContext> context_;
   std::optional<url::Origin> storage_probe_origin_;
   ClipboardReadPrompt clipboard_read_prompt_;
+  ClipboardReadPrompt notification_prompt_;
   base::WeakPtrFactory<ProfilePermissionController> weak_factory_{this};
 };
 

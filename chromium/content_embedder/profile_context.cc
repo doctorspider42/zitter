@@ -63,6 +63,14 @@
 #include "components/sync/model/wipe_model_upon_sync_disabled_behavior.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/version_info/channel.h"
+#include "build/build_config.h"
+#include "content/public/browser/platform_notification_service.h"
+#if BUILDFLAG(IS_WIN)
+#include "content/public/browser/notification_event_dispatcher.h"
+#include "content/public/browser/platform_notification_context.h"
+#include "third_party/blink/public/common/notifications/platform_notification_data.h"
+#include "base/timer/timer.h"
+#endif
 #include "content/public/browser/back_forward_cache.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/storage_partition.h"
@@ -91,6 +99,10 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 #include "zitter_content/fingerprint_state.mojom.h"
+
+#if BUILDFLAG(IS_MAC)
+#include "extension_notifications_mac.h"
+#endif
 
 namespace zitter::content_embedder {
 namespace {
@@ -1468,6 +1480,9 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
   }
   auto registry = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
   registry->RegisterDictionaryPref(Permissions::kClipboardPrefs);
+  registry->RegisterDictionaryPref(Permissions::kNotificationPrefs);
+  registry->RegisterDictionaryPref(Permissions::kNotificationRuleTimes);
+  registry->RegisterInt64Pref(Permissions::kNotificationNextId, 0);
   registry->RegisterDictionaryPref(Permissions::kPromptDefaults);
   registry->RegisterDictionaryPref(Permissions::kMediaRules);
   registry->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
@@ -1735,6 +1750,7 @@ ProfileContext::~ProfileContext() {
   rss_reader_.reset();
   password_privacy_registrar_.reset();
   NotifyWillBeDestroyed();
+  notifications_.reset();
   UnregisterExtensionContext(*this);
   if (password_store_) {
     password_store_->ShutdownOnUIThread();
@@ -1816,6 +1832,9 @@ void ProfileContext::InitializeNewWorkspacePreferences() {
   using Permissions = ProfilePermissionController;
   auto site = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
   site->RegisterDictionaryPref(Permissions::kClipboardPrefs);
+  site->RegisterDictionaryPref(Permissions::kNotificationPrefs);
+  site->RegisterDictionaryPref(Permissions::kNotificationRuleTimes);
+  site->RegisterInt64Pref(Permissions::kNotificationNextId, 0);
   site->RegisterDictionaryPref(Permissions::kPromptDefaults);
   site->RegisterDictionaryPref(Permissions::kMediaRules);
   site->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
@@ -2020,9 +2039,119 @@ storage::SpecialStoragePolicy* ProfileContext::GetSpecialStoragePolicy() {
   return nullptr;
 }
 
+#if BUILDFLAG(IS_WIN)
+namespace {
+
+class WindowsWebNotifications final : public content::PlatformNotificationService {
+ public:
+  WindowsWebNotifications(ProfileContext& profile,
+                          ProfileContext::WebNotificationPresenter show,
+                          base::RepeatingCallback<void(const std::string&)> close)
+      : profile_(profile), show_(std::move(show)), close_(std::move(close)) {}
+
+  void DisplayNotification(const std::string& id, const GURL& origin,
+                           const GURL&, const blink::PlatformNotificationData& data,
+                           const blink::NotificationResources&) override {
+    Show(id, origin, data, false);
+  }
+  void DisplayPersistentNotification(const std::string& id, const GURL&,
+                                     const GURL& origin, const blink::PlatformNotificationData& data,
+                                     const blink::NotificationResources&) override {
+    Show(id, origin, data, true);
+  }
+  void CloseNotification(const std::string& id) override {
+    entries_.erase(id);
+    close_.Run(id);
+  }
+  void ClosePersistentNotification(const std::string& id) override { CloseNotification(id); }
+
+  void GetDisplayedNotifications(DisplayedNotificationsCallback callback) override {
+    GetDisplayedNotificationsForOrigin(GURL(), std::move(callback));
+  }
+  void GetDisplayedNotificationsForOrigin(const GURL& origin,
+                                          DisplayedNotificationsCallback callback) override {
+    std::set<std::string> ids;
+    for (const auto& [id, source] : entries_) {
+      if (origin.is_empty() || source == origin)
+        ids.insert(id);
+    }
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), std::move(ids), true));
+  }
+  void ScheduleTrigger(base::Time timestamp) override {
+    if (timestamp >= next_trigger_)
+      return;
+    next_trigger_ = timestamp;
+    timer_.Start(FROM_HERE, std::max(base::TimeDelta(), timestamp - base::Time::Now()),
+                 this, &WindowsWebNotifications::Trigger);
+  }
+  base::Time ReadNextTriggerTimestamp() override { return next_trigger_; }
+  int64_t ReadNextPersistentNotificationId() override {
+    return profile_->site_permissions().NextNotificationId();
+  }
+  void RecordNotificationUkmEvent(const content::NotificationDatabaseData&) override {}
+
+ private:
+  void Trigger() {
+    next_trigger_ = base::Time::Max();
+    profile_->ForEachLoadedStoragePartition([](content::StoragePartition* partition) {
+      partition->GetPlatformNotificationContext()->TriggerNotifications();
+    });
+  }
+
+  void Show(const std::string& id, const GURL& origin,
+            const blink::PlatformNotificationData& data, bool persistent) {
+    if (profile_->site_permissions().NotificationSetting(url::Origin::Create(origin)) != 1)
+      return;
+    entries_.insert_or_assign(id, origin);
+    show_.Run(id, origin, data.title, data.body, base::BindRepeating(
+        &WindowsWebNotifications::Click, weak_factory_.GetWeakPtr(), id, persistent));
+    if (!persistent)
+      content::NotificationEventDispatcher::GetInstance()->DispatchNonPersistentShowEvent(id);
+  }
+  void Click(const std::string& id, bool persistent) {
+    const auto entry = entries_.find(id);
+    if (entry == entries_.end() || profile_->ShutdownStarted())
+      return;
+    const auto origin = entry->second;
+    CloseNotification(id);
+    if (profile_->site_permissions().NotificationSetting(url::Origin::Create(origin)) != 1)
+      return;
+    auto* dispatcher = content::NotificationEventDispatcher::GetInstance();
+    if (persistent) {
+      dispatcher->DispatchNotificationClickEvent(
+          &*profile_, id, origin, std::nullopt, std::nullopt, base::DoNothing());
+    } else {
+      dispatcher->DispatchNonPersistentClickEvent(id, base::DoNothing());
+    }
+  }
+
+  const raw_ref<ProfileContext> profile_;
+  const ProfileContext::WebNotificationPresenter show_;
+  const base::RepeatingCallback<void(const std::string&)> close_;
+  std::map<std::string, GURL> entries_;
+  base::Time next_trigger_ = base::Time::Max();
+  base::OneShotTimer timer_;
+  base::WeakPtrFactory<WindowsWebNotifications> weak_factory_{this};
+};
+}  // namespace
+
+void ProfileContext::SetWebNotificationPresenter(
+    WebNotificationPresenter show,
+    base::RepeatingCallback<void(const std::string&)> close) {
+  CHECK(!notifications_ && !IsOffTheRecord());
+  notifications_ = std::make_unique<WindowsWebNotifications>(
+      *this, std::move(show), std::move(close));
+}
+#endif
+
 content::PlatformNotificationService*
 ProfileContext::GetPlatformNotificationService() {
-  return nullptr;
+#if BUILDFLAG(IS_MAC)
+  if (!notifications_ && !ShutdownStarted() && !IsOffTheRecord())
+    notifications_ = CreateMacWebNotificationService(*this);
+#endif
+  return notifications_.get();
 }
 
 content::PushMessagingService* ProfileContext::GetPushMessagingService() {

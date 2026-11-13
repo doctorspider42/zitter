@@ -13,19 +13,30 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/check.h"
 #include "base/command_line.h"
+#include "base/memory/raw_ref.h"
 #include "base/no_destructor.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/bind_post_task.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/timer/timer.h"
 #include "base/uuid.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/notification_event_dispatcher.h"
+#include "content/public/browser/platform_notification_context.h"
+#include "content/public/browser/platform_notification_service.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "profile_context.h"
+#include "profile_permission_controller.h"
+#include "third_party/blink/public/common/notifications/platform_notification_data.h"
 
 @interface ZitterExtensionNotificationDelegate : NSObject <UNUserNotificationCenterDelegate>
 @end
@@ -34,6 +45,7 @@ namespace zitter::content_embedder {
 namespace {
 
 constexpr char kDenied[] = "Notifications are disabled for Zitter in macOS.";
+NSString* const kWebNotificationCategory = @"zitter.web-notification";
 
 UNUserNotificationCenter* GetNotificationCenter() {
   const auto& command = *base::CommandLine::ForCurrentProcess();
@@ -78,6 +90,7 @@ class Notifications {
       : center_(GetNotificationCenter()),
         delegate_([[ZitterExtensionNotificationDelegate alloc] init]) {
     center_.delegate = delegate_;
+    UpdateCategories();
   }
 
   auto Find(content::BrowserContext& context, std::string_view extension, std::string_view id) {
@@ -183,6 +196,9 @@ class Notifications {
 
   void UpdateCategories() {
     NSMutableSet<UNNotificationCategory*>* categories = [NSMutableSet set];
+    [categories addObject:[UNNotificationCategory
+        categoryWithIdentifier:kWebNotificationCategory actions:@[]
+        intentIdentifiers:@[] options:UNNotificationCategoryOptionCustomDismissAction]];
     for (const auto& [id, entry] : entries_) {
       NSMutableArray<UNNotificationAction*>* actions = [NSMutableArray array];
       if (const auto* buttons = entry.options.FindList("buttons")) {
@@ -228,6 +244,226 @@ class Notifications {
 };
 
 Notifications* g_notifications = nullptr;
+
+using WebNotificationActions =
+    std::map<std::string, base::RepeatingCallback<void(bool)>>;
+
+WebNotificationActions& WebActions() {
+  static base::NoDestructor<WebNotificationActions> actions;
+  return *actions;
+}
+
+// Share the notification center and its sole delegate with extension alerts.
+class MacWebNotificationService final : public content::PlatformNotificationService {
+ public:
+  explicit MacWebNotificationService(ProfileContext& profile) : profile_(profile) {}
+  ~MacWebNotificationService() override {
+    while (!entries_.empty())
+      Remove(entries_.begin()->first);
+  }
+
+  void DisplayNotification(const std::string& id,
+                           const GURL& origin,
+                           const GURL&,
+                           const blink::PlatformNotificationData& data,
+                           const blink::NotificationResources&) override {
+    Show(id, origin, data, false);
+  }
+
+  void DisplayPersistentNotification(const std::string& id,
+                                     const GURL&,
+                                     const GURL& origin,
+                                     const blink::PlatformNotificationData& data,
+                                     const blink::NotificationResources&) override {
+    Show(id, origin, data, true);
+  }
+
+  void CloseNotification(const std::string& id) override { Remove(id); }
+  void ClosePersistentNotification(const std::string& id) override { Remove(id); }
+
+  void GetDisplayedNotifications(DisplayedNotificationsCallback callback) override {
+    GetDisplayedNotificationsForOrigin(GURL(), std::move(callback));
+  }
+
+  void GetDisplayedNotificationsForOrigin(const GURL& origin,
+                                          DisplayedNotificationsCallback callback) override {
+    std::map<std::string, std::string> matching_ids;
+    std::set<std::string> pending;
+    for (const auto& [id, entry] : entries_) {
+      if (!origin.is_empty() && origin != entry.origin)
+        continue;
+      if (entry.submitted)
+        matching_ids.emplace(entry.identifier, id);
+      else
+        pending.insert(id);
+    }
+    if (matching_ids.empty()) {
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(std::move(callback), std::move(pending), true));
+      return;
+    }
+    auto reply = std::make_shared<DisplayedNotificationsCallback>(
+        base::BindPostTaskToCurrentDefault(std::move(callback)));
+    auto* center = Notifications::Get().center();
+    [center getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification*>* alerts) {
+      auto ids = pending;
+      for (UNNotification* alert in alerts) {
+        auto it = matching_ids.find(base::SysNSStringToUTF8(alert.request.identifier));
+        if (it != matching_ids.end())
+          ids.insert(it->second);
+      }
+      std::move(*reply).Run(std::move(ids), true);
+    }];
+  }
+
+  void ScheduleTrigger(base::Time timestamp) override {
+    if (timestamp >= next_trigger_)
+      return;
+    next_trigger_ = timestamp;
+    trigger_.Start(FROM_HERE, std::max(base::TimeDelta(), timestamp - base::Time::Now()),
+                   this, &MacWebNotificationService::TriggerNotifications);
+  }
+
+  base::Time ReadNextTriggerTimestamp() override { return next_trigger_; }
+
+  int64_t ReadNextPersistentNotificationId() override {
+    return profile_->site_permissions().NextNotificationId();
+  }
+
+  void RecordNotificationUkmEvent(const content::NotificationDatabaseData&) override {}
+
+ private:
+  struct Entry {
+    std::string identifier;
+    GURL origin;
+    bool persistent;
+    bool submitted = false;
+  };
+
+  void TriggerNotifications() {
+    next_trigger_ = base::Time::Max();
+    profile_->ForEachLoadedStoragePartition([](content::StoragePartition* partition) {
+      partition->GetPlatformNotificationContext()->TriggerNotifications();
+    });
+  }
+
+  void Show(const std::string& id, const GURL& origin,
+            const blink::PlatformNotificationData& data, bool persistent) {
+    if (profile_->ShutdownStarted() ||
+        profile_->site_permissions().NotificationSetting(url::Origin::Create(origin)) != 1) {
+      return;
+    }
+    Remove(id);
+    const auto identifier = base::Uuid::GenerateRandomV4().AsLowercaseString();
+    entries_.emplace(id, Entry{identifier, origin, persistent});
+    WebActions().emplace(identifier, base::BindRepeating(
+        &MacWebNotificationService::OnAction, weak_factory_.GetWeakPtr(), id));
+
+    auto* center = Notifications::Get().center();
+    UNMutableNotificationContent* alert = [[UNMutableNotificationContent alloc] init];
+    alert.title = base::SysUTF16ToNSString(data.title);
+    alert.subtitle = base::SysUTF8ToNSString(url::Origin::Create(origin).Serialize());
+    alert.body = base::SysUTF16ToNSString(data.body);
+    alert.categoryIdentifier = kWebNotificationCategory;
+    if (!data.silent)
+      alert.sound = UNNotificationSound.defaultSound;
+    auto* request = [UNNotificationRequest requestWithIdentifier:base::SysUTF8ToNSString(identifier)
+                                                       content:alert trigger:nil];
+    auto reply = base::BindPostTaskToCurrentDefault(base::BindRepeating(
+        &MacWebNotificationService::OnDelivery, weak_factory_.GetWeakPtr(), id, identifier));
+    [center getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings* settings) {
+      if (settings.authorizationStatus == UNAuthorizationStatusNotDetermined) {
+        [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert | UNAuthorizationOptionSound
+                             completionHandler:^(BOOL granted, NSError*) {
+          reply.Run(granted, request);
+        }];
+      } else {
+        reply.Run(IsAuthorized(settings.authorizationStatus), request);
+      }
+    }];
+  }
+
+  void OnDelivery(const std::string& id, const std::string& identifier,
+                  bool authorized, UNNotificationRequest* request) {
+    auto it = entries_.find(id);
+    if (it == entries_.end() || it->second.identifier != identifier)
+      return;
+    if (!authorized || profile_->ShutdownStarted() ||
+        profile_->site_permissions().NotificationSetting(
+            url::Origin::Create(it->second.origin)) != 1) {
+      Remove(id);
+      return;
+    }
+    auto* center = Notifications::Get().center();
+    auto reply = base::BindPostTaskToCurrentDefault(base::BindRepeating(
+        &MacWebNotificationService::OnSubmitted, weak_factory_.GetWeakPtr(), id, identifier));
+    [center addNotificationRequest:request withCompletionHandler:^(NSError* error) {
+      reply.Run(error == nil);
+    }];
+  }
+
+  void OnSubmitted(const std::string& id, const std::string& identifier, bool success) {
+    auto it = entries_.find(id);
+    if (it == entries_.end() || it->second.identifier != identifier) {
+      [Notifications::Get().center() removeDeliveredNotificationsWithIdentifiers:
+          @[base::SysUTF8ToNSString(identifier)]];
+      return;
+    }
+    if (!success) {
+      Remove(id);
+      return;
+    }
+    it->second.submitted = true;
+    if (!it->second.persistent)
+      content::NotificationEventDispatcher::GetInstance()->DispatchNonPersistentShowEvent(id);
+  }
+
+  void Remove(const std::string& id) {
+    auto it = entries_.find(id);
+    if (it == entries_.end())
+      return;
+    const auto& identifier = it->second.identifier;
+    NSArray* identifiers = @[base::SysUTF8ToNSString(identifier)];
+    auto* center = Notifications::Get().center();
+    [center removePendingNotificationRequestsWithIdentifiers:identifiers];
+    [center removeDeliveredNotificationsWithIdentifiers:identifiers];
+    WebActions().erase(identifier);
+    entries_.erase(it);
+  }
+
+  void OnAction(const std::string& id, bool clicked) {
+    auto it = entries_.find(id);
+    if (it == entries_.end())
+      return;
+    const auto entry = it->second;
+    Remove(id);
+    if (profile_->ShutdownStarted() ||
+        profile_->site_permissions().NotificationSetting(
+            url::Origin::Create(entry.origin)) != 1) {
+      return;
+    }
+    auto* dispatcher = content::NotificationEventDispatcher::GetInstance();
+    if (entry.persistent) {
+      if (clicked) {
+        dispatcher->DispatchNotificationClickEvent(
+            &*profile_, id, entry.origin, std::nullopt, std::nullopt, base::DoNothing());
+      } else {
+        dispatcher->DispatchNotificationCloseEvent(
+            &*profile_, id, entry.origin, true, base::DoNothing());
+      }
+    } else if (clicked) {
+      dispatcher->DispatchNonPersistentClickEvent(id, base::DoNothing());
+    } else {
+      dispatcher->DispatchNonPersistentCloseEvent(id, base::DoNothing());
+    }
+  }
+
+  const raw_ref<ProfileContext> profile_;
+  std::map<std::string, Entry> entries_;
+  base::Time next_trigger_ = base::Time::Max();
+  base::OneShotTimer trigger_;
+  base::WeakPtrFactory<MacWebNotificationService> weak_factory_{this};
+};
 
 class NotificationFunction : public ExtensionFunction {
  protected:
@@ -350,6 +586,11 @@ ZITTER_NOTIFICATION_FUNCTION(GetNotificationPermissionFunction, "getPermissionLe
 
 }  // namespace
 
+std::unique_ptr<content::PlatformNotificationService> CreateMacWebNotificationService(
+    ProfileContext& profile) {
+  return std::make_unique<MacWebNotificationService>(profile);
+}
+
 void RegisterExtensionNotificationFunctions(ExtensionFunctionRegistry& registry) {
   registry.RegisterFunction<CreateNotificationFunction>();
   registry.RegisterFunction<UpdateNotificationFunction>();
@@ -364,6 +605,11 @@ void RemoveExtensionNotifications(content::BrowserContext& context, std::string_
 }
 
 void DispatchMacExtensionNotificationAction(std::string identifier, std::string action) {
+  if (auto it = WebActions().find(identifier); it != WebActions().end()) {
+    auto callback = it->second;
+    callback.Run(action == base::SysNSStringToUTF8(UNNotificationDefaultActionIdentifier));
+    return;
+  }
   if (g_notifications)
     g_notifications->HandleAction(std::move(identifier), std::move(action));
 }

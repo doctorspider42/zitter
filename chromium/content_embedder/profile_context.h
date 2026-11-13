@@ -15,6 +15,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_context.h"
 #include "url/origin.h"
 
@@ -75,6 +76,14 @@ class ProfileContext final : public content::BrowserContext {
   }
   void SetFileChooserDirectory(const base::FilePath& directory);
   ProfilePermissionController& site_permissions();
+#if BUILDFLAG(IS_WIN)
+  using WebNotificationPresenter = base::RepeatingCallback<void(
+      const std::string&, const GURL&, std::u16string, std::u16string,
+      base::RepeatingClosure)>;
+  void SetWebNotificationPresenter(
+      WebNotificationPresenter show,
+      base::RepeatingCallback<void(const std::string&)> close);
+#endif
   void SetFingerprintPreferences(std::unique_ptr<PrefService> prefs);
   std::optional<bool> GetFingerprintProtection();
   bool SetFingerprintProtection(bool enabled);
@@ -198,6 +207,7 @@ class ProfileContext final : public content::BrowserContext {
   std::string download_safe_browsing_key_;
   std::vector<uint8_t> download_probe_certificate_;
   std::unique_ptr<ProfilePermissionController> permissions_;
+  std::unique_ptr<content::PlatformNotificationService> notifications_;
   std::unique_ptr<PrefService> file_chooser_prefs_;
   std::unique_ptr<PrefService> page_zoom_prefs_;
   double default_page_zoom_level_ = 0.0;

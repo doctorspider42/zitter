@@ -298,6 +298,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Wyczyść dane…", "Clear data…"),
     ("Zezwolić na odczyt schowka?", "Allow clipboard access?"),
     ("Zezwól dla witryny", "Allow for this site"),
+    ("Brak powiadomień", "No notifications"),
+    ("{} chce wysyłać powiadomienia.", "{} wants to send notifications."),
     ("Udostępnij", "Share"),
     ("Co udostępnić?", "What would you like to share?"),
     ("Źródło udostępniania", "Source to share"),

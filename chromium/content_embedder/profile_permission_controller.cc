@@ -30,6 +30,16 @@ using content::PermissionStatus;
 
 namespace {
 
+bool IsNotification(const blink::mojom::PermissionDescriptorPtr& descriptor) {
+  return descriptor && descriptor->name == blink::mojom::PermissionName::NOTIFICATIONS;
+}
+
+PermissionResult NotificationResult(int setting) {
+  if (setting == 1)
+    return PermissionResult(PermissionStatus::GRANTED);
+  return PermissionResult(setting == 3 ? PermissionStatus::ASK : PermissionStatus::DENIED);
+}
+
 bool IsClipboardWriteDescriptor(
     const blink::mojom::PermissionDescriptorPtr& descriptor) {
   return descriptor &&
@@ -44,8 +54,8 @@ bool IsClipboardReadDescriptor(
          descriptor->name == blink::mojom::PermissionName::CLIPBOARD_READ;
 }
 
-bool IsClipboardDocument(content::RenderFrameHost* frame,
-                         content::BrowserContext* context) {
+bool IsTrustworthyMainDocument(content::RenderFrameHost* frame,
+                               content::BrowserContext* context) {
   return frame && frame->GetBrowserContext() == context && frame->IsActive() &&
          frame->IsInPrimaryMainFrame() &&
          ProfilePermissionController::IsClipboardOriginEligible(
@@ -73,7 +83,7 @@ bool CanUseExtensionClipboard(
 
 bool CanReadClipboard(content::RenderFrameHost* frame,
                       content::BrowserContext* context) {
-  return IsClipboardDocument(frame, context) && HasClipboardFocus(frame) &&
+  return IsTrustworthyMainDocument(frame, context) && HasClipboardFocus(frame) &&
          frame->IsFeatureEnabled(
              network::mojom::PermissionsPolicyFeature::kClipboardRead);
 }
@@ -171,12 +181,15 @@ void ProfilePermissionController::ClearSitePermissions(base::Time begin,
     return removed;
   };
   const auto clipboard = clear(kClipboardPrefs, kClipboardRuleTimes);
+  const auto notifications = clear(kNotificationPrefs, kNotificationRuleTimes);
   clear(kPopupPrefs, kPopupRuleTimes);
   clear(kMediaRules, kMediaRuleTimes);
   clear(kExternalProtocolPrefs, kExternalProtocolRuleTimes);
   site_permission_prefs_->CommitPendingWrite();
   for (const auto& key : clipboard)
     NotifyClipboardPermissionChanged(url::Origin::Create(GURL(key)));
+  for (const auto& key : notifications)
+    NotifyNotificationPermissionChanged(url::Origin::Create(GURL(key)));
 }
 
 bool ProfilePermissionController::PromptByDefault(std::string_view key) const {
@@ -187,7 +200,8 @@ bool ProfilePermissionController::PromptByDefault(std::string_view key) const {
 bool ProfilePermissionController::SetPromptByDefault(std::string_view key,
                                                     bool prompt) {
   if (!CanClearSitePermissions() ||
-      (key != "clipboard" && key != "camera" && key != "microphone"))
+      (key != "clipboard" && key != "camera" && key != "microphone" &&
+       key != "notifications"))
     return false;
   {
     ScopedDictPrefUpdate update(site_permission_prefs_.get(), kPromptDefaults);
@@ -196,7 +210,49 @@ bool ProfilePermissionController::SetPromptByDefault(std::string_view key,
   site_permission_prefs_->CommitPendingWrite();
   if (key == "clipboard")
     NotifyClipboardPermissionChanged(std::nullopt);
+  if (key == "notifications")
+    NotifyNotificationPermissionChanged(std::nullopt);
   return true;
+}
+
+bool ProfilePermissionController::CanUseNotifications(const url::Origin& origin) const {
+  return CanClearSitePermissions() && IsPopupOriginEligible(origin) &&
+         IsClipboardOriginEligible(origin) && context_->GetPlatformNotificationService();
+}
+
+int ProfilePermissionController::NotificationSetting(const url::Origin& origin) const {
+  if (!CanUseNotifications(origin))
+    return 2;
+  const auto value = site_permission_prefs_->GetDict(kNotificationPrefs)
+                         .FindInt(origin.Serialize());
+  if (value == 1 || value == 2 || value == 3)
+    return *value;
+  return PromptByDefault("notifications") ? 3 : 2;
+}
+
+bool ProfilePermissionController::SetNotificationSetting(const url::Origin& origin,
+                                                          int setting) {
+  if (!CanUseNotifications(origin) || setting < 0 || setting > 3)
+    return false;
+  base::DictValue unused_private_rules;
+  if (!WriteSiteSetting(site_permission_prefs_.get(), kNotificationPrefs,
+                        kNotificationRuleTimes, unused_private_rules,
+                        origin.Serialize(), setting ? std::optional(setting) : std::nullopt,
+                        256)) {
+    return false;
+  }
+  NotifyNotificationPermissionChanged(origin);
+  return true;
+}
+
+int64_t ProfilePermissionController::NextNotificationId() {
+  const auto next = site_permission_prefs_->GetInt64(kNotificationNextId) + 1;
+  site_permission_prefs_->SetInt64(kNotificationNextId, next);
+  return next;
+}
+
+void ProfilePermissionController::SetNotificationPrompt(ClipboardReadPrompt prompt) {
+  notification_prompt_ = std::move(prompt);
 }
 
 int ProfilePermissionController::MediaSetting(const url::Origin& origin,
@@ -372,6 +428,18 @@ void ProfilePermissionController::SetClipboardReadPrompt(ClipboardReadPrompt pro
 void ProfilePermissionController::OnPermissionStatusChangeSubscriptionAdded(
     content::PermissionController::SubscriptionId id) {
   auto* subscription = subscriptions() ? subscriptions()->Lookup(id) : nullptr;
+  if (subscription && IsNotification(subscription->permission_descriptor)) {
+    auto* frame = content::RenderFrameHost::FromID(subscription->render_process_id,
+                                                  subscription->render_frame_id);
+    subscription->permission_result = frame
+        ? GetPermissionResultForCurrentDocument(subscription->permission_descriptor, frame,
+                                                subscription->should_include_device_status)
+        : GetPermissionResultForOriginWithoutContext(
+              subscription->permission_descriptor,
+              url::Origin::Create(subscription->requesting_origin),
+              url::Origin::Create(subscription->embedding_origin));
+    return;
+  }
   if (!subscription || (!IsClipboardReadDescriptor(subscription->permission_descriptor) &&
                         !IsClipboardWriteDescriptor(subscription->permission_descriptor))) {
     return;
@@ -412,6 +480,38 @@ void ProfilePermissionController::NotifyClipboardPermissionChanged(
     std::move(callback).Run();
 }
 
+void ProfilePermissionController::NotifyNotificationPermissionChanged(
+    std::optional<url::Origin> origin) {
+  if (!subscriptions())
+    return;
+  std::vector<base::OnceClosure> callbacks;
+  for (content::PermissionController::SubscriptionsMap::iterator iter(subscriptions());
+       !iter.IsAtEnd(); iter.Advance()) {
+    auto* subscription = iter.GetCurrentValue();
+    if (!subscription || !subscription->permission_result ||
+        !IsNotification(subscription->permission_descriptor)) {
+      continue;
+    }
+    const auto requester = url::Origin::Create(subscription->requesting_origin);
+    if (origin && requester != *origin)
+      continue;
+    auto* frame = content::RenderFrameHost::FromID(subscription->render_process_id,
+                                                  subscription->render_frame_id);
+    auto result = frame
+        ? GetPermissionResultForCurrentDocument(subscription->permission_descriptor, frame,
+                                                subscription->should_include_device_status)
+        : GetPermissionResultForOriginWithoutContext(
+              subscription->permission_descriptor, requester,
+              url::Origin::Create(subscription->embedding_origin));
+    if (subscription->permission_result->status == result.status)
+      continue;
+    subscription->permission_result = result;
+    callbacks.push_back(base::BindOnce(subscription->callback, result, false));
+  }
+  for (auto& callback : callbacks)
+    std::move(callback).Run();
+}
+
 void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
     content::RenderFrameHost* frame,
     const content::PermissionRequestDescription& request,
@@ -422,6 +522,31 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
       frame && !request.embedded_permission_request_descriptor &&
       url::Origin::Create(request.requesting_origin) ==
           frame->GetLastCommittedOrigin();
+  if (is_document_request && request.permissions.size() == 1 &&
+      IsNotification(request.permissions.front()) && request.user_gesture &&
+      notification_prompt_ && IsTrustworthyMainDocument(frame, &*context_) &&
+      HasClipboardFocus(frame) && NotificationSetting(frame->GetLastCommittedOrigin()) == 3) {
+    notification_prompt_.Run(
+        *frame, base::BindOnce(
+            [](base::WeakPtr<ProfilePermissionController> self,
+               content::WeakDocumentPtr document,
+               base::OnceCallback<void(const std::vector<PermissionResult>&)> reply,
+               bool accepted) {
+              auto* current = document.AsRenderFrameHostIfValid();
+              auto* contents = current ? content::WebContents::FromRenderFrameHost(current) : nullptr;
+              if (!self || !IsTrustworthyMainDocument(current, &*self->context_) ||
+                  !contents || contents->GetVisibility() != content::Visibility::VISIBLE) {
+                std::move(reply).Run({PermissionResult(PermissionStatus::DENIED)});
+                return;
+              }
+              const auto origin = current->GetLastCommittedOrigin();
+              if (accepted && self->NotificationSetting(origin) == 3)
+                self->SetNotificationSetting(origin, 1);
+              std::move(reply).Run({NotificationResult(self->NotificationSetting(origin))});
+            },
+            weak_factory_.GetWeakPtr(), frame->GetWeakDocumentPtr(), std::move(callback)));
+    return;
+  }
   if (is_document_request && request.permissions.size() == 1 &&
       IsClipboardReadDescriptor(request.permissions.front()) &&
       request.user_gesture &&
@@ -442,7 +567,7 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
                   : nullptr;
               if (accepted && self && contents &&
                   contents->GetVisibility() == content::Visibility::VISIBLE &&
-                  IsClipboardDocument(current, &*self->context_) &&
+                  IsTrustworthyMainDocument(current, &*self->context_) &&
                   current->IsFeatureEnabled(
                       network::mojom::PermissionsPolicyFeature::kClipboardRead)) {
                 const auto& origin = current->GetLastCommittedOrigin();
@@ -469,7 +594,7 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
     } else if (IsClipboardWriteDescriptor(descriptor)) {
       const bool allowed = request.user_gesture &&
           descriptor->extension->get_clipboard()->has_user_gesture &&
-          IsClipboardDocument(frame, &*context_) && HasClipboardFocus(frame) &&
+          IsTrustworthyMainDocument(frame, &*context_) && HasClipboardFocus(frame) &&
           frame->IsFeatureEnabled(network::mojom::PermissionsPolicyFeature::kClipboardWrite) &&
           frame->HasTransientUserActivation() &&
           GetClipboardSetting(frame->GetLastCommittedOrigin()) != ClipboardSetting::kBlock;
@@ -484,17 +609,20 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
 }
 
 PermissionStatus ProfilePermissionController::GetPermissionStatus(
-    const blink::mojom::PermissionDescriptorPtr&,
-    const GURL&,
-    const GURL&) {
-  return PermissionStatus::DENIED;
+    const blink::mojom::PermissionDescriptorPtr& descriptor,
+    const GURL& requester,
+    const GURL& embedder) {
+  return GetPermissionResultForOriginWithoutContext(
+      descriptor, url::Origin::Create(requester), url::Origin::Create(embedder)).status;
 }
 
 PermissionResult
 ProfilePermissionController::GetPermissionResultForOriginWithoutContext(
-    const blink::mojom::PermissionDescriptorPtr&,
-    const url::Origin&,
-    const url::Origin&) {
+    const blink::mojom::PermissionDescriptorPtr& descriptor,
+    const url::Origin& requester,
+    const url::Origin& embedder) {
+  if (IsNotification(descriptor) && requester == embedder)
+    return NotificationResult(NotificationSetting(requester));
   return PermissionResult(PermissionStatus::DENIED);
 }
 
@@ -505,7 +633,9 @@ ProfilePermissionController::GetPermissionResultForCurrentDocument(
     bool) {
   if (CanUseExtensionClipboard(descriptor, frame, &*context_))
     return PermissionResult(PermissionStatus::GRANTED);
-  if (IsClipboardDocument(frame, &*context_)) {
+  if (IsTrustworthyMainDocument(frame, &*context_)) {
+    if (IsNotification(descriptor))
+      return NotificationResult(NotificationSetting(frame->GetLastCommittedOrigin()));
     const auto setting = GetClipboardSetting(frame->GetLastCommittedOrigin());
     if (IsClipboardReadDescriptor(descriptor)) {
       if (!frame->IsFeatureEnabled(
@@ -539,9 +669,11 @@ ProfilePermissionController::GetPermissionResultForCurrentDocument(
 }
 
 PermissionResult ProfilePermissionController::GetPermissionResultForWorker(
-    const blink::mojom::PermissionDescriptorPtr&,
+    const blink::mojom::PermissionDescriptorPtr& descriptor,
     content::RenderProcessHost*,
-    const GURL&) {
+    const GURL& origin) {
+  if (IsNotification(descriptor))
+    return NotificationResult(NotificationSetting(url::Origin::Create(origin)));
   return PermissionResult(PermissionStatus::DENIED);
 }
 
@@ -557,6 +689,11 @@ void ProfilePermissionController::ResetPermission(
     blink::PermissionType type,
     const GURL& requesting_origin,
     const GURL& embedding_origin) {
+  if (type == blink::PermissionType::NOTIFICATIONS &&
+      url::Origin::Create(requesting_origin) == url::Origin::Create(embedding_origin)) {
+    SetNotificationSetting(url::Origin::Create(requesting_origin), 0);
+    return;
+  }
   if ((type == blink::PermissionType::CLIPBOARD_READ_WRITE ||
        type == blink::PermissionType::CLIPBOARD_SANITIZED_WRITE) &&
       url::Origin::Create(requesting_origin) == url::Origin::Create(embedding_origin)) {
