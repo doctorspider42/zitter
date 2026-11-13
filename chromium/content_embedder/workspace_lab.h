@@ -1062,11 +1062,16 @@ class WorkspaceLab final : private WorkspaceRuntime,
   };
   std::string favicon_profile_;
   std::pair<std::string, std::string> favicon_refresh_scope_;
+  class FaviconDecoderObserver;
+  std::unique_ptr<content::WebContents> favicon_refresh_page_;
+  std::unique_ptr<FaviconDecoderObserver> favicon_refresh_observer_;
   std::unique_ptr<WorkspaceFaviconRefresh> favicon_refresh_;
-  class ImportedFaviconObserver;
+  void StartWorkspaceFaviconRefresh(std::map<GURL, GURL> pages, bool loaded);
+  void FinishWorkspaceFaviconRefresh();
+
   std::map<std::string, std::set<GURL>> imported_favicon_urls_;
   std::unique_ptr<content::WebContents> imported_favicon_page_;
-  std::unique_ptr<ImportedFaviconObserver> imported_favicon_observer_;
+  std::unique_ptr<FaviconDecoderObserver> imported_favicon_observer_;
   std::unique_ptr<WorkspaceFaviconRefresh> imported_favicon_refresh_;
   void PumpImportedFavicons();
   void StartImportedFaviconRefresh(std::string profile, std::set<GURL> urls, bool loaded);

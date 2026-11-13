@@ -1471,9 +1471,9 @@ struct WorkspaceLab::GitHubRefresh {
   std::unique_ptr<network::SimpleURLLoader> loader;
 };
 
-class WorkspaceLab::ImportedFaviconObserver final : public content::WebContentsObserver {
+class WorkspaceLab::FaviconDecoderObserver final : public content::WebContentsObserver {
  public:
-  ImportedFaviconObserver(content::WebContents& page, base::OnceCallback<void(bool)> ready)
+  FaviconDecoderObserver(content::WebContents& page, base::OnceCallback<void(bool)> ready)
       : WebContentsObserver(&page), ready_(base::BindPostTaskToCurrentDefault(std::move(ready))) {}
 
  private:
@@ -3334,6 +3334,7 @@ WorkspaceLab::~WorkspaceLab() {
   StopFind();
   Observe(nullptr);
   weak_factory_.InvalidateWeakPtrs();
+  FinishWorkspaceFaviconRefresh();
   if (extension_picker_)
     extension_picker_->ListenerDestroyed();
   extension_install_.reset();
@@ -10249,7 +10250,7 @@ void WorkspaceLab::PumpImportedFavicons() {
   content::WebContents::CreateParams params(context);
   params.initially_hidden = true;
   imported_favicon_page_ = content::WebContents::Create(params);
-  imported_favicon_observer_ = std::make_unique<ImportedFaviconObserver>(
+  imported_favicon_observer_ = std::make_unique<FaviconDecoderObserver>(
       *imported_favicon_page_, base::BindOnce(
           &WorkspaceLab::StartImportedFaviconRefresh, weak_factory_.GetWeakPtr(),
           next.key(), std::move(next.mapped())));
@@ -10300,9 +10301,7 @@ void WorkspaceLab::FinishImportedFaviconRefresh() {
 }
 
 bool WorkspaceLab::RefreshWorkspaceFavicons() {
-  auto* source = web_contents();
-  if (!CanEditWorkspace() || !model_.active() || !source ||
-      !source->GetPrimaryMainFrame()->IsRenderFrameLive()) {
+  if (!CanEditWorkspace() || !model_.active()) {
     return false;
   }
   std::map<GURL, GURL> pages;
@@ -10325,13 +10324,44 @@ bool WorkspaceLab::RefreshWorkspaceFavicons() {
   }
   if (pages.empty())
     return false;
+  FinishWorkspaceFaviconRefresh();
   favicon_refresh_scope_ = {model_.active()->id, model_.active()->profile_id};
-  favicon_refresh_ = std::make_unique<WorkspaceFaviconRefresh>(
-      *source, std::move(pages),
-      base::BindRepeating(&WorkspaceLab::PublishWorkspaceFavicon,
-                          weak_factory_.GetWeakPtr()));
-  favicon_refresh_->Start();
+  content::WebContents::CreateParams params(WorkspaceProfile(active_index_));
+  params.initially_hidden = true;
+  favicon_refresh_page_ = content::WebContents::Create(params);
+  favicon_refresh_observer_ = std::make_unique<FaviconDecoderObserver>(
+      *favicon_refresh_page_, base::BindOnce(
+          [](base::WeakPtr<WorkspaceLab> lab, base::WeakPtr<content::WebContents> decoder,
+             std::map<GURL, GURL> pages, bool loaded) {
+            if (lab && decoder)
+              lab->StartWorkspaceFaviconRefresh(std::move(pages), loaded);
+          }, weak_factory_.GetWeakPtr(), favicon_refresh_page_->GetWeakPtr(), std::move(pages)));
+  favicon_refresh_page_->GetController().LoadURL(
+      GURL("about:blank"), content::Referrer(), ui::PAGE_TRANSITION_AUTO_TOPLEVEL, {});
   return true;
+}
+
+void WorkspaceLab::StartWorkspaceFaviconRefresh(std::map<GURL, GURL> pages, bool loaded) {
+  if (!loaded) {
+    FinishWorkspaceFaviconRefresh();
+    return;
+  }
+  favicon_refresh_ = std::make_unique<WorkspaceFaviconRefresh>(
+      *favicon_refresh_page_, std::move(pages),
+      base::BindRepeating(&WorkspaceLab::PublishWorkspaceFavicon,
+                          weak_factory_.GetWeakPtr()),
+      base::BindPostTaskToCurrentDefault(base::BindOnce(
+          [](base::WeakPtr<WorkspaceLab> lab, base::WeakPtr<content::WebContents> decoder) {
+            if (lab && decoder)
+              lab->FinishWorkspaceFaviconRefresh();
+          }, weak_factory_.GetWeakPtr(), favicon_refresh_page_->GetWeakPtr())));
+  favicon_refresh_->Start();
+}
+
+void WorkspaceLab::FinishWorkspaceFaviconRefresh() {
+  favicon_refresh_.reset();
+  favicon_refresh_observer_.reset();
+  favicon_refresh_page_.reset();
 }
 
 void WorkspaceLab::PublishWorkspaceFavicon(const GURL& url, const GURL& icon,
@@ -10363,9 +10393,9 @@ void WorkspaceLab::PublishWorkspaceFavicon(const GURL& url, const GURL& icon,
 
 void WorkspaceLab::ReadCachedFavicons(prototype::ShellState& state,
                                        const std::set<GURL>& urls) {
-  if (favicon_refresh_ &&
+  if (favicon_refresh_page_ &&
       favicon_refresh_scope_ != std::pair(state.workspace_id, state.profile_id)) {
-    favicon_refresh_.reset();
+    FinishWorkspaceFaviconRefresh();
   }
   if (favicon_profile_ != state.profile_id) {
     favicon_tasks_.TryCancelAll();
@@ -10563,9 +10593,9 @@ void WorkspaceLab::RefreshShell() {
       auto pixels = FaviconPixels(driver->GetFavicon());
       if (!pixels.empty())
         state.favicons[url.spec()] = std::move(pixels);
-    } else if (!page && url.SchemeIsHTTPOrHTTPS()) {
-      cached_icon_urls.insert(url);
     }
+    if (url.SchemeIsHTTPOrHTTPS() && !state.favicons.contains(url.spec()))
+      cached_icon_urls.insert(url);
     if (!tabs[index].custom_title.empty())
       title = tabs[index].custom_title;
     state.tabs.push_back({title.empty() ? u"New tab" : std::move(title),
