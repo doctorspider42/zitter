@@ -6285,7 +6285,9 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
              prototype::PageCommand command) {
             if (lab && page)
               lab->RunPageCommandOn(*page, command);
-          }, weak_factory_.GetWeakPtr(), page->GetWeakPtr())};
+          }, weak_factory_.GetWeakPtr(), page->GetWeakPtr()),
+      .copy_image = prototype::MakeCopyImageAction(frame, params),
+      .image_url = prototype::PageMenuImageUrl(params)};
   if (!preview && !private_owner_) {
     navigation.extension_items = WorkspaceExtensionPageMenu(frame, params);
     auto& document = *page->GetPrimaryMainFrame();

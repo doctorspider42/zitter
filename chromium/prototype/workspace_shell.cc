@@ -60,6 +60,10 @@
 #include "ui/compositor/paint_recorder.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/vector_icons/vector_icons.h"
+#include "content/public/browser/context_menu_params.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/weak_document_ptr.h"
+#include "third_party/blink/public/mojom/context_menu/context_menu.mojom-shared.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/menu_source_utils.h"
 #include "ui/accessibility/ax_action_data.h"
@@ -7227,6 +7231,9 @@ constexpr int kUnmuteTab = 213;
 constexpr int kSaveLink = 214;
 constexpr int kRenameSidebarTab = 215;
 constexpr int kRestoreSidebarTabTitle = 216;
+constexpr int kCopyImage = 217;
+constexpr int kOpenImageInNewTab = 218;
+constexpr int kCopyImageAddress = 219;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
@@ -7416,6 +7423,31 @@ void WorkspaceShell::ShowPeek(std::u16string title) {
   peek_widget_->Show(); peek_widget_->Activate();
 }
 void WorkspaceShell::HidePeek() { if (peek_widget_) peek_widget_->Hide(); }
+base::RepeatingClosure MakeCopyImageAction(
+    content::RenderFrameHost& frame, const content::ContextMenuParams& params) {
+  if (!params.has_image_contents)
+    return {};
+  return base::BindRepeating(
+      [](const content::WeakDocumentPtr& document, int x, int y) {
+        auto* target = document.AsRenderFrameHostIfValid();
+        if (target && target->IsActive())
+          target->CopyImageAt(x, y);
+      },
+      frame.GetWeakDocumentPtr(), params.x, params.y);
+}
+
+GURL PageMenuImageUrl(const content::ContextMenuParams& params) {
+  if (params.media_type != blink::mojom::ContextMenuDataMediaType::kImage)
+    return {};
+  const auto& url = params.src_url;
+  if (!url.is_valid() ||
+      !(url.SchemeIsHTTPOrHTTPS() || url.SchemeIs("blob") ||
+        url.SchemeIs("data") || url.SchemeIsFile())) {
+    return {};
+  }
+  return url;
+}
+
 void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
                                    const PageMenuNavigation* page) {
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
@@ -7424,6 +7456,8 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
   page_menu_url_ = page ? page->url : GURL();
   page_menu_save_link_ = page ? page->save_link : base::RepeatingClosure();
+  page_menu_copy_image_ = page ? page->copy_image : base::RepeatingClosure();
+  page_menu_image_url_ = page ? page->image_url : GURL();
   route_workspaces_ = state_.workspaces;
   route_menu_ = std::make_unique<DesignMenuModel>(this);
   link_menu_ = std::make_unique<DesignMenuModel>(this);
@@ -7435,6 +7469,20 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
       link_menu_->AddItemWithIcon(kCopyCleanPageAddress, T(u"Kopiuj bez trackerów"),
                                   MenuIcon(vector_icons::kLinkIcon));
     }
+  }
+  const bool image = page_menu_copy_image_ || page_menu_image_url_.is_valid();
+  if (image) {
+    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    link_menu_->AddTitle(base::i18n::ToUpper(T(u"Obraz")));
+    if (IsCommandIdEnabled(kOpenImageInNewTab))
+      link_menu_->AddItemWithIcon(kOpenImageInNewTab, T(u"Otwórz obraz w nowej karcie"),
+                                  MenuIcon(kMenuNewTabIcon));
+    if (page_menu_copy_image_)
+      link_menu_->AddItemWithIcon(kCopyImage, T(u"Kopiuj obraz"),
+                                  MenuIcon(vector_icons::kContentCopyIcon));
+    if (page_menu_image_url_.is_valid())
+      link_menu_->AddItemWithIcon(kCopyImageAddress, T(u"Kopiuj adres obrazu"),
+                                  MenuIcon(vector_icons::kLinkIcon));
   }
   if (!context_url_.SchemeIsHTTPOrHTTPS()) return;
   if (page) {
@@ -7456,7 +7504,9 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
         if (entry.command == kLinkPeek)
           link_menu_->AddItemWithIcon(entry.command, label, MenuIcon(kMenuSidebarIcon));
         else if (entry.command == kLinkNewTab)
-          link_menu_->AddItemWithIcon(entry.command, label, MenuIcon(kMenuNewTabIcon));
+          link_menu_->AddItemWithIcon(entry.command,
+              image ? T(u"Otwórz link w nowej karcie") : label,
+              MenuIcon(kMenuNewTabIcon));
         else if (entry.command == kLinkSplit)
           link_menu_->AddItemWithIcon(entry.command, label, MenuIcon(vector_icons::kOpenInNewFlippableIcon));
         else
@@ -7547,7 +7597,7 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
           if (!shell) return;
           shell->ExecuteCommand(kCopyPageAddress, 0);
           shell->link_menu_runner_->Cancel();
-        }, weak_factory_.GetWeakPtr()), vector_icons::kContentCopyIcon, T(u"Kopiuj adres strony")));
+        }, weak_factory_.GetWeakPtr()), vector_icons::kLinkIcon, T(u"Kopiuj adres strony")));
     copy->SetEnabled(IsWorkspaceTabUrl(page_menu_url_));
     layout->SetFlexForView(copy, 1);
     link_menu_runner_ = std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
@@ -8378,6 +8428,12 @@ bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
   }
   if (command_id == kCopyPageAddress) return IsWorkspaceTabUrl(page_menu_url_);
   if (command_id == kCopyLinkAddress) return context_url_.SchemeIsHTTPOrHTTPS();
+  if (command_id == kCopyImage) return !!page_menu_copy_image_;
+  if (command_id == kCopyImageAddress) return page_menu_image_url_.is_valid();
+  if (command_id == kOpenImageInNewTab)
+    return page_menu_image_url_.SchemeIsHTTPOrHTTPS() &&
+           !page_menu_image_url_.has_username() && !page_menu_image_url_.has_password() &&
+           page_menu_image_url_.spec().size() <= 32768 && callbacks_.open_link;
   if (command_id == kCopyCleanPageAddress) return CleanUrlForCopy(page_menu_url_).has_value();
   if (command_id == kCopyCleanLinkAddress) return CleanUrlForCopy(context_url_).has_value();
   if (command_id == kRenameSidebarTab || command_id == kRestoreSidebarTabTitle) {
@@ -9001,6 +9057,30 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
     return;
   }
   if (command_id == kPageNavigation) return;
+  if (command_id == kOpenImageInNewTab) {
+    if (IsCommandIdEnabled(command_id)) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(
+              [](base::WeakPtr<WorkspaceShell> shell, GURL url, std::string workspace) {
+                if (shell)
+                  shell->callbacks_.open_link.Run(url, workspace, true, false);
+              }, weak_factory_.GetWeakPtr(), page_menu_image_url_, link_source_workspace_));
+    }
+    return;
+  }
+  if (command_id == kCopyImageAddress) {
+    if (IsCommandIdEnabled(command_id))
+      ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)
+          .WriteText(base::UTF8ToUTF16(page_menu_image_url_.spec()));
+    return;
+  }
+  if (command_id == kCopyImage) {
+    if (page_menu_copy_image_) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(page_menu_copy_image_));
+    }
+    return;
+  }
   if (command_id == kSaveLink) {
     if (page_menu_save_link_) {
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(

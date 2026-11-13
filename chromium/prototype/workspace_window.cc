@@ -2557,7 +2557,9 @@ void WorkspaceWindow::ShowPageMenu(content::WebContents* source, content::Render
             const auto* focused = window->peek_contents() ? window->peek_contents()
                                                           : window->contents(window->active_id());
             window->RunPageCommandOn(page.get(), command, focused == page.get());
-          }, weak_factory_.GetWeakPtr(), source->GetWeakPtr())};
+          }, weak_factory_.GetWeakPtr(), source->GetWeakPtr()),
+      .copy_image = MakeCopyImageAction(*frame, params),
+      .image_url = PageMenuImageUrl(params)};
   shell_->ShowLinkMenu(url, WorkspaceForPage(source), source->GetContainerBounds().origin() + gfx::Vector2d(params.x, params.y),
       DevToolsWindow::AllowDevToolsFor(Profile::FromBrowserContext(source->GetBrowserContext()), source) ? base::BindRepeating([](content::WeakDocumentPtr document, int x, int y) {
         auto* target = document.AsRenderFrameHostIfValid();

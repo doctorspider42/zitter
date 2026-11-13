@@ -43,6 +43,11 @@
 
 class PrefService;
 
+namespace content {
+class RenderFrameHost;
+struct ContextMenuParams;
+}
+
 namespace zitter::sidebar { struct Item; struct Timeline; struct SidebarPinTree; struct PreferenceCatalogue; struct WorkspaceMenuState; struct FolderMenuState; struct ProfileControls; enum class FormCommand : uint32_t; struct FormCommandBinding; }
 namespace ui { class AcceleratorTarget; class KeyEvent; }
 namespace gfx { class Canvas; }
@@ -99,8 +104,14 @@ struct PageMenuNavigation {
   bool can_reload = false;
   base::RepeatingCallback<void(PageCommand)> run;
   base::RepeatingClosure save_link;
+  base::RepeatingClosure copy_image;
+  GURL image_url;
   std::vector<PageMenuItem> extension_items;
 };
+
+base::RepeatingClosure MakeCopyImageAction(
+    content::RenderFrameHost& frame, const content::ContextMenuParams& params);
+GURL PageMenuImageUrl(const content::ContextMenuParams& params);
 
 struct ShellTab {
   std::u16string title;
@@ -1361,6 +1372,8 @@ class WorkspaceShell final : public ui::EventHandler,
   GURL context_url_;
   GURL page_menu_url_;
   base::RepeatingClosure page_menu_save_link_;
+  base::RepeatingClosure page_menu_copy_image_;
+  GURL page_menu_image_url_;
   std::string link_source_workspace_;
   std::vector<Workspace> route_workspaces_;
   std::unique_ptr<views::DialogDelegate> rust_folder_dialog_delegate_;
