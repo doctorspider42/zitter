@@ -143,6 +143,7 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
+#include "ui/views/controls/throbber.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
 #include "ui/gfx/geometry/skia_conversions.h"
@@ -3113,7 +3114,7 @@ class PreferenceChromeRenderer : public views::WidgetObserver {
   void OnWidgetDestroying(views::Widget*) override{timer_.Stop();observation_.Reset();if(surface_)surface_->Hide();}
  private:
   gfx::Rect Projected(views::View* view) const{auto rect=view->GetVisibleBounds();rect.Offset(view->GetBoundsInScreen().x()-root_->GetBoundsInScreen().x(),view->GetBoundsInScreen().y()-root_->GetBoundsInScreen().y());rect.Intersect(root_->GetLocalBounds());return rect;}
-  void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* progress=views::AsViewClass<SceneProgress>(view)){text.push_back(progress->Scene(box,clip));moving_|=progress->moving();return;}if(auto* actions=views::AsViewClass<SceneActionGroup>(view);actions&&actions->shared()){actions->Append(text,box.origin(),clip);return;}if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
+  void Collect(views::View* view,std::vector<sidebar::Item>& backgrounds,std::vector<sidebar::Item>& text,std::vector<sidebar::FloatRect>& holes){if(!SceneIsVisible(view))return;auto clip=Projected(view);if(clip.IsEmpty())return;auto box=view->GetBoundsInScreen();box.Offset(-root_->GetBoundsInScreen().x(),-root_->GetBoundsInScreen().y());if(auto* progress=views::AsViewClass<SceneProgress>(view)){text.push_back(progress->Scene(box,clip));moving_|=progress->moving();return;}if(auto* actions=views::AsViewClass<SceneActionGroup>(view);actions&&actions->shared()){actions->Append(text,box.origin(),clip);return;}if(auto* copy=views::AsViewClass<PreferenceCopy>(view)){copy->Append(text,box.origin(),clip);return;}if(auto* surface=views::AsViewClass<PreferenceSurface>(view))backgrounds.push_back(surface->Scene(gfx::RectF(box),gfx::RectF(clip)));if(views::AsViewClass<views::Throbber>(view)||views::AsViewClass<SceneActionGroup>(view)||views::AsViewClass<SceneCheckboxGroup>(view)||views::AsViewClass<ScenePreferenceControls>(view)||views::AsViewClass<SceneSelect>(view)||views::AsViewClass<SceneToggle>(view)||views::AsViewClass<views::Button>(view)||view->GetViewAccessibility().GetCachedRole()==ax::mojom::Role::kTextField){holes.push_back({float(clip.x()),float(clip.y()),float(clip.width()),float(clip.height())});return;}for(const auto& child:view->children())Collect(child.get(),backgrounds,text,holes);}
   void Update(){pending_=false;auto* widget=root_->GetWidget();if(!widget)return;if(observation_.GetSource()!=widget){observation_.Reset();observation_.Observe(widget);}widget->LayoutRootViewIfNecessary();const bool was=visible();if(!SceneIsVisible(root_)){timer_.Stop();if(surface_)surface_->Hide();return;}moving_=false;std::vector<sidebar::Item> backgrounds,text;std::vector<sidebar::FloatRect> holes;Collect(root_,backgrounds,text,holes);backgrounds.insert(backgrounds.end(),std::make_move_iterator(text.begin()),std::make_move_iterator(text.end()));last_ops_=sidebar::preference_chrome_scene(rust::Slice<const sidebar::Item>(backgrounds.data(),backgrounds.size()),rust::Slice<const sidebar::FloatRect>(holes.data(),holes.size()));if(!surface_)surface_=CreateSidebarMetal();if(surface_)surface_->UpdateUnderlay(widget->GetNativeWindow(),root_->GetBoundsInScreen(),UNSAFE_BUFFERS(base::span<const sidebar::Primitive>(last_ops_.data(),last_ops_.size())));if(was!=visible())root_->SchedulePaint();if(moving_){if(!timer_.IsRunning())timer_.Start(FROM_HERE,base::Milliseconds(16),base::BindRepeating(&PreferenceChromeRenderer::Tick,base::Unretained(this)));}else timer_.Stop();}
   void Tick(){if(!visible())root_->SchedulePaint();Schedule();}
   base::RepeatingTimer timer_;bool moving_=false;
@@ -5588,6 +5589,7 @@ void WorkspaceShell::Detach() {
   scrim_widget_.reset(); scrim_delegate_.reset();
   about_view_ = nullptr; about_dialog_.reset(); about_delegate_.reset();
   update_preferences_status_ = nullptr; update_preferences_check_ = nullptr;
+  update_preferences_spinner_ = nullptr;
   update_preferences_action_ = nullptr;
   auto_update_check_toggle_ = nullptr; auto_update_download_toggle_ = nullptr;
   clear_period_ = nullptr;
@@ -9988,7 +9990,11 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
       }
       case Kind::Updates: {
         auto* labels = row->children().front().get();
-        update_preferences_status_ = copy(labels, u"", kInk, 0, gfx::Font::Weight::NORMAL, true);
+        auto* status_row = labels->AddChildView(std::make_unique<views::View>());
+        update_preferences_spinner_ = status_row->AddChildView(std::make_unique<views::Throbber>());
+        update_preferences_status_ = copy(status_row, u"", kInk, 0, gfx::Font::Weight::NORMAL, true);
+        SetSidebarPanelLayout(status_row, false, gfx::Insets(), Metrics().space_2,
+                              update_preferences_status_, true);
         update_preferences_check_ = PreferenceAction(row, {}, T(u"Sprawdź aktualizacje"));
         SetActionCallback(update_preferences_check_, base::BindRepeating(&WorkspaceShell::CheckForUpdates, weak));
         update_preferences_action_ = PreferenceAction(labels, {}, T(u"Otwórz stronę wydania"));
@@ -13154,7 +13160,7 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
     commands.push_back({action});
     chord(action);
   };
-  if (install_update_) {
+  if (install_update_ && !update_download_pending_) {
     const auto version = base::UTF8ToUTF16(update_version_);
     add("install_update", update_offer_label_ == T(u"Pobierz aktualizację")
         ? TF(u"Pobierz aktualizację {}…", {version})
@@ -14658,8 +14664,11 @@ class WorkspaceShell::AboutView final : public views::View {
         TF(u"Wersja {} · Chromium {}", {version,
            base::UTF8ToUTF16(version_info::GetVersionNumber())}),
         0, false, kMuted, true));
-    status_ = AddChildView(std::make_unique<SceneParagraph>(
+    auto* status_row = AddChildView(std::make_unique<views::View>());
+    spinner_ = status_row->AddChildView(std::make_unique<views::Throbber>());
+    status_ = status_row->AddChildView(std::make_unique<SceneParagraph>(
         std::u16string(), 0, false, kInk, true));
+    SetSidebarPanelLayout(status_row, false, gfx::Insets(), Metrics().space_2, status_, true);
     auto* actions = AddChildView(std::make_unique<SceneActionGroup>(false, 8));
     actions->UseDialogBackground();
     check_ = actions->AddAction(std::move(check), T(u"Sprawdź aktualizacje"),
@@ -14669,9 +14678,11 @@ class WorkspaceShell::AboutView final : public views::View {
   }
 
   void Refresh(const std::u16string& status, const std::u16string& label,
-               bool available, bool pending) {
+               bool available, bool pending, bool downloading) {
     status_->SetText(status);
-    status_->SetVisible(!status.empty());
+    status_->parent()->SetVisible(!status.empty());
+    spinner_->SetVisible(downloading);
+    if (downloading) spinner_->Start(); else spinner_->Stop();
     check_->SetEnabled(!pending);
     check_->parent()->SetVisible(available);
     action_->SetText(label);
@@ -14685,6 +14696,7 @@ class WorkspaceShell::AboutView final : public views::View {
 
  private:
   raw_ptr<SceneParagraph> status_ = nullptr;
+  raw_ptr<views::Throbber> spinner_ = nullptr;
   raw_ptr<views::View> check_ = nullptr;
   raw_ptr<SceneTextButton> action_ = nullptr;
   std::u16string announced_;
@@ -14716,7 +14728,7 @@ bool WorkspaceShell::UpdatePreferencesVisible() const {
 }
 
 void WorkspaceShell::CheckForUpdates() {
-  if (!check_update_ || update_check_pending_) return;
+  if (!check_update_ || update_check_pending_ || update_download_pending_) return;
   DownloadUpdate(base::BindOnce(check_update_));
 }
 
@@ -14754,6 +14766,7 @@ void WorkspaceShell::ShowUpdateReady(std::string version, base::RepeatingClosure
 void WorkspaceShell::ShowUpdateOffer(std::string version, std::u16string message,
                                      std::u16string label, base::RepeatingClosure action,
                                      bool notify_again) {
+  update_download_pending_ = false;
   const bool changed = update_version_ != version || update_offer_label_ != label;
   update_version_ = std::move(version);
   update_offer_message_ = std::move(message);
@@ -14772,11 +14785,18 @@ void WorkspaceShell::ShowUpdateOffer(std::string version, std::u16string message
   }
 }
 
+void WorkspaceShell::SetUpdateDownloadPending(bool pending) {
+  update_download_pending_ = pending;
+  RefreshUpdateControls();
+}
+
 std::u16string WorkspaceShell::UpdateStatus() const {
+  if (update_download_pending_) return T(u"Pobieranie aktualizacji…");
   return update_check_message_.empty() ? update_offer_message_ : update_check_message_;
 }
 
 std::u16string WorkspaceShell::UpdateActionLabel() const {
+  if (update_download_pending_) return {};
   if (install_update_) return update_offer_label_;
   return update_release_url_.is_valid() ? T(u"Otwórz stronę wydania") : std::u16string();
 }
@@ -14785,7 +14805,7 @@ void WorkspaceShell::RunUpdateAction() {
   // Some actions close a widget that contains the button.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
-        if (!shell) return;
+        if (!shell || shell->update_download_pending_) return;
         if (shell->about_dialog_ && shell->update_offer_label_ != T(u"Pobierz aktualizację"))
           shell->about_dialog_->Close();
         if (shell->install_update_) {
@@ -14801,13 +14821,18 @@ void WorkspaceShell::RunUpdateAction() {
 void WorkspaceShell::RefreshUpdateControls() {
   const auto status = UpdateStatus();
   const auto label = UpdateActionLabel();
+  const bool busy = update_check_pending_ || update_download_pending_;
   if (about_view_)
-    about_view_->Refresh(status, label, bool(check_update_), update_check_pending_);
+    about_view_->Refresh(status, label, bool(check_update_), busy, update_download_pending_);
   if (!update_preferences_check_) return;
-  update_preferences_check_->SetEnabled(check_update_ && !update_check_pending_);
+  update_preferences_check_->SetEnabled(check_update_ && !busy);
   SetPanelText(update_preferences_status_, check_update_ ? status :
       T(u"Aktualizacje są niedostępne w tej instalacji."));
-  update_preferences_status_->SetVisible(!status.empty() || !check_update_);
+  update_preferences_status_->parent()->SetVisible(!status.empty() || !check_update_);
+  update_preferences_spinner_->SetVisible(update_download_pending_);
+  if (update_download_pending_) update_preferences_spinner_->Start();
+  else update_preferences_spinner_->Stop();
+  SchedulePreferenceChrome();
   views::AsViewClass<SceneTextButton>(update_preferences_action_)->SetText(label);
   update_preferences_action_->parent()->SetVisible(!label.empty());
   auto_update_check_toggle_->SetEnabled(bool(configure_updates_));

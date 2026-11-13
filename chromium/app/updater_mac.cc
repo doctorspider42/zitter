@@ -62,6 +62,7 @@ void MacUpdater::Configure(bool check, bool download) {
   if ((!check || !download) && update_download_ && !installer_requested_) {
     update_download_.reset();
     preparing_mac_installer_ = false;
+    shell_->SetUpdateDownloadPending(false);
   }
   if (!check) {
     update_startup_timer_.Stop();
@@ -161,6 +162,7 @@ void MacUpdater::PrepareMacInstaller(MacInstaller installer, bool requested) {
     return;
   installer_requested_ = requested;
   preparing_mac_installer_ = true;
+  shell_->SetUpdateDownloadPending(true);
   auto verify = base::BindOnce(&VerifyMacInstaller, installer.path, installer.size, installer.digest);
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT}, std::move(verify),
@@ -226,6 +228,8 @@ void MacUpdater::MacInstallerReady(MacInstaller installer, bool verified) {
       ShowReleaseOffer(installer.version,
                        prototype::T(u"Nie udało się zweryfikować pobranego instalatora."),
                        GURL("https://github.com/doctorspider42/zitter/releases/tag/v" + installer.version));
+    else
+      shell_->SetUpdateDownloadPending(false);
     return;
   }
   downloaded_mac_version_ = installer.version;

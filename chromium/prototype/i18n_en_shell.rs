@@ -107,6 +107,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Zainstaluj aktualizację {}…", "Install update {}…"),
     ("Sprawdź aktualizacje…", "Check for updates…"),
     ("Sprawdzanie aktualizacji…", "Checking for updates…"),
+    ("Pobieranie aktualizacji…", "Downloading update…"),
     ("Sprawdź aktualizacje", "Check for updates"),
     ("Masz najnowszą wersję Zitter.", "You’re running the latest version of Zitter."),
     ("Masz najnowszą dostępną wersję Zitter dla Windows.", "You’re running the latest available version of Zitter for Windows."),

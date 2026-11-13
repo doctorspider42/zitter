@@ -62,6 +62,7 @@ class MdTextButton;
 class Label;
 class MenuRunner;
 class Textfield;
+class Throbber;
 class View;
 class Widget;
 }
@@ -421,6 +422,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetUpdateCheckCallback(base::RepeatingCallback<void(UpdateCheckDone)> check,
                               base::RepeatingCallback<void(bool, bool)> configure = {});
   void DownloadUpdate(base::OnceCallback<void(UpdateCheckDone)> download);
+  void SetUpdateDownloadPending(bool pending);
   void ShowUpdateOffer(std::string version, std::u16string message,
                        std::u16string label, base::RepeatingClosure action,
                        bool notify_again = false);
@@ -1558,12 +1560,14 @@ class WorkspaceShell final : public ui::EventHandler,
   std::u16string update_offer_message_;
   std::u16string update_offer_label_;
   raw_ptr<views::View> update_preferences_status_ = nullptr;
+  raw_ptr<views::Throbber> update_preferences_spinner_ = nullptr;
   raw_ptr<views::View> update_preferences_check_ = nullptr;
   raw_ptr<views::View> update_preferences_action_ = nullptr;
   raw_ptr<views::View> auto_update_check_toggle_ = nullptr;
   raw_ptr<views::View> auto_update_download_toggle_ = nullptr;
   GURL update_release_url_;
   bool update_check_pending_ = false;
+  bool update_download_pending_ = false;
   size_t pin_visibility_update_count_ = 0;
   raw_ptr<views::View> profile_picker_ = nullptr;
   raw_ptr<EditorControl> workspace_input_ = nullptr;
