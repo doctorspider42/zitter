@@ -4199,6 +4199,7 @@ class ShellRoot final : public views::View {
   METADATA_HEADER(ShellRoot, views::View)
  public:
   ShellRoot() = default;
+  raw_ptr<views::View> site_settings = nullptr;
   gfx::Size GetMinimumSize() const override { return gfx::Size(560, 560); }
   void Layout(PassKey) override {
     if (content_fullscreen) {
@@ -4260,6 +4261,7 @@ class ShellRoot final : public views::View {
       if (assistant_pinned) page.set_width(std::max(0, assistant->x() - kGap - page.x()));
     }
     content->SetBoundsRect(page);
+    if (site_settings) site_settings->SetBoundsRect(page);
     auto page_bounds = content->bounds();
     if (assistant && assistant->GetVisible() && !assistant_pinned)
       page_bounds.set_width(std::max(0, assistant->x() - kGap - page_bounds.x()));
@@ -5482,7 +5484,7 @@ void WorkspaceShell::Detach() {
   address_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
   preferences_search_->SetCallbacks({},{});
-  site_origin_->SetCallbacks({},{});
+  if (site_origin_) site_origin_->SetCallbacks({},{});
   for(const auto& [key,field]:preference_textfields_)field->SetCallbacks({},{});
   import_scroll_ = nullptr;
   import_root_ = nullptr;
@@ -5600,8 +5602,7 @@ void WorkspaceShell::Detach() {
   clear_checks_.fill(nullptr);
   clear_tabs_.fill(nullptr);
   quit_dialog_.reset(); quit_dialog_delegate_.reset(); danger_dialog_.reset(); danger_dialog_delegate_.reset(); clear_dialog_.reset(); clear_dialog_delegate_.reset();
-  site_menu_runner_.reset(); site_menu_.reset(); site_rows_.clear(); site_data_row_ = nullptr; site_header_ = nullptr; site_body_ = nullptr;
-  site_panel_.reset(); site_panel_delegate_.reset();
+  CloseSitePanel();
 #if BUILDFLAG(IS_WIN)
   // The wizard closing with the window reports nothing: the window is going.
   if (welcome_delegate_) AbandonWelcome(welcome_delegate_->GetContentsView());
@@ -5628,6 +5629,10 @@ void WorkspaceShell::Detach() {
 }
 
 void WorkspaceShell::Update(ShellState state) {
+  if (site_settings_page_ &&
+      (state.profile_id != state_.profile_id || state.workspace_id != state_.workspace_id ||
+       state.active_tab != state_.active_tab || state.url != state_.url))
+    CloseSitePanel();
   if (state_.profile_id != state.profile_id || state_.workspace_id != state.workspace_id) {
     search_timer_.Stop(); search_results_.clear();
   }
@@ -7241,6 +7246,7 @@ constexpr int kRestoreSidebarTabTitle = 216;
 constexpr int kCopyImage = 217;
 constexpr int kOpenImageInNewTab = 218;
 constexpr int kCopyImageAddress = 219;
+constexpr int kAllSiteSettings = 220;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
@@ -7536,7 +7542,19 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
 void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
                                   gfx::Point point, base::RepeatingClosure inspect,
                                   std::optional<PageMenuNavigation> navigation) {
+  ShowLinkMenu(std::move(url), std::move(source_workspace), point,
+               std::move(inspect), std::move(navigation), false);
+}
+
+void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
+                                  gfx::Point point, base::RepeatingClosure inspect,
+                                  std::optional<PageMenuNavigation> navigation, bool from_address) {
   BuildLinkMenu(std::move(url), std::move(source_workspace), navigation ? &*navigation : nullptr);
+  if (from_address && callbacks_.site_panel) {
+    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    link_menu_->AddItemWithIcon(kAllSiteSettings, T(u"Wszystkie ustawienia witryny"),
+                               MenuIcon(vector_icons::kTuneIcon));
+  }
   inspect_element_ = std::move(inspect);
   const bool source = navigation && navigation->url.SchemeIsHTTPOrHTTPS();
   if (inspect_element_ || source) link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -8071,7 +8089,8 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
                                                ui::mojom::MenuSourceType source_type) {
   context_tab_.reset(); context_pin_.clear();context_tab_identity_={};
   if (source == url_pill_) {
-    if (state_.url.SchemeIsHTTPOrHTTPS()) ShowLinkMenu(state_.url, state_.workspace_id, point);
+    if (state_.url.SchemeIsHTTPOrHTTPS())
+      ShowLinkMenu(state_.url, state_.workspace_id, point, {}, std::nullopt, true);
     return;
   }
   if (auto cache = tab_lists_.find(state_.workspace_id); cache != tab_lists_.end()) {
@@ -8292,6 +8311,11 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     }
     workspace_menu_->AddItemWithIcon(kCopyTabAddress, T(u"Kopiuj adres karty"),
                                      MenuIcon(vector_icons::kLinkIcon));
+    if (context_tab_ && *context_tab_ == state_.active_tab && url.SchemeIsHTTPOrHTTPS() &&
+        callbacks_.site_panel) {
+      workspace_menu_->AddItemWithIcon(kAllSiteSettings, T(u"Wszystkie ustawienia witryny"),
+                                       MenuIcon(vector_icons::kTuneIcon));
+    }
     if (target.valid && callbacks_.tab_menu_url &&
         CleanUrlForCopy(callbacks_.tab_menu_url.Run(target.tab, target.pin))) {
       workspace_menu_->AddItemWithIcon(kCopyCleanTabAddress, T(u"Kopiuj bez trackerów"),
@@ -9025,6 +9049,17 @@ bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator*
   return false;
 }
 void WorkspaceShell::ExecuteCommand(int command_id, int) {
+  if (command_id == kAllSiteSettings) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+          if (!shell || !shell->callbacks_.site_panel)
+            return;
+          shell->callbacks_.site_panel.Run();
+          if (shell->site_panel_ && shell->site_handlers_.clear_storage)
+            shell->SwitchSiteSettings(true);
+        }, weak_factory_.GetWeakPtr()));
+    return;
+  }
   if (const auto action = extension_page_actions_.find(command_id);
       action != extension_page_actions_.end() && action->second) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
@@ -9789,7 +9824,9 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
       }
       auto* row=card->AddChildView(std::make_unique<views::View>());
       auto* labels=row->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),3);
-      copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);SetSidebarPanelLayout(row,false,gfx::Insets(),20,labels,true);
+      copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);
+      copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);
+      SetSidebarPanelLayout(row,false,gfx::Insets(),20,labels,true);
       for(auto& entry:preference_groups_)if(entry.card==card)entry.rows.push_back(row);
       preference_sections_[spec.category].rows.push_back({row,base::i18n::ToLower(text(catalogue.categories[spec.category])+u" "+text(spec.title)+u" "+text(spec.detail))});return row;
     }
@@ -9798,8 +9835,52 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);SetSidebarPanelLayout(row,false,gfx::Insets(16),20,labels,true);
     preference_sections_[spec.category].rows.push_back({row,base::i18n::ToLower(text(catalogue.categories[spec.category])+u" "+text(spec.title)+u" "+text(spec.detail))});return row;
   };
+  constexpr size_t kSiteSection = 3;
+  auto& sites = preference_sections_[kSiteSection];
+  constexpr auto kGroupTitles = std::to_array({
+      u"Dostęp do urządzenia", u"Zawartość witryn", u"Pozostałe uprawnienia"});
+  for (size_t i = 0; i < kSiteCategoryGroups.size(); ++i) {
+    auto* card = sites.view->AddChildView(std::make_unique<PreferenceSurface>(
+        false, base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome, weak),
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          return shell && shell->PreferenceChromeVisible();
+        }, weak)));
+    SetSidebarPanelLayout(card, true, gfx::Insets(16), 12);
+    copy(card, T(kGroupTitles[i]), kInk, 1, gfx::Font::Weight::SEMIBOLD, true);
+    preference_groups_.push_back({card, {}});
+    for (const auto& category : kSiteCategoryGroups[i]) {
+      const auto title = T(category.title);
+      const std::string key = std::string(kSiteDefaultPrefix) + category.key;
+      auto* row = card->AddChildView(std::make_unique<views::View>());
+      auto* label = copy(row, title, kInk, 0, gfx::Font::Weight::MEDIUM, true);
+      auto* status = copy(row, T(u"Niedostępne w tej wersji"), kMuted, -1,
+                          gfx::Font::Weight::NORMAL, false);
+      unavailable_preferences_[key] = status;
+      auto* picker = ChoicePicker(row, title, {});
+      preference_pickers_[key] = picker;
+      SetPickerCallback(picker, base::BindRepeating(
+          [](base::WeakPtr<WorkspaceShell> shell, std::string key) {
+            if (shell) {
+              const auto index = PickerIndex(shell->preference_pickers_.at(key));
+              if (index)
+                shell->WritePreference(key, static_cast<int>(*index));
+            }
+          }, weak, key));
+      SetSidebarPanelLayout(row, false, gfx::Insets(), 16, label, true);
+      sites.rows.push_back({row, base::i18n::ToLower(T(u"Uprawnienia stron") + u" " +
+                                                    title + u" " + base::UTF8ToUTF16(key))});
+      preference_groups_.back().rows.push_back(row);
+    }
+  }
   for(const auto& spec:catalogue.rows){
-    auto* row=make_row(spec);const auto title=text(spec.title);const std::string key(spec.key);
+    const std::string key(spec.key);
+    if (spec.kind == Kind::Toggle &&
+        std::ranges::find(kSitePreferenceKeys, key) != kSitePreferenceKeys.end())
+      continue;
+    if ((spec.kind == Kind::SiteEditor || spec.kind == Kind::SiteRules) &&
+        !callbacks_.write_site_preference)
+      continue;
+    auto* row=make_row(spec);const auto title=text(spec.title);
     if (key == "referrers" || key == "https_only" || key == "third_party_cookies" ||
         key == "do_not_track" || key == "assistant_background" ||
         key == "assistant_confirm_background" || key == "assistant_concurrency") {
@@ -10009,9 +10090,11 @@ void WorkspaceShell::RefreshGeneralControls() {
   SetToggleOn(folders_collapsed_check_,folders_collapsed_);
   {const auto stored=StoredUiLanguage(callbacks_.locale_preferences);SyncPickerIndex(language_picker_,stored=="pl"?1:stored=="en"?2:0);}
   if (profile_changed) {
-    site_origin_->SetText(u"");
-    ResetPreferenceRuleLimit();
-    RefreshSitePreferences();
+    if (site_origin_) {
+      site_origin_->SetText(u"");
+      ResetPreferenceRuleLimit();
+      RefreshSitePreferences();
+    }
   }
   // Rust owns availability/managed copy; Views keeps its original strings.
   const bool rust_copy =
@@ -10079,6 +10162,18 @@ void WorkspaceShell::RefreshGeneralControls() {
     if (const auto unavailable = unavailable_preferences_.find(key);
         unavailable != unavailable_preferences_.end())
       unavailable->second->SetVisible(it == values.end());
+    if (unavailable_preferences_.contains(key)) {
+      control->SetVisible(it != values.end());
+      if (it != values.end()) {
+        const auto& policies = it->second.text;
+        std::vector<std::pair<std::string, std::u16string>> options = {{"block", T(u"Blokuj")}};
+        if (policies.find('p') != std::string::npos)
+          options.emplace_back("ask", T(u"Pytaj"));
+        if (policies.find('a') != std::string::npos)
+          options.emplace_back("allow", T(u"Zezwalaj"));
+        ReplacePickerOptions(control, options);
+      }
+    }
     if (it != values.end()) SyncPickerIndex(control,it->second.value < 0 ? std::nullopt : std::optional<size_t>(it->second.value));
   }
   RefreshUpdateControls();
@@ -10755,6 +10850,8 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   else if (repaint) ApplyTheme(/*refresh_controls=*/false);
   if (repaint && sidebar_root_) sidebar_root_->SchedulePaint();
   root_->SetBackground(views::CreateSolidBackground(FrameVoid(color, root_)));
+  if (site_settings_page_)
+    site_settings_page_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
   const auto tint = FrameTint(color, root_);
   root_->SchedulePaint();
   if (pinned_) {
@@ -11005,7 +11102,7 @@ const SitePermissionLook* SiteLook(const std::string& key){
   for(const auto& look:*looks)if(look.key==key)return &look;
   return nullptr;
 }
-std::u16string SitePermissionName(const std::string& key){const auto* look=SiteLook(key);return look?T(look->name):base::UTF8ToUTF16(key);}
+std::u16string SitePermissionName(const std::string& key){if(key.starts_with("protocol:"))return TF(u"Otwieranie aplikacji ({})",{base::UTF8ToUTF16(key.substr(9))+u":"});const auto* look=SiteLook(key);return look?T(look->name):base::UTF8ToUTF16(key);}
 const gfx::VectorIcon& SitePermissionIcon(const std::string& key){const auto* look=SiteLook(key);return look?*look->icon:vector_icons::kTuneIcon;}
 // 1 wizyta, 2–4 wizyty, 5 wizyt (12–14 wizyt).
 std::u16string VisitsText(int count){
@@ -11183,14 +11280,22 @@ END_METADATA
 // Design B: Zezwalaj · Pytaj za każdym razem · Blokuj, then forgetting the site.
 class SitePermissionMenu final : public ui::SimpleMenuModel,public ui::SimpleMenuModel::Delegate {
  public:
-  enum : int { kAllow=1, kBlock=2, kAsk=3, kForget=10 };
-  SitePermissionMenu(const SitePermissionState& state,base::RepeatingCallback<void(int)> chosen):ui::SimpleMenuModel(this),current_(state.setting),chosen_(std::move(chosen)){
-    AddRadioItem(kAllow,T(u"Zezwalaj"),1);
-    if(state.can_ask)AddRadioItem(kAsk,T(u"Pytaj za każdym razem"),1);
-    AddRadioItem(kBlock,T(u"Blokuj"),1);
+  enum : int { kDefault=0, kAllow=1, kBlock=2, kAsk=3, kForget=10 };
+  SitePermissionMenu(const SitePermissionState& state, bool can_reset, base::RepeatingCallback<void(int)> chosen):ui::SimpleMenuModel(this),current_(state.setting),chosen_(std::move(chosen)){
+    if (state.can_allow && !state.key.starts_with("protocol:"))
+      AddRadioItem(kAllow,T(u"Zezwalaj"),1);
+    if (state.key.starts_with("protocol:")) {
+      AddItem(kDefault, T(u"Cofnij zgodę"));
+    } else {
+      if (state.can_ask) AddRadioItem(kAsk, T(u"Pytaj za każdym razem"), 1);
+      AddRadioItem(kBlock, T(u"Blokuj"), 1);
+      if (!can_reset) AddItem(kDefault, T(u"Użyj ustawienia domyślnego"));
+    }
     if(state.today)if(const auto index=GetIndexOfCommandId(current_))SetMinorText(*index,T(u"od dziś"));
-    AddSeparator(ui::NORMAL_SEPARATOR);
-    AddItem(kForget,T(u"Zapomnij ustawienia tej witryny"));
+    if (can_reset) {
+      AddSeparator(ui::NORMAL_SEPARATOR);
+      AddItem(kForget, T(u"Zapomnij ustawienia tej witryny"));
+    }
     editable_=state.editable;
   }
   bool IsCommandIdChecked(int command) const override{return command==current_;}
@@ -11212,26 +11317,52 @@ std::u16string SiteSince(const SiteDataFacts& facts){
 }
 }  // namespace
 void WorkspaceShell::ToggleSitePanel(){
-  if(site_panel_&&site_panel_->IsVisible()){CloseSitePanel();return;}
+  if (site_settings_page_ || (site_panel_ && site_panel_->IsVisible())) { CloseSitePanel(); return; }
   if(callbacks_.site_panel)callbacks_.site_panel.Run();
 }
 void WorkspaceShell::CloseSitePanel(){
-  if(!site_panel_)return;
+  if (!site_panel_ && !site_settings_page_) return;
   site_menu_runner_.reset();site_menu_.reset();site_rows_.clear();site_data_row_=nullptr;site_header_=nullptr;site_body_=nullptr;
+  if (site_settings_page_) {
+    auto* root = static_cast<ShellRoot*>(root_.get());
+    root->site_settings = nullptr;
+    auto* page = site_settings_page_.get();
+    site_settings_page_ = nullptr;
+    root->RemoveChildViewT(page);
+  }
   auto widget=std::move(site_panel_);widget.reset();site_panel_delegate_.reset();
   if(url_pill_)SetRowSiteControls(url_pill_,RowSiteControls(url_pill_),false);
   ScheduleMetalSidebar();
 }
-void WorkspaceShell::ShowSitePanel(SiteSummary summary,SiteHandlers handlers){
+void WorkspaceShell::ShowSitePanel(SiteSummary summary, SiteHandlers handlers, bool full) {
   if(!url_pill_||!sidebar_visible())return;
   CloseSitePanel();
-  site_summary_=std::move(summary);site_handlers_=std::move(handlers);site_facts_={};site_page_=0;++site_generation_;
+  site_summary_=std::move(summary);site_handlers_=std::move(handlers);site_facts_={};site_page_=full ? 2 : 0;++site_generation_;
   auto weak=weak_factory_.GetWeakPtr();
   auto body=std::make_unique<views::View>();site_body_=body.get();
-  auto dialog=std::make_unique<SceneModalDialog>(std::move(body),false,false);
-  dialog->SetTitle(TF(u"Ustawienia witryny {}",{site_summary_.host}));dialog->SetShowTitle(false);dialog->SetShowCloseButton(false);
-  dialog->set_fixed_width(kSitePanelWidth);dialog->set_margins(gfx::Insets::VH(10,0));dialog->set_corner_radius(12);
-  dialog->set_close_on_deactivate(true);dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
+  if (full) {
+    PanelViewport* viewport = nullptr;
+    auto scroll = CreatePanelViewport(&viewport, {});
+    viewport->SetPanelContents(std::move(body));
+    scroll->SetPaintToLayer();
+    scroll->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
+    auto* root = static_cast<ShellRoot*>(root_.get());
+    site_settings_page_ = root->AddChildView(std::move(scroll));
+    root->site_settings = site_settings_page_;
+    BuildSitePage();
+    root->InvalidateLayout();
+    widget_->LayoutRootViewIfNecessary();
+    return;
+  }
+  auto dialog=std::make_unique<SceneModalDialog>(std::move(body), false, false);
+  dialog->SetTitle(TF(u"Ustawienia witryny {}", {site_summary_.host}));
+  dialog->SetShowTitle(false);
+  dialog->SetShowCloseButton(false);
+  dialog->set_fixed_width(kSitePanelWidth);
+  dialog->set_margins(gfx::Insets::VH(10, 0));
+  dialog->set_corner_radius(12);
+  dialog->set_close_on_deactivate(true);
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
   // Design A: 10 px in from the panel's edge, the rows' own 6 px inside that.
   SetSidebarPanelLayout(dialog->GetContentsView(),true,gfx::Insets::VH(0,10),0);
   site_panel_delegate_=std::move(dialog);
@@ -11246,13 +11377,13 @@ void WorkspaceShell::ShowSitePanel(SiteSummary summary,SiteHandlers handlers){
   PreparePanelText(widget->GetRootView());
   widget->Show();PlaceSitePanel();
   SetRowSiteControls(url_pill_,true,true);ScheduleMetalSidebar();
-  if(site_handlers_.measure)site_handlers_.measure.Run(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,const SiteDataFacts& facts){
+  if (!site_handlers_.clear_storage && site_handlers_.measure) site_handlers_.measure.Run(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,const SiteDataFacts& facts){
     if(shell&&shell->site_generation_==generation)shell->ApplySiteFacts(facts);},weak,site_generation_));
 }
 // An anchorless bubble hangs centred below its anchor point: put that point
 // under the pill, half the panel in from its left edge.
 void WorkspaceShell::PlaceSitePanel(){
-  if(!site_panel_||!url_pill_)return;
+  if(!site_panel_||!url_pill_||site_page_==2)return;
   auto* bubble=site_panel_delegate_->AsBubbleDialogDelegate();if(!bubble)return;
   bubble->SizeToContents();const auto anchor=url_pill_->GetBoundsInScreen();
   bubble->SetAnchorRect(gfx::Rect(anchor.x()+site_panel_->GetWindowBoundsInScreen().width()/2,anchor.bottom()+6,0,0));
@@ -11263,7 +11394,55 @@ void WorkspaceShell::BuildSitePage(){
   site_menu_runner_.reset();site_menu_.reset();site_rows_.clear();site_data_row_=nullptr;site_header_=nullptr;
   site_body_->RemoveAllChildViews();
   const auto& host=site_summary_.host;const auto& facts=site_facts_;
-  if(site_page_==0){
+  if (site_page_ == 2) {
+    auto* back = ActionGroup(site_body_, false, 8);
+    AddAction(back, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+      if (shell)
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(&WorkspaceShell::CloseSitePanel, shell));
+    }, weak), T(u"Wróć do witryny"));
+    PanelText(site_body_, T(u"Ustawienia witryny"), kDisplayLarge, kInk);
+    site_body_->AddChildView(std::make_unique<SiteHeader>(
+        host, TF(u"Profil: {}", {site_handlers_.profile_name}), false,
+        views::Button::PressedCallback()));
+    site_body_->AddChildView(std::make_unique<SceneHairline>());
+    PanelText(site_body_, T(u"Dane witryny"), kTitleText, kInk);
+    for (bool cookies : {true, false}) {
+      auto* row = site_body_->AddChildView(std::make_unique<views::View>());
+      auto* label = PanelText(row, cookies ? T(u"Ciasteczka") : u"Local storage",
+                              kBodyText, kInk);
+      row->AddChildView(std::make_unique<SceneDangerPill>(
+          base::BindRepeating(&WorkspaceShell::ConfirmSiteStorageClear, weak, cookies),
+          T(u"Wyczyść"), cookies ? T(u"Wyczyść ciasteczka") : T(u"Wyczyść local storage")));
+      SetSidebarPanelLayout(row, false, gfx::Insets(), 12, label, true);
+    }
+    site_body_->AddChildView(std::make_unique<SceneHairline>());
+    PanelText(site_body_, T(u"Dostępy"), kTitleText, kInk);
+    for (size_t i = 0; i < site_summary_.permissions.size(); ++i) {
+      const auto& state = site_summary_.permissions[i];
+      const auto value = state.setting == 1 ? T(u"Dozwolone")
+          : state.setting == 2 ? T(u"Zablokowane") : T(u"Pyta");
+      site_rows_.push_back(site_body_->AddChildView(std::make_unique<SiteRowButton>(
+          base::BindRepeating(&WorkspaceShell::OpenSitePermissionMenu, weak, i),
+          &SitePermissionIcon(state.key), SitePermissionName(state.key), value,
+          SiteRowButton::Tone::kMuted, 0)));
+    }
+    if (site_rows_.empty())
+      PanelText(site_body_, T(u"Brak ustawionych wyjątków."), kBodyText, kMuted);
+    {
+      auto* actions = ActionGroup(site_body_, false, 8);
+      AddAction(actions, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        if (shell)
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+                if (shell) {
+                  shell->OpenGeneralSettings();
+                  shell->SelectPreferenceCategory(3);
+                }
+              }, shell));
+      }, weak), T(u"Domyślne uprawnienia witryn"));
+    }
+  } else if(site_page_==0){
     // Design A: the site, its own permissions in a word each, and its data.
     auto line=site_summary_.secure?T(u"Szyfrowane"):T(u"Nieszyfrowane");
     if(const auto since=SiteSince(facts);!since.empty())line+=u" · "+since;
@@ -11276,7 +11455,13 @@ void WorkspaceShell::BuildSitePage(){
           &SitePermissionIcon(state.key),SitePermissionName(state.key),value,tone,0)));
     }
     if(site_summary_.permissions.empty())site_body_->AddChildView(std::make_unique<SiteNote>(T(u"Nic jeszcze nie zezwolono ani nie zablokowano. Strona zapyta, gdy będzie czegoś potrzebować.")));
-    if (site_handlers_.measure || site_handlers_.clear) {
+    if (site_handlers_.clear_storage) {
+      site_body_->AddChildView(std::make_unique<SceneHairline>());
+      site_body_->AddChildView(std::make_unique<SiteRowButton>(
+          base::BindRepeating(&WorkspaceShell::SwitchSiteSettings, weak, true),
+          &vector_icons::kTuneIcon, T(u"Wszystkie ustawienia witryny"),
+          std::u16string(), SiteRowButton::Tone::kMuted, 1));
+    } else if (site_handlers_.measure || site_handlers_.clear) {
       site_body_->AddChildView(std::make_unique<SceneHairline>());
       site_data_row_=site_body_->AddChildView(std::make_unique<SiteRowButton>(base::BindRepeating(&WorkspaceShell::ShowSiteData,weak,true),
           &vector_icons::kDatabaseIcon,T(u"Dane witryny"),DataSummary(facts),SiteRowButton::Tone::kMono,1));
@@ -11306,34 +11491,75 @@ void WorkspaceShell::BuildSitePage(){
     clear->SetPreferredSize(gfx::Size(pill_width,28));
     SetSidebarPanelLayout(footer,false,gfx::Insets::TLBR(2,0,2,6),8,note,true);
   }
-  SetSidebarPanelLayout(site_body_,true,gfx::Insets(),2);
+  SetSidebarPanelLayout(site_body_,true,site_page_ == 2 ? gfx::Insets(24) : gfx::Insets(),site_page_ == 2 ? 8 : 2);
   PreparePanelText(site_body_);
   if(site_panel_){site_body_->InvalidateLayout();PlaceSitePanel();}
 }
+void WorkspaceShell::SwitchSiteSettings(bool full) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(
+          [](base::WeakPtr<WorkspaceShell> shell, uint64_t generation, bool full) {
+            if (!shell || !shell->site_panel_ || shell->site_generation_ != generation)
+              return;
+            auto summary = shell->site_handlers_.read ? shell->site_handlers_.read.Run(full)
+                                                      : shell->site_summary_;
+            shell->ShowSitePanel(std::move(summary), std::move(shell->site_handlers_), full);
+          }, weak_factory_.GetWeakPtr(), site_generation_, full));
+}
+
+void WorkspaceShell::ConfirmSiteStorageClear(bool cookies) {
+  if (!site_settings_page_ || !site_handlers_.clear_storage)
+    return;
+  ConfirmDanger(
+      widget_, cookies ? T(u"Wyczyścić ciasteczka?") : T(u"Wyczyścić local storage?"),
+      TF(u"{} · Profil: {}", {site_summary_.host, site_handlers_.profile_name}),
+      cookies ? T(u"Usunięcie ciasteczek może Cię wylogować.")
+              : T(u"Witryna może utracić lokalne dane i preferencje."),
+      T(u"Wyczyść"),
+      base::BindOnce(
+          [](base::WeakPtr<WorkspaceShell> shell, uint64_t generation, bool cookies, bool accepted) {
+            if (!accepted || !shell || !shell->site_settings_page_ ||
+                shell->site_generation_ != generation)
+              return;
+            auto clear = shell->site_handlers_.clear_storage;
+            clear.Run(cookies, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
+              if (shell)
+                shell->ShowToast(ok ? T(u"Dane witryny wyczyszczone")
+                                    : T(u"Nie udało się wyczyścić danych witryny"), {}, {});
+            }, shell));
+          }, weak_factory_.GetWeakPtr(), site_generation_, cookies));
+}
+
 void WorkspaceShell::ShowSiteData(bool data){
-  if(!site_panel_)return;site_page_=data?1:0;
+  if (!site_panel_) return;
+  if (site_handlers_.clear_storage) {
+    SwitchSiteSettings(data);
+    return;
+  }
+  site_page_ = data ? 1 : 0;
   // Rebuilt after the press that asked for it has finished.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->BuildSitePage();},weak_factory_.GetWeakPtr()));
 }
 void WorkspaceShell::ApplySiteFacts(const SiteDataFacts& facts){
   site_facts_=facts;
+  if(site_page_==2)return;
   if(site_page_==1){BuildSitePage();return;}
   if(site_data_row_)static_cast<SiteRowButton*>(site_data_row_.get())->SetValue(DataSummary(facts));
   if(site_header_){auto line=site_summary_.secure?T(u"Szyfrowane"):T(u"Nieszyfrowane");if(const auto since=SiteSince(facts);!since.empty())line+=u" · "+since;static_cast<SiteHeader*>(site_header_.get())->SetLine(line);}
 }
 void WorkspaceShell::OpenSitePermissionMenu(size_t row){
-  if(row>=site_rows_.size()||row>=site_summary_.permissions.size()||!site_panel_)return;
+  if(row>=site_rows_.size()||row>=site_summary_.permissions.size()||(!site_panel_ && !site_settings_page_))return;
   site_menu_runner_.reset();
-  site_menu_=std::make_unique<SitePermissionMenu>(site_summary_.permissions[row],base::BindRepeating(&WorkspaceShell::ChooseSitePermission,weak_factory_.GetWeakPtr(),row));
+  site_menu_=std::make_unique<SitePermissionMenu>(site_summary_.permissions[row], site_page_ != 2,base::BindRepeating(&WorkspaceShell::ChooseSitePermission,weak_factory_.GetWeakPtr(),row));
   site_menu_runner_=std::make_unique<views::MenuRunner>(site_menu_.get(),views::MenuRunner::HAS_MNEMONICS);
-  site_menu_runner_->RunMenuAt(site_panel_.get(),nullptr,site_rows_[row]->GetBoundsInScreen(),views::MenuAnchorPosition::kTopRight,ui::mojom::MenuSourceType::kMouse);
+  site_menu_runner_->RunMenuAt(site_panel_ ? site_panel_.get() : widget_.get(),nullptr,site_rows_[row]->GetBoundsInScreen(),views::MenuAnchorPosition::kTopRight,ui::mojom::MenuSourceType::kMouse);
 }
 void WorkspaceShell::ChooseSitePermission(size_t row,int choice){
   if(row>=site_summary_.permissions.size())return;
   if(choice==SitePermissionMenu::kForget){if(site_handlers_.reset_permissions)site_handlers_.reset_permissions.Run();}
   else if(site_handlers_.set_permission)site_handlers_.set_permission.Run(site_summary_.permissions[row].key,choice);
   // The panel stays, with what the site now has.
-  if(site_handlers_.read)site_summary_=site_handlers_.read.Run();
+  if(site_handlers_.read)site_summary_=site_handlers_.read.Run(site_page_ == 2);
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->BuildSitePage();},weak_factory_.GetWeakPtr()));
 }
 void WorkspaceShell::RemoveSiteCookie(SiteCookie cookie){
@@ -13013,7 +13239,7 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
       (profiles_widget_ && profiles_widget_->IsVisible()) || import_visible() ||
       (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible()) ||
-      find_visible() || print_visible() || renaming;
+      find_visible() || print_visible() || site_settings_page_ || renaming;
   HideFind();
   HidePrint();
   CloseSitePanel();

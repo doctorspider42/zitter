@@ -1,6 +1,8 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
 #include "workspace_lab.h"
+
+#include "chromium/prototype/site_storage.h"
 #include "http_auth_prompt.h"
 
 #include "adblock_cache_probe.h"
@@ -4359,7 +4361,7 @@ void WorkspaceLab::OpenSitePanel() {
   prototype::WorkspaceShell::SiteHandlers handlers;
   handlers.read = base::BindRepeating(
       [](const base::RepeatingCallback<Permissions*()>& resolve,
-         const url::Origin& origin) {
+         const url::Origin& origin, bool full) {
         prototype::SiteSummary summary;
         summary.url = origin.GetURL();
         summary.host = base::UTF8ToUTF16(origin.Serialize());
@@ -4374,6 +4376,12 @@ void WorkspaceLab::OpenSitePanel() {
               .setting = static_cast<int>(current->GetPopupSetting(origin)),
               .can_ask = false,
           });
+          if (full && current->CanClearSitePermissions()) {
+            for (const auto* key : {"media-stream-camera", "media-stream-mic"})
+              summary.permissions.push_back({.key = key, .setting = current->MediaSetting(origin, prototype::SiteDefaultKey(key)), .can_allow = false});
+          }
+          for (const auto& scheme : current->AllowedExternalProtocols(origin))
+            summary.permissions.push_back({.key = "protocol:" + scheme, .setting = 1});
         }
         return summary;
       },
@@ -4386,22 +4394,41 @@ void WorkspaceLab::OpenSitePanel() {
           return false;
         if (key == "clipboard") {
           return current->SetClipboardSetting(
-              origin, static_cast<Permissions::ClipboardSetting>(setting));
+              origin, setting ? std::optional(static_cast<Permissions::ClipboardSetting>(setting)) : std::nullopt);
         }
+        if (key == "media-stream-camera" || key == "media-stream-mic")
+          return current->SetMediaSetting(origin, prototype::SiteDefaultKey(key), setting);
+        if (key.starts_with("protocol:"))
+          return (setting == 0 || setting == 3) && current->ForgetExternalProtocol(origin, key.substr(9));
         return key == "popups" && current->SetPopupSetting(
-            origin, static_cast<Permissions::PopupSetting>(setting));
+            origin, setting ? std::optional(static_cast<Permissions::PopupSetting>(setting)) : std::nullopt);
       },
       resolve, origin);
   handlers.reset_permissions = base::BindRepeating(
       [](const base::RepeatingCallback<Permissions*()>& resolve,
          const url::Origin& origin) {
         if (auto* current = resolve.Run()) {
-          current->SetClipboardSetting(origin, Permissions::ClipboardSetting::kAsk);
+          current->SetClipboardSetting(origin, std::nullopt);
           current->SetPopupSetting(origin, std::nullopt);
+          current->SetMediaSetting(origin, "camera", 0);
+          current->SetMediaSetting(origin, "microphone", 0);
+          for (const auto& scheme : current->AllowedExternalProtocols(origin))
+            current->ForgetExternalProtocol(origin, scheme);
         }
       },
       resolve, origin);
-  auto summary = handlers.read.Run();
+  handlers.profile_name = base::UTF8ToUTF16(WorkspaceProfileName(active_index_));
+  handlers.clear_storage = base::BindRepeating(
+      [](base::RepeatingCallback<Permissions*()> resolve,
+         content::WeakDocumentPtr document, bool cookies,
+         base::OnceCallback<void(bool)> done) {
+        if (!resolve.Run()) {
+          std::move(done).Run(false);
+          return;
+        }
+        prototype::ClearSiteStorage(document, std::move(done), cookies, !cookies);
+      }, resolve, frame->GetWeakDocumentPtr());
+  auto summary = handlers.read.Run(false);
   shell_->ShowSitePanel(std::move(summary), std::move(handlers));
 }
 
@@ -4871,7 +4898,7 @@ void WorkspaceLab::CheckSitePermissionProbe() {
   if (!site_permission_probe_changed_) {
     shell_->ToggleSitePanel();
     auto* panel = shell_->site_panel_for_testing();
-    if (!panel || !panel->IsVisible() || shell_->site_rows_for_testing() != 2 ||
+    if (!panel || !panel->IsVisible() || shell_->site_rows_for_testing() < 2 ||
         panel->color_mode_override() != widget_->color_mode_override()) {
       LOG(ERROR) << "The Clipboard permission row did not appear in the site panel";
       Finish(false);
@@ -7415,6 +7442,12 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
   auto& permissions = profile.site_permissions();
   if (permissions.CanEditSitePermissions()) {
     settings["popups"] = {.value = permissions.GetPopupDefault(), .editable = true};
+    settings["site_default.popups"] = {.value = permissions.GetPopupDefault(), .editable = true, .text = "a"};
+    for (const auto* key : {"media-stream-camera", "media-stream-mic", "clipboard"}) {
+      settings[std::string(prototype::kSiteDefaultPrefix) + key] = {
+          .value = permissions.PromptByDefault(prototype::SiteDefaultKey(key)),
+          .editable = permissions.CanClearSitePermissions(), .text = "p"};
+    }
   }
   if (const auto saving = profile.GetPasswordSavingSetting())
     settings["save_passwords"] = {.value = *saving, .editable = true};
@@ -7481,7 +7514,13 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
     PersistWorkspaceChanges();
     return true;
   }
-  if (key == "popups")
+  if (key == "site_default.media-stream-camera" || key == "site_default.media-stream-mic" ||
+      key == "site_default.clipboard") {
+    const auto category = std::string_view(key).substr(prototype::kSiteDefaultPrefix.size());
+    return CanEditWorkspace() && profile.site_permissions().SetPromptByDefault(
+        prototype::SiteDefaultKey(category), value == 1);
+  }
+  if (key == "popups" || key == "site_default.popups")
     return CanEditWorkspace() && profile.site_permissions().SetPopupDefault(value == 1);
   if (key == "fingerprint_protection") {
     if (!profile.SetFingerprintProtection(value == 1))
@@ -11559,7 +11598,7 @@ void WorkspaceLab::AdvanceSessionProbe() {
     auto& permissions = contexts_[0]->site_permissions();
     if (!restore) {
       shell_->ToggleSitePanel();
-      if (shell_->site_rows_for_testing() != 2) {
+      if (shell_->site_rows_for_testing() < 2) {
         Finish(false);
         return;
       }

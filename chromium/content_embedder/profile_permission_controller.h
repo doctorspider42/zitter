@@ -45,7 +45,17 @@ class ProfilePermissionController final
   bool CanRememberExternalProtocol(const url::Origin& origin) const;
   bool IsExternalProtocolAllowed(const url::Origin& origin,
                                  std::string_view scheme) const;
+  std::vector<std::string> AllowedExternalProtocols(const url::Origin& origin) const;
+  bool ForgetExternalProtocol(const url::Origin& origin, std::string_view scheme);
   void AllowExternalProtocol(const url::Origin& origin, std::string_view scheme);
+
+  static constexpr char kPromptDefaults[] = "zitter.permission_prompt_defaults";
+  static constexpr char kMediaRules[] = "zitter.media_permissions";
+  static constexpr char kMediaRuleTimes[] = "zitter.media_permission_times";
+  bool PromptByDefault(std::string_view key) const;
+  bool SetPromptByDefault(std::string_view key, bool prompt);
+  int MediaSetting(const url::Origin& origin, std::string_view key) const;
+  bool SetMediaSetting(const url::Origin& origin, std::string_view key, int setting);
 
   static bool IsPopupOriginEligible(const url::Origin& origin);
   bool GetPopupDefault() const;
@@ -60,7 +70,7 @@ class ProfilePermissionController final
   bool CanClearSitePermissions() const;
   void ClearSitePermissions(base::Time begin, base::Time end);
   ClipboardSetting GetClipboardSetting(const url::Origin& origin) const;
-  bool SetClipboardSetting(const url::Origin& origin, ClipboardSetting setting);
+  bool SetClipboardSetting(const url::Origin& origin, std::optional<ClipboardSetting> setting);
   bool HasClipboardReadGrant(content::RenderFrameHost* frame);
   using ClipboardReadPrompt = base::RepeatingCallback<void(
       content::RenderFrameHost&, base::OnceCallback<void(bool)>)>;
@@ -98,7 +108,7 @@ class ProfilePermissionController final
                        const GURL& embedding_origin) override;
 
  private:
-  void NotifyClipboardPermissionChanged(const url::Origin& origin);
+  void NotifyClipboardPermissionChanged(std::optional<url::Origin> origin);
 
   std::unique_ptr<PrefService> site_permission_prefs_;
   base::DictValue private_clipboard_rules_;

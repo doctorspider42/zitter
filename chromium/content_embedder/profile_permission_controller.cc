@@ -172,10 +172,54 @@ void ProfilePermissionController::ClearSitePermissions(base::Time begin,
   };
   const auto clipboard = clear(kClipboardPrefs, kClipboardRuleTimes);
   clear(kPopupPrefs, kPopupRuleTimes);
+  clear(kMediaRules, kMediaRuleTimes);
   clear(kExternalProtocolPrefs, kExternalProtocolRuleTimes);
   site_permission_prefs_->CommitPendingWrite();
   for (const auto& key : clipboard)
     NotifyClipboardPermissionChanged(url::Origin::Create(GURL(key)));
+}
+
+bool ProfilePermissionController::PromptByDefault(std::string_view key) const {
+  return !site_permission_prefs_ ||
+         site_permission_prefs_->GetDict(kPromptDefaults).FindBool(key).value_or(true);
+}
+
+bool ProfilePermissionController::SetPromptByDefault(std::string_view key,
+                                                    bool prompt) {
+  if (!CanClearSitePermissions() ||
+      (key != "clipboard" && key != "camera" && key != "microphone"))
+    return false;
+  {
+    ScopedDictPrefUpdate update(site_permission_prefs_.get(), kPromptDefaults);
+    update->Set(key, prompt);
+  }
+  site_permission_prefs_->CommitPendingWrite();
+  if (key == "clipboard")
+    NotifyClipboardPermissionChanged(std::nullopt);
+  return true;
+}
+
+int ProfilePermissionController::MediaSetting(const url::Origin& origin,
+                                               std::string_view key) const {
+  if (site_permission_prefs_) {
+    const auto rule = site_permission_prefs_->GetDict(kMediaRules)
+        .FindInt(origin.Serialize() + " " + std::string(key));
+    if (rule == 2 || rule == 3)
+      return *rule;
+  }
+  return PromptByDefault(key) ? 3 : 2;
+}
+
+bool ProfilePermissionController::SetMediaSetting(
+    const url::Origin& origin, std::string_view key, int setting) {
+  if (!CanClearSitePermissions() || !IsPopupOriginEligible(origin) ||
+      (key != "camera" && key != "microphone") ||
+      (setting != 0 && setting != 2 && setting != 3))
+    return false;
+  base::DictValue unused_private_rules;
+  return WriteSiteSetting(site_permission_prefs_.get(), kMediaRules, kMediaRuleTimes,
+                          unused_private_rules, origin.Serialize() + " " + std::string(key),
+                          setting ? std::optional(setting) : std::nullopt, 256);
 }
 
 ProfilePermissionController::ClipboardSetting
@@ -187,21 +231,18 @@ ProfilePermissionController::GetClipboardSetting(const url::Origin& origin) cons
     return ClipboardSetting::kAllow;
   if (value == static_cast<int>(ClipboardSetting::kBlock))
     return ClipboardSetting::kBlock;
-  return ClipboardSetting::kAsk;
+  if (value == static_cast<int>(ClipboardSetting::kAsk) || PromptByDefault("clipboard"))
+    return ClipboardSetting::kAsk;
+  return ClipboardSetting::kBlock;
 }
 
 bool ProfilePermissionController::SetClipboardSetting(
-    const url::Origin& origin, ClipboardSetting setting) {
+    const url::Origin& origin, std::optional<ClipboardSetting> setting) {
   if (!CanEditSitePermissions() || !IsClipboardOriginEligible(origin) ||
-      (setting != ClipboardSetting::kAllow && setting != ClipboardSetting::kBlock &&
-       setting != ClipboardSetting::kAsk)) {
+      (setting && *setting != ClipboardSetting::kAllow &&
+       *setting != ClipboardSetting::kBlock && *setting != ClipboardSetting::kAsk))
     return false;
-  }
-  if (GetClipboardSetting(origin) == setting)
-    return true;
-
-  const auto stored = setting == ClipboardSetting::kAsk
-                          ? std::nullopt : std::make_optional(static_cast<int>(setting));
+  const auto stored = setting ? std::optional(static_cast<int>(*setting)) : std::nullopt;
   if (!WriteSiteSetting(site_permission_prefs_.get(), kClipboardPrefs, kClipboardRuleTimes,
                           private_clipboard_rules_, origin.Serialize(), stored, kMaxClipboardRules)) {
     return false;
@@ -256,6 +297,33 @@ bool ProfilePermissionController::IsExternalProtocolAllowed(
   return CanRememberExternalProtocol(origin) &&
          site_permission_prefs_->GetDict(kExternalProtocolPrefs)
              .FindInt(origin.Serialize() + " " + std::string(scheme)) == 1;
+}
+
+std::vector<std::string> ProfilePermissionController::AllowedExternalProtocols(
+    const url::Origin& origin) const {
+  std::vector<std::string> schemes;
+  if (!CanRememberExternalProtocol(origin))
+    return schemes;
+  const auto prefix = origin.Serialize() + " ";
+  for (const auto [key, value] : site_permission_prefs_->GetDict(kExternalProtocolPrefs)) {
+    if (key.starts_with(prefix) && value.is_int() && value.GetInt() == 1) {
+      const auto scheme = key.substr(prefix.size());
+      if (scheme.size() <= 64 && GURL(scheme + ":").scheme() == scheme)
+        schemes.push_back(scheme);
+    }
+  }
+  return schemes;
+}
+
+bool ProfilePermissionController::ForgetExternalProtocol(
+    const url::Origin& origin, std::string_view scheme) {
+  if (!IsExternalProtocolAllowed(origin, scheme))
+    return false;
+  base::DictValue unused_private_rules;
+  return WriteSiteSetting(site_permission_prefs_.get(), kExternalProtocolPrefs,
+                          kExternalProtocolRuleTimes, unused_private_rules,
+                          origin.Serialize() + " " + std::string(scheme),
+                          std::nullopt, 256);
 }
 
 void ProfilePermissionController::AllowExternalProtocol(
@@ -316,7 +384,7 @@ void ProfilePermissionController::OnPermissionStatusChangeSubscriptionAdded(
 }
 
 void ProfilePermissionController::NotifyClipboardPermissionChanged(
-    const url::Origin& origin) {
+    std::optional<url::Origin> origin) {
   if (!subscriptions())
     return;
   std::vector<base::OnceClosure> callbacks;
@@ -330,7 +398,7 @@ void ProfilePermissionController::NotifyClipboardPermissionChanged(
     }
     auto* frame = content::RenderFrameHost::FromID(subscription->render_process_id,
                                                   subscription->render_frame_id);
-    if (!frame || frame->GetLastCommittedOrigin() != origin)
+    if (!frame || (origin && frame->GetLastCommittedOrigin() != *origin))
       continue;
     auto result = GetPermissionResultForCurrentDocument(
         subscription->permission_descriptor, frame,
@@ -492,7 +560,7 @@ void ProfilePermissionController::ResetPermission(
   if ((type == blink::PermissionType::CLIPBOARD_READ_WRITE ||
        type == blink::PermissionType::CLIPBOARD_SANITIZED_WRITE) &&
       url::Origin::Create(requesting_origin) == url::Origin::Create(embedding_origin)) {
-    SetClipboardSetting(url::Origin::Create(requesting_origin), ClipboardSetting::kAsk);
+    SetClipboardSetting(url::Origin::Create(requesting_origin), std::nullopt);
     return;
   }
   if (type == blink::PermissionType::PERSISTENT_STORAGE &&

@@ -1,5 +1,6 @@
 #include "chromium/prototype/site_data.h"
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <utility>
@@ -46,6 +47,23 @@ constexpr std::array<std::string_view, 12> kInternal = {
 const content_settings::ContentSettingsInfo* InfoFor(const std::string& key) {
   const auto* website = content_settings::WebsiteSettingsRegistry::GetInstance()->GetByName(key);
   return website ? content_settings::ContentSettingsRegistry::GetInstance()->Get(website->type()) : nullptr;
+}
+
+bool IsSiteCategory(std::string_view key) {
+  return std::ranges::any_of(kSiteCategoryGroups, [key](auto group) {
+    return std::ranges::any_of(group, [key](const auto& category) {
+      return category.key == key;
+    });
+  });
+}
+
+std::vector<ContentSetting> DefaultPolicies(const content_settings::ContentSettingsInfo& info) {
+  std::vector<ContentSetting> result;
+  for (const auto setting : {CONTENT_SETTING_BLOCK, CONTENT_SETTING_ASK, CONTENT_SETTING_ALLOW}) {
+    if (info.IsDefaultSettingValid(setting))
+      result.push_back(setting);
+  }
+  return result;
 }
 
 // The site's registrable domain: cookies and storage are cleared for all of it.
@@ -98,7 +116,46 @@ void DeleteSiteHistory(Profile* profile, const GURL& url, base::OnceClosure done
 
 }  // namespace
 
-SiteSummary ReadSitePermissions(Profile* profile, const GURL& url) {
+void AppendSiteDefaults(Profile* profile, BrowserPreferences& result) {
+  auto* map = HostContentSettingsMapFactory::GetForProfile(profile);
+  for (const auto group : kSiteCategoryGroups) {
+    for (const auto& category : group) {
+      const auto* info = InfoFor(category.key);
+      if (!info)
+        continue;
+      const auto policies = DefaultPolicies(*info);
+      if (policies.empty() || policies.front() != CONTENT_SETTING_BLOCK)
+        continue;
+      content_settings::ProviderType provider;
+      const auto setting = map->GetDefaultContentSetting(
+          info->website_settings_info()->type(), &provider);
+      const auto index = std::ranges::find(policies, setting);
+      std::string options;
+      if (std::ranges::contains(policies, CONTENT_SETTING_ASK)) options += 'p';
+      if (std::ranges::contains(policies, CONTENT_SETTING_ALLOW)) options += 'a';
+      result[std::string(kSiteDefaultPrefix) + category.key] = {
+          index == policies.end() ? -1 : static_cast<int>(index - policies.begin()),
+          content_settings::GetSettingSourceFromProviderType(provider) ==
+              content_settings::SettingSource::kUser, std::move(options)};
+    }
+  }
+}
+
+bool WriteSiteDefault(Profile* profile, std::string_view key, int index) {
+  if (!IsSiteCategory(key))
+    return false;
+  const auto* info = InfoFor(std::string(key));
+  if (!info)
+    return false;
+  const auto policies = DefaultPolicies(*info);
+  if (index < 0 || static_cast<size_t>(index) >= policies.size())
+    return false;
+  HostContentSettingsMapFactory::GetForProfile(profile)->SetDefaultContentSetting(
+      info->website_settings_info()->type(), policies[index]);
+  return true;
+}
+
+SiteSummary ReadSitePermissions(Profile* profile, const GURL& url, bool full) {
   SiteSummary summary;
   summary.url = url;
   summary.host = base::UTF8ToUTF16(url.host());
@@ -110,20 +167,28 @@ SiteSummary ReadSitePermissions(Profile* profile, const GURL& url) {
   // rule the site was given can always be changed back here.
   for (const auto* registry : *content_settings::ContentSettingsRegistry::GetInstance()) {
     const auto& name = registry->website_settings_info()->name();
-    if (std::ranges::find(kInternal, std::string_view(name)) != kInternal.end()) continue;
+    const bool category = full && IsSiteCategory(name);
+    if ((!category && std::ranges::contains(kInternal, std::string_view(name))) ||
+        !registry->IsSettingValid(CONTENT_SETTING_BLOCK))
+      continue;
     const auto type = registry->website_settings_info()->type();
     content_settings::SettingInfo info;
     const auto setting = settings->GetContentSetting(url, url, type, &info);
     // Only what this site has its own rule for; defaults stay out of the way.
-    if (info.source != content_settings::SettingSource::kUser && info.source != content_settings::SettingSource::kPolicy) continue;
-    if (info.primary_pattern == ContentSettingsPattern::Wildcard() &&
-        info.secondary_pattern == ContentSettingsPattern::Wildcard()) continue;
+    if (!category &&
+        ((info.source != content_settings::SettingSource::kUser &&
+          info.source != content_settings::SettingSource::kPolicy) ||
+         (info.primary_pattern == ContentSettingsPattern::Wildcard() &&
+          info.secondary_pattern == ContentSettingsPattern::Wildcard())))
+      continue;
     SitePermissionState state;
     state.key = name;
     state.setting = setting == CONTENT_SETTING_ALLOW ? 1 : setting == CONTENT_SETTING_BLOCK ? 2 : 3;
     state.can_ask = registry->IsSettingValid(CONTENT_SETTING_ASK);
     state.today = !info.metadata.last_modified().is_null() && info.metadata.last_modified() >= midnight;
-    state.editable = info.source == content_settings::SettingSource::kUser;
+    state.editable = info.source == content_settings::SettingSource::kUser ||
+                     info.source == content_settings::SettingSource::kNone;
+    state.can_allow = registry->IsSettingValid(CONTENT_SETTING_ALLOW);
     summary.permissions.push_back(std::move(state));
   }
   return summary;
@@ -131,13 +196,13 @@ SiteSummary ReadSitePermissions(Profile* profile, const GURL& url) {
 
 bool WriteSitePermission(Profile* profile, const GURL& url, const std::string& key, int setting) {
   const auto* registry = InfoFor(key);
-  if (!registry || !url.SchemeIsHTTPOrHTTPS() || setting < 1 || setting > 3) return false;
+  if (!registry || !url.SchemeIsHTTPOrHTTPS() || setting < 0 || setting > 3) return false;
   const auto type = registry->website_settings_info()->type();
   auto* settings = HostContentSettingsMapFactory::GetForProfile(profile);
   content_settings::SettingInfo info;
   settings->GetContentSetting(url, url, type, &info);
   if (info.source != content_settings::SettingSource::kUser && info.source != content_settings::SettingSource::kNone) return false;
-  ContentSetting value = setting == 1 ? CONTENT_SETTING_ALLOW : setting == 2 ? CONTENT_SETTING_BLOCK : CONTENT_SETTING_ASK;
+  ContentSetting value = static_cast<ContentSetting>(setting);
   // "Ask" is the default for permissions: drop the rule instead of pinning it.
   if (value == CONTENT_SETTING_ASK && settings->GetDefaultContentSetting(type) == CONTENT_SETTING_ASK) value = CONTENT_SETTING_DEFAULT;
   if (value != CONTENT_SETTING_DEFAULT && !registry->IsSettingValid(value)) return false;

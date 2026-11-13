@@ -20,6 +20,7 @@
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/common/url_constants.h"
 #include "chromium/prototype/site_data.h"
+#include "chromium/prototype/site_storage.h"
 #include "chromium/prototype/passwords_panel.h"
 #include "chrome/browser/device_reauth/chrome_device_authenticator_factory.h"
 #include "chrome/browser/download/download_core_service.h"
@@ -198,6 +199,8 @@
 #include "ui/gfx/image/image_family.h"
 #include "ui/gfx/win/icon_util.h"
 #endif
+
+#include "url/origin.h"
 
 namespace zitter::prototype {
 BASE_FEATURE(kZitterLiveFolders, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -1870,6 +1873,7 @@ BrowserPreferences WorkspaceWindow::ReadPreferences() const {
     if (entry) result[key] = {value, entry->IsUserModifiable()};
   };
   AppendChromiumPreferences(profile, g_browser_process->local_state(), result);
+  AppendSiteDefaults(profile, result);
   for (const auto& entry : kBooleanPreferences)
     read(entry.key, entry.pref, service->GetBoolean(entry.pref));
   result["ad_blocking_stealth"] = {std::ranges::all_of(kStealthLists, [&](const char* id) { return ContentBlocking::ListEnabled(profile, id); }),
@@ -1982,6 +1986,8 @@ bool WorkspaceWindow::WritePreference(std::string key, int value) {
   }
   auto* profile = ProfileFor(model_.active()->profile_id);
   auto* service = profile->GetPrefs();
+  if (key.starts_with(kSiteDefaultPrefix))
+    return WriteSiteDefault(profile, std::string_view(key).substr(kSiteDefaultPrefix.size()), value);
   if (auto result = WriteChromiumPreference(profile, g_browser_process->local_state(), key, value)) return *result;
   if (key == "preconnect") {
     if (value != 0 && value != 1) return false;
@@ -2116,11 +2122,11 @@ void WorkspaceWindow::ShowSitePanel() {
   const GURL url = page->GetLastCommittedURL();
   auto weak_page = page->GetWeakPtr();
   auto alive = [](base::WeakPtr<content::WebContents> page, const GURL& url) {
-    return page && page->GetLastCommittedURL().host() == url.host();
+    return page && url::Origin::Create(page->GetLastCommittedURL()) == url::Origin::Create(url);
   };
   WorkspaceShell::SiteHandlers handlers;
-  handlers.read = base::BindRepeating([](base::WeakPtr<content::WebContents> page, GURL url) {
-    return page ? ReadSitePermissions(Profile::FromBrowserContext(page->GetBrowserContext()), url) : SiteSummary();
+  handlers.read = base::BindRepeating([](base::WeakPtr<content::WebContents> page, GURL url, bool full) {
+    return page ? ReadSitePermissions(Profile::FromBrowserContext(page->GetBrowserContext()), url, full) : SiteSummary();
   }, weak_page, url);
   handlers.set_permission = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, std::string key, int setting) {
     return alive(page, url) && WriteSitePermission(Profile::FromBrowserContext(page->GetBrowserContext()), url, key, setting);
@@ -2141,6 +2147,12 @@ void WorkspaceWindow::ShowSitePanel() {
   handlers.delete_cookie = base::BindRepeating([](decltype(alive) alive, base::WeakPtr<content::WebContents> page, GURL url, SiteCookie cookie) {
     if (alive(page, url)) DeleteSiteCookie(Profile::FromBrowserContext(page->GetBrowserContext()), std::move(cookie), base::DoNothing());
   }, alive, weak_page, url);
+  handlers.profile_name = BrowsingProfileName(profile);
+  handlers.clear_storage = base::BindRepeating(
+      [](content::WeakDocumentPtr document, bool cookies,
+         base::OnceCallback<void(bool)> done) {
+        ClearSiteStorage(document, std::move(done), cookies, !cookies);
+      }, page->GetPrimaryMainFrame()->GetWeakDocumentPtr());
   shell_->ShowSitePanel(ReadSitePermissions(profile, url), std::move(handlers));
 }
 

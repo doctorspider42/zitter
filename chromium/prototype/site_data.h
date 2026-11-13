@@ -12,8 +12,10 @@ namespace zitter::prototype {
 // model, history and remover do the work.
 
 // Every permission this site has its own rule for, keyed by Chromium's name.
-SiteSummary ReadSitePermissions(Profile* profile, const GURL& url);
-// `key` is that name; `setting` 1 allow, 2 block, 3 ask (back to the default when that asks).
+SiteSummary ReadSitePermissions(Profile* profile, const GURL& url, bool full = false);
+void AppendSiteDefaults(Profile* profile, BrowserPreferences& result);
+bool WriteSiteDefault(Profile* profile, std::string_view key, int index);
+// `key` is that name; `setting` 0 default, 1 allow, 2 block, 3 ask (back to the default when that asks).
 bool WriteSitePermission(Profile* profile, const GURL& url, const std::string& key, int setting);
 // Every rule for this site back to the defaults.
 void ResetSitePermissions(Profile* profile, const GURL& url);

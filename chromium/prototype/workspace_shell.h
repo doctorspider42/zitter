@@ -345,6 +345,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point,
                     base::RepeatingClosure inspect = {},
                     std::optional<PageMenuNavigation> navigation = std::nullopt);
+  void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point,
+                    base::RepeatingClosure inspect,
+                    std::optional<PageMenuNavigation> navigation, bool from_address);
   void SetDeveloperPage(GURL url, bool allowed = true, bool compare = true);
   void SetDeveloperMode(std::string mode);
   void ShowDeveloperMenu();
@@ -794,13 +797,15 @@ class WorkspaceShell final : public ui::EventHandler,
     ~SiteHandlers();
     base::RepeatingCallback<bool(std::string, int)> set_permission;
     base::RepeatingClosure reset_permissions;
-    base::RepeatingCallback<SiteSummary()> read;
+    base::RepeatingCallback<SiteSummary(bool)> read;
     base::RepeatingCallback<void(base::RepeatingCallback<void(const SiteDataFacts&)>)> measure;
     base::RepeatingCallback<void(SiteClearChoice)> clear;
     base::RepeatingCallback<void(SiteCookie)> delete_cookie;
+    std::u16string profile_name;
+    base::RepeatingCallback<void(bool, base::OnceCallback<void(bool)>)> clear_storage;
   };
   void ToggleSitePanel();
-  void ShowSitePanel(SiteSummary summary, SiteHandlers handlers);
+  void ShowSitePanel(SiteSummary summary, SiteHandlers handlers, bool full = false);
   void CloseSitePanel();
   // The panel's data page (design C), or back to its permissions.
   void ShowSiteData(bool data);
@@ -1441,6 +1446,9 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> permission_chip_ = nullptr;  // A site's permission request.
   void BuildSitePage();
   void PlaceSitePanel();
+  void SwitchSiteSettings(bool full);
+  void ConfirmSiteStorageClear(bool cookies);
+  raw_ptr<views::View> site_settings_page_ = nullptr;
   void ApplySiteFacts(const SiteDataFacts& facts);
   void OpenSitePermissionMenu(size_t row);
   void ChooseSitePermission(size_t row, int choice);

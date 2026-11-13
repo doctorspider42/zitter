@@ -2,6 +2,9 @@
 
 #include "workspace_media_access.h"
 
+#include "profile_context.h"
+#include "profile_permission_controller.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <optional>
@@ -66,12 +69,18 @@ bool IsTabCapture(Type type) {
 bool IsEligible(content::RenderFrameHost* frame, content::WebContents* page,
                 const url::Origin& origin, bool audio, bool video,
                 bool tab = false) {
-  return frame && page && page->GetPrimaryMainFrame() == frame &&
+  if (!frame || !page)
+    return false;
+  const auto& permissions =
+      static_cast<ProfileContext*>(frame->GetBrowserContext())->site_permissions();
+  return page->GetPrimaryMainFrame() == frame &&
          frame->IsActive() && page->GetVisibility() == content::Visibility::VISIBLE &&
          frame->GetLastCommittedOrigin() == origin &&
          network::IsOriginPotentiallyTrustworthy(origin) &&
-         (!audio || frame->IsFeatureEnabled(Policy::kMicrophone)) &&
-         (!video || frame->IsFeatureEnabled(Policy::kCamera)) &&
+         (!audio || (permissions.MediaSetting(origin, "microphone") != 2 &&
+                     frame->IsFeatureEnabled(Policy::kMicrophone))) &&
+         (!video || (permissions.MediaSetting(origin, "camera") != 2 &&
+                     frame->IsFeatureEnabled(Policy::kCamera))) &&
          (!tab || frame->IsFeatureEnabled(Policy::kDisplayCapture));
 }
 

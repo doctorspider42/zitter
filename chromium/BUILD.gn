@@ -107,6 +107,7 @@ source_set("shell") {
     "chromium/prototype/rss_chrome.cc",
     "chromium/prototype/site_data.cc",
     "chromium/prototype/site_data.h",
+    "chromium/prototype/site_storage.h",
     "chromium/prototype/fingerprint_protection.h",
     "chromium/prototype/fingerprint_protection.cc",
     "chromium/prototype/content_blocking.h",

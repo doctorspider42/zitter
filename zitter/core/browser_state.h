@@ -42,6 +42,7 @@ struct SitePermissionState {
   bool can_ask = true;  // Sound, images and JavaScript only allow or block.
   bool today = false;   // Changed since midnight.
   bool editable = true; // False under policy or an extension.
+  bool can_allow = true;
 };
 
 struct SiteClearChoice {

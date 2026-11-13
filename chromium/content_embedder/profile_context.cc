@@ -1442,7 +1442,8 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
       if (!Permissions::IsClipboardOriginEligible(origin) ||
           origin.Serialize() != key || !rule.is_int() ||
           (rule.GetInt() != static_cast<int>(Permissions::ClipboardSetting::kAllow) &&
-           rule.GetInt() != static_cast<int>(Permissions::ClipboardSetting::kBlock))) {
+           rule.GetInt() != static_cast<int>(Permissions::ClipboardSetting::kBlock) &&
+           rule.GetInt() != static_cast<int>(Permissions::ClipboardSetting::kAsk))) {
         return nullptr;
       }
     }
@@ -1467,6 +1468,9 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
   }
   auto registry = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
   registry->RegisterDictionaryPref(Permissions::kClipboardPrefs);
+  registry->RegisterDictionaryPref(Permissions::kPromptDefaults);
+  registry->RegisterDictionaryPref(Permissions::kMediaRules);
+  registry->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
   registry->RegisterDictionaryPref(Permissions::kPopupPrefs);
   registry->RegisterDictionaryPref(Permissions::kClipboardRuleTimes);
   registry->RegisterDictionaryPref(Permissions::kPopupRuleTimes);
@@ -1812,6 +1816,9 @@ void ProfileContext::InitializeNewWorkspacePreferences() {
   using Permissions = ProfilePermissionController;
   auto site = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
   site->RegisterDictionaryPref(Permissions::kClipboardPrefs);
+  site->RegisterDictionaryPref(Permissions::kPromptDefaults);
+  site->RegisterDictionaryPref(Permissions::kMediaRules);
+  site->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
   site->RegisterDictionaryPref(Permissions::kPopupPrefs);
   site->RegisterDictionaryPref(Permissions::kClipboardRuleTimes);
   site->RegisterDictionaryPref(Permissions::kPopupRuleTimes);

@@ -4,7 +4,9 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <span>
 #include <string>
+#include <string_view>
 #include <optional>
 #include <vector>
 
@@ -28,6 +30,80 @@ inline constexpr std::array<const char*, 9> kSitePreferenceKeys = {
 // Polish source text (the English is in i18n_en_native.rs): show through T().
 inline constexpr std::array<const char16_t*, 9> kSitePreferenceNames = {
     u"JavaScript", u"Obrazy", u"Wyskakujące okna", u"Dźwięk", u"Powiadomienia", u"Lokalizacja", u"Kamera", u"Mikrofon", u"Schowek"};
+
+// The site settings categories exposed by Chromium, including feature- and
+// platform-dependent entries. Each backend supplies the policies it implements.
+struct SiteCategory {
+  const char* key;
+  const char16_t* title;
+};
+
+inline constexpr SiteCategory kSiteContentCategories[] = {
+    {"javascript", u"JavaScript"},
+    {"images", u"Obrazy"},
+    {"popups", u"Wyskakujące okna"},
+    {"sound", u"Dźwięk"},
+    {"automatic-downloads", u"Pobieranie wielu plików"},
+    {"auto-picture-in-picture", u"Automatyczny obraz w obrazie"},
+    {"mixed-script", u"Niezabezpieczona zawartość"},
+    {"subresource-filter", u"Natrętne reklamy"},
+    {"javascript-optimizer", u"Optymalizator JavaScript"},
+    {"javascript-jit", u"Kompilacja JavaScript JIT"},
+    {"protected-media-identifier", u"Chronione treści"},
+    {"automatic-fullscreen", u"Pełny ekran bez pytania"},
+};
+
+inline constexpr SiteCategory kSiteDeviceCategories[] = {
+    {"media-stream-camera", u"Kamera"},
+    {"media-stream-mic", u"Mikrofon"},
+    {"geolocation", u"Lokalizacja"},
+    {"notifications", u"Powiadomienia"},
+    {"clipboard", u"Schowek"},
+    {"file-system-write-guard", u"Edycja plików"},
+    {"bluetooth-guard", u"Urządzenia Bluetooth"},
+    {"bluetooth-scanning", u"Wyszukiwanie Bluetooth"},
+    {"usb-guard", u"Urządzenia USB"},
+    {"hid-guard", u"Urządzenia HID"},
+    {"serial-guard", u"Porty szeregowe"},
+    {"midi-sysex", u"Urządzenia MIDI"},
+    {"smart-card-guard", u"Karty inteligentne"},
+    {"sensors", u"Czujniki ruchu"},
+    {"vr", u"Wirtualna rzeczywistość"},
+    {"ar", u"Rozszerzona rzeczywistość"},
+    {"hand-tracking", u"Śledzenie dłoni"},
+    {"speaker-selection", u"Wybór głośnika"},
+    {"captured-surface-control", u"Sterowanie udostępnianym ekranem"},
+    {"web-printing", u"Drukowanie"},
+};
+
+inline constexpr SiteCategory kSiteOtherCategories[] = {
+    {"background-sync", u"Synchronizacja w tle"},
+    {"idle-detection", u"Wykrywanie bezczynności"},
+    {"local-fonts", u"Czcionki na komputerze"},
+    {"window-placement", u"Zarządzanie oknami"},
+    {"keyboard-lock", u"Przejmowanie klawiatury"},
+    {"storage-access", u"Dostęp do danych w ramkach"},
+    {"top-level-storage-access", u"Dostęp do danych innych witryn"},
+    {"payment-handler", u"Obsługa płatności"},
+    {"webid-api", u"Logowanie przez zewnętrzne usługi"},
+    {"web-app-installation", u"Instalowanie aplikacji internetowych"},
+    {"local-network-access", u"Połączenia z siecią lokalną"},
+    {"local-network", u"Sieć lokalna"},
+    {"loopback-network", u"Usługi na tym komputerze"},
+    {"protocol-handler", u"Otwieranie linków"},
+};
+
+inline constexpr auto kSiteCategoryGroups = std::to_array<std::span<const SiteCategory>>(
+    {kSiteDeviceCategories, kSiteContentCategories, kSiteOtherCategories});
+
+inline constexpr std::string_view kSiteDefaultPrefix = "site_default.";
+
+inline constexpr std::string_view SiteDefaultKey(std::string_view key) {
+  if (key == "media-stream-camera") return "camera";
+  if (key == "media-stream-mic") return "microphone";
+  if (key == "geolocation") return "location";
+  return key;
+}
 
 using ::zitter::SitePreferenceRule;
 using ::zitter::BrowsingDataSelection;
