@@ -2065,6 +2065,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       params.bounds.AdjustToFit(work_area);
       restore_window_fullscreen_ = placement->FindBool("fullscreen").value_or(false);
       restore_window_maximized_ = placement->FindBool("maximized").value_or(false);
+#if BUILDFLAG(IS_MAC)
+      // AppKit zoom can depend on the window's contents. Restore the screen's
+      // available bounds directly for a maximized window.
+      if (restore_window_maximized_ && !restore_window_fullscreen_ && !work_area.IsEmpty()) {
+        params.bounds = work_area;
+        restore_window_maximized_ = false;
+      }
+#endif
     }
   }
   params.delegate = delegate_.get();
@@ -3473,8 +3481,6 @@ void WorkspaceLab::StartWorkspace() {
   }
   if (std::exchange(restore_window_maximized_, false))
     widget_->Maximize();
-  if (std::exchange(restore_window_fullscreen_, false))
-    widget_->SetFullscreen(true);
   if (private_owner_) {
     SelectWorkspace(std::string(kWorkspaceIds[0]));
     shell_->OpenAddress(false);
@@ -3659,6 +3665,15 @@ void WorkspaceLab::StartWorkspace() {
   if (restore_extensions)
     session_probe_advancing_ = true;
   SelectWorkspace(model_.workspaces()[restored_workspace_].id);
+  if (std::exchange(restore_window_fullscreen_, false)) {
+    // AppKit needs the main window and its content to be ready before
+    // entering a full-screen space during launch.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab && lab->widget_->IsVisible() && !lab->saving_session_)
+            lab->widget_->SetFullscreen(true);
+        }, weak_factory_.GetWeakPtr()));
+  }
   if (std::exchange(close_after_workspace_start_, false)) {
     RequestClose();
     return;
@@ -9171,9 +9186,15 @@ void WorkspaceLab::OnWidgetActivationChanged(views::Widget* widget, bool active)
 }
 
 void WorkspaceLab::OnWidgetShowStateChanged(views::Widget* widget) {
-  if (widget == widget_.get() && fullscreen_page_ && !widget->IsFullscreen()) {
+  if (widget != widget_.get())
+    return;
+  if (fullscreen_page_ && !widget->IsFullscreen()) {
     window_was_fullscreen_ = false;
     ExitPageFullscreen();
+  }
+  if (!window_placement_at_close_ && model_.active() && !widget->IsMinimized() &&
+      CanEditWorkspace()) {
+    PersistWorkspaceChanges();
   }
 }
 
@@ -11392,6 +11413,9 @@ void WorkspaceLab::RequestClose() {
       replacing_timeline_ || download_close_prompt_pending_) {
     return;
   }
+  // Save the placement while the browser window is still in its current
+  // Space. AppKit can change the show state while quit dialogs are active.
+  window_placement_at_close_ = CaptureWindowPlacement();
   auto pages = OpenPages();
   if (std::ranges::none_of(pages, [](auto* page) {
         return page->NeedToFireBeforeUnload();
@@ -11406,7 +11430,11 @@ void WorkspaceLab::RequestClose() {
     std::rotate(pages.begin(), current, current + 1);
   CheckBeforeUnload(
       pages, base::BindOnce(&WorkspaceLab::ConfirmDownloadShutdown,
-                            weak_factory_.GetWeakPtr()));
+                            weak_factory_.GetWeakPtr()),
+      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+        if (lab)
+          lab->window_placement_at_close_.reset();
+      }, weak_factory_.GetWeakPtr()));
 }
 
 void WorkspaceLab::ConfirmDownloadShutdown() {
@@ -11443,19 +11471,35 @@ void WorkspaceLab::OnDownloadShutdownAnswered(bool close) {
   download_close_prompt_pending_ = false;
   if (close)
     CommitClose();
+  else
+    window_placement_at_close_.reset();
+}
+
+base::DictValue WorkspaceLab::CaptureWindowPlacement() const {
+  const auto bounds = widget_->GetRestoredBounds();
+  if (bounds.IsEmpty())
+    return {};
+  const bool fullscreen = fullscreen_page_ ? window_was_fullscreen_ : widget_->IsFullscreen();
+  bool maximized = widget_->IsMaximized();
+#if BUILDFLAG(IS_MAC)
+  // Tiling and resizing a window to fill the display can leave isZoomed false.
+  const auto work_area = display::Screen::Get()->GetDisplayMatching(bounds).work_area();
+  maximized = !fullscreen && (maximized || bounds == work_area);
+#endif
+  return base::DictValue()
+      .Set("x", bounds.x()).Set("y", bounds.y())
+      .Set("width", bounds.width()).Set("height", bounds.height())
+      .Set("maximized", maximized)
+      .Set("fullscreen", fullscreen);
 }
 
 base::DictValue WorkspaceLab::CaptureSession() const {
   base::DictValue session;
   session.Set("active_workspace", model_.active()->id);
-  const auto bounds = widget_->GetRestoredBounds();
-  if (!bounds.IsEmpty()) {
-    session.Set("window_placement", base::DictValue()
-        .Set("x", bounds.x()).Set("y", bounds.y())
-        .Set("width", bounds.width()).Set("height", bounds.height())
-        .Set("maximized", widget_->IsMaximized())
-        .Set("fullscreen", fullscreen_page_ ? window_was_fullscreen_ : widget_->IsFullscreen()));
-  }
+  auto placement = window_placement_at_close_ ? window_placement_at_close_->Clone()
+                                              : CaptureWindowPlacement();
+  if (!placement.empty())
+    session.Set("window_placement", std::move(placement));
   if (startup_import_pending_)
     session.Set("startup_import_pending", true);
   if (!removed_workspaces_.empty())
@@ -11590,6 +11634,7 @@ void WorkspaceLab::SessionSaved(bool ok) {
     return;
   }
   saving_session_ = false;
+  window_placement_at_close_.reset();
   shell_->SetConfigurationError(true);
 }
 

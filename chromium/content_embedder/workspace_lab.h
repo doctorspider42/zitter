@@ -257,6 +257,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PersistWorkspaceChanges();
   void PinSessionSaved(bool crash_probe, bool ok);
   void SessionSaved(bool ok);
+  base::DictValue CaptureWindowPlacement() const;
   base::DictValue CaptureSession() const;
   base::DictValue CaptureWorkspaceSession(size_t workspace) const;
   std::vector<content::WebContents*> OpenPages() const;
@@ -995,6 +996,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool window_was_fullscreen_ = false;
   bool restore_window_fullscreen_ = false;
   bool restore_window_maximized_ = false;
+  std::optional<base::DictValue> window_placement_at_close_;
   base::ScopedObservation<views::Widget, views::WidgetObserver>
       fullscreen_observation_{this};
   base::ScopedObservation<find_in_page::FindTabHelper,

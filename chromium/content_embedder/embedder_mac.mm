@@ -161,6 +161,14 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
     if (icon)
       self.applicationIconImage = icon;
   }
+  NSBundle* bundle = NSBundle.mainBundle;
+  if ([bundle.bundleIdentifier isEqualToString:@"dev.zitter.browser"] &&
+      [bundle.bundleURL.URLByDeletingLastPathComponent.path isEqualToString:@"/Applications"]) {
+    // The persistent Dock tile resolves the installed bundle through Launch
+    // Services after this process and its applicationIconImage are gone.
+    LSRegisterURL((__bridge CFURLRef)bundle.bundleURL, true);
+    [NSWorkspace.sharedWorkspace noteFileSystemChanged:bundle.bundlePath];
+  }
   if (self.delegate == self)
     [self installExternalUrlEvents];
 }
