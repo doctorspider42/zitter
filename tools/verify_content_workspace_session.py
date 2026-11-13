@@ -616,7 +616,7 @@ window.startFixtureAudio = async () => {
 };
 window.stopFixtureAudio = async () => {
   await context.close();
-  document.title = 'Audio fixture badge hidden';
+  document.title = 'Audio fixture unmuted by speaker';
 };
 </script>""")
             return
@@ -3681,10 +3681,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     await rejects(() => chrome.tabs.discard(audio.id), 'No eligible Workspace tab');
     await chrome.tabs.update(audio.id, {active: true});
     await chrome.tabs.update(audio.id, {muted: true});
-    await waitForPage(audioPath, 'Audio fixture badge hidden', audio.id);
+    await waitForPage(audioPath, 'Audio fixture unmuted by speaker', audio.id);
     for (let attempt = 0; attempt < 60 && (await chrome.tabs.get(audio.id)).audible; ++attempt)
       await new Promise(resolve => setTimeout(resolve, 50));
-    if ((await chrome.tabs.get(audio.id)).audible ||
+    const stoppedAudio = await chrome.tabs.get(audio.id);
+    if (stoppedAudio.audible || stoppedAudio.mutedInfo.muted ||
         !updatedTabs.some(update => update.tabId === audio.id && update.change.audible === false)) {
       throw Error('Stopping Web Audio did not clear the audible tab and event');
     }

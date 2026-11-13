@@ -259,6 +259,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   bool OpenLink(const GURL& url, std::string source_workspace, bool new_tab, bool split = false);
   WorkspaceShell* shell() const override;
   bool NavigateFromBar(const GURL& url, bool new_tab) override;
+  content::WebContents* TabContentsForAudio(size_t index) const;
   void SelectTab(size_t index);
   void CloseTab(size_t index);
   void CloseActiveTab();

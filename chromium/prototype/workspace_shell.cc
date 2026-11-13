@@ -708,7 +708,7 @@ std::u16string TabMonogram(const GURL& url, std::u16string_view title) {
 }
 
 
-enum class ControlGlyph { kVector, kSidebar, kDot, kSwatch, kMore, kDownloads, kReturnToPin, kConfirmTabName };
+enum class ControlGlyph { kVector, kSidebar, kDot, kSwatch, kMore, kDownloads, kReturnToPin, kConfirmTabName, kTabAudio };
 void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIcon* icon,SkColor color,bool on,const std::u16string& label,views::Button::ButtonState state,gfx::Canvas* canvas){
     const auto bounds = view->GetLocalBounds();
     if (glyph != ControlGlyph::kDot && glyph != ControlGlyph::kSwatch && view->GetEnabled() &&
@@ -760,6 +760,7 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
         for (int dx : {-5, 0, 5}) FillRound(canvas, gfx::Rect(center.x() + dx - 1, center.y() - 1, 3, 3), 2, ink);
         break;
       case ControlGlyph::kReturnToPin:
+      case ControlGlyph::kTabAudio:
       case ControlGlyph::kConfirmTabName:
       case ControlGlyph::kDownloads:  // The Rust recipe paints it (RustActionView::OnPaint).
         break;
@@ -853,7 +854,7 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   sidebar::Item item{}; item.kind=7;
   item.x=rect.x(); item.y=rect.y(); item.width=rect.width(); item.height=rect.height();
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
-  item.glyph=glyph==ControlGlyph::kReturnToPin ? 12 : glyph==ControlGlyph::kConfirmTabName ? 13 : glyph==GlyphButton::Glyph::kDownloads ? 11 : glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
+  item.glyph=glyph==ControlGlyph::kTabAudio ? 14 : glyph==ControlGlyph::kReturnToPin ? 12 : glyph==ControlGlyph::kConfirmTabName ? 13 : glyph==GlyphButton::Glyph::kDownloads ? 11 : glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
       : icon==&vector_icons::kReloadCustomIcon ? 5 : (icon==&vector_icons::kCloseSmallIcon || icon==&vector_icons::kCloseIcon) ? 7 : icon==&vector_icons::kSearchIcon ? 8
        : icon==&vector_icons::kAdd2Icon ? 9 : icon==&vector_icons::kLinkIcon ? 10 : 2;
@@ -875,7 +876,10 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.ink=Tone(view,!view->GetEnabledInViewsSubtree() ? kDisabled : item.glyph==1 ? item.active || item.hovered ? kInk : kMuted : item.hovered ? kInk : kSubtle);
   item.monogram=base::UTF16ToUTF8(label); item.font_size=item.glyph==1&&rect.height()>=36?18:Font(3).GetFontSize();
   item.fill=item.glyph==1 ? SK_ColorTRANSPARENT : item.hovered ? HoverWash(view) : SK_ColorTRANSPARENT;
-  if(item.glyph==12){
+  if (item.glyph == 14 && view->GetEnabledInViewsSubtree()) {
+    const auto p = Palette(view);
+    item.ink = on ? (hovered ? p.ink : p.ink_muted) : p.accent_ink;
+  } else if(item.glyph==12){
     const auto p=Palette(view);item.fill=item.hovered?p.bg_hover:p.accent_soft;item.ink=p.accent_ink;
   } else if(item.glyph==1){
     // Each dot keeps its own workspace's accent; the active one is a raised pill.
@@ -1021,7 +1025,7 @@ class RustActionView : public views::View {
   void PaintChildren(const views::PaintInfo& info) override{if(!visible_||!visible_.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;
     // Workspace dots paint the Rust recipe (own accent, active pill); vector icons stay native.
-    if(glyph_==ControlGlyph::kDot||glyph_==ControlGlyph::kDownloads||glyph_==ControlGlyph::kReturnToPin||glyph_==ControlGlyph::kConfirmTabName){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
+    if(glyph_==ControlGlyph::kDot||glyph_==ControlGlyph::kDownloads||glyph_==ControlGlyph::kReturnToPin||glyph_==ControlGlyph::kConfirmTabName||glyph_==ControlGlyph::kTabAudio){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
     PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
  protected:
   sidebar::ActionControl& NodeControl(){return *state_;}
@@ -2197,7 +2201,7 @@ struct RowRecipe {
     bool editing = false;   // AddressPill while its address is being edited (⌘L).
     bool site_controls = false;  // AddressPill on a web page: its icon opens the site panel.
     bool site_open = false;      // …while that panel is open.
-    bool audible = false;   // A tab playing sound: a speaker in `accent-ink`.
+    bool audio_replaces_icon = false;
     int capture = 0;        // A capturing tab: microphone, camera or screen in `danger`.
     int height = 34;
     views::Button::PressedCallback close;
@@ -2238,6 +2242,7 @@ struct RowRecipe {
     } else if (hovered) {
       FillRound(canvas, bounds, 8, HoverWash(theme));
     }
+    if (spec.audio_replaces_icon) return;
     if (spec.favicon.size()==1024) {
       SkBitmap bitmap;bitmap.allocN32Pixels(32,32);std::copy(spec.favicon.begin(),spec.favicon.end(),bitmap.getAddr32(0,0));bitmap.setImmutable();
       canvas->DrawImageInt(gfx::ImageSkia::CreateFrom1xBitmap(bitmap),0,0,32,32,10,(bounds.height()-16)/2,16,16,true);
@@ -2364,7 +2369,7 @@ class RustRowView final : public views::View {
   void ProjectTabSpec(SidebarNodeGraphState& scope,Spec spec){CHECK(!spec_.chip&&!spec_.address);CancelInput();const auto update=scope.graph->project_tab(*state_,SceneUtf16(spec.title),SceneUtf16(spec.monogram),spec.monogram_color,spec.tile);CHECK(update.admitted);ClearSidebarVisuals(spec);spec_=std::move(spec);measured_.reset();if(update.title_changed)SyncSidebarAX();if(update.geometry_changed)PreferredSizeChanged();UpdateClose();SchedulePaint();}
   void ProjectPinAdapter(Spec spec){CHECK(PinBinding().valid);CancelInput();ClearSidebarVisuals(spec);spec_=std::move(spec);SyncSidebarAX();PreferredSizeChanged();SchedulePaint();}
   void RefreshPinProperties(){CHECK(PinBinding().valid);CancelInput();SyncSidebarAX();SchedulePaint();}
-  Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;spec.favicon=spec_.favicon;spec.favorite=spec_.favorite;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?spec_.icon.get():nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
+  Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;spec.favicon=spec_.favicon;spec.favorite=spec_.favorite;spec.audio_replaces_icon=AudioButton()&&!spec_.favorite;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?spec_.icon.get():nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
   sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds, gfx::RectF clip) const {
     const auto palette = Palette(this);
     auto scene = state_->sidebar_scene(
@@ -2377,7 +2382,7 @@ class RustRowView final : public views::View {
     auto& item = scene.item;
     if (spec_.icon == &kLiveFolderIcon) SetLiveFolderSceneIcon(item);
     item.favorite = spec_.favorite;
-    item.close |= AudioSceneItem(bounds, clip).has_value();
+    item.audio_replaces_icon = AudioButton() && !spec_.favorite;
     item.title_width = SidebarActionInset();
     if (renaming_) item.title = rust::String();
     if (item.favorite) {
@@ -2388,21 +2393,32 @@ class RustRowView final : public views::View {
     }
     return scene;
   }
-  std::optional<sidebar::Item> AudioSceneItem(gfx::RectF bounds,
-                                              gfx::RectF clip) const {
-    if (!spec_.audible || bounds.width() < 65 || bounds.height() < 14 ||
-        close_button_visible()) {
-      return std::nullopt;
+  views::View* AudioButton() const {
+    return audio_ && audio_->GetVisible() ? audio_.get() : nullptr;
+  }
+  void SetTabAudio(bool visible, bool muted, std::array<uint64_t, 2> identity,
+                   base::RepeatingClosure toggle) {
+    if (!audio_ && !visible) return;
+    if (!audio_) {
+      audio_ = AddChildView(std::make_unique<RustActionView>(
+          base::BindRepeating([](RustRowView* row, const ui::Event&) {
+            if (auto toggle = row->toggle_audio_) toggle.Run();
+          }, base::Unretained(this)), T(u"Wycisz kartę"),
+          ControlGlyph::kTabAudio, nullptr, base::RepeatingCallback<bool()>(),
+          base::BindRepeating(&RustRowView::ChildChanged,
+                              weak_factory_.GetWeakPtr()), true));
+      audio_->SetVisible(false);
     }
-    sidebar::Item item{};
-    item.kind = 7;
-    item.glyph = 14;
-    item.ink = Palette(this).accent_ink;
-    item.x = bounds.right() - 30 - SidebarActionInset();
-    item.y = bounds.CenterPoint().y() - 7;
-    item.width = item.height = 14;
-    item.clip = {clip.x(), clip.y(), clip.width(), clip.height()};
-    return item;
+    if (identity != audio_identity_) {
+      audio_->CancelInput();
+      audio_identity_ = identity;
+    }
+    toggle_audio_ = std::move(toggle);
+    audio_->SetEnabled(!toggle_audio_.is_null());
+    audio_->SetTooltipText(T(muted ? u"Włącz dźwięk karty" : u"Wycisz kartę"));
+    audio_->SetOn(muted);
+    audio_visible_ = visible;
+    UpdateAudioVisibility();
   }
   bool HasTabMenuAction() const { return more_ != nullptr; }
   void SetTabMenuAction(views::Button::PressedCallback callback) {
@@ -2434,6 +2450,7 @@ class RustRowView final : public views::View {
   void SetRenaming(bool editing) {
     if (renaming_ == editing) return;
     renaming_ = editing;
+    UpdateAudioVisibility();
     if (more_) more_->SetVisible(!editing);
     if (return_to_pin_)
       return_to_pin_->SetVisible(!editing && !return_to_pin_->GetTooltipText().empty());
@@ -2443,7 +2460,7 @@ class RustRowView final : public views::View {
   }
   void AppendSidebarActions(std::vector<sidebar::Item>& items, gfx::RectF row,
                             gfx::RectF clip) const {
-    for (auto* action : {return_to_pin_.get(), more_.get()}) {
+    for (auto* action : {AudioButton(), return_to_pin_.get(), more_.get()}) {
       if (!action || !action->GetVisible()) continue;
       gfx::RectF bounds(action->GetMirroredBounds());
       bounds.Offset(row.OffsetFromOrigin());
@@ -2461,12 +2478,11 @@ class RustRowView final : public views::View {
     if(wanted&&!close_){CHECK(callback);close_=AddChildView(CreateSceneAction(std::move(callback),T(u"Zamknij kartę"),ControlGlyph::kVector,&vector_icons::kCloseSmallIcon,{},base::BindRepeating(&RustRowView::ChildChanged,weak_factory_.GetWeakPtr()),true,binding));}
     UpdateClose();InvalidateLayout();SchedulePaint();
   }
-  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;views::View::ViewHierarchyChanged(details);}
+  void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;if(!details.is_add&&details.parent==this&&details.child==audio_)audio_=nullptr;views::View::ViewHierarchyChanged(details);}
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
   // `zt-tremor`: 1 px shakes in four steps over 180 ms (off under reduced motion).
   void Tremor(){if(gfx::Animation::PrefersReducedMotion())return;tremor_step_=0;tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating(&RustRowView::TremorStep,base::Unretained(this)));}
-  void SetAudible(bool audible){if(spec_.audible==audible)return;spec_.audible=audible;SchedulePaint();if(changed_)changed_.Run();}
   void SetCapture(int capture){if(spec_.capture==capture)return;spec_.capture=capture;SchedulePaint();if(changed_)changed_.Run();}
   void SetEditing(bool editing){if(spec_.editing==editing)return;spec_.editing=editing;SchedulePaint();if(changed_)changed_.Run();}
   void SetSiteControls(bool site,bool open){if(spec_.site_controls==site&&spec_.site_open==open)return;spec_.site_controls=site;spec_.site_open=open;SchedulePaint();if(changed_)changed_.Run();}
@@ -2483,6 +2499,12 @@ class RustRowView final : public views::View {
   bool close_button_visible() const{return close_&&close_->GetVisible();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{const auto tab=state_->sidebar_visual();return gfx::Size(200,tab.valid?tab.height:spec_.height);}
   void Layout(PassKey) override {
+    if (auto* audio = AudioButton()) {
+      if (spec_.favorite)
+        audio->SetBounds(0, 0, 18, 18);
+      else
+        audio->SetBounds(8, (height() - 24) / 2, 24, 24);
+    }
     const auto r = Geometry().close;
     if (close_) close_->SetBounds(r.x, r.y, r.width, r.height);
     int right = close_ ? r.x : width() - 6;
@@ -2513,8 +2535,16 @@ class RustRowView final : public views::View {
   void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);if(changed_)changed_.Run();}
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();SchedulePaint();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
-  void CancelInput(){const bool changed=state_->action_cancel();if(close_)CancelActionInput(close_);UpdateClose();UpdateWatch();if(changed)SchedulePaint();}
-  void SyncViewport(){if(!PointerInputVisible())CancelInput();else if(close_){if(auto* close=views::AsViewClass<RustActionView>(close_.get()))close->SyncViewportVisibility();}}
+  void CancelInput(){const bool changed=state_->action_cancel();if(close_)CancelActionInput(close_);if(audio_)audio_->CancelInput();UpdateClose();UpdateWatch();if(changed)SchedulePaint();}
+  void SyncViewport() {
+    if (!PointerInputVisible()) {
+      CancelInput();
+      return;
+    }
+    if (auto* close = views::AsViewClass<RustActionView>(close_.get()))
+      close->SyncViewportVisibility();
+    if (audio_) audio_->SyncViewportVisibility();
+  }
   void PaintChildren(const views::PaintInfo& info) override{if(!spec_.scene_visible||!spec_.scene_visible.Run())views::View::PaintChildren(info);}
   void OnPaint(gfx::Canvas* canvas) override{
     if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){
@@ -2525,7 +2555,6 @@ class RustRowView final : public views::View {
         scene.item.close_visible=false;
         // A folder shows the folder icon in the row's ink, never an emoji.
         const bool folder=state_->sidebar_presentation().folder;if(folder)scene.item.monogram=rust::String();
-        const auto audio = AudioSceneItem(bounds, bounds);
         if (!scene.item.tile || spec_.favorite) {
           PaintSceneRecipe(canvas, scene.item, Font(0), true);
           if (folder && spec_.icon != &kLiveFolderIcon)
@@ -2533,12 +2562,9 @@ class RustRowView final : public views::View {
                       gfx::Rect(12, (height() - 16) / 2, 16, 16), 16, scene.item.ink);
         } else if (!renaming_) {
           const auto title = Geometry().title;
-          const int title_width = audio
-              ? std::clamp(static_cast<int>(audio->x) - title.x - 4, 0, title.width)
-              : title.width;
           canvas->DrawStringRectWithFlags(
               SidebarSnapshot().title, DesignFont(2, 13, scene.item.active ? 600 : 400, false),
-              scene.item.ink, gfx::Rect(title.x, title.y, title_width, title.height),
+              scene.item.ink, gfx::Rect(title.x, title.y, title.width, title.height),
               gfx::Canvas::TEXT_ALIGN_LEFT);
         }
         if (spec_.capture && !(close_ && close_->GetVisible())) {
@@ -2547,8 +2573,6 @@ class RustRowView final : public views::View {
                                    : vector_icons::kScreenShareIcon;
           PaintIcon(canvas, icon, gfx::Rect(width()-30-SidebarActionInset(), (height()-14)/2, 14, 14),
                     14, Palette(this).danger);
-        } else if (audio) {
-          PaintSceneRecipe(canvas, *audio, Font(0));
         }
       }
       return;}
@@ -2584,7 +2608,7 @@ class RustRowView final : public views::View {
   void WindowChanged(){CancelInput();state_->action_focus(HasFocus());SchedulePaint();}
   void UpdateClose(){if(close_){const auto v=state_->action_snapshot();const auto tab=state_->sidebar_visual();close_->SetVisible(!renaming_&&sidebar::close_visible(v.on,tab.valid?tab.tile:spec_.tile,v.visual==sidebar::RowVisual::Hovered||v.visual==sidebar::RowVisual::Pressed));}}
   void ChildChanged(){UpdateWatch();if(changed_)changed_.Run();}
-  void UpdateWatch(){if(!watch_)return;bool pending=state_->action_pending();if(close_)if(auto* action=views::AsViewClass<RustActionView>(close_.get()))pending=pending||action->Pending();watch_.Run(this,pending?base::BindRepeating(&RustRowView::SyncViewport,weak_factory_.GetWeakPtr()):base::RepeatingClosure());}
+  void UpdateWatch(){if(!watch_)return;bool pending=state_->action_pending()||(audio_&&audio_->Pending());if(close_)if(auto* action=views::AsViewClass<RustActionView>(close_.get()))pending=pending||action->Pending();watch_.Run(this,pending?base::BindRepeating(&RustRowView::SyncViewport,weak_factory_.GetWeakPtr()):base::RepeatingClosure());}
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){
     if(phase==sidebar::PointerPhase::Press)grab_=event.location();
     const bool handled=PointerInput(phase,event);
@@ -2598,6 +2622,17 @@ class RustRowView final : public views::View {
   bool PointerInput(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_row_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),PointerInputVisible(),!spec_.drop.is_null()),event,before);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_key(pressed,event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true,Interactive()),event,before);}
   bool Apply(const sidebar::RowInputResult& result,const ui::Event& event,sidebar::RowVisual before){UpdateClose();UpdateWatch();if(result.visual!=before)SchedulePaint();const bool handled=result.handled;if(result.action==sidebar::RowAction::Activate&&callback_){callback_.Run(event);return handled;}if(result.action==sidebar::RowAction::Drop&&spec_.drop){auto drop=spec_.drop;auto point=event.AsMouseEvent()->location();views::View::ConvertPointToScreen(this,&point);drop.Run(point);return handled;}return handled;}
+  void UpdateAudioVisibility() {
+    if (!audio_ || audio_->GetVisible() == (audio_visible_ && !renaming_))
+      return;
+    audio_->SetVisible(audio_visible_ && !renaming_);
+    InvalidateLayout();
+    SchedulePaint();
+  }
+  raw_ptr<RustActionView> audio_ = nullptr;
+  std::array<uint64_t, 2> audio_identity_{};
+  base::RepeatingClosure toggle_audio_;
+  bool audio_visible_ = false;
   raw_ptr<views::View> more_ = nullptr;
   raw_ptr<views::View> return_to_pin_ = nullptr;
   std::string return_pin_;
@@ -2634,7 +2669,6 @@ bool IsRow(views::View* view){
 const RowRecipe::Spec& RowSpec(views::View* view){return VisitRow(view,[](auto* row)->const RowRecipe::Spec&{return row->preview_spec();});}
 void SetRowActive(views::View* view,bool value){VisitRow(view,[value](auto* row){row->SetActive(value);});}
 void TremorRow(views::View* view){if(auto* row=views::AsViewClass<RustRowView>(view))row->Tremor();}
-void SetRowAudible(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetAudible(value);}
 void SetRowCapture(views::View* view,int value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetCapture(value);}
 void SetCreateAction(views::View* view,bool creating){if(auto* button=views::AsViewClass<SceneTextButton>(view))button->SetZing(creating);}
 void SetRowEditing(views::View* view,bool value){if(auto* row=views::AsViewClass<RustRowView>(view))row->SetEditing(value);}
@@ -5798,7 +5832,7 @@ bool WorkspaceShell::PatchPinnedItems(TabListCache& cache,
       state_.pins.empty() || cache.pins_root->children().size() != 1)
     return false;
   for (const auto& slot : cache.node_graph->graph->sidebar_tabs().slots)
-    if (slot.pair && slot.pin != SidebarTree::kRoot) return false;
+    if (slot.pin != SidebarTree::kRoot) return false;
   const auto next = cache.node_graph->graph->pin_tree();
   std::set<uint64_t> old_ids;
   for (const auto& entry : previous.entries) old_ids.insert(entry.id);
@@ -6043,7 +6077,6 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     auto add_tab = [&](views::View* parent, const ShellTab& tab, bool tile = false) {
       RowRecipe::Spec spec;
       spec.title = tab.title;
-      spec.audible = tab.audible;
       spec.capture = tab.capture;
       spec.sidebar_row = true;
       if(cache.node_graph)spec.scene_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr());
@@ -6090,7 +6123,13 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     cache.tab_plan = sidebar_tree_.Tabs(state_.workspace_id, pin_nodes, tab_nodes,
         state_.split_tabs, state_.split);
     for (const auto& slot : cache.tab_plan.slots) {
-      if (!slot.pair) { add_tab(contents.get(), state_.tabs[slot.first]); continue; }
+      if (!slot.pair) {
+        auto* parent = contents.get();
+        if (slot.pin != SidebarTree::kRoot)
+          parent = cache.pin_buttons.at(state_.pins[slot.pin].id)->parent();
+        add_tab(parent, state_.tabs[slot.first]);
+        continue;
+      }
       SplitPair* pair = nullptr;
       std::unique_ptr<SplitPair> pair_view = kept_pair ? base::WrapUnique(views::AsViewClass<SplitPair>(kept_pair.release())) : std::make_unique<SplitPair>();
       CHECK(pair_view);
@@ -6119,7 +6158,6 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       if (found == cache.tab_buttons.end()) continue;
       auto* row = found->second.get();
       if (tab.title != previous.title) SetRowTitle(row,tab.title);
-      if (tab.audible != previous.audible) SetRowAudible(row,tab.audible);
       if (tab.capture != previous.capture) SetRowCapture(row,tab.capture);
       if (tab.url != previous.url || tab.title != previous.title) {
         const auto host = HostLabel(tab.url);
@@ -6136,11 +6174,44 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
     }
     cache.active_pin = state_.active_pin;
   }
+  auto configure_audio = [&](RustRowView* row, const ShellTab* tab,
+                             std::string pin = {}) {
+    if (!tab || (!tab->audible && !tab->muted)) {
+      row->SetTabAudio(false, false, {}, {});
+      return;
+    }
+    base::RepeatingClosure toggle;
+    if (callbacks_.tab_muted && callbacks_.set_tab_muted) {
+      toggle = base::BindRepeating(
+          [](base::WeakPtr<WorkspaceShell> shell, const std::string& workspace,
+             std::array<uint64_t, 2> identity, const std::string& pin) {
+            if (!shell || shell->state_.workspace_id != workspace) return;
+            std::optional<size_t> index;
+            if (pin.empty()) {
+              const auto tab = std::ranges::find(shell->state_.tabs, identity,
+                                                 &ShellTab::identity);
+              if (tab != shell->state_.tabs.end()) index = tab->index;
+            } else {
+              const auto tab = shell->state_.open_pin_audio.find(pin);
+              if (tab != shell->state_.open_pin_audio.end() &&
+                  tab->second.identity == identity)
+                index = tab->second.index;
+            }
+            if (index) {
+              const bool muted = shell->callbacks_.tab_muted.Run(*index);
+              shell->callbacks_.set_tab_muted.Run(*index, !muted);
+            }
+          }, weak_factory_.GetWeakPtr(), state_.workspace_id, tab->identity,
+          std::move(pin));
+    }
+    row->SetTabAudio(true, tab->muted, tab->identity, std::move(toggle));
+  };
   for (const auto& tab : state_.tabs) if (auto found=cache.tab_buttons.find(tab.index);found!=cache.tab_buttons.end()) {
     if (auto* row=views::AsViewClass<RustRowView>(found->second.get())) {
       const auto icon=state_.favicons.find(tab.url.spec());
       row->SetFavicon(icon==state_.favicons.end()?std::vector<uint32_t>{}:icon->second,false);
       ConfigureSidebarTabActions(row, tab.pin_id, false);
+      configure_audio(row, &tab);
     }
   }
   for (const auto& pin : state_.pins) if (auto found=cache.pin_buttons.find(pin.id);found!=cache.pin_buttons.end()) {
@@ -6154,10 +6225,18 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
             ? base::UTF8ToUTF16(pin.display_title()) : page_title->second;
         if (row->GetTooltipText() != title) row->SetTitle(std::move(title));
         ConfigureSidebarTabActions(row, pin.id, pin.profile_pin);
+        const auto audio = state_.open_pin_audio.find(pin.id);
+        configure_audio(row, audio == state_.open_pin_audio.end() ? nullptr
+                                                                 : &audio->second,
+                        pin.id);
       }
     }
   }
   if (!same_structure) {
+    std::set<size_t> occupied_holders;
+    for (const auto& slot : cache.tab_plan.slots)
+      if (!slot.pair && slot.pin != SidebarTree::kRoot)
+        occupied_holders.insert(slot.pin);
     for (const auto& pin : cache.tab_plan.pins) {
       ++pin_visibility_update_count_;
       // Workspace pins are replaced by their open tab rows. Profile favorites
@@ -6165,7 +6244,10 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
       const auto& item = state_.pins[pin.index];
       const bool in_folder = item.parent_id.empty() || !sidebar_tree_.Collapsed(state_.workspace_id, item.parent_id) ||
           sidebar_tree_.Revealed(state_.workspace_id, item.id);
-      cache.pin_buttons.at(item.id)->parent()->SetVisible(pin.visible && in_folder);
+      auto* button = cache.pin_buttons.at(item.id).get();
+      button->SetVisible(pin.visible);
+      button->parent()->SetVisible(in_folder &&
+                                  (pin.visible || occupied_holders.contains(pin.index)));
     }
   }
   for (const auto& [index, button] : cache.tab_buttons)
@@ -6472,10 +6554,6 @@ void WorkspaceShell::UpdateMetalSidebar() {
         // The row being dragged stays in place as a faded placeholder.
         if(row==drag_row_.view()){auto& i=scene.item;i.ink=SkColorSetA(i.ink,0x59);i.badge=SkColorSetA(i.badge,0x59);i.fill=SkColorSetA(i.fill,SkColorGetA(i.fill)/3);i.close_visible=false;}
         items.push_back(std::move(scene.item));
-        if (row != drag_row_.view()) {
-          if (auto audio = rust_row->AudioSceneItem(rect, clip))
-            items.push_back(std::move(*audio));
-        }
         if (row != drag_row_.view()) rust_row->AppendSidebarActions(items, rect, clip);
         continue;}}
       const auto& spec = RowSpec(row);
@@ -6733,7 +6811,9 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
     rows.push_back({data.size(),2,depth,46,members.size()});sidebar::Item group{};group.kind=2;group.fill=SkColorSetA(Tone(shell->root_,kCard),0x33);data.push_back(std::move(group));
     for(auto* member:members)data.push_back(WithRowSnapshot(member,make_item));
   };
-  const SidebarTabSlot* pair_slot=nullptr;if(cache)for(const auto& slot:cache->tab_plan.slots)if(slot.pair){pair_slot=&slot;break;}
+  std::map<size_t, const SidebarTabSlot*> pinned_slots;
+  if (cache) for (const auto& slot : cache->tab_plan.slots)
+    if (slot.pin != SidebarTree::kRoot) pinned_slots.emplace(slot.pin, &slot);
   std::vector<bool> visible(pins?pins->size():0,true);if(cache)for(const auto& pin:cache->tab_plan.pins)visible[pin.index]=pin.visible;
   if(pins&&!pins->empty()) {
     rows.push_back({data.size(),1,0,Font(-2).GetHeight()});sidebar::Item label{};label.kind=1;label.title=base::UTF16ToUTF8(T(u"PRZYPIĘTE"));label.ink=Tone(shell->root_,kMuted);label.font_size=Font(-2).GetFontSize();label.text_style=7;data.push_back(std::move(label));
@@ -6744,8 +6824,13 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
       while(!groups.empty()&&groups.back()>=entry.depth){gap(2);groups.pop_back();}
       const auto& pin=(*pins)[entry.index];auto button=cache?cache->pin_buttons.find(pin.id):std::map<std::string,raw_ptr<views::View>>::const_iterator();
       if(cache&&button!=cache->pin_buttons.end()) {
-        if(pair_slot&&pair_slot->pin==entry.index)pair(*pair_slot,entry.depth);
-        else if(visible[entry.index])WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,entry.depth);});
+        if (const auto pinned = pinned_slots.find(entry.index); pinned != pinned_slots.end()) {
+          const auto& slot = *pinned->second;
+          if (slot.pair) pair(slot, entry.depth);
+          else if (auto tab = cache->tab_buttons.find(cache->tabs[slot.first].index);
+                   tab != cache->tab_buttons.end())
+            WithRowSnapshot(tab->second.get(), [&](const auto& spec) { row(spec, entry.depth); });
+        } else if(visible[entry.index])WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,entry.depth);});
       } else {
         RowRecipe::Spec spec;spec.title=base::UTF8ToUTF16(pin.display_title());
         if(pin.folder){spec.icon=PinFolderIcon(pin);spec.title=(entry.collapsed?u"▸ ":u"▾ ")+spec.title;}
@@ -6757,7 +6842,8 @@ std::vector<sidebar::Item> WorkspaceShell::CaptureWorkspaceScene(std::string_vie
     gap(static_cast<int>(groups.size())*2+8);
   }
   if(cache)for(const auto& slot:cache->tab_plan.slots){
-    if(slot.pair){if(slot.pin==SidebarTree::kRoot)pair(slot,0);continue;}
+    if (slot.pin != SidebarTree::kRoot) continue;
+    if (slot.pair) { pair(slot, 0); continue; }
     auto button=cache->tab_buttons.find(cache->tabs[slot.first].index);if(button!=cache->tab_buttons.end())WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,0);});
   }
   if(!cache||(cache->tabs.empty()&&!source)){RowRecipe::Spec blank;blank.title=T(u"Nowa karta");blank.monogram=u"N";row(blank,0);}
@@ -6796,8 +6882,9 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             RowRecipe::PaintPreview(canvas, gfx::Rect(indent, y, std::max(0, size.width() - indent), row_height), spec, shell->root_);
           y += row_height + 2;
         };
-        const SidebarTabSlot* pair_slot = nullptr;
-        if (cache) for (const auto& slot : cache->tab_plan.slots) if (slot.pair) {pair_slot = &slot; break;}
+        std::map<size_t, const SidebarTabSlot*> pinned_slots;
+        if (cache) for (const auto& slot : cache->tab_plan.slots)
+          if (slot.pin != SidebarTree::kRoot) pinned_slots.emplace(slot.pin, &slot);
         std::vector<bool> pin_visibility(pins ? pins->size() : 0, true);
         if (cache) for (const auto& pin : cache->tab_plan.pins) pin_visibility[pin.index] = pin.visible;
         auto pair = [&](const SidebarTabSlot& slot, int indent) {
@@ -6835,8 +6922,13 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
             const int indent = SidebarFolderIndent(entry.depth);
             auto button = cache ? cache->pin_buttons.find(pin->id) : std::map<std::string, raw_ptr<views::View>>::const_iterator();
             if (cache && button != cache->pin_buttons.end()) {
-              if (pair_slot && pair_slot->pin == entry.index) pair(*pair_slot, indent);
-              else if (pin_visibility[entry.index])
+              if (const auto pinned = pinned_slots.find(entry.index); pinned != pinned_slots.end()) {
+                const auto& slot = *pinned->second;
+                if (slot.pair) pair(slot, indent);
+                else if (auto tab = cache->tab_buttons.find(cache->tabs[slot.first].index);
+                         tab != cache->tab_buttons.end())
+                  WithRowSnapshot(tab->second.get(), [&](const auto& spec) { row(spec, indent, 34); });
+              } else if (pin_visibility[entry.index])
                 WithRowSnapshot(button->second.get(),[&](const auto& spec){row(spec,indent,34);});
             } else {
               RowRecipe::Spec spec; spec.title = base::UTF8ToUTF16(pin->display_title());
@@ -6854,7 +6946,8 @@ void WorkspaceShell::UpdateWorkspaceSwipePreview() {
           y += static_cast<int>(open_groups.size()) * 2 + 8;
         }
         if (cache) for (const auto& slot : cache->tab_plan.slots) {
-          if (slot.pair) { if (slot.pin == SidebarTree::kRoot) pair(slot, 0); continue; }
+          if (slot.pin != SidebarTree::kRoot) continue;
+          if (slot.pair) { pair(slot, 0); continue; }
           const auto& tab = cache->tabs[slot.first];
           auto button = cache->tab_buttons.find(tab.index);
           if (button != cache->tab_buttons.end())
@@ -7110,13 +7203,9 @@ uint64_t WorkspaceShell::scene_parent_id_for_testing(views::View* view) const{
 bool WorkspaceShell::sidebar_heading_visible_for_testing() const {return workspace_name_&&workspace_name_->GetVisible();}
 std::u16string WorkspaceShell::row_monogram_for_testing(views::View* row) const {auto* control=views::AsViewClass<RustRowView>(row);return control?control->SidebarSnapshot().monogram:std::u16string();}
 bool WorkspaceShell::row_has_favicon_for_testing(views::View* row) const {auto* control=views::AsViewClass<RustRowView>(row);return control&&control->SidebarScene(gfx::RectF(0,0,200,34),gfx::RectF(0,0,200,34)).item.favicon.size()==1024;}
-bool WorkspaceShell::row_has_audio_badge_for_testing(views::View* row) const {
-  const auto* control = views::AsViewClass<RustRowView>(row);
-  if (!control)
-    return false;
-  const auto bounds = gfx::RectF(control->GetLocalBounds());
-  const auto icon = control->AudioSceneItem(bounds, bounds);
-  return icon && !sidebar::layout(rust::Slice<const sidebar::Item>(&*icon, 1)).empty();
+views::View* WorkspaceShell::row_audio_button_for_testing(views::View* row) const {
+  auto* control = views::AsViewClass<RustRowView>(row);
+  return control ? control->AudioButton() : nullptr;
 }
 views::View* WorkspaceShell::pin_button(std::string_view id) const {
   auto cache = tab_lists_.find(state_.workspace_id);
@@ -7243,6 +7332,7 @@ constexpr int kCopyImage = 217;
 constexpr int kOpenImageInNewTab = 218;
 constexpr int kCopyImageAddress = 219;
 constexpr int kAllSiteSettings = 220;
+constexpr int kPinTab = 221;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
@@ -7292,6 +7382,21 @@ constexpr gfx::VectorIconRep kAddSpaceRep[]={{kAddSpacePath}};
 constexpr gfx::VectorIcon kAddTabIcon(kAddTabRep,1,"zitter_add_tab");
 constexpr gfx::VectorIcon kAddFolderIcon(kAddFolderRep,1,"zitter_add_folder");
 constexpr gfx::VectorIcon kAddSpaceIcon(kAddSpaceRep,1,"zitter_add_space");
+constexpr gfx::PathElement kMenuPinTabPath[] = {
+    CANVAS_DIMENSIONS, 16, STROKE, 1.6f,
+    MOVE_TO, 6, 2.5f, H_LINE_TO, 10, LINE_TO, 9.5f, 6.5f,
+    LINE_TO, 11.5f, 8.5f, H_LINE_TO, 4.5f, LINE_TO, 6.5f, 6.5f,
+    CLOSE, MOVE_TO, 8, 8.5f, V_LINE_TO, 13.5f};
+constexpr gfx::PathElement kMenuUnpinTabPath[] = {
+    CANVAS_DIMENSIONS, 16, STROKE, 1.6f,
+    MOVE_TO, 6, 2.5f, H_LINE_TO, 10, LINE_TO, 9.5f, 6.5f,
+    LINE_TO, 11, 8, MOVE_TO, 5.5f, 7.5f, LINE_TO, 4.5f, 8.5f,
+    H_LINE_TO, 6, MOVE_TO, 8, 10.5f, V_LINE_TO, 13.5f,
+    MOVE_TO, 2.5f, 2.5f, LINE_TO, 13.5f, 13.5f};
+constexpr gfx::VectorIconRep kMenuPinTabRep[] = {{kMenuPinTabPath}};
+constexpr gfx::VectorIconRep kMenuUnpinTabRep[] = {{kMenuUnpinTabPath}};
+constexpr gfx::VectorIcon kMenuPinTabIcon(kMenuPinTabRep, 1, "zitter_menu_pin_tab");
+constexpr gfx::VectorIcon kMenuUnpinTabIcon(kMenuUnpinTabRep, 1, "zitter_menu_unpin_tab");
 constexpr gfx::PathElement kMenuNewTabPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,MOVE_TO,8,3,V_LINE_TO,13,MOVE_TO,3,8,H_LINE_TO,13};
 constexpr gfx::PathElement kMenuSidebarPath[]={CANVAS_DIMENSIONS,16,STROKE,1.6f,ROUND_RECT,2.5f,3,11,10,2,MOVE_TO,6.5f,3,V_LINE_TO,13};
 constexpr gfx::VectorIconRep kMenuNewTabRep[]={{kMenuNewTabPath}};
@@ -8328,6 +8433,13 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     }
     const auto pin = std::ranges::find(state_.pins, ContextPinId(), &PinnedItem::id);
     const bool profile_favorite = pin != state_.pins.end() && pin->profile_pin;
+    if (pin != state_.pins.end() && !profile_favorite && callbacks_.unpin)
+      workspace_menu_->AddItemWithIcon(kUnpinTab, T(u"Odepnij kartę"),
+                                       MenuIcon(kMenuUnpinTabIcon));
+    else if (pin == state_.pins.end() && target.tab && callbacks_.pin_tab &&
+             IsWorkspaceTabUrl(url))
+      workspace_menu_->AddItemWithIcon(kPinTab, T(u"Przypnij kartę"),
+                                       MenuIcon(kMenuPinTabIcon));
     workspace_menu_->AddItemWithIcon(profile_favorite ? kUnpinTab : kPinProfileTab,
         profile_favorite ? T(u"Odepnij z ulubionych profilu") : T(u"Przypnij do profilu"),
         MenuIcon(vector_icons::kStarOldIcon));
@@ -8347,7 +8459,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     if(metal_sidebar_) {
       const auto plan=sidebar::tab_context_menu(RowMenuState(state_,target.tab,target.valid,url,context_pin_));
       for (const auto& entry : plan) {
-        if (profile_favorite && entry.command == kUnpinTab) continue;
+        if (entry.command == kUnpinTab) continue;
         if (entry.command == 0) workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
         else if (entry.command == kCloseTab)
           workspace_menu_->AddItemWithIcon(kCloseTab, T(u"Zamknij kartę"),
@@ -8361,7 +8473,6 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
     context_workspace_id_ = state_.workspace_id;
     workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
     if (!ContextPinId().empty()) {
-      if (!profile_favorite) workspace_menu_->AddItem(kUnpinTab, T(u"Odepnij kartę"));
       workspace_menu_->AddItem(kEditPinnedUrl, T(u"Edytuj przypięty adres…"));
       workspace_menu_->AddItem(kResetPinnedUrl, T(u"Wróć do przypiętego adresu"));
       workspace_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
@@ -8476,6 +8587,13 @@ bool WorkspaceShell::IsCommandIdEnabled(int command_id) const {
     return command_id == kCopyCleanTabAddress ? CleanUrlForCopy(url).has_value()
                                              : IsWorkspaceTabUrl(url);
   }
+  if (command_id == kPinTab) {
+    const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
+    return state_.configuration_ready && !state_.profiles_busy &&
+           target.valid && target.tab && callbacks_.pin_tab &&
+           ContextPinId().empty() && IsWorkspaceTabUrl(context_url_);
+  }
+  if (command_id == kUnpinTab && !callbacks_.unpin) return false;
   if (command_id == kMuteTab || command_id == kUnmuteTab) {
     const auto target = ResolveSidebarTarget(context_workspace_id_, context_tab_identity_, context_pin_);
     return state_.configuration_ready && !state_.profiles_busy &&
@@ -8580,19 +8698,24 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
     if(!view||!view->IsDrawn())return;meta.bounds=view->GetBoundsInScreen();
     rows.push_back({{meta.bounds.x(),meta.bounds.y(),meta.bounds.width(),meta.bounds.height()},meta.pinned,meta.folder});metas.push_back(std::move(meta));
   };
-  const SidebarTabSlot* pinned_pair=nullptr;
-  for(const auto& slot:cache.tab_plan.slots)if(slot.pair&&slot.pin!=SidebarTree::kRoot)pinned_pair=&slot;
+  std::map<size_t, views::View*> pinned_slots;
+  for (const auto& slot : cache.tab_plan.slots) {
+    if (slot.pin == SidebarTree::kRoot) continue;
+    pinned_slots.emplace(slot.pin, slot.pair ? cache.pin_pair.get()
+        : cache.tab_buttons.at(cache.tabs[slot.first].index).get());
+  }
   for(const auto& entry:cache.node_graph->graph->pin_tree().entries){
-    if(!entry.visible||entry.index>=state_.pins.size())continue;
+    if(entry.index>=state_.pins.size())continue;
     const auto& pin=state_.pins[entry.index];
     if (pin.profile_pin) continue;
     const auto button=cache.pin_buttons.find(pin.id);
     views::View* view=button==cache.pin_buttons.end()?nullptr:button->second.get();
-    if(pinned_pair&&pinned_pair->pin==entry.index)view=cache.pin_pair;
+    if (const auto slot = pinned_slots.find(entry.index); slot != pinned_slots.end())
+      view = slot->second;
     add(view,{true,pin.id,pin.parent_id,pin.folder,pin.folder&&!entry.collapsed,0,0,{}});
   }
   for(const auto& slot:cache.tab_plan.slots){
-    if(slot.pair&&slot.pin!=SidebarTree::kRoot)continue;
+    if(slot.pin!=SidebarTree::kRoot)continue;
     size_t first=cache.tabs[slot.first].index,last=first;
     for(size_t member:slot.members){first=std::min(first,cache.tabs[member].index);last=std::max(last,cache.tabs[member].index);}
     views::View* view=nullptr;
@@ -8974,7 +9097,14 @@ void WorkspaceShell::HandleSidebarDrop(std::string workspace,std::optional<size_
             shell->ShowToast(T(u"Nie udało się dodać karty do ulubionych profilu"), {}, {});
           }
         } else {
-          shell->callbacks_.move_tab.Run(*target.tab, reorder.before_tab);
+          const auto row = std::ranges::find(shell->state_.tabs, *target.tab,
+                                             &ShellTab::index);
+          const auto pinned_item = row == shell->state_.tabs.end() ? shell->state_.pins.end()
+              : std::ranges::find(shell->state_.pins, row->pin_id, &PinnedItem::id);
+          if (pinned_item != shell->state_.pins.end() && !pinned_item->profile_pin)
+            shell->callbacks_.unpin.Run(pinned_item->id, reorder.before_tab);
+          else
+            shell->callbacks_.move_tab.Run(*target.tab, reorder.before_tab);
         }
       } else if(!target.pin.empty()) {
         if(!reorder.pinned)shell->callbacks_.unpin.Run(target.pin,reorder.before_tab);
@@ -9183,7 +9313,7 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
     return;
   }
   if (command_id == kDuplicateTab || command_id == kPinProfileTab ||
-      command_id == kMuteTab || command_id == kUnmuteTab ||
+      command_id == kPinTab || command_id == kMuteTab || command_id == kUnmuteTab ||
       (command_id >= kMoveTabBase && command_id < kMoveTabBase + static_cast<int>(move_tab_workspaces_.size()))) {
     if (!IsCommandIdEnabled(command_id)) return;
     const std::string destination = command_id >= kMoveTabBase ? move_tab_workspaces_[command_id - kMoveTabBase] : "";
@@ -9198,6 +9328,14 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
             return;
           }
           if (command == kDuplicateTab) shell->callbacks_.duplicate_tab.Run(*target.tab);
+          else if (command == kPinTab) {
+            const auto tab = std::ranges::find(shell->state_.tabs, *target.tab,
+                                               &ShellTab::index);
+            if (tab != shell->state_.tabs.end() && tab->pin_id.empty() &&
+                IsWorkspaceTabUrl(tab->url) &&
+                !shell->callbacks_.pin_tab.Run(*target.tab, {}, {}))
+              shell->ShowToast(T(u"Nie udało się przypiąć karty"), {}, {});
+          }
           else if (command == kPinProfileTab) {
             if (!shell->callbacks_.pin_tab.Run(*target.tab, "@profile", ""))
               shell->ShowToast(T(u"Nie udało się dodać karty do ulubionych profilu"), {}, {});

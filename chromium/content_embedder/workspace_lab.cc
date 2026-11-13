@@ -1165,7 +1165,9 @@ class WorkspaceWebView final : public LabWebView {
 
   void NavigationStateChanged(content::WebContents* source,
                               content::InvalidateTypes changed_flags) override {
-    if ((changed_flags & content::INVALIDATE_TYPE_ICON) && presentation_changed_)
+    if ((changed_flags & (content::INVALIDATE_TYPE_ICON |
+                          content::INVALIDATE_TYPE_URL)) &&
+        presentation_changed_)
       presentation_changed_.Run();
   }
 
@@ -10573,14 +10575,21 @@ void WorkspaceLab::RefreshShell() {
     state.active_pane = std::ranges::find(split.tabs, state.active_tab) - split.tabs.begin();
   }
   std::set<GURL> cached_icon_urls;
+  std::map<std::string_view, const GURL*> pinned_urls;
   for (const auto& pin : state.pins) {
-    if (!pin.folder && pin.url.SchemeIsHTTPOrHTTPS())
+    if (pin.folder)
+      continue;
+    pinned_urls.emplace(pin.id, &pin.url);
+    if (pin.url.SchemeIsHTTPOrHTTPS())
       cached_icon_urls.insert(pin.url);
   }
   const auto& tabs = tabs_[active_index_];
   for (size_t index = 0; index < tabs.size(); ++index) {
     auto* page = tabs[index].view->web_contents();
     const GURL url = TabUrl(index, {});
+    const auto pinned = pinned_urls.find(tabs[index].pin);
+    if (pinned != pinned_urls.end() && !url.is_empty() && url != *pinned->second)
+      state.departed_pins.insert(tabs[index].pin);
     auto title = prototype::IsRssTabUrl(url) ? prototype::T(u"Czytnik RSS")
         : page && !page->GetTitle().empty() ? page->GetTitle()
                                           : tabs[index].deferred_title;
@@ -10600,8 +10609,8 @@ void WorkspaceLab::RefreshShell() {
       title = tabs[index].custom_title;
     state.tabs.push_back({title.empty() ? u"New tab" : std::move(title),
                           url, index, tabs[index].pin, {tabs[index].id, 1},
-                          page && page->IsCurrentlyAudible() && !page->IsAudioMuted(),
-                          0, !tabs[index].custom_title.empty()});
+                          page && page->IsCurrentlyAudible(), 0,
+                          !tabs[index].custom_title.empty(), TabMuted(index)});
   }
   ReadCachedFavicons(state, cached_icon_urls);
   const GURL developer_url = state.url;
@@ -18052,15 +18061,35 @@ void WorkspaceLab::CheckTabMessageReply(const std::string& id,
           u"window.startFixtureAudio();", base::DoNothing(),
           content::ISOLATED_WORLD_ID_GLOBAL);
     } else {
-      const bool badge = shell_->row_has_audio_badge_for_testing(
+      auto* speaker = shell_->row_audio_button_for_testing(
           shell_->tab_button(selected_[active_index_]));
       if (page->GetTitle() == u"Audio fixture playing" &&
-          page->IsCurrentlyAudible() && badge) {
+          page->IsCurrentlyAudible() && speaker &&
+          speaker->GetTooltipText() == prototype::T(u"Wycisz kartę")) {
         frame->ExecuteJavaScriptForTests(
             u"document.title = 'Audio fixture badge visible';",
             base::NullCallback(), content::ISOLATED_WORLD_ID_GLOBAL);
       } else if (page->GetTitle() == u"Audio fixture badge visible" &&
-                 page->IsAudioMuted() && !badge) {
+                 page->IsAudioMuted() && speaker &&
+                 speaker->GetTooltipText() == prototype::T(u"Włącz dźwięk karty")) {
+        shell_->SetPinned(true);
+        shell_->ShowSidebar();
+        speaker->GetWidget()->LayoutRootViewIfNecessary();
+        const auto point = speaker->GetLocalBounds().CenterPoint();
+        const auto click = [&](ui::EventType type) {
+          return ui::MouseEvent(type, point, point, base::TimeTicks::Now(),
+                                ui::EF_LEFT_MOUSE_BUTTON,
+                                ui::EF_LEFT_MOUSE_BUTTON);
+        };
+        if (!speaker->OnMousePressed(click(ui::EventType::kMousePressed))) {
+          Finish(false);
+          return;
+        }
+        speaker->OnMouseReleased(click(ui::EventType::kMouseReleased));
+        if (page->IsAudioMuted()) {
+          Finish(false);
+          return;
+        }
         frame->ExecuteJavaScriptForTests(
             u"window.stopFixtureAudio();", base::NullCallback(),
             content::ISOLATED_WORLD_ID_GLOBAL);

@@ -684,6 +684,8 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
   AdoptHandler adopt_;
   CreatedHandler created_;
   void TitleWasSet(content::NavigationEntry*) override { changed_.Run(); }
+  void OnAudioStateChanged(bool audible) override { changed_.Run(); }
+  void DidUpdateAudioMutingState(bool muted) override { changed_.Run(); }
   // URL and back/forward availability feed the sidebar's address pill.
   void NavigationStateChanged(content::WebContents* source,
                               content::InvalidateTypes flags) override {
@@ -997,6 +999,16 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
   callbacks.navigate = base::BindRepeating(&WorkspaceWindow::NavigateFromBar, base::Unretained(this));
   callbacks.select_tab = base::BindRepeating(&WorkspaceWindow::SelectTab, base::Unretained(this));
   callbacks.close_tab = base::BindRepeating(&WorkspaceWindow::CloseTab, base::Unretained(this));
+  callbacks.tab_muted = base::BindRepeating(
+      [](WorkspaceWindow* window, size_t index) {
+        auto* page = window->TabContentsForAudio(index);
+        return page && page->IsAudioMuted();
+      }, base::Unretained(this));
+  callbacks.set_tab_muted = base::BindRepeating(
+      [](WorkspaceWindow* window, size_t index, bool muted) {
+        if (auto* page = window->TabContentsForAudio(index))
+          page->SetAudioMuted(muted);
+      }, base::Unretained(this));
   callbacks.search = base::BindRepeating(&WorkspaceWindow::SearchPalette, base::Unretained(this));
   callbacks.commands = base::BindRepeating(&WorkspaceWindow::CommandResults, base::Unretained(this));
   callbacks.activate_result = base::BindRepeating(&WorkspaceWindow::ActivatePaletteResult, base::Unretained(this));
@@ -1678,15 +1690,22 @@ void WorkspaceWindow::UpdateShell() {
       }
       if (title.empty()) title = base::UTF8ToUTF16(display_url.host());
       const size_t index = &view - host.tabs.data();
-      if (pin_id.empty() || InSplit(host, view))
-      {
+      auto* page = view->web_contents();
+      ShellTab tab{title.empty() ? T(u"Nowa karta") : std::move(title),
+                   display_url, index, pin_id,
+                   static_cast<WorkspaceWebView*>(view.get())->sidebar_identity(),
+                   page && page->IsCurrentlyAudible(), 0, custom_title,
+                   page && page->IsAudioMuted()};
+      if (pin_id.empty() || InSplit(host, view)) {
         int capture = 0;
         if (auto* access = view->web_contents() ? PageMediaAccess::FromWebContents(view->web_contents()) : nullptr) {
           const auto live = access->capture_state();
           capture = !live.active ? 0 : live.camera ? 2 : live.microphone ? 1 : 3;
         }
-        state.tabs.push_back({title.empty() ? T(u"Nowa karta") : title, display_url, index, pin_id, static_cast<WorkspaceWebView*>(view.get())->sidebar_identity(),
-                              view->web_contents() && view->web_contents()->IsCurrentlyAudible(), capture, custom_title});
+        tab.capture = capture;
+        state.tabs.push_back(std::move(tab));
+      } else if (tab.audible || tab.muted) {
+        state.open_pin_audio.emplace(pin_id, std::move(tab));
       }
     }
     auto& controller = host.view->GetWebContents()->GetController();
@@ -2681,6 +2700,15 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
 size_t WorkspaceWindow::tab_count(std::string_view id) const {
   for (const auto& host : hosts_) if (host.workspace_id == id) return host.tabs.size();
   return 0;
+}
+
+content::WebContents* WorkspaceWindow::TabContentsForAudio(size_t index) const {
+  const auto id = active_id();
+  for (const auto& host : hosts_) {
+    if (host.workspace_id == id && index < host.tabs.size())
+      return host.tabs[index]->web_contents();
+  }
+  return nullptr;
 }
 
 void WorkspaceWindow::SelectTab(size_t index) {

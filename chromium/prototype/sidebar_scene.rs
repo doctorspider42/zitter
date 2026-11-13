@@ -206,7 +206,7 @@ mod ffi {
         // 30: shortcut keycap, 31: profile favorites drop preview.
         kind: u32, glyph: u32,
         title: String, monogram: String, detail: String,
-        favicon: Vec<u32>, favorite: bool,
+        favicon: Vec<u32>, favorite: bool, audio_replaces_icon: bool,
         title_width: f32, detail_ink: u32, detail_font_size: f32,
         ink: u32, fill: u32, badge: u32,
         // 1 px inset ring drawn over `fill` (0 = none); the design system's card edge.
@@ -2244,7 +2244,7 @@ impl SidebarTree {
     fn tab_plan(&self, workspace: &str, nodes: &[ffi::TreeNode], tabs: &[ffi::TabNode],
                 members: &[usize], split: bool) -> ffi::TabPlan {
         let tree = self.tree_plan(workspace, nodes);
-        let reachable: BTreeMap<&str, usize> = tree.iter().map(|e| (nodes[e.index].id.as_str(), e.index)).collect();
+        let reachable: BTreeMap<&str, usize> = tree.iter().filter(|e| !nodes[e.index].folder).map(|e| (nodes[e.index].id.as_str(), e.index)).collect();
         let mut positions = BTreeMap::new(); let mut order = Vec::new();
         for (index, tab) in tabs.iter().enumerate() {
             if let std::collections::btree_map::Entry::Vacant(entry) = positions.entry(tab.index) {
@@ -2272,7 +2272,8 @@ impl SidebarTree {
                     continue;
                 }
             }
-            slots.push(ffi::TabSlot {first: index, members: vec![], pin: usize::MAX, pair: false});
+            let pin = reachable.get(tabs[index].pin.as_str()).copied().unwrap_or(usize::MAX);
+            slots.push(ffi::TabSlot {first: index, members: vec![], pin, pair: false});
         }
         ffi::TabPlan {slots, pins}
     }
@@ -2634,13 +2635,21 @@ impl ActionGraph {
         for (index,pin) in pins.iter().enumerate(){let parent=positions.get(&index).map(|(_,entry)|if entry.parent==usize::MAX{pin_root.clone()}else{(14,0,0,pins[entry.parent].id.clone())});let key=(2,0,0,pin.id.clone());keys.push(ffi::ActionNodeKey{kind:2,high:0,low:0,name:pin.id.clone()});edges.insert(key,parent.clone());if pin.folder{keys.push(ffi::ActionNodeKey{kind:14,high:0,low:0,name:pin.id.clone()});edges.insert((14,0,0,pin.id.clone()),parent);}}
         let pair_key=(15,0,0,"sidebar.pair".to_owned());let pair_parent=pair_slot.as_ref().map(|(_,pin)|if *pin==usize::MAX{tab_root.clone()}else{edges[&(2,0,0,pins[*pin].id.clone())].clone().unwrap_or_else(||pin_root.clone())});
         if let Some(parent)=&pair_parent{keys.push(ffi::ActionNodeKey{kind:15,high:0,low:0,name:"sidebar.pair".into()});edges.insert(pair_key.clone(),Some(parent.clone()));}
-        let can_close=tabs.len()>1;for (position,tab) in tabs.iter().enumerate(){let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_key.clone()}else{tab_root.clone()}));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
+        let tab_pin_slots: BTreeMap<_, _> = tab_plan.slots.iter()
+            .filter(|slot| !slot.pair && slot.pin != usize::MAX)
+            .map(|slot| (slot.first, slot.pin))
+            .collect();
+        let can_close=tabs.len()>1;for (position,tab) in tabs.iter().enumerate(){let key=(1,tab.high,tab.low,String::new());keys.push(ffi::ActionNodeKey{kind:1,high:tab.high,low:tab.low,name:String::new()});edges.insert(key.clone(),Some(if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_key.clone()}else{tab_pin_slots.get(&position).map_or_else(|| tab_root.clone(), |pin|
+            edges[&(2,0,0,pins[*pin].id.clone())].clone().unwrap_or_else(|| pin_root.clone()))}));if can_close{keys.push(ffi::ActionNodeKey{kind:10,high:tab.high,low:tab.low,name:String::new()});edges.insert((10,tab.high,tab.low,String::new()),Some(key));}}
         let old_order=self.order.clone();let plan=self.reconcile_with_parents(keys,Some(&edges));if !plan.admitted{return plan;}let mut invalidated=old_order!=plan.ids||old_layout.as_ref()!=Some(&(members.clone(),split));
         for (index,pin) in pins.into_iter().enumerate(){let key=(2,0,0,pin.id.clone());let group=if pin.folder{self.nodes[&(14,0,0,pin.id.clone())].borrow().id}else{0};let mut next=SidebarPinModel::from_input(pin);next.index=index;next.group=group;next.row_shown=pin_shown.get(&index).copied().unwrap_or(true);if let Some((rank,entry))=positions.get(&index){next.rank=*rank;next.depth=entry.depth;next.reachable=true;next.visible=entry.visible&&next.row_shown;}
             let mut node=self.nodes[&key].borrow_mut();let changed=match node.model.as_deref(){Some(NodeModel::SidebarPin(p))=>p.parent_key!=next.parent_key||p.rank!=next.rank||p.visible!=next.visible||p.collapsed!=next.collapsed||p.revealed!=next.revealed||p.presentation.title!=next.presentation.title||p.presentation.monogram!=next.presentation.monogram||p.presentation.color!=next.presentation.color||p.presentation.folder!=next.presentation.folder,_=>true};if group!=0{self.nodes[&(14,0,0,next.key.clone())].borrow_mut().model=Some(Box::new(NodeModel::SidebarPinGroup(SidebarPinGroupModel{owner:node.id,visible:positions.get(&index).is_some_and(|(_,entry)|entry.visible)&&(!next.collapsed||peeking.contains(&next.key))})));}node.model=Some(Box::new(NodeModel::SidebarPin(next)));if changed{node.state.action_cancel();}}
         let pair_id=pair_slot.as_ref().map_or(0,|_|self.nodes[&pair_key].borrow().id);let pair_visible=pair_slot.as_ref().is_none_or(|(_,pin)|*pin==usize::MAX||positions.get(pin).is_some_and(|(_,entry)|entry.visible));
         if let Some((group,_))=&pair_slot{let mut pair=self.nodes[&pair_key].borrow_mut();invalidated|=old_pair_parent!=Some(pair.parent);pair.model=Some(Box::new(NodeModel::SidebarPair(SidebarPairModel{members:group.iter().map(|&i|(tabs[i].high,tabs[i].low)).collect(),visible:pair_visible})));}
-        for (position,tab) in tabs.into_iter().enumerate(){let pair=if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_id}else{0};let visible=pair==0||pair_visible;let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.pin!=tab.pin||p.pair!=pair||p.visible!=visible||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.pin=tab.pin;p.pair=pair;p.visible=visible;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,pin:tab.pin,pair,visible,can_close,presentation:None})));}}
+        for (position,tab) in tabs.into_iter().enumerate(){let pair=if pair_slot.as_ref().is_some_and(|(group,_)|group.contains(&position)){pair_id}else{0};let visible = if pair != 0 { pair_visible } else {
+                tab_pin_slots.get(&position).and_then(|pin| positions.get(pin))
+                    .is_none_or(|(_, entry)| entry.visible)
+            };let mut node=self.nodes[&(1,tab.high,tab.low,String::new())].borrow_mut();invalidated|=matches!(node.model.as_deref(),Some(NodeModel::SidebarTab(p)) if p.index!=tab.index||p.pin!=tab.pin||p.pair!=pair||p.visible!=visible||p.can_close!=can_close);if let Some(NodeModel::SidebarTab(p))=node.model.as_deref_mut(){p.index=tab.index;p.pin=tab.pin;p.pair=pair;p.visible=visible;p.can_close=can_close;}else{node.model=Some(Box::new(NodeModel::SidebarTab(SidebarTabModel{high:tab.high,low:tab.low,index:tab.index,pin:tab.pin,pair,visible,can_close,presentation:None})));}}
         self.nodes[&tab_root].borrow_mut().model=Some(Box::new(NodeModel::SidebarTabs(SidebarTabsModel{members,split,plan:tab_plan})));
         if invalidated{for (key,node) in &self.nodes{if matches!(key.0,1|2|10){node.borrow_mut().state.action_cancel();}}}plan
     }
@@ -2746,7 +2755,7 @@ impl ActionControl {
     fn sidebar_set_title(&mut self,title:Vec<u16>)->bool{self.write_node(|r|{if let Some(NodeModel::SidebarPin(pin))=r.model.as_deref_mut(){let display=pin_title(&title,pin.presentation.folder,pin.collapsed);if pin.presentation.title==display{return false;}if pin.presentation.folder{pin.base_title=title;}pin.presentation.title_utf8=String::from_utf16_lossy(&display);pin.presentation.title=display;return true;}let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.title==title{return false;}p.title_utf8=String::from_utf16_lossy(&title);p.title=title;true}).unwrap_or(false)}
     fn sidebar_set_monogram(&mut self,monogram:Vec<u16>,color:u32)->bool{self.write_node(|r|{let Some(p)=r.model.as_deref_mut().and_then(NodeModel::row_presentation_mut) else{return false;};if p.monogram==monogram&&p.color==color{return false;}p.monogram_utf8=if p.folder{"📁".into()}else{String::from_utf16_lossy(&monogram)};p.monogram=monogram;p.color=color;true}).unwrap_or(false)}
     fn sidebar_scene(&self,bounds:ffi::FloatRect,clip:ffi::FloatRect,style:ffi::SidebarRowStyle,close:bool,close_visible:bool)->ffi::SidebarRowScene{
-        let mut item=ffi::Item{favicon:vec![],favorite:false,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,text_style:0,clip};
+        let mut item=ffi::Item{favicon:vec![],favorite:false,audio_replaces_icon:false,x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height,kind:0,glyph:0,title:String::new(),monogram:String::new(),detail:String::new(),title_width:0.0,detail_ink:0,detail_font_size:0.0,ink:style.ink,fill:0,badge:0,edge:0,focus:style.focus,active:false,hovered:false,tile:false,close:false,close_visible:false,focused:false,font_size:style.font_size,font_height:0.0,font_weight:0,text_style:0,clip};
         let valid=self.read_node(|r|{let Some(p)=r.model.as_deref().and_then(NodeModel::row_presentation) else{return false;};let hovered=r.state.enabled&&matches!(r.state.visual,ffi::RowVisual::Hovered|ffi::RowVisual::Pressed);item.title=p.title_utf8.clone();item.monogram=p.monogram_utf8.clone();item.badge=if p.folder{0}else{p.color};item.close=close&&matches!(r.model.as_deref(),Some(NodeModel::SidebarTab(m)) if m.can_close);item.close_visible=item.close&&close_visible;item.active=r.state.on;item.hovered=hovered;if !r.state.on&&!hovered{item.ink=style.muted;}item.tile=p.tile;item.focused=r.state.focused;item.fill=if p.tile{(style.card&0xffffff)|((if r.state.on{0xff}else if hovered{0x8c}else{0x59})<<24)}else if r.state.on{style.card}else if hovered{style.hover}else{0};item.edge=if r.state.on&&!p.tile{style.edge}else{0};true}).unwrap_or(false);
         ffi::SidebarRowScene{valid,item}
     }
@@ -3058,7 +3067,7 @@ fn layout(items: &[ffi::Item]) -> Vec<ffi::Primitive> {
     for i in items {
         let start = out.len();
         layout_item(i, &mut out);
-        if i.kind == 0 && (i.favicon.len() == 1024 || i.favorite) {
+        if i.kind == 0 && !i.audio_replaces_icon && (i.favicon.len() == 1024 || i.favorite) {
             let icon_x = i.x + 12.0;
             let icon_y = i.y + (i.height - 16.0) / 2.0;
             let mut n = start;
@@ -3436,16 +3445,23 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                     }
                 }
             } else if i.glyph==14 {
-                // Speaker and sound waves in the tab's trailing slot.
+                // The active state shows a slashed speaker for a muted tab.
                 emit(cx-6.0,cy-2.0,3.0,4.0,0.8,i.ink,"",0.0,false);
                 for (dx,height) in [(-3.0,5.0),(-2.0,7.0),(-1.0,9.0)] {
                     emit(cx+dx,cy-height/2.0,1.4,height,0.5,i.ink,"",0.0,false);
                 }
-                for radius in [3.0f32,5.5] {
-                    for n in 0..=10 {
-                        let a=-0.85+1.7*n as f32/10.0;
-                        emit(cx+radius*a.cos()-0.65,cy+radius*a.sin()-0.65,
-                             1.3,1.3,0.65,i.ink,"",0.0,false);
+                if i.active {
+                    for n in 0..=16 {
+                        let d = -5.5 + 11.0 * n as f32 / 16.0;
+                        emit(cx+d-0.8,cy+d-0.8,1.6,1.6,0.8,i.ink,"",0.0,false);
+                    }
+                } else {
+                    for radius in [3.0f32,5.5] {
+                        for n in 0..=10 {
+                            let a=-0.85+1.7*n as f32/10.0;
+                            emit(cx+radius*a.cos()-0.65,cy+radius*a.sin()-0.65,
+                                 1.3,1.3,0.65,i.ink,"",0.0,false);
+                        }
                     }
                 }
             } else if i.glyph==12 || i.glyph==13 {
@@ -3616,7 +3632,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
         }
         return;
     }
-    if i.monogram == "\u{1f}RSS" {
+    if !i.audio_replaces_icon && i.monogram == "\u{1f}RSS" {
         // RSS: 1.6 px rounded strokes, two quarter circles and the source dot.
         let x = i.x + 12.0;
         let y = i.y + (i.height - 16.0) / 2.0;
@@ -3627,7 +3643,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                 emit(x+3.0+radius*a.sin()-0.8,y+13.0-radius*a.cos()-0.8,1.6,1.6,0.8,i.ink,"",0.0,false);
             }
         }
-    } else {
+    } else if !i.audio_replaces_icon {
     // Favicon tile at `space-3`: the workspace color's `accent` with `on-accent`.
     let (tile_fill, tile_ink) = monogram_colors(i.badge, i.ink);
     emit(i.x + 12.0, i.y + (i.height - 16.0) / 2.0, 16.0, 16.0,
@@ -3677,7 +3693,7 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
 mod tests {
     use super::*;
     fn row(width: f32) -> ffi::Item { ffi::Item {
-        favicon:vec![], favorite:false, x:0.0, y:0.0, width, height:34.0, kind:0, glyph:0,
+        favicon:vec![], favorite:false, audio_replaces_icon:false, x:0.0, y:0.0, width, height:34.0, kind:0, glyph:0,
         title:"Zażółć 日本語 🦀".into(), monogram:"Z".into(), detail:String::new(),
         title_width:0.0, detail_ink:0, detail_font_size:12.0, ink:0xff101010,
         fill:0xffffffff, badge:0xff556677, edge:0, focus:0, active:true, hovered:false,
@@ -4646,7 +4662,7 @@ mod tests {
         assert!(!g.pin_target("p",p.action_node_id()).valid&&g.pin_target("q",q.action_node_id()).valid);assert!(g.tab_target(7,1,a.action_node_id(),false).valid);a.action_pointer(ffi::PointerPhase::Press,1,1,true,true,true);
         assert!(g.set_pin_collapsed(&folder,true));assert!(!g.sidebar_tabs().visible);assert!(!a.action_pending());assert!(!g.tab_target(7,1,a.action_node_id(),false).valid&&!g.tab_target(7,2,b.action_node_id(),false).valid);assert!(!g.pin_target("q",q.action_node_id()).valid);
         assert!(g.set_pin_collapsed(&folder,false));assert!(g.sidebar_tabs().visible&&g.tab_target(7,2,b.action_node_id(),false).valid);assert!(!g.pin_target("p",p.action_node_id()).valid);
-        assert!(g.reconcile_sidebar_layout(pins(),tabs(),vec![],false).admitted);let tree=g.sidebar_tabs();assert_eq!((tree.pair,a.node_parent_id()),(0,tree.root));assert!(!g.pin_target("p",p.action_node_id()).valid);
+        assert!(g.reconcile_sidebar_layout(pins(),tabs(),vec![],false).admitted);let tree=g.sidebar_tabs();assert_eq!((tree.pair,a.node_parent_id()),(0,group));assert_eq!(tree.slots[0].pin,1);assert!(!g.pin_target("p",p.action_node_id()).valid);
         assert!(g.reconcile_sidebar_layout(pins(),vec![sidebar_tab(1,0),sidebar_tab(2,1)],vec![],false).admitted);assert!(g.pin_target("p",p.action_node_id()).valid);
     }
     #[test] fn sidebar_tree_defaults_folders_collapsed_and_reveals_single_items(){
@@ -5880,6 +5896,8 @@ mod tests {
             let p = tree.tab_plan("work", &nodes, &tabs, &[first, second], split);
             assert_eq!(p.slots.len(), 2); assert!(p.slots.iter().all(|s| !s.pair));
             assert_eq!((p.slots[0].first, p.slots[1].first), (0, 1));
+            assert_eq!((p.slots[0].pin, p.slots[1].pin), (usize::MAX, 1));
+            assert!(!p.pins[0].visible);
         }
         assert!(tree.tab_plan("work", &[], &[], &[0, 1], true).slots.is_empty());
     }

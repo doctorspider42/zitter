@@ -124,6 +124,7 @@ struct ShellTab {
   // Capturing (design: Kamera i mikrofon): 0 none, 1 microphone, 2 camera, 3 screen.
   int capture = 0;
   bool custom_title = false;
+  bool muted = false;
   bool operator==(const ShellTab&) const = default;
 };
 
@@ -141,6 +142,7 @@ struct ShellState {
   std::string active_pin;
   std::set<std::string> departed_pins;
   std::map<std::string, std::u16string> pin_page_titles;
+  std::map<std::string, ShellTab> open_pin_audio;
   std::u16string workspace_name;
   std::u16string profile_name;
   GURL url;
@@ -851,7 +853,7 @@ class WorkspaceShell final : public ui::EventHandler,
   views::View* tab_button(size_t index) const;
   views::View* pin_button(std::string_view id) const;
   bool row_has_favicon_for_testing(views::View* row) const;
-  bool row_has_audio_badge_for_testing(views::View* row) const;
+  views::View* row_audio_button_for_testing(views::View* row) const;
   std::u16string row_monogram_for_testing(views::View* row) const;
   bool sidebar_heading_visible_for_testing() const;
   uint64_t sidebar_node_id_for_testing(views::View* row) const;
