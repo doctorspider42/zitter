@@ -36,6 +36,11 @@ MacUpdater::MacUpdater(
 
 MacUpdater::~MacUpdater() = default;
 
+void MacUpdater::SetInstallCallback(
+    base::RepeatingCallback<void(const MacInstaller&)> install) {
+  install_ = std::move(install);
+}
+
 void MacUpdater::Attach() {
   shell_->SetUpdateCheckCallback(
       base::BindRepeating(&MacUpdater::CheckForUpdates, weak_factory_.GetWeakPtr()),
@@ -54,7 +59,7 @@ void MacUpdater::CheckInBackground() {
 void MacUpdater::Configure(bool check, bool download) {
   const bool start_download = download && !auto_download_updates_;
   auto_download_updates_ = download;
-  if ((!check || !download) && update_download_) {
+  if ((!check || !download) && update_download_ && !installer_requested_) {
     update_download_.reset();
     preparing_mac_installer_ = false;
   }
@@ -130,20 +135,31 @@ void MacUpdater::MacUpdateChecked(std::optional<std::string> body) {
   } else if (has_stable_release) {
     message = prototype::T(u"Najnowsze wydanie nie ma instalatora dla tego Maca.");
   }
-  if (background && release_url.is_valid() && downloaded_mac_version_ != latest.GetString()) {
-    downloaded_mac_version_.clear();
+  const bool manual = !update_checks_.empty();
+  const bool has_in_app_installer = install_ && installer.has_value();
+  if ((background || manual) && has_in_app_installer &&
+      downloaded_mac_version_ != installer->version && !preparing_mac_installer_) {
+    auto download = base::BindRepeating(
+        &MacUpdater::PrepareMacInstaller, weak_factory_.GetWeakPtr(), *installer, true);
+    shell_->ShowUpdateOffer(installer->version, message,
+                           prototype::T(u"Pobierz aktualizację"), std::move(download));
+  } else if (background && release_url.is_valid() &&
+             downloaded_mac_version_ != latest.GetString() && !preparing_mac_installer_) {
     ShowReleaseOffer(latest.GetString(), message, release_url);
   }
-  if (auto_download_updates_ && (background || !update_checks_.empty()) &&
+  if (auto_download_updates_ && (background || manual) &&
       installer && !preparing_mac_installer_ &&
       downloaded_mac_version_ != installer->version) {
     PrepareMacInstaller(std::move(*installer));
   }
   for (auto& done : std::exchange(update_checks_, {}))
-    std::move(done).Run(message, release_url);
+    std::move(done).Run(message, has_in_app_installer ? GURL() : release_url);
 }
 
-void MacUpdater::PrepareMacInstaller(MacInstaller installer) {
+void MacUpdater::PrepareMacInstaller(MacInstaller installer, bool requested) {
+  if (preparing_mac_installer_)
+    return;
+  installer_requested_ = requested;
   preparing_mac_installer_ = true;
   auto verify = base::BindOnce(&VerifyMacInstaller, installer.path, installer.size, installer.digest);
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
@@ -153,7 +169,7 @@ void MacUpdater::PrepareMacInstaller(MacInstaller installer) {
 
 void MacUpdater::DownloadMacInstaller(MacInstaller installer, bool already_cached) {
   auto factory = factory_.Run();
-  if (already_cached || !auto_download_updates_ || !factory) {
+  if (already_cached || (!auto_download_updates_ && !installer_requested_) || !factory) {
     MacInstallerReady(std::move(installer), already_cached);
     return;
   }
@@ -165,25 +181,28 @@ void MacUpdater::DownloadMacInstaller(MacInstaller installer, bool already_cache
     semantics {
       sender: "Zitter installer download"
       description: "Downloads an installer for a newer stable Zitter release."
-      trigger: "An update is found while automatic downloads are enabled."
+      trigger: "An update is found while automatic downloads are enabled, or the user requests it."
       data: "The public release asset URL, without cookies or authentication."
       destination: WEBSITE
     }
     policy {
       cookies_allowed: NO
       setting: "Automatic downloads are opt-in in Zitter Preferences."
-      policy_exception_justification: "The user enabled automatic downloads."
+      policy_exception_justification: "The user initiated or enabled downloads."
     })");
   update_download_ = network::SimpleURLLoader::Create(std::move(request), annotation);
   update_download_->SetTimeoutDuration(base::Minutes(15));
   update_download_->SetOnRedirectCallback(base::BindRepeating(
-      [](base::WeakPtr<MacUpdater> runtime, const GURL&, const net::RedirectInfo& redirect,
-         const network::mojom::URLResponseHead&, std::vector<std::string>*) {
+      [](base::WeakPtr<MacUpdater> runtime, MacInstaller installer, const GURL&,
+         const net::RedirectInfo& redirect, const network::mojom::URLResponseHead&,
+         std::vector<std::string>*) {
         if (IsAllowedMacInstallerRedirect(redirect.new_url))
           return;
-        runtime->update_download_.reset();
-        runtime->preparing_mac_installer_ = false;
-      }, weak_factory_.GetWeakPtr()));
+        if (runtime) {
+          runtime->update_download_.reset();
+          runtime->MacInstallerReady(std::move(installer), false);
+        }
+      }, weak_factory_.GetWeakPtr(), installer));
   const auto size = installer.size;
   update_download_->DownloadToTempFile(factory.get(),
       base::BindOnce(&MacUpdater::MacInstallerDownloaded, weak_factory_.GetWeakPtr(), std::move(installer)),
@@ -201,11 +220,25 @@ void MacUpdater::MacInstallerDownloaded(MacInstaller installer, base::FilePath t
 
 void MacUpdater::MacInstallerReady(MacInstaller installer, bool verified) {
   preparing_mac_installer_ = false;
-  if (!verified || !auto_download_updates_) return;
+  const bool requested = std::exchange(installer_requested_, false);
+  if (!verified || (!auto_download_updates_ && !requested)) {
+    if (requested)
+      ShowReleaseOffer(installer.version,
+                       prototype::T(u"Nie udało się zweryfikować pobranego instalatora."),
+                       GURL("https://github.com/doctorspider42/zitter/releases/tag/v" + installer.version));
+    return;
+  }
   downloaded_mac_version_ = installer.version;
   auto reveal = base::BindRepeating(&MacUpdater::RevealMacInstaller,
                                    weak_factory_.GetWeakPtr(), std::move(installer));
-  shell_->ShowUpdateReady(downloaded_mac_version_, std::move(reveal));
+  if (install_) {
+    shell_->ShowUpdateOffer(
+        downloaded_mac_version_,
+        prototype::TF(u"Pobrano instalator wersji {}.", {base::UTF8ToUTF16(downloaded_mac_version_)}),
+        prototype::T(u"Zainstaluj i uruchom ponownie"), std::move(reveal));
+  } else {
+    shell_->ShowUpdateReady(downloaded_mac_version_, std::move(reveal));
+  }
 }
 
 void MacUpdater::RevealMacInstaller(const MacInstaller& installer) {
@@ -224,7 +257,10 @@ void MacUpdater::MacInstallerRechecked(MacInstaller installer, bool verified) {
   if (downloaded_mac_version_ != installer.version)
     return;
   if (verified) {
-    reveal_installer_.Run(installer.path);
+    if (install_)
+      install_.Run(installer);
+    else
+      reveal_installer_.Run(installer.path);
     return;
   }
   downloaded_mac_version_.clear();

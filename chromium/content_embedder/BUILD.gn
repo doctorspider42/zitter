@@ -541,6 +541,7 @@ if (is_mac) {
       "AppKit.framework",
       "AVFoundation.framework",
       "LocalAuthentication.framework",
+      "Security.framework",
       "UserNotifications.framework",
     ]
     if (enable_printing) {

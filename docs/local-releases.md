@@ -11,6 +11,27 @@ drag the app into Applications, eject the image and launch the installed app.
 The `.app` is the actual application bundle; the `.dmg` is its distribution disk
 image. No privileged installer package is needed for this drag-and-drop install.
 
+## Choose the version by upgrade compatibility
+
+Use `MAJOR.MINOR.PATCH` based on what changes for someone upgrading from the
+latest supported release on that platform.
+
+- **Major** for breaking changes. A browser backend change requires a major
+  bump when users need a fresh profile, a separate installation, a manual
+  migration, or a different updater. This rule applies during 0.x development
+  too. For example, an incompatible switch to Content after 0.4.x calls for
+  1.0.0.
+- **Minor** for backward-compatible features that preserve the in-place upgrade
+  and existing user data.
+- **Patch** for backward-compatible fixes.
+
+Before choosing a minor or patch version for a backend, installer, or profile
+format change, verify an in-place upgrade from the previous published version
+on each affected platform. Check profile data, credentials, extensions,
+settings, and the updater path where affected. Treat an unverified migration
+as breaking for version selection. Keep existing published versions and tags
+as they are.
+
 ## One version, one release
 
 **Build every operating system's assets for a version from the same source tag
@@ -317,6 +338,11 @@ Publish production Content images as
 `Zitter-v<version>-macos-content-<architecture>.dmg`. The Content
 updater selects this filename from the release feed. The first Content
 installation can be downloaded manually from the release page.
+Content builds with in-app installation use the published DMG and its GitHub
+asset digest. In a writable installation under `/Applications`, the updater
+checks the replacement against the current app's designated signing requirement
+and Gatekeeper before applying it on restart. When testing an updater change,
+exercise an actual upgrade from a signed build that contains the new updater.
 An isolated checkout may lack the local signing configuration. Set
 `ZITTER_CODESIGN_IDENTITY` to the configured Developer ID Application
 identity before running the preparation and packaging commands in that

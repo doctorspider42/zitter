@@ -37,6 +37,9 @@ class MacUpdater {
              base::RepeatingCallback<void(const base::FilePath&)> reveal_installer);
   ~MacUpdater();
 
+  // When set, the ready action installs the verified asset and restarts.
+  void SetInstallCallback(base::RepeatingCallback<void(const MacInstaller&)> install);
+
   void CheckForUpdates(CheckDone done);
   void Attach();
 
@@ -45,7 +48,7 @@ class MacUpdater {
   void CheckInBackground();
   void StartMacCheck(CheckDone done, bool background);
   void MacUpdateChecked(std::optional<std::string> body);
-  void PrepareMacInstaller(MacInstaller installer);
+  void PrepareMacInstaller(MacInstaller installer, bool requested = false);
   void DownloadMacInstaller(MacInstaller installer, bool already_cached);
   void MacInstallerDownloaded(MacInstaller installer, base::FilePath temporary);
   void MacInstallerReady(MacInstaller installer, bool verified);
@@ -55,6 +58,7 @@ class MacUpdater {
                         std::u16string message,
                         const GURL& release_url);
 
+  base::RepeatingCallback<void(const MacInstaller&)> install_;
   const raw_ref<prototype::WorkspaceShell> shell_;
   const std::string version_;
   const MacReleaseBackend backend_;
@@ -70,6 +74,7 @@ class MacUpdater {
   bool auto_download_updates_ = false;
   bool background_update_check_ = false;
   bool preparing_mac_installer_ = false;
+  bool installer_requested_ = false;
   bool rechecking_mac_installer_ = false;
   std::string downloaded_mac_version_;
   base::WeakPtrFactory<MacUpdater> weak_factory_{this};

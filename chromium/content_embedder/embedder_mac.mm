@@ -3,6 +3,7 @@
 // content/shell/browser/shell_application_mac.mm (Copyright 2013 The Chromium Authors).
 
 #import <Cocoa/Cocoa.h>
+#import <Security/Security.h>
 
 #include <algorithm>
 #include <array>
@@ -18,6 +19,7 @@
 
 #include "base/apple/bundle_locations.h"
 #include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/auto_reset.h"
 #include "base/base_paths.h"
 #include "base/base_paths_mac.h"
@@ -38,6 +40,7 @@
 #include "base/message_loop/message_pump_apple.h"
 #include "base/observer_list.h"
 #include "base/path_service.h"
+#include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
@@ -555,6 +558,86 @@ bool UsesPreparedWorkspaceOnLaunch(const base::CommandLine& command) {
          FindFileKeychainFixtureInstaller() && HasExternalUrlProbeRoot();
 }
 
+struct StagedMacUpdate {
+  base::ScopedTempDir directory;
+  base::FilePath app;
+  base::FilePath installed;
+};
+
+bool CheckUpdateSignature(const base::FilePath& installed,
+                          const base::FilePath& candidate) {
+  base::apple::ScopedCFTypeRef<SecStaticCodeRef> current;
+  base::apple::ScopedCFTypeRef<SecStaticCodeRef> update;
+  base::apple::ScopedCFTypeRef<SecRequirementRef> requirement;
+  if (SecStaticCodeCreateWithPath(
+          (__bridge CFURLRef)base::apple::FilePathToNSURL(installed),
+          kSecCSDefaultFlags, current.InitializeInto()) != errSecSuccess ||
+      SecCodeCopyDesignatedRequirement(
+          current.get(), kSecCSDefaultFlags, requirement.InitializeInto()) != errSecSuccess ||
+      SecStaticCodeCreateWithPath(
+          (__bridge CFURLRef)base::apple::FilePathToNSURL(candidate),
+          kSecCSDefaultFlags, update.InitializeInto()) != errSecSuccess) {
+    return false;
+  }
+  constexpr SecCSFlags flags = kSecCSCheckAllArchitectures |
+                              kSecCSCheckNestedCode | kSecCSStrictValidate;
+  std::string output;
+  return SecStaticCodeCheckValidity(update.get(), flags, requirement.get()) == errSecSuccess &&
+         base::GetAppOutput({"/usr/sbin/spctl", "--assess", "--type", "execute",
+                             candidate.value()}, &output);
+}
+
+std::unique_ptr<StagedMacUpdate> StageMacUpdate(const MacInstaller& installer,
+                                                const base::FilePath& installed) {
+  @autoreleasepool {
+    if (installed.DirName() != base::FilePath("/Applications") ||
+        installed != base::MakeAbsoluteFilePath(installed) ||
+        !base::DirectoryExists(installed)) {
+      return nullptr;
+    }
+    auto update = std::make_unique<StagedMacUpdate>();
+    if (!update->directory.CreateUniqueTempDirUnderPath(installed.DirName()))
+      return nullptr;
+    update->installed = installed;
+    update->app = update->directory.GetPath().AppendASCII("Zitter.app");
+
+    // Mount a private copy of the exact bytes matched against the release digest.
+    const auto image = update->directory.GetPath().AppendASCII("update.dmg");
+    const auto mount = update->directory.GetPath().AppendASCII("mount");
+    if (!base::CopyFile(installer.path, image) ||
+        !VerifyMacInstaller(image, installer.size, installer.digest) ||
+        !base::CreateDirectory(mount)) {
+      return nullptr;
+    }
+    std::string output;
+    if (!base::GetAppOutput({"/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse",
+                             "-mountpoint", mount.value(), image.value()}, &output)) {
+      return nullptr;
+    }
+    const auto mounted = mount.AppendASCII("Zitter.app");
+    const bool copied = !base::IsLink(mounted) && base::DirectoryExists(mounted) &&
+        base::GetAppOutput({"/usr/bin/ditto", mounted.value(), update->app.value()}, &output);
+    const bool detached = base::GetAppOutput(
+        {"/usr/bin/hdiutil", "detach", mount.value()}, &output);
+    if (!detached) {
+      // Leave a busy read-only mount for macOS to detach. Never recurse into it.
+      (void)update->directory.Take();
+      return nullptr;
+    }
+    base::DeleteFile(image);
+    if (!copied || !CheckUpdateSignature(installed, update->app))
+      return nullptr;
+    NSBundle* bundle = [NSBundle bundleWithURL:base::apple::FilePathToNSURL(update->app)];
+    NSString* version = [bundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    if (![version isKindOfClass:NSString.class] ||
+        base::SysNSStringToUTF8(version) != installer.version ||
+        ![bundle.bundleIdentifier isEqualToString:@"dev.zitter.browser"]) {
+      return nullptr;
+    }
+    return update;
+  }
+}
+
 using OpenEncryptionCallback = base::OnceCallback<os_crypt_async::OSCryptAsync*(
     const base::FilePath&, base::FilePath, std::vector<base::FilePath>,
     std::vector<base::FilePath>, bool)>;
@@ -963,6 +1046,8 @@ class LabMainParts final : public content::BrowserMainParts,
             [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:
                 @[base::apple::FilePathToNSURL(path)]];
           }));
+      updater_->SetInstallCallback(base::BindRepeating(
+          &LabMainParts::InstallMacUpdate, weak_factory_.GetWeakPtr()));
       updater_->Attach();
     }
     workspace_->Start(
@@ -1016,9 +1101,27 @@ class LabMainParts final : public content::BrowserMainParts,
   }
 
   void PostDestroyThreads() override {
+    base::FilePath restart;
+    if (install_mac_update_on_exit_ && staged_mac_update_) {
+      auto update = std::move(staged_mac_update_);
+      // Keep the profile locked until the atomic bundle exchange completes.
+      if (renamex_np(update->app.value().c_str(), update->installed.value().c_str(),
+                     RENAME_SWAP) != 0) {
+        PLOG(ERROR) << "Could not replace the installed Zitter application";
+      }
+      restart = update->installed;
+    }
     profile_lock_.Close();
     if (directory_.IsValid())
       (void)directory_.Delete();
+    if (!restart.empty()) {
+      // Launch the executable of the verified installed bundle. Launch Services
+      // can translocate the quarantined bundle out of Applications.
+      const auto executable =
+          restart.AppendASCII("Contents").AppendASCII("MacOS").AppendASCII("Zitter Content Lab");
+      if (!base::LaunchProcess({executable.value()}, {}).IsValid())
+        LOG(ERROR) << "Could not relaunch Zitter after the update";
+    }
   }
 
  private:
@@ -1392,7 +1495,49 @@ class LabMainParts final : public content::BrowserMainParts,
     return true;
   }
 
+  void InstallMacUpdate(const MacInstaller& installer) {
+    if (staging_mac_update_)
+      return;
+    if (staged_mac_update_ && staged_mac_update_version_ == installer.version) {
+      workspace_->RequestClose();
+      return;
+    }
+    staged_mac_update_.reset();
+    staging_mac_update_ = true;
+    auto* shell = workspace_->shell();
+    shell->ShowUpdateOffer(installer.version, prototype::T(u"Przygotowywanie aktualizacji…"),
+                           {}, {});
+    base::ThreadPool::PostTaskAndReplyWithResult(
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+        base::BindOnce(&StageMacUpdate, installer, base::apple::OuterBundlePath()),
+        base::BindOnce(&LabMainParts::MacUpdateStaged, weak_factory_.GetWeakPtr(), installer));
+  }
+
+  void MacUpdateStaged(MacInstaller installer, std::unique_ptr<StagedMacUpdate> update) {
+    staging_mac_update_ = false;
+    auto* shell = workspace_->shell();
+    if (!update) {
+      shell->ShowUpdateOffer(
+          installer.version,
+          prototype::T(u"Nie udało się przygotować aktualizacji. Możesz zainstalować ją z pliku DMG."),
+          prototype::T(u"Pokaż instalator"),
+          base::BindRepeating([](const base::FilePath& path) {
+            [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:
+                @[base::apple::FilePathToNSURL(path)]];
+          }, installer.path));
+      return;
+    }
+    staged_mac_update_ = std::move(update);
+    staged_mac_update_version_ = installer.version;
+    shell->ShowUpdateOffer(
+        installer.version, prototype::T(u"Aktualizacja jest gotowa."),
+        prototype::T(u"Zainstaluj i uruchom ponownie"),
+        base::BindRepeating(&LabMainParts::InstallMacUpdate, weak_factory_.GetWeakPtr(), installer));
+    workspace_->RequestClose();
+  }
+
   void FinishWorkspace() {
+    install_mac_update_on_exit_ = !!staged_mac_update_;
     if (workspace_root_.empty()) {
       quit_.Run();
       return;
@@ -1941,6 +2086,10 @@ class LabMainParts final : public content::BrowserMainParts,
   std::vector<std::unique_ptr<ProfileContext>> additional_profiles_;
   std::unique_ptr<WorkspaceLab> workspace_;
   std::unique_ptr<MacUpdater> updater_;
+  std::unique_ptr<StagedMacUpdate> staged_mac_update_;
+  std::string staged_mac_update_version_;
+  bool staging_mac_update_ = false;
+  bool install_mac_update_on_exit_ = false;
   std::unique_ptr<content::WebContents> contents_;
   std::unique_ptr<prototype::DevToolsConsoleReader> console_reader_;
   NSWindow* __strong window_ = nil;
