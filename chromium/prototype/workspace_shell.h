@@ -98,6 +98,8 @@ struct PageMenuItem {
   bool enabled = true;
   bool separator = false;
   std::optional<bool> checked;
+  bool radio = false;
+  std::optional<ui::Accelerator> accelerator;
 };
 struct PageMenuNavigation {
   GURL url;
@@ -172,6 +174,20 @@ class WorkspaceShell final : public ui::EventHandler,
                              public ui::NativeThemeObserver {
  public:
   struct Callbacks {
+    struct Dictionary {
+      std::u16string code;
+      std::u16string name;
+      bool added;
+    };
+    struct Spelling {
+      std::vector<Dictionary> dictionaries;
+      std::u16string selected;
+      bool enabled = true;
+    };
+    base::RepeatingCallback<Spelling()> read_spelling;
+    base::RepeatingCallback<std::vector<gfx::Range>(std::u16string_view)> check_spelling;
+    base::RepeatingCallback<bool(std::u16string, bool)> change_dictionary;
+    base::RepeatingCallback<bool(std::u16string)> select_dictionary;
     bool show_web_notifications = false;
     bool private_mode = false;
     bool can_create_profile = true;
@@ -1061,6 +1077,22 @@ class WorkspaceShell final : public ui::EventHandler,
   // or cancel the general settings controls.
   void ApplyTheme(bool refresh_controls = true);
   void RefreshGeneralControls();
+  void BuildSpellingPreferences(views::View* parent);
+  void RefreshSpellingPreferences();
+  void RefreshSpellingPreview();
+  raw_ptr<views::View> spelling_rows_ = nullptr;
+  raw_ptr<views::View> spelling_library_ = nullptr;
+  raw_ptr<views::View> spelling_results_ = nullptr;
+  raw_ptr<views::View> spelling_feedback_ = nullptr;
+  raw_ptr<views::Textfield> spelling_preview_ = nullptr;
+  raw_ptr<views::Label> spelling_preview_mode_ = nullptr;
+  bool spelling_preview_initialized_ = false;
+  raw_ptr<views::View> spelling_add_ = nullptr;
+  raw_ptr<EditorControl> spelling_search_ = nullptr;
+  std::string spelling_profile_;
+  std::u16string removed_dictionary_;
+  std::u16string removed_dictionary_name_;
+  bool removed_dictionary_was_selected_ = false;
   void RefreshPreferenceViewport();
   void RefreshFormViewports();
   void FilterPreferences();
@@ -1404,6 +1436,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<std::unique_ptr<ui::SimpleMenuModel>> extension_page_menus_;
   std::map<int, base::RepeatingClosure> extension_page_actions_;
   std::set<int> checked_page_menu_commands_;
+  std::map<int, ui::Accelerator> page_menu_accelerators_;
   std::unique_ptr<ui::SimpleMenuModel> link_menu_;
   std::unique_ptr<ui::SimpleMenuModel> route_menu_;
   std::unique_ptr<views::MenuRunner> link_menu_runner_;

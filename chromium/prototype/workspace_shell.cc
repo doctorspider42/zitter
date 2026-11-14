@@ -142,6 +142,8 @@
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/controls/separator.h"
+#include "ui/views/controls/button/radio_button.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/views/controls/throbber.h"
 #include "third_party/skia/include/core/SkPath.h"
@@ -5607,6 +5609,10 @@ void WorkspaceShell::Detach() {
   preferences_navigation_ = nullptr; preferences_category_picker_ = nullptr;preferences_close_=nullptr;
   install_extension_button_ = nullptr;
   preferences_search_ = nullptr; preferences_profile_ = nullptr; preferences_empty_ = nullptr; preferences_body_ = nullptr;
+  spelling_rows_ = nullptr; spelling_library_ = nullptr; spelling_results_ = nullptr;
+  spelling_feedback_ = nullptr; spelling_preview_ = nullptr; spelling_preview_mode_ = nullptr;
+  spelling_preview_initialized_ = false; spelling_add_ = nullptr;
+  spelling_search_ = nullptr;
   general_root_ = nullptr; general_scroll_ = nullptr; general_status_ = nullptr;
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
   time_machine_check_ = nullptr; time_machine_days_picker_ = nullptr; time_machine_ = nullptr;
@@ -7582,6 +7588,7 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   extension_page_menus_.clear();
   extension_page_actions_.clear();
   checked_page_menu_commands_.clear();
+  page_menu_accelerators_.clear();
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
   page_menu_url_ = page ? page->url : GURL();
   page_menu_save_link_ = page ? page->save_link : base::RepeatingClosure();
@@ -7590,6 +7597,7 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   route_workspaces_ = state_.workspaces;
   route_menu_ = std::make_unique<DesignMenuModel>(this);
   link_menu_ = std::make_unique<DesignMenuModel>(this);
+  if (page && !page->editing_items.empty()) return;
   // Design: Page context menu. Back, Forward, Reload and Copy page address
   // share one icon row; a link gets its own section under a header.
   if (page) {
@@ -7672,52 +7680,63 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
                                MenuIcon(vector_icons::kTuneIcon));
   }
   inspect_element_ = std::move(inspect);
-  const bool source = navigation && navigation->url.SchemeIsHTTPOrHTTPS();
-  if (inspect_element_ || source) link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-  if (inspect_element_)
-    link_menu_->AddItemWithIcon(19010, T(u"Zbadaj element"), MenuIcon(vector_icons::kCodeIcon));
-  if (source)
-    link_menu_->AddItemWithIcon(kViewSource, T(u"Pokaż źródło strony"), MenuIcon(kMenuSourceIcon));
-  if (navigation && (!navigation->editing_items.empty() || !navigation->extension_items.empty())) {
-    int command = 31000;
-    const auto add_item = [&](ui::SimpleMenuModel& model, const PageMenuItem& item) {
-      if (item.separator) {
-        model.AddSeparator(ui::NORMAL_SEPARATOR);
-        return;
-      }
-      if (item.checked.has_value()) {
-        model.AddCheckItem(command, item.title);
-        if (*item.checked)
-          checked_page_menu_commands_.insert(command);
+  const bool editing = navigation && !navigation->editing_items.empty();
+  const bool source = navigation && !editing && navigation->url.SchemeIsHTTPOrHTTPS();
+  int command = 31000;
+  const auto add_item = [&](auto&& self, ui::SimpleMenuModel& model,
+                            const PageMenuItem& item) -> void {
+    if (item.separator) {
+      model.AddSeparator(ui::NORMAL_SEPARATOR);
+      return;
+    }
+    const int id = command++;
+    if (!item.children.empty()) {
+      auto submenu = std::make_unique<DesignMenuModel>(this);
+      for (const auto& child : item.children)
+        self(self, *submenu, child);
+      model.AddSubMenu(id, item.title, submenu.get());
+      extension_page_menus_.push_back(std::move(submenu));
+    } else {
+      if (item.radio) {
+        model.AddRadioItem(id, item.title, 1);
+      } else if (item.checked.value_or(false)) {
+        model.AddCheckItem(id, item.title);
       } else {
-        model.AddItem(command, item.title);
+        model.AddItem(id, item.title);
       }
-      model.SetEnabledAt(model.GetItemCount() - 1, item.enabled);
+      if (item.checked.value_or(false))
+        checked_page_menu_commands_.insert(id);
       if (item.enabled)
-        extension_page_actions_.emplace(command, item.run);
-      ++command;
-    };
-    const auto add_group = [&](const std::vector<PageMenuItem>& items) {
-      if (items.empty())
-        return;
-      link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
-      for (const auto& item : items) {
-        if (item.children.empty()) {
-          add_item(*link_menu_, item);
-          continue;
-        }
-        auto submenu = std::make_unique<DesignMenuModel>(this);
-        for (const auto& child : item.children)
-          add_item(*submenu, child);
-        link_menu_->AddSubMenu(command++, item.title, submenu.get());
-        link_menu_->SetEnabledAt(link_menu_->GetItemCount() - 1, item.enabled);
-        extension_page_menus_.push_back(std::move(submenu));
-      }
-    };
-    add_group(navigation->editing_items);
-    add_group(navigation->extension_items);
+        extension_page_actions_.emplace(id, item.run);
+      if (item.accelerator)
+        page_menu_accelerators_.emplace(id, *item.accelerator);
+    }
+    model.SetEnabledAt(model.GetItemCount() - 1, item.enabled);
+  };
+  if (editing) {
+    for (const auto& item : navigation->editing_items)
+      add_item(add_item, *link_menu_, item);
   }
-  if (navigation) {
+  if (inspect_element_ || source) {
+    if (link_menu_->GetItemCount())
+      link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    if (inspect_element_)
+      link_menu_->AddItemWithIcon(19010, T(u"Zbadaj element"), MenuIcon(vector_icons::kCodeIcon));
+    if (source)
+      link_menu_->AddItemWithIcon(kViewSource, T(u"Pokaż źródło strony"), MenuIcon(kMenuSourceIcon));
+  }
+  if (navigation && !navigation->extension_items.empty()) {
+    link_menu_->AddSeparator(ui::NORMAL_SEPARATOR);
+    if (editing) {
+      PageMenuItem extensions{.title = T(u"Rozszerzenia"),
+                              .children = std::move(navigation->extension_items)};
+      add_item(add_item, *link_menu_, extensions);
+    } else {
+      for (const auto& item : navigation->extension_items)
+        add_item(add_item, *link_menu_, item);
+    }
+  }
+  if (navigation && !editing) {
     auto menu = static_cast<DesignMenuModel*>(link_menu_.get())->CreateViewMenu();
     menu->GetSubmenu()->set_minimum_preferred_width(264);
     auto* item = menu->GetMenuItemByID(kPageNavigation);
@@ -9194,6 +9213,11 @@ void WorkspaceShell::QueueSplit(std::optional<size_t> tab, std::string pin, std:
 }
 
 bool WorkspaceShell::GetAcceleratorForCommandId(int command_id, ui::Accelerator* accelerator) const {
+  if (const auto it = page_menu_accelerators_.find(command_id);
+      it != page_menu_accelerators_.end()) {
+    *accelerator = it->second;
+    return true;
+  }
   // Inspect element shows its DevTools chord, as designed for the page menu.
   if (command_id != kAddTab && command_id != kDuplicateTab && command_id != 19010 && command_id != kViewSource) return false;
   const char* id = command_id == kDuplicateTab ? "duplicate_tab" : command_id == 19010 ? "devtools_inspect" :
@@ -10068,6 +10092,8 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
       else if(spec.kind==Kind::FoldersCollapsed){folders_collapsed_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinnedFoldersCollapsed(ToggleOn(shell->folders_collapsed_check_));},weak));}
       else if(spec.kind==Kind::WorkspaceNames){workspace_names_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceNames(ToggleOn(shell->workspace_names_check_));},weak));}
       else{preference_toggles_[key]=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
+      if (key == "spellcheck" && callbacks_.read_spelling)
+        BuildSpellingPreferences(preference_sections_[spec.category].view);
       constexpr std::string_view kExtensionPrefix = "extension_enabled.";
       if (callbacks_.open_extension_popup && key.starts_with(kExtensionPrefix)) {
         const auto id = key.substr(kExtensionPrefix.size());
@@ -10230,8 +10256,241 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     }
   }
 }
+namespace {
+class SpellingPreviewField final : public views::Textfield,
+                                   public views::TextfieldController {
+  METADATA_HEADER(SpellingPreviewField, views::Textfield)
+
+ public:
+  explicit SpellingPreviewField(base::RepeatingClosure changed)
+      : changed_(std::move(changed)) {
+    set_controller(this);
+  }
+  ~SpellingPreviewField() override { set_controller(nullptr); }
+
+  void ContentsChanged(views::Textfield*, const std::u16string&) override {
+    changed_.Run();
+  }
+
+ private:
+  base::RepeatingClosure changed_;
+};
+BEGIN_METADATA(SpellingPreviewField)
+END_METADATA
+}  // namespace
+
+void WorkspaceShell::BuildSpellingPreferences(views::View* parent) {
+  auto weak = weak_factory_.GetWeakPtr();
+  auto card = [&] {
+    auto* view = parent->AddChildView(std::make_unique<PreferenceSurface>(
+        false, base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome, weak),
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          return shell && shell->PreferenceChromeVisible();
+        }, weak)));
+    SetSidebarPanelLayout(view, true, gfx::Insets(14), 8);
+    return view;
+  };
+  auto* dictionaries = card();
+  auto* header = dictionaries->AddChildView(std::make_unique<views::View>());
+  header->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 10));
+  auto* heading = header->AddChildView(std::make_unique<views::View>());
+  SetSidebarPanelLayout(heading, true, gfx::Insets(), 3);
+  PanelText(heading, T(u"Moje słowniki"), kTitleText, kInk);
+  auto* hint = Label(heading, T(u"Te języki są dostępne pod prawym przyciskiem."), kMuted);
+  hint->SetMultiLine(true);
+  static_cast<views::BoxLayout*>(header->GetLayoutManager())->SetFlexForView(heading, 1);
+  spelling_add_ = PreferenceAction(header, base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell) {
+        if (!shell) return;
+        const bool open = !shell->spelling_library_->GetVisible();
+        shell->spelling_library_->SetVisible(open);
+        SetActionText(shell->spelling_add_, T(open ? u"Zamknij listę" : u"Dodaj język"));
+        shell->RefreshSpellingPreferences();
+        if (open) shell->spelling_search_->view()->RequestFocus();
+      }, weak), T(u"Dodaj język"));
+  spelling_rows_ = dictionaries->AddChildView(std::make_unique<views::View>());
+  spelling_feedback_ = dictionaries->AddChildView(std::make_unique<views::View>());
+  spelling_library_ = dictionaries->AddChildView(std::make_unique<views::View>());
+  SetSidebarPanelLayout(spelling_rows_, true, gfx::Insets(), 0);
+  SetSidebarPanelLayout(spelling_feedback_, false, gfx::Insets(), 8);
+  SetSidebarPanelLayout(spelling_library_, true, gfx::Insets(), 6);
+  spelling_search_ = AddEditor(spelling_library_);
+  spelling_search_->SetPlaceholderText(T(u"Szukaj słownika…"));
+  spelling_search_->GetViewAccessibility().SetName(T(u"Szukaj słownika"));
+  spelling_search_->SetCallbacks(
+      base::BindRepeating(&WorkspaceShell::RefreshSpellingPreferences, weak), {});
+  spelling_results_ = spelling_library_->AddChildView(std::make_unique<views::View>());
+  SetSidebarPanelLayout(spelling_results_, true, gfx::Insets(), 0);
+  spelling_library_->SetVisible(false);
+  auto* sample = card();
+  PanelText(sample, T(u"Podgląd pisowni"), kTitleText, kInk);
+  spelling_preview_ = sample->AddChildView(std::make_unique<SpellingPreviewField>(
+      base::BindRepeating(&WorkspaceShell::RefreshSpellingPreview, weak)));
+  spelling_preview_->GetViewAccessibility().SetName(T(u"Podgląd pisowni"));
+  spelling_preview_->SetPlaceholderText(T(u"Wpisz tekst do sprawdzenia…"));
+  spelling_preview_mode_ = Label(sample, {}, kMuted);
+  auto& section = preference_sections_[7];
+  const auto search = base::i18n::ToLower(T(u"Sprawdzaj pisownię") + u" " + T(u"Języki i pisownia"));
+  section.rows.push_back({dictionaries, search});
+  section.rows.push_back({sample, search});
+}
+
+void WorkspaceShell::RefreshSpellingPreferences() {
+  if (!spelling_rows_)
+    return;
+  if (spelling_profile_ != state_.profile_id) {
+    spelling_profile_ = state_.profile_id;
+    spelling_preview_initialized_ = false;
+    removed_dictionary_.clear();
+    spelling_library_->SetVisible(false);
+    SetActionText(spelling_add_, T(u"Dodaj język"));
+    if (!spelling_search_->GetText().empty())
+      spelling_search_->SetText(u"");
+  }
+  const auto state = callbacks_.read_spelling.Run();
+  const auto count = std::ranges::count_if(state.dictionaries, &Callbacks::Dictionary::added);
+  auto selected = state.selected;
+  if (selected.empty() && count == 1)
+    selected = std::ranges::find_if(state.dictionaries, &Callbacks::Dictionary::added)->code;
+  auto weak = weak_factory_.GetWeakPtr();
+  auto row = [](views::View* list) {
+    if (!list->children().empty())
+      list->AddChildView(std::make_unique<views::Separator>());
+    auto* item = list->AddChildView(std::make_unique<views::View>());
+    item->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(5, 0), 8));
+    return item;
+  };
+  auto add_radio = [&](views::View* parent, std::u16string title, std::u16string code) {
+    auto* radio = parent->AddChildView(std::make_unique<views::RadioButton>(title, 911));
+    radio->SetChecked(code == selected);
+    radio->SetEnabled(state.enabled);
+    radio->SetCallback(base::BindRepeating([](base::WeakPtr<WorkspaceShell> weak, std::u16string code) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, std::u16string code) {
+        if (shell && shell->callbacks_.select_dictionary.Run(std::move(code)))
+          shell->RefreshSpellingPreferences();
+      }, weak, code));
+    }, weak, code));
+    static_cast<views::BoxLayout*>(parent->GetLayoutManager())->SetFlexForView(radio, 1);
+  };
+  spelling_rows_->RemoveAllChildViews();
+  if (count > 1)
+    add_radio(row(spelling_rows_), T(u"Wszystkie moje języki"), {});
+  for (const auto& dictionary : state.dictionaries) {
+    if (!dictionary.added)
+      continue;
+    auto* item = row(spelling_rows_);
+    add_radio(item, base::i18n::ToUpper(dictionary.code) + u"  " + dictionary.name,
+              dictionary.code);
+    auto remove = CreateSceneAction(base::BindRepeating(
+        [](base::WeakPtr<WorkspaceShell> weak, Callbacks::Dictionary dictionary, std::string profile) {
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,
+                                 Callbacks::Dictionary dictionary, std::string profile) {
+            if (!shell || shell->state_.profile_id != profile)
+              return;
+            const bool selected = shell->callbacks_.read_spelling.Run().selected == dictionary.code;
+            if (!shell->callbacks_.change_dictionary.Run(dictionary.code, false))
+              return;
+            shell->removed_dictionary_ = dictionary.code;
+            shell->removed_dictionary_name_ = dictionary.name;
+            shell->removed_dictionary_was_selected_ = selected;
+            shell->RefreshSpellingPreferences();
+          }, weak, dictionary, profile));
+        }, weak, dictionary, spelling_profile_), TF(u"Usuń słownik: {}", {dictionary.name}),
+        ControlGlyph::kVector, &vector_icons::kCloseSmallIcon, {}, {});
+    remove->SetPreferredSize(gfx::Size(32, 32));
+    item->AddChildView(std::move(remove));
+  }
+  if (count == 0)
+    Label(spelling_rows_, T(u"Dodaj pierwszy słownik, aby zacząć sprawdzanie."), kMuted);
+  spelling_feedback_->RemoveAllChildViews();
+  spelling_feedback_->SetVisible(!removed_dictionary_.empty());
+  if (!removed_dictionary_.empty()) {
+    Label(spelling_feedback_, TF(u"Usunięto: {}", {removed_dictionary_name_}), kMuted);
+    PreferenceAction(spelling_feedback_, base::BindRepeating([](base::WeakPtr<WorkspaceShell> weak) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+        if (!shell || shell->state_.profile_id != shell->spelling_profile_ ||
+            !shell->callbacks_.change_dictionary.Run(shell->removed_dictionary_, true))
+          return;
+        if (shell->removed_dictionary_was_selected_ &&
+            shell->callbacks_.read_spelling.Run().selected.empty())
+          shell->callbacks_.select_dictionary.Run(shell->removed_dictionary_);
+        shell->removed_dictionary_.clear();
+        shell->RefreshSpellingPreferences();
+        shell->spelling_add_->RequestFocus();
+      }, weak));
+    }, weak), T(u"Cofnij"));
+  }
+
+  spelling_results_->RemoveAllChildViews();
+  if (spelling_library_->GetVisible()) {
+    const auto query = base::i18n::ToLower(spelling_search_->GetText());
+    for (const auto& dictionary : state.dictionaries) {
+      if (dictionary.added ||
+          (base::i18n::ToLower(dictionary.name).find(query) == std::u16string::npos &&
+           base::i18n::ToLower(dictionary.code).find(query) == std::u16string::npos))
+        continue;
+      auto* item = row(spelling_results_);
+      auto* name = Label(item, dictionary.name, kInk);
+      static_cast<views::BoxLayout*>(item->GetLayoutManager())->SetFlexForView(name, 1);
+      auto* add = PreferenceAction(item, base::BindRepeating(
+          [](base::WeakPtr<WorkspaceShell> weak, Callbacks::Dictionary dictionary, std::string profile) {
+            base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,
+                                   Callbacks::Dictionary dictionary, std::string profile) {
+              if (!shell || shell->state_.profile_id != profile ||
+                  !shell->callbacks_.change_dictionary.Run(dictionary.code, true))
+                return;
+              shell->RefreshSpellingPreferences();
+              shell->SetPreferencesStatus(TF(u"Dodano: {}", {dictionary.name}));
+              shell->spelling_search_->view()->RequestFocus();
+            }, weak, dictionary, profile));
+          }, weak, dictionary, spelling_profile_), T(u"Dodaj"));
+      add->GetViewAccessibility().SetName(TF(u"Dodaj słownik: {}", {dictionary.name}));
+    }
+    if (spelling_results_->children().empty())
+      Label(spelling_results_, T(u"Brak pasujących słowników."), kMuted);
+  }
+
+  auto mode = selected.empty() ? T(u"Wszystkie moje języki") : selected;
+  auto example = selected;
+  for (const auto& dictionary : state.dictionaries) {
+    if (dictionary.code == selected)
+      mode = dictionary.name;
+    if (example.empty() && dictionary.added)
+      example = dictionary.code;
+  }
+  if (!spelling_preview_initialized_) {
+    spelling_preview_initialized_ = true;
+    spelling_preview_->SetText(example.starts_with(u"en") ? u"This is a spelng example."
+        : example.starts_with(u"de") ? u"Das ist ein Beispeil."
+        : u"To jest przkład sprawdzania pisowni.");
+  }
+  spelling_preview_mode_->SetText(!state.enabled ? T(u"Sprawdzanie wyłączone")
+                                  : count == 0 ? T(u"Brak słowników") : mode);
+  RefreshSpellingPreview();
+  spelling_rows_->InvalidateLayout();
+}
+
+void WorkspaceShell::RefreshSpellingPreview() {
+  if (!spelling_preview_ || spelling_preview_->IsIMEComposing() ||
+      !callbacks_.check_spelling)
+    return;
+  const auto text = spelling_preview_->GetText();
+  const gfx::Range whole(0, text.size());
+  spelling_preview_->SetColor(Tone(spelling_preview_, kInk));
+  spelling_preview_->ApplyStyle(gfx::TEXT_STYLE_UNDERLINE, false, whole);
+  for (const auto& range : callbacks_.check_spelling.Run(text)) {
+    if (!whole.Contains(range))
+      continue;
+    spelling_preview_->ApplyColor(Tone(spelling_preview_, kError), range);
+    spelling_preview_->ApplyStyle(gfx::TEXT_STYLE_UNDERLINE, true, range);
+  }
+}
+
 void WorkspaceShell::RefreshGeneralControls() {
   if (!general_widget_) return;
+  RefreshSpellingPreferences();
   bool profile_changed=false;
   if(preferences_form_)profile_changed=preferences_form_->form->preference_profile(state_.profile_id);
   if(profile_changed){CancelChoiceInteractions(general_widget_->GetContentsView());

@@ -48,6 +48,7 @@ mojom("extension_archive") {
 
 mojom("fingerprint_state") {
   sources = [ "fingerprint_state.mojom" ]
+  public_deps = [ "//mojo/public/mojom/base" ]
 }
 
 mojom("adblock_probe") {
@@ -148,6 +149,7 @@ lab_deps = [
   ":content_blocking_probe_script",
   ":extension_archive",
   ":fingerprint_state",
+  "//ui/base/emoji",
   "//base",
   "//base:i18n",
   "//components/autofill/content/renderer",

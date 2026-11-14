@@ -110,6 +110,11 @@
 #include "extensions/renderer/bindings/api_binding_hooks_delegate.h"
 #include "extensions/renderer/native_extension_bindings_system.h"
 #include "mojo/public/cpp/bindings/self_owned_associated_receiver.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/web/web_text_check_client.h"
+#include "third_party/blink/public/web/web_text_checking_result.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "tabs_hooks_delegate.h"
 #include "net/base/ip_address.h"
@@ -144,7 +149,66 @@
 #include "zitter_content/fingerprint_state.mojom.h"
 
 namespace zitter::content_embedder {
+#if BUILDFLAG(IS_MAC)
+std::vector<mojom::SpellingMatchPtr> CheckMacSpelling(
+    const std::u16string& text, const std::vector<std::u16string>& dictionaries,
+    const std::u16string& selected);
+#endif
 namespace {
+
+#if BUILDFLAG(IS_MAC)
+class LocalSpellingHost final : public mojom::LocalSpelling {
+ public:
+  explicit LocalSpellingHost(content::BrowserContext& context) : context_(context.GetWeakPtr()) {}
+  void Check(const std::u16string& text, CheckCallback reply) override {
+    std::vector<mojom::SpellingMatchPtr> matches;
+    if (context_ && !context_->ShutdownStarted() && text.size() <= 32768) {
+      const auto& prefs = static_cast<ProfileContext*>(context_.get())->site_permissions();
+      if (prefs.SpellingEnabled())
+        matches = CheckMacSpelling(text, prefs.SpellingDictionaries(),
+                                  prefs.ActiveSpellingDictionary());
+    }
+    std::move(reply).Run(std::move(matches));
+  }
+
+ private:
+  base::WeakPtr<content::BrowserContext> context_;
+};
+
+class LocalSpellingClient final : public content::RenderFrameObserver,
+                                  public blink::WebTextCheckClient {
+ public:
+  explicit LocalSpellingClient(content::RenderFrame* frame) : RenderFrameObserver(frame) {
+    frame->GetWebFrame()->SetTextCheckClient(this);
+  }
+  bool IsSpellCheckingEnabled() const override { return true; }
+  void RequestCheckingOfText(
+      const blink::WebString& text, const std::vector<blink::WebSpellingMarker>&,
+      ShouldForceRefreshTextCheckService,
+      std::unique_ptr<blink::WebTextCheckingCompletion> completion) override {
+    if (!host_)
+      render_frame()->GetBrowserInterfaceBroker().GetInterface(host_.BindNewPipeAndPassReceiver());
+    host_->Check(text.Utf16(), mojo::WrapCallbackWithDefaultInvokeIfNotRun(
+        base::BindOnce([](std::unique_ptr<blink::WebTextCheckingCompletion> completion,
+                          std::vector<mojom::SpellingMatchPtr> matches) {
+          std::vector<blink::WebTextCheckingResult> results;
+          for (const auto& match : matches) {
+            std::vector<blink::WebString> replacements;
+            for (const auto& suggestion : match->suggestions)
+              replacements.push_back(blink::WebString::FromUtf16(suggestion));
+            results.emplace_back(blink::kWebTextDecorationTypeSpelling,
+                match->offset, match->length, std::move(replacements));
+          }
+          completion->DidFinishCheckingText(results);
+        }, std::move(completion)), std::vector<mojom::SpellingMatchPtr>()));
+  }
+  void OnDestruct() override { delete this; }
+
+ private:
+  mojo::Remote<mojom::LocalSpelling> host_;
+};
+#endif
+
 
 class RestrictedExtensionLoaderFactory final
     : public network::SelfDeletingURLLoaderFactory {
@@ -1011,6 +1075,13 @@ void LabBrowserClientBase::CreateThrottlesForNavigation(
 void LabBrowserClientBase::RegisterBrowserInterfaceBindersForFrame(
     content::RenderFrameHost* frame,
     mojo::BinderMapWithContext<content::RenderFrameHost*>* map) {
+#if BUILDFLAG(IS_MAC)
+  map->Add<mojom::LocalSpelling>(base::BindRepeating(
+      [](content::RenderFrameHost* frame, mojo::PendingReceiver<mojom::LocalSpelling> receiver) {
+        mojo::MakeSelfOwnedReceiver(
+            std::make_unique<LocalSpellingHost>(*frame->GetBrowserContext()), std::move(receiver));
+      }));
+#endif
 #if BUILDFLAG(ENABLE_PRINTING) && BUILDFLAG(ENABLE_PDF)
   map->Add<mojom::ScriptedPrint>(base::BindRepeating(&BindScriptedPrint));
 #endif
@@ -1184,6 +1255,9 @@ void LabRendererClient::WebViewCreated(blink::WebView* view,
 }
 
 void LabRendererClient::RenderFrameCreated(content::RenderFrame* frame) {
+#if BUILDFLAG(IS_MAC)
+  new LocalSpellingClient(frame);
+#endif
   if (frame->IsMainFrame() && !frame->IsInFencedFrameTree())
     new AdblockProbeObserver(frame);
   frame->GetAssociatedInterfaceRegistry()->AddInterface<mojom::FingerprintState>(

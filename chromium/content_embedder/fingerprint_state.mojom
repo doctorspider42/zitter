@@ -2,7 +2,20 @@
 
 module zitter.content_embedder.mojom;
 
+import "mojo/public/mojom/base/string16.mojom";
+
 // Browser to renderer, associated with the frame's navigation channel.
 interface FingerprintState {
   Set(uint64 sequence, array<uint8> key);
+};
+
+// Local spelling requests from an editable document.
+struct SpellingMatch {
+  uint32 offset;
+  uint32 length;
+  array<mojo_base.mojom.String16> suggestions;
+};
+
+interface LocalSpelling {
+  Check(mojo_base.mojom.String16 text) => (array<SpellingMatch> matches);
 };

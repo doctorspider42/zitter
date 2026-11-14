@@ -8,6 +8,8 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
+#include <algorithm>
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_context.h"
@@ -249,6 +251,67 @@ int64_t ProfilePermissionController::NextNotificationId() {
   const auto next = site_permission_prefs_->GetInt64(kNotificationNextId) + 1;
   site_permission_prefs_->SetInt64(kNotificationNextId, next);
   return next;
+}
+
+bool ProfilePermissionController::SpellingEnabled() const {
+  return !site_permission_prefs_ ||
+         site_permission_prefs_->GetDict(kSpellingPrefs).FindBool("enabled").value_or(true);
+}
+
+std::vector<std::u16string> ProfilePermissionController::SpellingDictionaries() const {
+  const auto* values = site_permission_prefs_
+      ? site_permission_prefs_->GetDict(kSpellingPrefs).FindList("dictionaries") : nullptr;
+  if (!values)
+    return {u"pl", u"en"};
+  std::vector<std::u16string> dictionaries;
+  for (const auto& value : *values) {
+    if (value.is_string())
+      dictionaries.push_back(base::UTF8ToUTF16(value.GetString()));
+  }
+  return dictionaries;
+}
+
+std::u16string ProfilePermissionController::ActiveSpellingDictionary() const {
+  const auto* value = site_permission_prefs_
+      ? site_permission_prefs_->GetDict(kSpellingPrefs).FindString("selected") : nullptr;
+  return value ? base::UTF8ToUTF16(*value) : std::u16string();
+}
+
+bool ProfilePermissionController::SetSpellingEnabled(bool enabled) {
+  if (!CanClearSitePermissions())
+    return false;
+  ScopedDictPrefUpdate update(site_permission_prefs_.get(), kSpellingPrefs);
+  update->Set("enabled", enabled);
+  return true;
+}
+
+bool ProfilePermissionController::SetSpellingDictionary(const std::u16string& code,
+                                                         bool add) {
+  if (!CanClearSitePermissions() || code.empty())
+    return false;
+  auto dictionaries = SpellingDictionaries();
+  if (add && !std::ranges::contains(dictionaries, code))
+    dictionaries.push_back(code);
+  if (!add)
+    std::erase(dictionaries, code);
+  base::ListValue values;
+  for (const auto& dictionary : dictionaries)
+    values.Append(base::UTF16ToUTF8(dictionary));
+  const bool reset = !add && ActiveSpellingDictionary() == code;
+  ScopedDictPrefUpdate update(site_permission_prefs_.get(), kSpellingPrefs);
+  update->Set("dictionaries", std::move(values));
+  if (reset)
+    update->Remove("selected");
+  return true;
+}
+
+bool ProfilePermissionController::SelectSpellingDictionary(const std::u16string& code) {
+  if (!CanClearSitePermissions() ||
+      (!code.empty() && !std::ranges::contains(SpellingDictionaries(), code)))
+    return false;
+  ScopedDictPrefUpdate update(site_permission_prefs_.get(), kSpellingPrefs);
+  update->Set("selected", base::UTF16ToUTF8(code));
+  return true;
 }
 
 void ProfilePermissionController::SetNotificationPrompt(ClipboardReadPrompt prompt) {

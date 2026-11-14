@@ -136,6 +136,8 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
+#include "content/public/browser/render_widget_host_view.h"
+#include "zitter_content/fingerprint_state.mojom.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/web_authentication_delegate.h"
@@ -187,6 +189,7 @@
 #include "ui/events/event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/dom_key.h"
+#include "ui/base/emoji/emoji_panel_helper.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/content_accelerators/accelerator_util.h"
 #include "ui/menus/simple_menu_model.h"
@@ -247,8 +250,13 @@ CONTENT_EXPORT bool ZitterGoThroughHistory(NavigationController& controller,
 
 namespace zitter::content_embedder {
 #if BUILDFLAG(IS_MAC)
-std::vector<prototype::PageMenuItem> MacSpellingMenuItems(
-    const content::WeakDocumentPtr& document, const content::ContextMenuParams& params);
+std::vector<mojom::SpellingMatchPtr> CheckMacSpelling(
+    const std::u16string& text, const std::vector<std::u16string>& dictionaries,
+    const std::u16string& selected);
+std::vector<gfx::Range> MacSpellingRanges(
+    std::u16string_view text, const std::vector<std::u16string>& dictionaries,
+    const std::u16string& selected);
+std::vector<std::pair<std::u16string, std::u16string>> MacSpellingLanguages();
 #endif
 
 class WorkspacePasswordClear final : public password_manager::PasswordStoreConsumer {
@@ -1638,6 +1646,44 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     views_delegate_ = std::make_unique<LabViewsDelegate>();
   prototype::ApplyUiLanguage("en-US");
   prototype::WorkspaceShell::Callbacks callbacks;
+#if BUILDFLAG(IS_MAC)
+  if (!private_owner_) {
+    callbacks.read_spelling = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+      prototype::WorkspaceShell::Callbacks::Spelling state;
+      if (!lab || !lab->model_.active())
+        return state;
+      const auto& prefs = lab->WorkspaceProfile(lab->active_index_)->site_permissions();
+      const auto added = prefs.SpellingDictionaries();
+      state.selected = prefs.ActiveSpellingDictionary();
+      state.enabled = prefs.SpellingEnabled();
+      for (const auto& [name, code] : MacSpellingLanguages())
+        state.dictionaries.push_back({code, name, std::ranges::contains(added, code)});
+      return state;
+    }, weak_factory_.GetWeakPtr());
+    callbacks.check_spelling = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, std::u16string_view text) {
+          if (!lab || !lab->model_.active() || text.size() > 32768)
+            return std::vector<gfx::Range>();
+          const auto& prefs = lab->WorkspaceProfile(lab->active_index_)->site_permissions();
+          if (!prefs.SpellingEnabled())
+            return std::vector<gfx::Range>();
+          return MacSpellingRanges(text, prefs.SpellingDictionaries(),
+                                   prefs.ActiveSpellingDictionary());
+        }, weak_factory_.GetWeakPtr());
+    callbacks.change_dictionary = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, std::u16string code, bool add) {
+          return lab && lab->CanEditWorkspace() &&
+                 lab->WorkspaceProfile(lab->active_index_)->site_permissions()
+                     .SetSpellingDictionary(code, add);
+        }, weak_factory_.GetWeakPtr());
+    callbacks.select_dictionary = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, std::u16string code) {
+          return lab && lab->CanEditWorkspace() &&
+                 lab->WorkspaceProfile(lab->active_index_)->site_permissions()
+                     .SelectSpellingDictionary(code);
+        }, weak_factory_.GetWeakPtr());
+  }
+#endif
 #if BUILDFLAG(IS_WIN)
   callbacks.show_web_notifications = !private_owner_;
 #endif
@@ -4981,6 +5027,7 @@ void WorkspaceLab::ShowNotificationPrompt(
           std::move(answer)));
 }
 
+
 void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
                                          std::u16string text,
                                          std::u16string allow,
@@ -5043,7 +5090,8 @@ void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
   permission_prompt_delegate_->SetDefaultButton(
       static_cast<int>(ui::mojom::DialogButton::kCancel));
   permission_prompt_widget_.reset(views::DialogDelegate::CreateDialogWidget(
-      permission_prompt_delegate_.get(), widget_->GetNativeWindow(), widget_->GetNativeView()));
+      permission_prompt_delegate_.get(),
+      widget_->GetNativeWindow(), widget_->GetNativeView()));
   permission_prompt_widget_->MakeCloseSynchronous(base::BindOnce(
       [](base::WeakPtr<WorkspaceLab> lab, views::Widget::ClosedReason reason) {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
@@ -6803,21 +6851,61 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
       .copy_image = prototype::MakeCopyImageAction(frame, params),
       .image_url = prototype::PageMenuImageUrl(params)};
   if (params.is_editable) {
+    const auto document = frame.GetWeakDocumentPtr();
+    if (ui::IsEmojiPanelSupported()) {
+      navigation.editing_items.push_back({
+#if BUILDFLAG(IS_MAC)
+          .title = prototype::T(u"Emoji i symbole"),
+#else
+          .title = u"Emoji",
+#endif
+          .run = base::BindRepeating([](const content::WeakDocumentPtr& document) {
+            auto* frame = document.AsRenderFrameHostIfValid();
+            auto* page = frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
+            if (frame && frame->IsActive() && page && page->GetFocusedFrame() == frame)
+              ui::ShowEmojiPanel();
+          }, document),
+#if BUILDFLAG(IS_MAC)
+          .accelerator = ui::Accelerator(ui::VKEY_SPACE, ui::EF_CONTROL_DOWN | ui::EF_COMMAND_DOWN)
+#else
+          .accelerator = ui::Accelerator(ui::VKEY_OEM_PERIOD, ui::EF_COMMAND_DOWN)
+#endif
+      });
+      navigation.editing_items.push_back({.separator = true});
+    }
     struct EditCommand {
       std::u16string_view label;
       int flag;
       void (content::WebContents::*run)();
+      ui::KeyboardCode key;
+      int extra_modifiers = 0;
+      bool starts_group = false;
     };
+#if BUILDFLAG(IS_MAC)
+    constexpr int modifier = ui::EF_COMMAND_DOWN;
+#else
+    constexpr int modifier = ui::EF_CONTROL_DOWN;
+#endif
     constexpr EditCommand commands[] = {
-        {u"Cofnij", blink::kCanUndo, &content::WebContents::Undo},
-        {u"Ponów", blink::kCanRedo, &content::WebContents::Redo},
-        {u"Wytnij", blink::kCanCut, &content::WebContents::Cut},
-        {u"Kopiuj", blink::kCanCopy, &content::WebContents::Copy},
-        {u"Wklej", blink::kCanPaste, &content::WebContents::Paste},
-        {u"Zaznacz wszystko", blink::kCanSelectAll, &content::WebContents::SelectAll},
+        {u"Cofnij", blink::kCanUndo, &content::WebContents::Undo, ui::VKEY_Z},
+        {u"Ponów", blink::kCanRedo, &content::WebContents::Redo, ui::VKEY_Z,
+         ui::EF_SHIFT_DOWN},
+        {u"Wytnij", blink::kCanCut, &content::WebContents::Cut, ui::VKEY_X, 0, true},
+        {u"Kopiuj", blink::kCanCopy, &content::WebContents::Copy, ui::VKEY_C},
+        {u"Wklej", blink::kCanPaste, &content::WebContents::Paste, ui::VKEY_V},
+        {u"Wklej jako zwykły tekst", blink::kCanPaste,
+         &content::WebContents::PasteAndMatchStyle, ui::VKEY_V,
+         ui::EF_SHIFT_DOWN
+#if BUILDFLAG(IS_MAC)
+             | ui::EF_ALT_DOWN
+#endif
+        },
+        {u"Zaznacz wszystko", blink::kCanSelectAll, &content::WebContents::SelectAll,
+         ui::VKEY_A},
     };
-    const auto document = frame.GetWeakDocumentPtr();
     for (const auto& command : commands) {
+      if (command.starts_group)
+        navigation.editing_items.push_back({.separator = true});
       navigation.editing_items.push_back({
           .title = prototype::T(command.label),
           .run = base::BindRepeating(
@@ -6828,16 +6916,76 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
                 if (frame && frame->IsActive() && page && page->GetFocusedFrame() == frame)
                   (page->*run)();
               }, document, command.run),
-          .enabled = (params.edit_flags & command.flag) != 0});
+          .enabled = (params.edit_flags & command.flag) != 0,
+          .accelerator = ui::Accelerator(command.key, modifier | command.extra_modifiers)});
     }
 #if BUILDFLAG(IS_MAC)
     if (params.form_control_type != blink::mojom::FormControlType::kInputPassword) {
-      auto spelling = MacSpellingMenuItems(document, params);
-      if (!spelling.empty()) {
-        navigation.editing_items.push_back({.separator = true});
-        for (auto& item : spelling)
-          navigation.editing_items.push_back(std::move(item));
+      navigation.editing_items.push_back({.separator = true});
+      auto* profile = static_cast<ProfileContext*>(frame.GetBrowserContext());
+      const auto& settings = profile->site_permissions();
+      const bool has_marker = !params.misspelled_word.empty();
+      const auto& word = has_marker ? params.misspelled_word : params.selection_text;
+      if (settings.SpellingEnabled() && !word.empty() && word.size() <= 100 &&
+          word.find_first_of(base::kWhitespaceUTF16) == std::u16string::npos) {
+        // Prefilled fields may not have Blink spelling markers yet. A context
+        // click still selects the word, so check that selection with the
+        // current dictionaries and replace only that selection.
+        const auto matches = CheckMacSpelling(word, settings.SpellingDictionaries(),
+                                              settings.ActiveSpellingDictionary());
+        if (matches.size() == 1 && matches.front()->offset == 0 &&
+            matches.front()->length == word.size()) {
+          for (const auto& correction : matches.front()->suggestions) {
+            navigation.editing_items.push_back({
+                .title = correction,
+                .run = base::BindRepeating(
+                    [](const content::WeakDocumentPtr& document,
+                       const std::u16string& word, const std::u16string& correction,
+                       bool has_marker) {
+                      auto* frame = document.AsRenderFrameHostIfValid();
+                      auto* page = frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
+                      if (!frame || !frame->IsActive() || !page || page->GetFocusedFrame() != frame)
+                        return;
+                      if (has_marker) {
+                        page->ReplaceMisspelling(correction);
+                      } else if (auto* view = frame->GetView();
+                                 view && view->GetSelectedText() == word) {
+                        page->Replace(correction);
+                      }
+                    }, document, word, correction, has_marker)});
+          }
+        }
       }
+      prototype::PageMenuItem spelling{.title = prototype::T(u"Sprawdzanie pisowni")};
+      if (settings.SpellingEnabled() && !settings.SpellingDictionaries().empty()) {
+        const auto active = settings.ActiveSpellingDictionary();
+        const auto dictionaries = settings.SpellingDictionaries();
+        const auto select = base::BindRepeating(
+            [](base::WeakPtr<content::BrowserContext> profile, const std::u16string& code) {
+              if (profile)
+                static_cast<ProfileContext*>(profile.get())->site_permissions()
+                    .SelectSpellingDictionary(code);
+            }, profile->GetWeakPtr());
+        spelling.children.push_back({
+            .title = prototype::T(u"Wszystkie moje języki"),
+            .run = base::BindRepeating(select, std::u16string()),
+            .checked = active.empty(), .radio = true});
+        for (const auto& [name, code] : MacSpellingLanguages()) {
+          if (std::ranges::contains(dictionaries, code)) {
+            spelling.children.push_back({
+                .title = name, .run = base::BindRepeating(select, code),
+                .checked = code == active, .radio = true});
+          }
+        }
+        spelling.children.push_back({.separator = true});
+      }
+      spelling.children.push_back({
+          .title = prototype::T(u"Ustawienia pisowni…"),
+          .run = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+            if (lab)
+              lab->shell_->OpenGeneralSettings(prototype::T(u"Sprawdzaj pisownię"));
+          }, weak_factory_.GetWeakPtr())});
+      navigation.editing_items.push_back(std::move(spelling));
     }
 #endif
   }
@@ -7904,6 +8052,10 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     return {};
   auto& profile = *WorkspaceProfile(active_index_);
   BrowserPreferences settings;
+#if BUILDFLAG(IS_MAC)
+  settings["spellcheck"] = {.value = profile.site_permissions().SpellingEnabled(),
+                            .editable = profile.site_permissions().CanClearSitePermissions()};
+#endif
   const auto* extension_prefs = IsWorkspaceExtensionRuntime() && !private_owner_
       ? extensions::ExtensionPrefs::Get(&profile) : nullptr;
   const auto pinned_extensions = extension_prefs
@@ -8001,6 +8153,10 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
   if (!model_.active())
     return false;
   auto& profile = *WorkspaceProfile(active_index_);
+#if BUILDFLAG(IS_MAC)
+  if (key == "spellcheck")
+    return (value == 0 || value == 1) && profile.site_permissions().SetSpellingEnabled(value == 1);
+#endif
   if (key == "zoom") {
     const auto& zoom_values = prototype::kWorkspaceZoomPercentages;
     return CanEditWorkspace() && value >= 0 &&

@@ -82,6 +82,13 @@ class ProfilePermissionController final
   int NotificationSetting(const url::Origin& origin) const;
   bool SetNotificationSetting(const url::Origin& origin, int setting);
   int64_t NextNotificationId();
+  static constexpr char kSpellingPrefs[] = "zitter.spelling";
+  bool SpellingEnabled() const;
+  std::vector<std::u16string> SpellingDictionaries() const;
+  std::u16string ActiveSpellingDictionary() const;
+  bool SetSpellingEnabled(bool enabled);
+  bool SetSpellingDictionary(const std::u16string& code, bool add);
+  bool SelectSpellingDictionary(const std::u16string& code);
   void SetNotificationPrompt(ClipboardReadPrompt prompt);
 
   void OnPermissionStatusChangeSubscriptionAdded(

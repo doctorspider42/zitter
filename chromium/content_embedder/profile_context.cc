@@ -1483,6 +1483,7 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
   registry->RegisterDictionaryPref(Permissions::kNotificationPrefs);
   registry->RegisterDictionaryPref(Permissions::kNotificationRuleTimes);
   registry->RegisterInt64Pref(Permissions::kNotificationNextId, 0);
+  registry->RegisterDictionaryPref(Permissions::kSpellingPrefs);
   registry->RegisterDictionaryPref(Permissions::kPromptDefaults);
   registry->RegisterDictionaryPref(Permissions::kMediaRules);
   registry->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
@@ -1835,6 +1836,7 @@ void ProfileContext::InitializeNewWorkspacePreferences() {
   site->RegisterDictionaryPref(Permissions::kNotificationPrefs);
   site->RegisterDictionaryPref(Permissions::kNotificationRuleTimes);
   site->RegisterInt64Pref(Permissions::kNotificationNextId, 0);
+  site->RegisterDictionaryPref(Permissions::kSpellingPrefs);
   site->RegisterDictionaryPref(Permissions::kPromptDefaults);
   site->RegisterDictionaryPref(Permissions::kMediaRules);
   site->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
