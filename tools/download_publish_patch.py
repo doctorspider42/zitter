@@ -360,6 +360,11 @@ CHECKPOINT_PATCHES = {
 }
 
 std::string BaseFile::DebugString() const {"""),
+        # Windows builds -Wunsafe-buffer-usage this file.
+        ("  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());",
+         """  // SAFETY: `buffer` is aligned for and larger than FILE_RENAME_INFO.
+  auto* rename_info =
+      UNSAFE_BUFFERS(reinterpret_cast<FILE_RENAME_INFO*>(buffer.data()));"""),
     ),
     DESTINATION_OBSERVER: (
         ("#include <optional>\n", "#include <optional>\n#include <string>\n"),

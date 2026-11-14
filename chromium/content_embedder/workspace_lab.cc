@@ -15333,7 +15333,9 @@ void WorkspaceLab::CheckInteractiveImportProbe(bool apply, bool repeat,
                          .starts_with("arc-");
     if (preview.spaces.size() != 2 || preview.tab_count != (arc ? 3u : 2u) ||
         (arc && preview.folder_count != 1) || !preview.options.history ||
-        (BUILDFLAG(IS_MAC) && !preview.options.cookies) ||
+#if BUILDFLAG(IS_MAC)
+        !preview.options.cookies ||
+#endif
         contexts_.size() != (repeat ? 4u : 2u) ||
         tabs_.size() != (repeat ? 4u : 2u)) {
       LOG(ERROR) << "Unexpected browser import preview";

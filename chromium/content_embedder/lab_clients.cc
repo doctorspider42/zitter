@@ -1423,13 +1423,18 @@ std::optional<int> CheckLabStartupFlags() {
   }
   const bool tls_probe = command_line.HasSwitch(kWorkspaceTlsProbe);
   const bool trusted_tls_probe = command_line.HasSwitch(kWorkspaceTrustedTlsProbe);
+#if BUILDFLAG(IS_MAC)
   if (command_line.HasSwitch(kWorkspaceNativePasskeyPreflight) &&
-      (!BUILDFLAG(IS_MAC) || !command_line.HasSwitch(kWorkspaceSmokeTest) ||
+      (!command_line.HasSwitch(kWorkspaceSmokeTest) ||
        command_line.HasSwitch(kWorkspaceRoot) ||
        command_line.HasSwitch(kWorkspaceWebAuthnProbe) ||
        command_line.HasSwitch(kWorkspaceProbe) || tls_probe || trusted_tls_probe)) {
     return 1;
   }
+#else
+  if (command_line.HasSwitch(kWorkspaceNativePasskeyPreflight))
+    return 1;
+#endif
   if (command_line.HasSwitch(kWorkspaceWebAuthnProbe) &&
       (!command_line.HasSwitch(kWorkspaceSmokeTest) ||
        command_line.HasSwitch(kWorkspaceRoot) || tls_probe ||

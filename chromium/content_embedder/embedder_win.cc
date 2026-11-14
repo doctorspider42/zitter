@@ -12,6 +12,7 @@
 #include "base/base_paths.h"
 #include "base/barrier_closure.h"
 #include "base/check.h"
+#include "base/compiler_specific.h"
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -90,6 +91,12 @@ void LaunchExternalProtocol(const GURL& url) {
 }
 
 namespace {
+
+// Writes a fixed diagnostic line for the probe scripts that read stderr.
+void WriteStderr(const char* message) {
+  // SAFETY: every caller passes a NUL-terminated string literal.
+  UNSAFE_BUFFERS(std::fputs(message, stderr));
+}
 
 constexpr char kSmokeTest[] = "zitter-content-smoke-test";
 constexpr char kWorkspaceLocalState[] = "ContentWorkspaceLocalState.json";
@@ -272,8 +279,8 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         kOpenPreparedWorkspace);
     auto root = prepared ? std::optional(path) : NormalizeProbeRoot(path);
     if (!root || (prepared && !IsPreparedContentWorkspace(*root, "windows-dpapi"))) {
-      std::fputs(prepared ? "Invalid prepared Content workspace\n"
-                         : "The Content workspace requires a temporary probe root\n", stderr);
+      WriteStderr(prepared ? "Invalid prepared Content workspace\n"
+                         : "The Content workspace requires a temporary probe root\n");
       return false;
     }
     const auto lock_path = root->AppendASCII("WorkspaceLock");
@@ -285,13 +292,13 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     if (!profile_lock_.IsValid() ||
         profile_lock_.Lock(base::File::LockMode::kExclusive) !=
             base::File::FILE_OK) {
-      std::fputs("Could not lock the Content workspace root\n", stderr);
+      WriteStderr("Could not lock the Content workspace root\n");
       return false;
     }
 
     auto session = ReadContentWorkspaceSession(root->AppendASCII(kWorkspaceSession));
     if (!session || base::IsLink(root->AppendASCII("WorkspaceSettings.json"))) {
-      std::fputs("Invalid Content workspace session or settings path\n", stderr);
+      WriteStderr("Invalid Content workspace session or settings path\n");
       return false;
     }
     workspace_timeline_ = ReadWorkspaceTimeline(
@@ -321,7 +328,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
           !ProfileContext::IsPasswordStorePathSafe(profile) ||
           !ProfileContext::IsHistoryStorePathSafe(profile) ||
           (base::PathExists(bootstrap) && !base::IsDirectoryEmpty(bootstrap))) {
-        std::fputs("Invalid Content workspace profile directory\n", stderr);
+        WriteStderr("Invalid Content workspace profile directory\n");
         return false;
       }
       password_saving_defaults_[index] =
@@ -330,9 +337,9 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     }
     const auto profiles = ReadContentProfiles(*session).value();
     for (size_t index = kWorkspaceIds.size(); index < profiles.size(); ++index) {
-      const auto path = root->AppendASCII(profiles[index].id);
-      const auto network = path.AppendASCII(kNetworkData);
-      const auto bootstrap = path.AppendASCII(kNetworkBootstrap);
+      const auto profile_path = root->AppendASCII(profiles[index].id);
+      const auto network = profile_path.AppendASCII(kNetworkData);
+      const auto bootstrap = profile_path.AppendASCII(kNetworkBootstrap);
       const auto safe_directory = [](const base::FilePath& directory) {
         const DWORD attributes = ::GetFileAttributesW(directory.value().c_str());
         return attributes != INVALID_FILE_ATTRIBUTES &&
@@ -340,12 +347,12 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
                !(attributes & FILE_ATTRIBUTE_REPARSE_POINT);
       };
       if (profiles[index].separate_network ||
-          !safe_directory(path) || !safe_directory(network) ||
+          !safe_directory(profile_path) || !safe_directory(network) ||
           !safe_directory(bootstrap) || !base::IsDirectoryEmpty(bootstrap)) {
         LOG(ERROR) << "Invalid additional Content profile directory or preferences";
         return false;
       }
-      auto startup = WorkspaceProfileStartup::Read(path);
+      auto startup = WorkspaceProfileStartup::Read(profile_path);
       if (!startup) {
         LOG(ERROR) << "Invalid additional Content profile directory or preferences";
         return false;
@@ -361,7 +368,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     os_crypt_ = std::move(open_encryption_).Run(*root, can_create_key,
                                               std::move(network_paths));
     if (!os_crypt_) {
-      std::fputs("The Content workspace could not open its DPAPI key\n", stderr);
+      WriteStderr("The Content workspace could not open its DPAPI key\n");
       return false;
     }
     for (size_t index = 0; index < kProfileDirectories.size(); ++index) {
@@ -374,7 +381,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
       file_chooser_prefs_[index] =
           ProfileContext::OpenFileChooserPreferences(profile);
       if (!site_permission_prefs_[index]) {
-        std::fputs("Could not open Content site permissions\n", stderr);
+        WriteStderr("Could not open Content site permissions\n");
         return false;
       }
       page_zoom_prefs_[index] = ProfileContext::OpenPageZoomPreferences(profile);
@@ -390,7 +397,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         return false;
       }
       if (!fingerprint_prefs_[index]) {
-        std::fputs("Could not open Content fingerprint preferences\n", stderr);
+        WriteStderr("Could not open Content fingerprint preferences\n");
         return false;
       }
     }
@@ -447,7 +454,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
       if (success)
         std::puts("Zitter Content workspace smoke passed");
       else
-        std::fputs("Zitter Content workspace smoke failed\n", stderr);
+        WriteStderr("Zitter Content workspace smoke failed\n");
     }
     if (!success || workspace_root_.empty()) {
       quit_.Run();

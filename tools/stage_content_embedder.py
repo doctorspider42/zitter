@@ -436,6 +436,7 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
         "chromium/app/network_policy_features.inc",
         "chromium/app/updater_mac.cc",
         "chromium/app/updater_mac.h",
+        "chromium/app/windows_channel.h",
         "tests/fixtures/assistant_cli.cc",
         "third_party/brave_clean_urls/clean-urls.json",
     ):

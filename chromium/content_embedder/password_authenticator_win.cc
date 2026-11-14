@@ -58,7 +58,7 @@ bool IsCurrentAccount(ULONG package, void* credentials, ULONG size) {
   char origin_name[] = "Zitter";
   LSA_STRING origin = {sizeof(origin_name) - 1, sizeof(origin_name), origin_name};
   TOKEN_SOURCE source = {};
-  base::span(source.SourceName).copy_prefix_from(base::span(origin_name));
+  base::span(source.SourceName).copy_prefix_from(base::span_from_cstring("Zitter"));
   if (!::AllocateLocallyUniqueId(&source.SourceIdentifier))
     return false;
 
