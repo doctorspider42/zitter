@@ -460,6 +460,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void FinishBrowserImport(bool ok, std::string error = {});
   void SleepOtherWorkspaces();
   bool OpenRss();
+  bool OpenPreferencesTab();
   bool OpenHistory();
   bool OpenDownloads();
   void DownloadCompleted(std::string guid, std::u16string name);

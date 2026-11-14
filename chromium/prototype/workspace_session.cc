@@ -27,7 +27,7 @@ std::optional<std::vector<WorkspaceSessionTab>> ReadWorkspaceSessionTabs(
     if (!spec || spec->size() > 32768)
       return std::nullopt;
     GURL url(*spec);
-    if (!spec->empty() && !IsWorkspaceTabUrl(url))
+    if (!spec->empty() && !IsWorkspaceTabUrl(url) && !IsSettingsTabUrl(url))
       return std::nullopt;
     WorkspaceSessionTab entry{.url = std::move(url)};
     if (const auto* title = tab->FindString("title"); title && title->size() <= 32768)
@@ -44,7 +44,7 @@ std::optional<std::vector<WorkspaceSessionTab>> ReadWorkspaceSessionTabs(
 base::DictValue WriteWorkspaceSessionTab(const GURL& url,
                                          std::u16string_view title) {
   return base::DictValue()
-      .Set("url", IsWorkspaceTabUrl(url) ? url.spec() : "")
+      .Set("url", (IsWorkspaceTabUrl(url) || IsSettingsTabUrl(url)) ? url.spec() : "")
       .Set("title", base::UTF16ToUTF8(title));
 }
 

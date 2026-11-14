@@ -228,6 +228,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string)> duplicate_pin;
     base::RepeatingCallback<bool(size_t, std::string)> move_tab_to_workspace;
     base::RepeatingCallback<void(PageCommand)> page_command;
+    base::RepeatingCallback<bool()> open_preferences_tab;
     base::RepeatingCallback<GURL(std::optional<size_t>, std::string_view)> tab_menu_url;
     base::RepeatingCallback<bool()> clean_address_copies;
     base::RepeatingCallback<void(std::u16string)> search;
@@ -497,6 +498,8 @@ class WorkspaceShell final : public ui::EventHandler,
   bool CloseOverlays(bool keep_sidebar = false);
   // With `query`, the list opens filtered to it.
   void OpenGeneralSettings(std::u16string_view query = {});
+  bool DismissPreferencesTab();
+  bool FocusPreferencesTab();
   bool ExtensionActionAppearanceForTesting(const std::string& id,
                                            std::u16string_view badge) const;
   void SetExtensionActionAppearance(const std::string& id,
@@ -964,6 +967,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void CreateTimeMachinePanel();
   void CreateToolsPanel();
   void PositionPanels();
+  void PositionPreferencesTab();
+  void SyncPreferencesTab();
   void ApplySidebarWidth(int width,bool done);
   void FitInitialSidebarWidth();
   void HideMetalSidebarGrip();
@@ -1347,6 +1352,8 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<views::View> preferences_empty_ = nullptr;
   raw_ptr<views::View> preferences_body_ = nullptr;
   raw_ptr<views::View> preferences_navigation_ = nullptr;
+  raw_ptr<views::View> theme_preview_row_ = nullptr;
+  std::vector<std::pair<raw_ptr<views::View>, raw_ptr<views::View>>> theme_previews_;
   raw_ptr<views::View> preferences_close_ = nullptr;
   raw_ptr<views::View> preferences_category_picker_ = nullptr;
   struct PreferenceRow {

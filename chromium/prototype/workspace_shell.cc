@@ -694,12 +694,14 @@ class SidebarDivider final : public views::View {
 BEGIN_METADATA(SidebarDivider)
 END_METADATA
 std::u16string HostLabel(const GURL& url) {
+  if (IsSettingsTabUrl(url)) return u"zitter://settings";
   if (IsRssTabUrl(url)) return u"zitter://rss/";
   std::string host(url.host());
   if (host.starts_with("www.")) host = host.substr(4);
   return base::UTF8ToUTF16(host);
 }
 std::u16string TabMonogram(const GURL& url, std::u16string_view title) {
+  if (IsSettingsTabUrl(url)) return u"⚙︎";
   if (IsRssTabUrl(url)) return u"\x1fRSS";
   auto text = HostLabel(url);
   if (text.empty()) text = std::u16string(title);
@@ -3043,6 +3045,51 @@ FolderNoticeView* FindFolderNotice(views::View* view) {
   for(const auto& child:view->children())if(auto* notice=FindFolderNotice(child.get()))return notice;return nullptr;
 }
 
+class ThemePreview final : public views::View {
+  METADATA_HEADER(ThemePreview, views::View)
+
+ public:
+  explicit ThemePreview(ThemeMode mode) : mode_(mode) {
+    SetPreferredSize(gfx::Size(98, 44));
+    SetCanProcessEventsWithinSubtree(false);
+    GetViewAccessibility().SetIsIgnored(true);
+  }
+
+  void SetSelected(bool selected) {
+    if (selected_ == selected)
+      return;
+    selected_ = selected;
+    SchedulePaint();
+  }
+
+  void OnPaint(gfx::Canvas* canvas) override {
+    const bool dark = mode_ == ThemeMode::kSystem
+        ? ui::NativeTheme::GetInstanceForNativeUi()->preferred_color_scheme() ==
+              ui::NativeTheme::PreferredColorScheme::kDark
+        : mode_ == ThemeMode::kDark;
+    const auto colors = sidebar::design_palette(dark, WindowWorkspaceColor(this));
+    const auto frame = GetLocalBounds();
+    FillRound(canvas, frame, 7, colors.bg_void);
+    gfx::Rect rail(6, 6, 20, std::max(0, height() - 12));
+    FillRound(canvas, rail, 3, colors.bg_base);
+    gfx::Rect page(30, 6, std::max(0, width() - 36), rail.height());
+    FillRound(canvas, page, 3, colors.bg_raised);
+    if (page.width() > 16) {
+      FillRound(canvas, gfx::Rect(38, 14, (page.width() - 16) * 7 / 10, 3), 1, colors.accent);
+      FillRound(canvas, gfx::Rect(38, 22, page.width() - 16, 2), 1, colors.line_strong);
+      FillRound(canvas, gfx::Rect(38, 28, (page.width() - 16) * 11 / 20, 2), 1, colors.line_strong);
+    }
+    StrokeRound(canvas, frame, 7, selected_ ? Palette(this).accent : Hairline(this));
+  }
+
+ private:
+  const ThemeMode mode_;
+  bool selected_ = false;
+};
+
+BEGIN_METADATA(ThemePreview)
+END_METADATA
+
 class PreferenceCopy final : public views::View {
   METADATA_HEADER(PreferenceCopy,views::View)
  public:
@@ -4686,6 +4733,7 @@ void WorkspaceShell::LayoutAssistant(bool pinned) {
   root->assistant_pinned = pinned;
   root->InvalidateLayout();
   if (widget_) widget_->LayoutRootViewIfNecessary();
+  PositionPreferencesTab();
 }
 void WorkspaceShell::SetPanes(std::vector<views::View*> panes, std::vector<double> weights, bool vertical) {
   static_cast<PaneHost*>(content_host_.get())->SetPanes(std::move(panes), std::move(weights), vertical);
@@ -4744,7 +4792,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
           return;
         }
         const bool blocked=shell->settings_visible() ||
-            (shell->general_widget_ && shell->general_widget_->IsVisible()) ||
             (shell->tools_widget_ && shell->tools_widget_->IsVisible()) ||
             (shell->time_machine_widget_ && shell->time_machine_widget_->IsVisible()) ||
             (shell->site_panel_ && shell->site_panel_->IsVisible()) ||
@@ -5207,20 +5254,17 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true,preference_chrome_painted,preference_chrome_visible));
   preferences_navigation_ = navigation;
   navigation->SetPreferredSize(gfx::Size(212, 1));
-  copy(navigation, u"zitter", kInk, 8, gfx::Font::Weight::BOLD);
-  copy(navigation, T(u"TWOJA PRZEGLĄDARKA"), kMuted, -3, gfx::Font::Weight::MEDIUM);
-  Spacer(navigation, 20);
   auto* main = general->AddChildView(std::make_unique<views::View>());
   SetSidebarPanelLayout(general.get(),false,gfx::Insets(8),8,main);
   auto* preferences_heading = main->AddChildView(std::make_unique<views::View>());
-  auto* heading_text = preferences_heading->AddChildView(std::make_unique<views::View>());
-  SetSidebarPanelLayout(heading_text,true,gfx::Insets(),5);
-  if(auto* title=views::AsViewClass<PreferenceCopy>(copy(heading_text, T(u"Preferencje"), kInk, 9, gfx::Font::Weight::SEMIBOLD)))title->SetDisplay();
-  copy(heading_text, T(u"Twoja przestrzeń. Twoje zasady."), kMuted, 0);
-  SetSidebarPanelLayout(preferences_heading,false,gfx::Insets(),12,heading_text);
-  auto dismiss=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell){shell->CloseOverlays();shell->RestorePageFocus();}},weak);
-  {auto* controls=preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));preferences_close_=controls->AddControl({},T(u"Zamknij preferencje (Escape)"));BindFormCommand(preferences_close_,sidebar::FormCommand::PreferencesDismiss);}
-  preferences_search_ = AddEditor(main);
+  auto* page_title = copy(preferences_heading, T(u"Preferencje"), kInk, 9,
+                     gfx::Font::Weight::SEMIBOLD);
+  views::AsViewClass<PreferenceCopy>(page_title)->SetDisplay();
+  preferences_search_ = AddEditor(preferences_heading);
+  auto* controls = preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));
+  preferences_close_ = controls->AddControl({}, T(u"Zamknij preferencje (Escape)"));
+  BindFormCommand(preferences_close_, sidebar::FormCommand::PreferencesDismiss);
+  SetSidebarPanelLayout(preferences_heading, false, gfx::Insets(), 12, page_title, true);
   preferences_search_->SetPlaceholderText(T(u"Szukaj ustawień"));
   preferences_search_->GetViewAccessibility().SetName(T(u"Szukaj we wszystkich ustawieniach"));
   preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
@@ -5305,9 +5349,7 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
     copy(section,descriptions[i],kMuted,-1,gfx::Font::Weight::NORMAL,true);
     preference_sections_.push_back({section, button, {}});
   }
-  auto* nav_space = Spacer(navigation, 1);
-  SetSidebarPanelLayout(navigation,true,gfx::Insets(16),6,nav_space);
-  copy(navigation, T(u"ZITTER / PREFERENCJE"), kMuted, -3);
+  SetSidebarPanelLayout(navigation, true, gfx::Insets(6), 0);
   BuildRustPreferenceRows(*preference_catalogue);
   preferences_empty_ = copy(body.get(), T(u"Brak pasujących ustawień. Spróbuj innego hasła."), kMuted,0,gfx::Font::Weight::NORMAL,true);
   general_scroll_->SetPanelContents(std::move(body));
@@ -5343,7 +5385,9 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   import_scroll_=import_viewport;import_viewport->SetPanelContents(std::move(import_panel));
   CreatePanelWidget(std::move(import_scroll), import_delegate_, import_widget_, T(u"Zitter — Import danych"));
   CreatePanelWidget(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
+  // The preferences tab uses a child widget for native input and scene layers.
   CreatePanelWidget(std::move(general), general_delegate_, general_widget_, T(u"Zitter — Ustawienia"));
+  general_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
    toast_=toast.get();CreatePanelWidget(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
@@ -5614,6 +5658,7 @@ void WorkspaceShell::Detach() {
   spelling_preview_initialized_ = false; spelling_add_ = nullptr;
   spelling_search_ = nullptr;
   general_root_ = nullptr; general_scroll_ = nullptr; general_status_ = nullptr;
+  theme_previews_.clear(); theme_preview_row_ = nullptr;
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
   time_machine_check_ = nullptr; time_machine_days_picker_ = nullptr; time_machine_ = nullptr;
   time_machine_widget_.reset(); time_machine_delegate_.reset();
@@ -5733,6 +5778,7 @@ void WorkspaceShell::Update(ShellState state) {
   edit_workspace_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   remove_workspace_->SetEnabled(state_.configuration_ready && !state_.profiles_busy && state_.workspaces.size() > 1);
   if ((changed || selected || profiles_changed) && settings_visible()) RefreshWorkspaceSettings();
+  SyncPreferencesTab();
   if (general_widget_->IsVisible()) RefreshGeneralControls();
   RefreshWorkspaceHeading();
   SetPanelText(settings_title_,creating_workspace_ ? T(u"Nowa przestrzeń") : state_.workspace_name);
@@ -5757,7 +5803,7 @@ void WorkspaceShell::Update(ShellState state) {
   }
   nav_buttons_[0]->SetEnabled(state_.can_go_back);
   nav_buttons_[1]->SetEnabled(state_.can_go_forward);
-  copy_url_button_->SetEnabled(IsWorkspaceTabUrl(state_.url));
+  copy_url_button_->SetEnabled(IsWorkspaceTabUrl(state_.url) || IsSettingsTabUrl(state_.url));
   if (state_.loading && !reload_timer_.IsRunning()) AnimateReload();
   if (selected) ApplyAppearance(false);
   FitInitialSidebarWidth();
@@ -9834,6 +9880,10 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   applying_theme_ = false;
 }
 void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
+  if (theme_preview_row_) {
+    for (const auto& [preview, action] : theme_previews_)
+      preview->SchedulePaint();
+  }
   if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
 }
 void WorkspaceShell::ScheduleToolsChrome(){
@@ -10076,7 +10126,30 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
       unavailable_preferences_[key] = unavailable;
     }
     if(spec.kind==Kind::Theme||spec.kind==Kind::Search||spec.kind==Kind::Picker||spec.kind==Kind::Language||spec.kind==Kind::TimeMachineDays){
-      auto* control=ChoicePicker(row,title,strings(spec.choices));
+      views::View* picker_parent = row;
+      if (spec.kind == Kind::Theme) {
+        picker_parent = row->children().front().get();
+        auto* previews = picker_parent->AddChildView(std::make_unique<views::View>());
+        theme_preview_row_ = previews;
+        SetSidebarPanelLayout(previews, false, gfx::Insets::VH(4, 0), 8);
+        size_t index = 0;
+        for (const auto& label : strings(spec.choices)) {
+          const auto mode = static_cast<ThemeMode>(index++);
+          auto* tile = previews->AddChildView(std::make_unique<views::View>());
+          auto* preview = tile->AddChildView(std::make_unique<ThemePreview>(mode));
+          auto* actions = tile->AddChildView(std::make_unique<SceneActionGroup>(false, 0));
+          actions->Share(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+            return shell && shell->PreferenceChromeVisible();
+          }, weak), base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome, weak));
+          auto* action = AddAction(actions, base::BindRepeating(&WorkspaceShell::SetThemeMode, weak, mode),
+                                   label, ui::ButtonStyle::kText);
+          action->GetViewAccessibility().SetRole(ax::mojom::Role::kRadioButton);
+          theme_previews_.push_back({preview, action});
+          SetSidebarPanelLayout(tile, true, gfx::Insets(), 2);
+        }
+      }
+      auto* control=ChoicePicker(picker_parent,title,strings(spec.choices));
+
       if(spec.kind==Kind::TimeMachineDays){time_machine_days_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetTimeMachine(shell->time_machine_enabled_,std::array{7,30,90}[std::min<size_t>(2,PickerIndex(shell->time_machine_days_picker_).value_or(1))]);},weak));}
       else if(spec.kind==Kind::Language){language_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetUiLanguageChoice(PickerIndex(shell->language_picker_).value_or(0));},weak));}
       else if(spec.kind==Kind::Theme){theme_picker_=control;SetPickerCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetThemeMode(static_cast<ThemeMode>(PickerIndex(shell->theme_picker_).value_or(0)));},weak));}
@@ -10497,6 +10570,13 @@ void WorkspaceShell::RefreshGeneralControls() {
     CancelSceneActions(general_widget_->GetContentsView());
   }
   SyncPickerIndex(theme_picker_,static_cast<size_t>(theme_mode_));
+  for (size_t i = 0; i < theme_previews_.size(); ++i) {
+    const bool active = i == static_cast<size_t>(theme_mode_);
+    const auto& [preview, action] = theme_previews_[i];
+    static_cast<ThemePreview*>(preview.get())->SetSelected(active);
+    action->GetViewAccessibility().SetCheckedState(
+        active ? ax::mojom::CheckedState::kTrue : ax::mojom::CheckedState::kFalse);
+  }
   std::vector<std::pair<std::string,std::u16string>> provider_choices;
   size_t provider_index=0;
   const std::string implicit=search_engine_==SearchEngine::kGoogle?"g":search_engine_==SearchEngine::kBing?"b":"d";
@@ -11191,11 +11271,94 @@ void WorkspaceShell::AddExtensionPreference(const std::string& key,
 }
 
 void WorkspaceShell::OpenGeneralSettings(std::u16string_view query) {
-  if (!widget_ || !widget_->IsVisible()) return;
+  if (!widget_ || !widget_->IsVisible() || !general_widget_)
+    return;
+  const bool was_visible = general_widget_->IsVisible();
   CloseOverlays(true);
-  if (!query.empty()) preferences_search_->SetText(query);
-  RefreshGeneralControls(); RefreshSitePreferences(); FilterPreferences(); PositionPanels();
-  general_widget_->Show(); general_widget_->Activate(); preferences_search_->RequestFocus();
+  if (callbacks_.open_preferences_tab && !callbacks_.open_preferences_tab.Run())
+    return;
+  if (!query.empty())
+    preferences_search_->SetText(query);
+  RefreshGeneralControls();
+  RefreshSitePreferences();
+  if (!was_visible || !query.empty())
+    FilterPreferences();
+  if (!callbacks_.open_preferences_tab) {
+    PositionPreferencesTab();
+    general_widget_->ShowInactive();
+  }
+  FocusPreferencesTab();
+}
+
+bool WorkspaceShell::FocusPreferencesTab() {
+  if (!general_widget_ || !general_widget_->IsVisible())
+    return false;
+  general_widget_->Activate();
+  preferences_search_->RequestFocus();
+  return true;
+}
+
+bool WorkspaceShell::DismissPreferencesTab() {
+  if (!general_widget_ || !general_widget_->IsVisible())
+    return false;
+  if (callbacks_.open_preferences_tab) {
+    const auto workspace = state_.workspace_id;
+    const auto tab = std::ranges::find(state_.tabs, state_.active_tab, &ShellTab::index);
+    if (tab == state_.tabs.end() || !IsSettingsTabUrl(tab->url))
+      return false;
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,
+                                   std::string workspace,
+                                   std::array<uint64_t, 2> identity) {
+          if (!shell || shell->state_.workspace_id != workspace)
+            return;
+          const auto& tabs = shell->state_.tabs;
+          const auto current = std::ranges::find(tabs, identity, &ShellTab::identity);
+          if (current != tabs.end() && IsSettingsTabUrl(current->url))
+            shell->callbacks_.close_tab.Run(current->index);
+        }, weak_factory_.GetWeakPtr(), workspace, tab->identity));
+  } else {
+    general_widget_->Hide();
+    RestorePageFocus();
+  }
+  return true;
+}
+
+void WorkspaceShell::SyncPreferencesTab() {
+  if (!callbacks_.open_preferences_tab || !general_widget_)
+    return;
+  if (!IsSettingsTabUrl(state_.url) || content_fullscreen_ || !widget_->IsVisible()) {
+    if (general_widget_->IsVisible())
+      general_widget_->Hide();
+    return;
+  }
+  if (!general_widget_->IsVisible()) {
+    PositionPreferencesTab();
+    general_widget_->ShowInactive();
+    if (sidebar_visible())
+      sidebar_widget_->StackAboveWidget(general_widget_.get());
+  }
+}
+
+void WorkspaceShell::PositionPreferencesTab() {
+  if (!general_widget_)
+    return;
+  auto area = content_host_->GetBoundsInScreen();
+  const auto* root = static_cast<ShellRoot*>(root_.get());
+  if (root->assistant && root->assistant->GetVisible()) {
+    const int right = root->assistant->GetBoundsInScreen().x() - kGap;
+    area.set_width(std::min(area.width(), std::max(0, right - area.x())));
+  }
+  if (area.IsEmpty())
+    return;
+  const bool rail = area.width() >= 680 && area.height() >= 650;
+  preferences_navigation_->SetVisible(rail);
+  preferences_category_picker_->SetVisible(!rail);
+  const bool previews = area.width() >= 410;
+  if (theme_preview_row_)
+    theme_preview_row_->SetVisible(previews);
+  if (general_widget_->GetWindowBoundsInScreen() != area)
+    general_widget_->SetBounds(area);
 }
 void WorkspaceShell::SetThemeMode(ThemeMode mode) {
   if (mode < ThemeMode::kSystem || mode > ThemeMode::kDark) return;
@@ -11315,7 +11478,10 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   static_cast<ShellRoot*>(root_.get())->sidebar_width = sidebar_width_;
   root_->InvalidateLayout();
   // Workspace color changes do not resize the frame or hidden settings panels.
-  if (refresh_theme) PositionPanels();
+  if (refresh_theme) {
+    widget_->LayoutRootViewIfNecessary();
+    PositionPanels();
+  }
 }
 
 namespace {
@@ -12188,15 +12354,7 @@ void WorkspaceShell::PositionPanels() {
   if(download_cue_widget_&&download_cue_widget_->IsVisible()&&static_cast<DownloadCueView*>(download_cue_.get())->pill())SetWidgetBounds(download_cue_widget_.get(),DownloadPillBounds());
   if (find_visible()) PositionFind();
   PositionPrint();
-  if (general_widget_) {
-    const int panel_width = std::max(320, std::min(960, bounds.width() - 24));
-    const int panel_height = std::max(240, std::min(760, bounds.height() - 24));
-    const bool sidebar = panel_width >= 760 && panel_height >= 720;
-    preferences_navigation_->SetVisible(sidebar);
-    preferences_category_picker_->SetVisible(!sidebar);
-    SetWidgetBounds(general_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - panel_width / 2,
-        std::max(bounds.y() + 8, bounds.CenterPoint().y() - panel_height / 2), panel_width, panel_height));
-  }
+  PositionPreferencesTab();
   const int settings_width = std::min(440, bounds.width() - 24);
   const int settings_height = std::min(settings_root_->GetHeightForWidth(settings_width), std::max(120, bounds.height() - 24));
   SetWidgetBounds(settings_widget_.get(),gfx::Rect(bounds.CenterPoint().x() - settings_width / 2,
@@ -12361,6 +12519,9 @@ GURL WorkspaceShell::ResolveInput(std::string text, std::u16string* provider_nam
       return SearchDestination(provider, query);
     }
   }
+  const GURL internal(text);
+  if (IsSettingsTabUrl(internal))
+    return GURL(kSettingsTabUrl);
   const GURL local = ExternalOpenArgument(base::FilePath::FromUTF8Unsafe(text));
   if (IsLocalHtmlUrl(local))
     return local;
@@ -13509,7 +13670,8 @@ void WorkspaceShell::ShowSidebar() {
   }
   AnimateSidebar(true);
   sidebar_widget_->ShowInactive();
-  sidebar_widget_->StackAboveWidget(widget_);
+  sidebar_widget_->StackAboveWidget(general_widget_ && general_widget_->IsVisible()
+                                       ? general_widget_.get() : widget_.get());
   ScheduleMetalSidebar();
   if (!pinned_) sidebar_hover_timer_.Start(FROM_HERE, base::Milliseconds(40), this, &WorkspaceShell::PollSidebar);
 }
@@ -13523,7 +13685,7 @@ void WorkspaceShell::PollSidebar() {
   if (!sidebar_visible() || pinned_ || content_fullscreen_) { sidebar_hover_timer_.Stop(); return; }
   const bool blocked = (sidebar_rename_widget_ && sidebar_rename_widget_->IsVisible()) ||
       sidebar_resizing_ || drag_row_.view() || settings_visible() || address_visible() ||
-      (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
+      (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) ||
       (workspace_menu_runner_ && workspace_menu_runner_->IsRunning()) ||
       (link_menu_runner_ && link_menu_runner_->IsRunning()) ||
@@ -13658,6 +13820,8 @@ void WorkspaceShell::SetContentFullscreen(views::View* page) {
   }
   root_->InvalidateLayout();
   widget_->LayoutRootViewIfNecessary();
+  SyncPreferencesTab();
+  PositionPreferencesTab();
   ScheduleMetalHeader(); ScheduleMetalSplit();
 }
 void WorkspaceShell::TogglePinned() {
@@ -13797,7 +13961,8 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
   if (!keep_sidebar) CancelWorkspaceSwipe();
   const bool visible = address_visible() || settings_visible() ||
       (profiles_widget_ && profiles_widget_->IsVisible()) || import_visible() ||
-      (general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
+      (!callbacks_.open_preferences_tab && general_widget_ && general_widget_->IsVisible()) ||
+      (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible()) ||
       find_visible() || print_visible() || site_settings_page_ || renaming;
   HideFind();
@@ -13806,7 +13971,7 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
   if (tools_widget_) tools_widget_->Hide();
   if (time_machine_widget_) time_machine_widget_->Hide();
   SetShortcutRecording(false);
-  if (general_widget_) general_widget_->Hide();
+  if (!callbacks_.open_preferences_tab && general_widget_) general_widget_->Hide();
   if (profiles_widget_) profiles_widget_->Hide();
   if (import_widget_) import_widget_->Hide();
   address_widget_->Hide();
@@ -13820,7 +13985,7 @@ bool WorkspaceShell::address_visible() const { return address_widget_ && address
 bool WorkspaceShell::settings_visible() const { return settings_widget_ && settings_widget_->IsVisible(); }
 void WorkspaceShell::OpenWorkspaceSettings() {
   if (!widget_ || !widget_->IsVisible()) return;
-  if (general_widget_) general_widget_->Hide();
+  if (!callbacks_.open_preferences_tab && general_widget_) general_widget_->Hide();
   address_widget_->Hide();
   if (profiles_widget_) profiles_widget_->Hide();
   RefreshWorkspaceSettings();
@@ -13830,8 +13995,9 @@ void WorkspaceShell::OpenWorkspaceSettings() {
 }
 bool WorkspaceShell::sidebar_visible() const { return sidebar_widget_ && sidebar_widget_->IsVisible(); }
 void WorkspaceShell::RestorePageFocus(std::optional<size_t> pane) {
-  if ((general_widget_ && general_widget_->IsVisible()) || (tools_widget_ && tools_widget_->IsVisible()) ||
+  if ((tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible())) return;
+  if (FocusPreferencesTab()) return;
   const size_t selected_pane = pane.value_or(state_.active_pane);
   widget_->Activate();
   if (callbacks_.focus_pane) callbacks_.focus_pane.Run(selected_pane);
@@ -13866,6 +14032,7 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
   sidebar_width_dirty_ = true;
   static_cast<ShellRoot*>(root_.get())->sidebar_width = sidebar_width_;
   root_->InvalidateLayout();
+  widget_->LayoutRootViewIfNecessary();
   PositionPanels();
   if (!done) return;
   sidebar_resizing_ = false;
@@ -16375,7 +16542,7 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
       },weak_factory_.GetWeakPtr(),state_.profile_id,action->DeferFormCommand()));break;
     }
     case C::WorkspaceDismiss:settings_widget_->Hide();RestorePageFocus();break;
-    case C::PreferencesDismiss:CloseOverlays();RestorePageFocus();break;
+    case C::PreferencesDismiss:DismissPreferencesTab();break;
     case C::ToolsDismiss:
       SetShortcutRecording(false);
       tools_widget_->Hide();
@@ -16989,7 +17156,14 @@ bool WorkspaceShell::HandleToolsEditorKey(EditorControl* sender,const ui::KeyEve
 bool WorkspaceShell::HandlePreferenceEditorKey(EditorControl* sender,const ui::KeyEvent& event) {
   if(!general_widget_->IsVisible()||!sender->view()->GetEnabledInViewsSubtree()||
       sender->IsIMEComposing()||event.type()!=ui::EventType::kKeyPressed)return false;
-  if(event.key_code()==ui::VKEY_ESCAPE){CloseOverlays();RestorePageFocus();return true;}
+  if (event.key_code() == ui::VKEY_ESCAPE) {
+    if (sender == preferences_search_.get() && !sender->GetText().empty()) {
+      sender->SetText(u"");
+      FilterPreferences();
+      return true;
+    }
+    return DismissPreferencesTab();
+  }
   if(event.key_code()!=ui::VKEY_RETURN)return false;
   for(const auto& [key,field]:preference_textfields_)if(sender==field){SaveTextPreference(key);return true;}
   if(sender==site_origin_){SaveSitePreference();return true;}
@@ -17061,7 +17235,7 @@ void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rec
   // live content instead of leaving an overlay at old window/sidebar bounds.
   if(workspace_switch_overlay_&&(widget==widget_||widget==sidebar_widget_.get()))StopWorkspaceAnimation();
   if(widget==address_widget_.get())ScheduleMetalPalette();
-  if (widget == widget_) {PositionPanels();ScheduleMetalHeader();ScheduleMetalSplit();}
+  if (widget == widget_) {widget_->LayoutRootViewIfNecessary();PositionPanels();ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !sidebar_rename_workspace_.empty())
     ScheduleMetalSidebar();
 }
@@ -17108,7 +17282,7 @@ void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visib
   if(widget==address_widget_.get()&&!visible&&scrim_widget_)scrim_widget_->Hide();
   if(widget==address_widget_.get()&&!visible)SetPaletteLoading(false);
   if(widget==address_widget_.get()&&!visible&&url_pill_){SetRowEditing(url_pill_,false);ScheduleMetalSidebar();}
-  if (widget==widget_) {ScheduleMetalHeader();ScheduleMetalSplit();}
+  if (widget==widget_) {SyncPreferencesTab();ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
   if (widget == widget_ && !visible) {
     HideWebNotifications();

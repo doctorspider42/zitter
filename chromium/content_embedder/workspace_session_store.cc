@@ -145,7 +145,7 @@ bool IsValidSession(const base::DictValue& session) {
         static_cast<size_t>(*selected) >= tabs->size() ||
         !ReadWorkspaceSplit(*entry, tabs->size()) ||
         !std::ranges::all_of(*tabs, [](const auto& tab) {
-          return CanRestoreWorkspaceURL(tab.url) && tab.title;
+          return (CanRestoreWorkspaceURL(tab.url) || prototype::IsSettingsTabUrl(tab.url)) && tab.title;
         })) {
       return false;
     }

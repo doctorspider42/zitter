@@ -203,10 +203,12 @@ void LoadWorkspaceTab(content::WebContents* page, const GURL& url,
                       ui::PageTransition transition) {
   content::NavigationController::LoadURLParams params(url);
   params.transition_type = transition;
-  if (IsRssTabUrl(url)) {
-    params.url = GURL("data:text/html,<meta http-equiv=Content-Security-Policy content=\"default-src 'none'\"><title>RSS</title>");
+  if (IsRssTabUrl(url) || IsSettingsTabUrl(url)) {
+    params.url = GURL(IsRssTabUrl(url)
+        ? "data:text/html,<meta http-equiv=Content-Security-Policy content=\"default-src 'none'\"><title>RSS</title>"
+        : "data:text/html,<meta http-equiv=Content-Security-Policy content=\"default-src 'none'\">");
     params.load_type = content::NavigationController::LOAD_TYPE_DATA;
-    params.virtual_url_for_special_cases = url;
+    params.virtual_url_for_special_cases = IsSettingsTabUrl(url) ? GURL(kSettingsTabUrl) : url;
   }
   page->GetController().LoadURLWithParams(params);
 }

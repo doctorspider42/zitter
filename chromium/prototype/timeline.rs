@@ -46,8 +46,8 @@ impl Frame {
     }
 }
 
-/// A frame from native code: tabs without an http(s) URL (new tab pages, internal
-/// pages) are not part of history, so they are dropped and `active` follows.
+/// Keep web pages and supported internal tabs. Drop other entries and remap
+/// the active index to the retained list.
 fn admit(frame: &ffi::TimelineFrame, forced: bool) -> Option<Frame> {
     if frame.workspace.is_empty() || frame.tabs.len() > MAX_TABS {
         return None;
@@ -56,7 +56,10 @@ fn admit(frame: &ffi::TimelineFrame, forced: bool) -> Option<Frame> {
     let mut active = -1;
     for (i, tab) in frame.tabs.iter().enumerate() {
         let lower = tab.url.to_ascii_lowercase();
-        if tab.url.len() > MAX_TEXT || !(lower.starts_with("https://") || lower.starts_with("http://") || tab.url == "zitter://rss/") {
+        let supported = lower.starts_with("https://")
+            || lower.starts_with("http://")
+            || matches!(tab.url.as_str(), "zitter://rss/" | "zitter://settings/");
+        if tab.url.len() > MAX_TEXT || !supported {
             continue;
         }
         if i as i32 == frame.active {

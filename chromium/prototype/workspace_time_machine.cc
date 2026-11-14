@@ -281,7 +281,8 @@ bool WorkspaceWindow::RestoreLayout(std::string workspace_id, base::DictValue en
 }
 void WorkspaceWindow::RecordClosedTab(const Host& host, size_t index) {
   const GURL url = TabUrl(host, host.tabs[index]);
-  if (!IsWorkspaceTabUrl(url) || !host.profile || host.profile->IsOffTheRecord()) return;
+  if ((!IsWorkspaceTabUrl(url) && !IsSettingsTabUrl(url)) ||
+      !host.profile || host.profile->IsOffTheRecord()) return;
   closed_tabs_.push_back({host.workspace_id, host.profile_id, url, TabTitle(host, host.tabs[index]), base::Time::Now()});
   if (closed_tabs_.size() > 50) closed_tabs_.erase(closed_tabs_.begin());
 }
@@ -303,7 +304,7 @@ bool WorkspaceWindow::ReopenClosedTab() {
       const auto closed = timeline_->current->timeline_last_closed(host.workspace_id, rust::Slice<const rust::String>(open.data(), open.size()));
       if (closed.valid) { url = GURL(std::string(closed.tab.url)); title = base::UTF8ToUTF16(std::string(closed.tab.title)); }
     }
-    if (!IsWorkspaceTabUrl(url)) return false;
+    if (!IsWorkspaceTabUrl(url) && !IsSettingsTabUrl(url)) return false;
     auto* view = CreatePage(host.profile); host.tabs.push_back(view);
     host.deferred_urls[view] = url;
     if (IsRssTabUrl(url)) AssociateReaderPin(host, view);

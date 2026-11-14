@@ -10,6 +10,10 @@
 namespace zitter::prototype {
 
 inline constexpr char kExtensionsTabUrl[] = "chrome://extensions/";
+inline constexpr char kSettingsTabUrl[] = "zitter://settings/";
+inline bool IsSettingsTabUrl(const GURL& url) {
+  return url == GURL(kSettingsTabUrl) || url == GURL("zitter://settings");
+}
 inline constexpr char kRssTabUrl[] = "zitter://rss/";
 inline bool IsRssTabUrl(const GURL& url) { return url == GURL(kRssTabUrl); }
 // Local documents are opened by explicit browser or OS actions only.

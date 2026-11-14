@@ -62,6 +62,8 @@
 #include "chromium/prototype/arc_importer.h"
 
 #include "chromium/prototype/workspace_favicon_links.h"
+#include "chromium/prototype/workspace_session.h"
+#include "chromium/prototype/workspace_urls.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/favicon/core/favicon_service.h"
@@ -471,7 +473,9 @@ class WorkspaceWebView final : public views::WebView, public views::FocusChangeL
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
     if (!navigation->HasCommitted() || !navigation->IsInPrimaryMainFrame()) return;
     if (IsRssTabUrl(web_contents()->GetVisibleURL())) MountReader();
-    else if (rss_) { UnmountReader(); holder()->SetVisible(true); }
+    else if (rss_) UnmountReader();
+    // The native preferences surface owns the tab's appearance.
+    holder()->SetVisible(!rss_ && !IsSettingsTabUrl(web_contents()->GetVisibleURL()));
     changed_.Run();
   }
   void RenderViewReady() override {
@@ -1089,6 +1093,7 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
       window->SplitTab(index);
     }
   }, base::Unretained(this));
+  callbacks.open_preferences_tab = base::BindRepeating(&WorkspaceWindow::OpenPreferencesTab, base::Unretained(this));
   callbacks.page_command = base::BindRepeating(&WorkspaceWindow::RunPageCommand, base::Unretained(this));
   callbacks.clean_address_copies = base::BindRepeating(&WorkspaceWindow::clean_address_copies, base::Unretained(this));
   callbacks.tab_menu_url = base::BindRepeating(&WorkspaceWindow::GetTabMenuUrl, base::Unretained(this));
@@ -1457,7 +1462,9 @@ GURL WorkspaceWindow::TabUrl(const Host& host, views::WebView* view) {
 }
 
 std::u16string WorkspaceWindow::TabTitle(const Host& host, views::WebView* view) {
-  if (IsRssTabUrl(TabUrl(host, view))) return T(u"Czytnik RSS");
+  const auto url = TabUrl(host, view);
+  if (IsSettingsTabUrl(url)) return T(u"Preferencje");
+  if (IsRssTabUrl(url)) return T(u"Czytnik RSS");
   if (auto stored = host.deferred_titles.find(view); stored != host.deferred_titles.end()) return stored->second;
   return view->web_contents() ? view->web_contents()->GetTitle() : std::u16string();
 }
@@ -1561,7 +1568,9 @@ bool WorkspaceWindow::Select(std::string_view id) {
     shell_->CloseOverlays(true);
     UpdateShell();
     widget_->Activate();
-    for (auto& host : hosts_) if (host.workspace_id == active_id()) host.view->RequestFocus();
+    if (!shell_->FocusPreferencesTab()) {
+      for (auto& host : hosts_) if (host.workspace_id == active_id()) host.view->RequestFocus();
+    }
     if (sidebar_was_visible && !shell_->sidebar_visible()) shell_->ShowSidebar();
     if (changed) { shell_->AnimateWorkspaceSwitch(previous); SaveSelection(); }
   }
@@ -1744,7 +1753,7 @@ void WorkspaceWindow::UpdateShell() {
 #endif
     state.configuration_ready = configuration_ready_ && !profiles_busy_ && !configuration_invalid_;
     state.onboarding_complete = !offer_import_ || onboarding_complete_;
-    state.url = host.view->GetWebContents()->GetVisibleURL();
+    state.url = TabUrl(host, host.view);
     state.active_tab = host.active_tab;
     for (const auto& member : host.split)
       state.split_tabs.push_back(std::find(host.tabs.begin(), host.tabs.end(), member) - host.tabs.begin());
@@ -2188,6 +2197,38 @@ RssPanel* WorkspaceWindow::rss_panel() const {
     return static_cast<WorkspaceWebView*>(host.view.get())->rss();
   return nullptr;
 }
+bool WorkspaceWindow::OpenPreferencesTab() {
+  if (!configuration_ready_ || configuration_invalid_ || profiles_busy_ ||
+      closing_ || !model_.active())
+    return false;
+  if (peek_view_ && GuardPages({peek_contents()},
+          base::BindOnce([](base::WeakPtr<WorkspaceWindow> window) {
+            if (window) window->shell_->OpenGeneralSettings();
+          }, weak_factory_.GetWeakPtr())))
+    return false;
+  ClosePeek();
+  if (fullscreen_page_)
+    fullscreen_page_->ExitFullscreen(true);
+  for (auto& host : hosts_) {
+    if (host.workspace_id != active_id() || !host.profile)
+      continue;
+    size_t index = 0;
+    while (index < host.tabs.size() && !IsSettingsTabUrl(TabUrl(host, host.tabs[index])))
+      ++index;
+    if (index == host.tabs.size()) {
+      if (host.tabs.size() >= kMaxWorkspaceSessionTabs)
+        return false;
+      auto* view = CreatePage(host.profile);
+      host.tabs.push_back(view);
+      host.deferred_urls[view] = GURL(kSettingsTabUrl);
+    }
+    SelectTab(index);
+    ScheduleSessionSave();
+    return true;
+  }
+  return false;
+}
+
 void WorkspaceWindow::ShowRss() {
   if (!configuration_ready_ || profiles_busy_ || !model_.active()) return;
   auto* source = contents(active_id());
@@ -2643,7 +2684,7 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
     for (size_t i = 0; i < host.tabs.size() && results.size() < 8; ++i) {
       const auto& view = host.tabs[i];
       const auto url = TabUrl(host, view);
-      if (!IsWorkspaceTabUrl(url)) continue;
+      if (!IsWorkspaceTabUrl(url) && !IsSettingsTabUrl(url)) continue;
       auto title = TabTitle(host, view);
       if (title.empty()) title = base::UTF8ToUTF16(url.host());
       if (!matches(title + u" " + label, url)) continue;
@@ -2726,7 +2767,7 @@ void WorkspaceWindow::SelectTab(size_t index) {
     shell_->CloseOverlays(true);
     UpdateShell();
     widget_->Activate();
-    host.view->RequestFocus();
+    if (!shell_->FocusPreferencesTab()) host.view->RequestFocus();
     return;
   }
 }
@@ -3328,6 +3369,9 @@ bool WorkspaceWindow::SplitTab(size_t index) {
   if (!configuration_ready_ || profiles_busy_) return false;
   for (auto& host : hosts_) {
     if (host.workspace_id != active_id() || index >= host.tabs.size()) continue;
+    if (IsSettingsTabUrl(TabUrl(host, host.tabs[index])) ||
+        IsSettingsTabUrl(TabUrl(host, host.view)))
+      return false;
     RecordTimeline(true, active_id());
     // A visible group gains a pane; otherwise the shown page anchors a new pair.
     if (!SplitShown(host)) { host.split = {host.view}; host.weights.clear(); host.vertical = false; }
@@ -3435,7 +3479,8 @@ bool WorkspaceWindow::ReopenTabs(std::string workspace_id, std::vector<ClosedTab
     for (const auto& tab : tabs) {
       auto* view = CreatePage(host.profile);
       host.tabs.insert(host.tabs.begin() + std::min(tab.index, host.tabs.size()), view);
-      if (IsWorkspaceTabUrl(tab.url)) host.deferred_urls[view] = tab.url;
+      if (IsWorkspaceTabUrl(tab.url) || IsSettingsTabUrl(tab.url))
+        host.deferred_urls[view] = tab.url;
       if (IsRssTabUrl(tab.url)) AssociateReaderPin(host, view);
       if (!tab.title.empty()) host.deferred_titles[view] = tab.title;
       std::erase_if(closed_tabs_, [&](const ClosedTab& closed) { return closed.workspace_id == workspace_id && closed.url == tab.url; });
@@ -3558,6 +3603,7 @@ void WorkspaceWindow::RunPageCommand(PageCommand command) {
 
 void WorkspaceWindow::RunPageCommandOn(content::WebContents* page,
                                        PageCommand command, bool focused) {
+  if (command == PageCommand::kReload && IsSettingsTabUrl(page->GetVisibleURL())) return;
   if (command == PageCommand::kReload && IsRssTabUrl(page->GetVisibleURL())) {
     RssReader::For(Profile::FromBrowserContext(page->GetBrowserContext()))->Refresh();
     return;
@@ -3591,6 +3637,7 @@ GURL WorkspaceWindow::GetTabMenuUrl(std::optional<size_t> tab, std::string_view 
 
 bool WorkspaceWindow::NavigateFromBar(const GURL& url, bool new_tab) {
   preconnect_timer_.Stop();
+  if (IsSettingsTabUrl(url)) { shell_->OpenGeneralSettings(); return true; }
   if (peek_view_ && GuardPages({peek_contents()}, base::BindOnce([](base::WeakPtr<WorkspaceWindow> w, GURL url, bool fresh) {
     if (w) w->NavigateFromBar(url, fresh);
   }, weak_factory_.GetWeakPtr(), url, new_tab))) return true;
@@ -3622,11 +3669,13 @@ bool WorkspaceWindow::AcceleratorPressed(const ui::Accelerator& accelerator) {
     if (assistant_ && assistant_->HandleEscape()) return true;
     if (fullscreen_page_) { fullscreen_page_->ExitFullscreen(true); return true; }
     if (!shell_->CloseOverlays()) {
-      if (!peek_view_) return false;
+      if (!peek_view_) return shell_->DismissPreferencesTab();
       ClosePeek();
     }
     widget_->Activate();
-    if (auto* page = contents(active_id())) page->Focus();
+    if (!shell_->FocusPreferencesTab()) {
+      if (auto* page = contents(active_id())) page->Focus();
+    }
     return true;
   }
   const auto id = shell_->ShortcutFor(accelerator);
@@ -3653,7 +3702,7 @@ bool WorkspaceWindow::RunShortcut(std::string id) {
   if (id == "copy_url") {
     // The address pill trembles once: the copy's only confirmation (design: AddressPill).
     auto* page = peek_contents() ? peek_contents() : contents(active_id());
-    if (!page || !IsWorkspaceTabUrl(page->GetVisibleURL())) return false;
+    if (!page || (!IsWorkspaceTabUrl(page->GetVisibleURL()) && !IsSettingsTabUrl(page->GetVisibleURL()))) return false;
     const GURL& url = page->GetVisibleURL();
     const auto clean = clean_address_copies() ? CleanUrlForCopy(url) : std::nullopt;
     ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste)

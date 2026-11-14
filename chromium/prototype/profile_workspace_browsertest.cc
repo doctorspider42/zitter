@@ -3749,12 +3749,11 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferencePanelActualHierarchy
   };
   for(auto size:{gfx::Size(700,660),gfx::Size(1000,860)}){window_->widget()->SetBounds(gfx::Rect(gfx::Point(40,40),size));shell->OpenGeneralSettings();auto* widget=shell->general_widget();widget->LayoutRootViewIfNecessary();
     for(size_t category=0;category<10;++category){SCOPED_TRACE(testing::Message()<<"size="<<size.ToString()<<" category="<<category);auto* nav=shell->preference_navigation_for_testing(category);if(nav->IsDrawn())ActivateSidebarRow(nav);else shell->ActivatePreferenceChoiceForTesting("category",category);EXPECT_EQ(category,shell->preference_category_for_testing());widget->LayoutRootViewIfNecessary();
-      auto rows=shell->preference_rows_for_testing(category);ASSERT_FALSE(rows.empty());auto* section=rows.front()->parent();auto* body=section->parent();auto* main=shell->preferences_search()->view()->parent();auto* root=main->parent();auto* navigation=root->children().front().get();auto* header=main->children().front().get();
+      auto rows=shell->preference_rows_for_testing(category);ASSERT_FALSE(rows.empty());auto* section=rows.front()->parent();auto* body=section->parent();auto* header=shell->preferences_search()->view()->parent();auto* main=header->parent();auto* root=main->parent();auto* navigation=root->children().front().get();
       ASSERT_NO_FATAL_FAILURE(compare(root,false,gfx::Insets(8),8,main,false));
       ASSERT_NO_FATAL_FAILURE(compare(main,true,gfx::Insets::VH(16,20),12,main->children()[main->children().size()-2],false));
-      ASSERT_NO_FATAL_FAILURE(compare(navigation,true,gfx::Insets(16),6,navigation->children()[navigation->children().size()-2],false));
-      ASSERT_NO_FATAL_FAILURE(compare(header,false,gfx::Insets(),12,header->children().front(),false));
-      ASSERT_NO_FATAL_FAILURE(compare(header->children().front(),true,gfx::Insets(),5,nullptr,false));
+      ASSERT_NO_FATAL_FAILURE(compare(navigation,true,gfx::Insets(6),0,nullptr,false));
+      ASSERT_NO_FATAL_FAILURE(compare(header,false,gfx::Insets(),12,header->children().front(),true));
       ASSERT_NO_FATAL_FAILURE(compare(body,true,gfx::Insets::TLBR(0,0,8,8),16,nullptr,false));
       ASSERT_NO_FATAL_FAILURE(compare(section,true,gfx::Insets(),12,nullptr,false));
       for(auto* row:rows){SCOPED_TRACE(row->bounds().ToString());ASSERT_FALSE(row->children().empty());
@@ -5013,18 +5012,47 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueRowsOrderCo
   auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"słowniki",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();EXPECT_TRUE(shell->preference_toggle("spellcheck")->IsDrawn());EXPECT_FALSE(shell->theme_picker()->IsDrawn());EXPECT_FALSE(shell->preference_choice_for_testing("site_default.media-stream-camera")->IsDrawn());
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferencesReuseWorkspaceTab) {
+  ASSERT_TRUE(window_->Select("work"));
+  window_->SelectTab(0);
+  auto* shell = window_->shell();
+  const size_t initial_tabs = window_->tab_count("work");
+  auto* original = window_->contents("work");
+
+  shell->OpenGeneralSettings(u"Sprawdzaj pisownię");
+  ASSERT_TRUE(shell->general_widget()->IsVisible());
+  ASSERT_EQ(initial_tabs + 1, window_->tab_count("work"));
+  auto* preferences = window_->contents("work");
+  EXPECT_NE(original, preferences);
+  EXPECT_TRUE(IsSettingsTabUrl(preferences->GetVisibleURL()));
+  EXPECT_TRUE(shell->preference_toggle("spellcheck")->IsDrawn());
+
+  window_->SelectTab(0);
+  EXPECT_FALSE(shell->general_widget()->IsVisible());
+  EXPECT_EQ(original, window_->contents("work"));
+  shell->OpenGeneralSettings();
+  EXPECT_EQ(preferences, window_->contents("work"));
+  EXPECT_EQ(initial_tabs + 1, window_->tab_count("work"));
+
+  ClickControl(shell->preference_close_for_testing());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return !shell->general_widget()->IsVisible();
+  }));
+  EXPECT_EQ(initial_tabs, window_->tab_count("work"));
+}
+
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueToolsRoutes) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));
   EXPECT_FALSE(shell->tools_widget());
   EXPECT_FALSE(shell->time_machine_for_testing());
   const std::vector<std::pair<std::u16string,int>> routes={{u"Time Machine przestrzeni",0},{u"Skróty klawiszowe",1},{u"Wyszukiwarki i prefiksy",2}};
-  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()&&shell->tools_widget()->IsVisible();}));EXPECT_FALSE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_search_for_testing()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
+  for(const auto& [title,page]:routes){SCOPED_TRACE(page);shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(title,ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();auto* button=FindButton(shell->general_widget()->GetContentsView(),title);ASSERT_TRUE(button&&button->IsDrawn());ClickControl(button);ASSERT_TRUE(base::test::RunUntil([&]{return page==0?shell->time_machine_visible():shell->tools_widget()&&shell->tools_widget()->IsVisible();}));EXPECT_TRUE(shell->general_widget()->IsVisible());if(page==0){EXPECT_FALSE(shell->tools_widget());shell->CloseOverlays();EXPECT_FALSE(shell->time_machine_visible());continue;}EXPECT_EQ(page==1,shell->shortcut_search_for_testing()!=nullptr);EXPECT_EQ(page==2,shell->provider_input(0)!=nullptr);}
   // Its History row opens Zitter's History window.
   ASSERT_TRUE(window_->Select("work"));const auto tabs=window_->tab_count("work");
   shell->OpenGeneralSettings();auto* query=shell->preferences_search();query->SelectRange(gfx::Range(0,query->GetText().size()));query->input_client()->InsertText(u"Historia przeglądania",ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);shell->general_widget()->LayoutRootViewIfNecessary();
   auto* history=FindButton(shell->general_widget()->GetContentsView(),u"Historia przeglądania");ASSERT_TRUE(history&&history->IsDrawn());ClickControl(history);
   ASSERT_TRUE(base::test::RunUntil([&]{return window_->history_panel()&&window_->history_panel()->widget()&&window_->history_panel()->widget()->IsVisible();}));
-  EXPECT_EQ(tabs,window_->tab_count("work"));EXPECT_FALSE(shell->general_widget()->IsVisible());EXPECT_FALSE(shell->tools_widget()->IsVisible());
+  EXPECT_EQ(tabs + 1, window_->tab_count("work"));EXPECT_TRUE(shell->general_widget()->IsVisible());EXPECT_FALSE(shell->tools_widget()->IsVisible());
 }
 
 // Add deterministic overflow without inflating the native window minimum.
@@ -5299,21 +5327,22 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersist
   auto* shell = window_->shell();
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->appearance_ready(); }));
   const auto url = embedded_test_server()->GetURL("/links_probe.html");
-  ASSERT_TRUE(content::NavigateToURL(window_->contents("work"), url));
+  auto* site_page = window_->contents("work");
+  ASSERT_TRUE(content::NavigateToURL(site_page, url));
   EnableNativeUIControls();
   ASSERT_TRUE(ui_test_utils::ShowAndFocusNativeWindow(window_->widget()->GetNativeWindow()));
   ASSERT_TRUE(SendPrimaryKey(window_->widget()->GetNativeWindow(), ui::VKEY_OEM_COMMA));
   ASSERT_TRUE(base::test::RunUntil([&] { return shell->general_widget()->IsVisible(); }));
   shell->SetThemeMode(ThemeMode::kDark);
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+    return content::EvalJs(site_page, "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
   }));
   EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, window_->widget()->GetColorMode());
   EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, shell->general_widget()->GetColorMode());
   EXPECT_EQ(ui::ColorProviderKey::ColorMode::kDark, shell->sidebar_widget()->GetColorMode());
   shell->SetThemeMode(ThemeMode::kLight);
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return !content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+    return !content::EvalJs(site_page, "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
   }));
   // System mode follows changes without recreating pages or changing OS prefs.
   auto* native = ui::NativeTheme::GetInstanceForNativeUi();
@@ -5326,12 +5355,12 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, GeneralSettingsThemeAndPersist
   native->set_preferred_color_scheme(ui::NativeTheme::PreferredColorScheme::kDark);
   native->NotifyOnNativeThemeUpdated();
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+    return content::EvalJs(site_page, "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
   }));
   native->set_preferred_color_scheme(ui::NativeTheme::PreferredColorScheme::kLight);
   native->NotifyOnNativeThemeUpdated();
   ASSERT_TRUE(base::test::RunUntil([&] {
-    return !content::EvalJs(window_->contents("work"), "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
+    return !content::EvalJs(site_page, "matchMedia('(prefers-color-scheme: dark)').matches").ExtractBool();
   }));
   shell->SetThemeMode(ThemeMode::kDark);
   shell->SetSearchEngine(SearchEngine::kGoogle);
@@ -8434,14 +8463,14 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, TextActionHostsDialogDefaultsA
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PanelCommandHeadersAndCategoriesRetainModelsAndBehavior) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;
   shell->OpenGeneralSettings();shell->general_widget()->LayoutRootViewIfNecessary();if(!shell->preference_navigation_for_testing(0)->IsDrawn())GTEST_SKIP()<<"The category list needs a panel of 760 x 720 DIPs; this screen is smaller at the tests' 200%";for(size_t category=0;category<10;++category){auto* button=shell->preference_navigation_for_testing(category);ASSERT_TRUE(button);const auto id=shell->sidebar_node_id_for_testing(button);EXPECT_EQ(8u,shell->control_model_kind_for_testing(button));EXPECT_EQ(gfx::Size(200,40),button->GetPreferredSize());ClickControl(button);EXPECT_TRUE(shell->preference_navigation_selected_for_testing(category));EXPECT_EQ(id,shell->sidebar_node_id_for_testing(button));}
-  auto check_close=[&](views::View* close){ASSERT_TRUE(close);EXPECT_EQ(8u,shell->control_model_kind_for_testing(close));EXPECT_EQ(gfx::Size(32,32),close->GetPreferredSize());};check_close(shell->preference_close_for_testing());ClickControl(shell->preference_close_for_testing());EXPECT_FALSE(shell->general_widget()->IsVisible());
+  auto check_close=[&](views::View* close){ASSERT_TRUE(close);EXPECT_EQ(8u,shell->control_model_kind_for_testing(close));EXPECT_EQ(gfx::Size(32,32),close->GetPreferredSize());};check_close(shell->preference_close_for_testing());ClickControl(shell->preference_close_for_testing());ASSERT_TRUE(base::test::RunUntil([&]{return !shell->general_widget()->IsVisible();}));
   shell->OpenWorkspaceSettings();auto* close=FindButton(shell->workspace_panel_for_testing(),u"Zamknij ustawienia przestrzeni");check_close(close);ASSERT_TRUE(close);ClickControl(close);EXPECT_FALSE(shell->settings_widget()->IsVisible());
   shell->OpenTools(1);check_close(shell->tools_close_for_testing());ClickControl(shell->tools_close_for_testing());EXPECT_FALSE(shell->tools_widget()->IsVisible());
   shell->OpenImport();check_close(shell->import_close());ClickControl(shell->import_close());EXPECT_FALSE(shell->import_widget()->IsVisible());
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PanelCommandHideShowObserverCannotCloseReopenedPreferences) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenGeneralSettings();auto* close=shell->preference_close_for_testing();ASSERT_TRUE(close);const auto node=shell->sidebar_node_id_for_testing(close);close->SetProperty(views::kElementIdentifierKey,views::DialogClientView::kCancelButtonElementId);int notified=0;
-  auto observer=ui::ElementTracker::GetElementTracker()->AddElementActivatedCallback(views::DialogClientView::kCancelButtonElementId,views::ElementTrackerViews::GetContextForWidget(shell->general_widget()),base::BindRepeating([](views::Widget* widget,int* count,ui::TrackedElement*){++*count;widget->Hide();widget->Show();},base::Unretained(shell->general_widget()),&notified));ClickControl(close);EXPECT_EQ(1,notified);EXPECT_TRUE(shell->general_widget()->IsVisible());EXPECT_EQ(node,shell->sidebar_node_id_for_testing(close));close->ClearProperty(views::kElementIdentifierKey);ClickControl(close);EXPECT_FALSE(shell->general_widget()->IsVisible());
+  auto observer=ui::ElementTracker::GetElementTracker()->AddElementActivatedCallback(views::DialogClientView::kCancelButtonElementId,views::ElementTrackerViews::GetContextForWidget(shell->general_widget()),base::BindRepeating([](views::Widget* widget,int* count,ui::TrackedElement*){++*count;widget->Hide();widget->Show();},base::Unretained(shell->general_widget()),&notified));ClickControl(close);EXPECT_EQ(1,notified);EXPECT_TRUE(shell->general_widget()->IsVisible());EXPECT_EQ(node,shell->sidebar_node_id_for_testing(close));close->ClearProperty(views::kElementIdentifierKey);ClickControl(close);ASSERT_TRUE(base::test::RunUntil([&]{return !shell->general_widget()->IsVisible();}));
 }
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PanelImportDismissCommandHonorsApplyingState) {
   base::ScopedAllowBlockingForTesting files;base::ScopedTempDir app_data;ASSERT_TRUE(app_data.CreateUniqueTempDir());base::ScopedPathOverride isolated_data(kImportAppData,app_data.GetPath());auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));if(!shell->workspace_input()->rust_editor())return;shell->OpenImport();auto* close=shell->import_close();ASSERT_TRUE(close);const auto id=shell->sidebar_node_id_for_testing(close);shell->SetImportStatus(u"Applying",false,true,true);EXPECT_FALSE(close->GetEnabledInViewsSubtree());EXPECT_EQ(gfx::Size(32,32),close->GetPreferredSize());ClickControl(close);EXPECT_TRUE(shell->import_widget()->IsVisible());shell->SetImportStatus(u"Ready",false,false,false);EXPECT_TRUE(close->GetEnabledInViewsSubtree());EXPECT_EQ(id,shell->sidebar_node_id_for_testing(close));ClickControl(close);EXPECT_FALSE(shell->import_widget()->IsVisible());

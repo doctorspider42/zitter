@@ -153,6 +153,7 @@ class WorkspaceWindow final : public WorkspaceRuntime,
   void ShowDownloads();
   void ShowHistory();
   void ShowRss();
+  bool OpenPreferencesTab();
   RssPanel* rss_panel() const;
   // `hover`: opened from the window edge; it hides again once the pointer is gone.
   void ShowAssistant();

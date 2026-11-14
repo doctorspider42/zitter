@@ -1193,11 +1193,14 @@ class WorkspaceWebView final : public LabWebView {
         MountReader();
     } else if (rss_) {
       rss_.reset();
-      holder()->SetVisible(true);
       set_lock_child_ax_tree_id_override(false);
       GetViewAccessibility().SetRole(ax::mojom::Role::kWebView);
       AXTreeIDForMainFrameHasChanged();
     }
+    // Preferences paint in a native child widget. Hide the placeholder
+    // document so its background cannot show through the rounded corners.
+    holder()->SetVisible(!rss_ &&
+                         !prototype::IsSettingsTabUrl(web_contents()->GetVisibleURL()));
     if (navigation_changed_)
       navigation_changed_.Run(web_contents());
   }
@@ -1854,6 +1857,10 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   callbacks.run_shortcut = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string id) {
         return lab && lab->RunShortcut(std::move(id));
+      }, weak);
+  callbacks.open_preferences_tab = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab) {
+        return lab && lab->OpenPreferencesTab();
       }, weak);
   callbacks.page_command = base::BindRepeating(&WorkspaceLab::RunPageCommand, weak);
   callbacks.select_tab = base::BindRepeating(&WorkspaceLab::SelectTab, weak);
@@ -3869,7 +3876,7 @@ bool WorkspaceLab::AcceleratorPressed(const ui::Accelerator& accelerator) {
     }
     if (startup_import_pending_ && shell_->import_visible() && !saving_catalogue_)
       DismissBrowserImport();
-    return shell_->CloseOverlays();
+    return shell_->CloseOverlays() || shell_->DismissPreferencesTab();
   }
   return RunShortcut(shell_->ShortcutFor(accelerator));
 }
@@ -4034,7 +4041,8 @@ bool WorkspaceLab::RunShortcut(std::string id) {
     if (!page)
       page = web_contents();
     if (!CanEditWorkspace() || !page ||
-        !prototype::IsWorkspaceTabUrl(page->GetVisibleURL())) {
+        (!prototype::IsWorkspaceTabUrl(page->GetVisibleURL()) &&
+         !prototype::IsSettingsTabUrl(page->GetVisibleURL()))) {
       return false;
     }
     const auto& url = page->GetVisibleURL();
@@ -4230,6 +4238,31 @@ bool WorkspaceLab::RunShortcut(std::string id) {
   } else {
     return false;
   }
+  return true;
+}
+
+bool WorkspaceLab::OpenPreferencesTab() {
+  if (smoke_ || !CanEditWorkspace() || !model_.active() || !web_contents())
+    return false;
+  if (PeekPage()) {
+    if (DeferPeekClose(base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab)
+            lab->shell_->OpenGeneralSettings();
+        }, weak_factory_.GetWeakPtr())))
+      return false;
+    DiscardPeek();
+  }
+  const auto& tabs = tabs_[active_index_];
+  size_t index = 0;
+  while (index < tabs.size() && !prototype::IsSettingsTabUrl(TabUrl(index, {})))
+    ++index;
+  if (index == tabs.size()) {
+    if (tabs.size() >= prototype::kMaxWorkspaceSessionTabs)
+      return false;
+    AddTab(active_index_, GURL(prototype::kSettingsTabUrl));
+  }
+  SelectTab(index);
+  PersistWorkspaceChanges();
   return true;
 }
 
@@ -7086,6 +7119,10 @@ void WorkspaceLab::OpenExternalUrl(GURL url) {
 }
 
 bool WorkspaceLab::Navigate(const GURL& url, bool new_tab) {
+  if (prototype::IsSettingsTabUrl(url)) {
+    shell_->OpenGeneralSettings();
+    return true;
+  }
   if (smoke_ || saving_session_ || before_unload_batch_.pending() ||
       !web_contents() ||
       !url.is_valid() ||
@@ -7883,6 +7920,8 @@ void WorkspaceLab::RunPageCommandOn(content::WebContents& page,
 
 void WorkspaceLab::ReloadWorkspacePage(content::WebContents& page,
                                        bool bypass_cache) {
+  if (prototype::IsSettingsTabUrl(page.GetVisibleURL()))
+    return;
   if (prototype::IsRssTabUrl(page.GetVisibleURL())) {
     static_cast<ProfileContext*>(page.GetBrowserContext())->GetRssReader().Refresh();
     return;
@@ -8580,7 +8619,8 @@ bool WorkspaceLab::CommitWorkspaceSleep(size_t workspace) {
       continue;
     const auto url = WorkspaceDocumentURL(*page);
     if (!url.is_empty()) {
-      tab.deferred_url = CanRestoreWorkspaceURL(url) ? url : GURL();
+      tab.deferred_url = CanRestoreWorkspaceURL(url) || prototype::IsSettingsTabUrl(url)
+                             ? url : GURL();
       const auto* entry = page->GetController().GetLastCommittedEntry();
       tab.deferred_title = entry && !tab.deferred_url.is_empty()
                                ? entry->GetTitleForDisplay()
@@ -9509,7 +9549,8 @@ void WorkspaceLab::ShowTab() {
     if (restoring)
       view->SetOwnedWebContents(std::move(tab.discarded_page));
     auto* page = view->GetWebContents(
-        tab.deferred_url.is_empty() || prototype::IsRssTabUrl(tab.deferred_url)
+        tab.deferred_url.is_empty() || prototype::IsRssTabUrl(tab.deferred_url) ||
+                prototype::IsSettingsTabUrl(tab.deferred_url)
             ? GURL("about:blank") : tab.deferred_url);
     if (needs_contents) {
       SetWorkspaceExtensionTabPage(tab.extension_tab.get(), page);
@@ -9551,7 +9592,8 @@ void WorkspaceLab::ShowTab() {
     restored->GetController().LoadIfNecessary();
   for (size_t index : pending_navigation) {
     auto& tab = tabs[index];
-    if (prototype::IsRssTabUrl(tab.deferred_url)) {
+    if (prototype::IsRssTabUrl(tab.deferred_url) ||
+        prototype::IsSettingsTabUrl(tab.deferred_url)) {
       prototype::LoadWorkspaceTab(tab.view->web_contents(), tab.deferred_url,
                                   ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
     } else {
@@ -9569,6 +9611,9 @@ bool WorkspaceLab::SplitTab(size_t index) {
   auto& split = splits_[active_index_];
   auto& tabs = tabs_[active_index_];
   const auto selected = selected_[active_index_];
+  if (prototype::IsSettingsTabUrl(TabUrl(index, {})) ||
+      prototype::IsSettingsTabUrl(TabUrl(selected, {})))
+    return false;
   const bool shown = SplitShown();
   const bool duplicate = shown ? std::ranges::contains(split.tabs, index)
                                : index == selected;
@@ -9862,7 +9907,7 @@ void WorkspaceLab::SelectTab(size_t index) {
     ShowTab();
   }
   RefreshShell();
-  tabs[index].view->RequestFocus();
+  if (!shell_->FocusPreferencesTab()) tabs[index].view->RequestFocus();
 }
 
 bool WorkspaceLab::TabMuted(size_t index) const {
@@ -10070,7 +10115,7 @@ WorkspaceLab::ClosedTab WorkspaceLab::RecordClosedTab(size_t workspace,
   auto* page = tab.view->web_contents();
   const auto committed = page ? WorkspaceDocumentURL(*page) : GURL();
   const auto& url = committed.is_empty() ? tab.deferred_url : committed;
-  if (url.is_empty() || !CanRestoreWorkspaceURL(url) ||
+  if (url.is_empty() || (!CanRestoreWorkspaceURL(url) && !prototype::IsSettingsTabUrl(url)) ||
       url.spec().size() > 32768) {
     return ClosedTab{.tab_id = tab.id};
   }
@@ -10142,7 +10187,7 @@ std::optional<WorkspaceLab::ClosedTab> WorkspaceLab::HistoricalClosedTab() const
   if (!closed.valid)
     return std::nullopt;
   GURL url(std::string(closed.tab.url));
-  if (url.is_empty() || !CanRestoreWorkspaceURL(url))
+  if (url.is_empty() || (!CanRestoreWorkspaceURL(url) && !prototype::IsSettingsTabUrl(url)))
     return std::nullopt;
   return ClosedTab{std::move(url), base::UTF8ToUTF16(std::string(closed.tab.title)),
                    base::Time::FromMillisecondsSinceUnixEpoch(closed.t_ms)};
@@ -10188,7 +10233,8 @@ void WorkspaceLab::RecordTimeline(bool force) {
     const auto& url = committed.is_empty() ? tab.deferred_url : committed;
     const auto& title = page && !page->GetTitle().empty() ? page->GetTitle()
                                                          : tab.deferred_title;
-    frame.tabs.push_back({CanRestoreWorkspaceURL(url) ? url.spec() : "",
+    frame.tabs.push_back({CanRestoreWorkspaceURL(url) || prototype::IsSettingsTabUrl(url)
+                              ? url.spec() : "",
                           url.SchemeIs(content::kViewSourceScheme)
                               ? std::string() : base::UTF16ToUTF8(title.substr(0, 8192))});
   }
@@ -10321,7 +10367,7 @@ bool WorkspaceLab::RestoreTimeline(int64_t time_ms, int64_t quantum_ms) {
   base::ListValue tabs;
   for (const auto& tab : moment.tabs) {
     const GURL url(std::string(tab.url));
-    if (url.is_empty() || !CanRestoreWorkspaceURL(url))
+    if (url.is_empty() || (!CanRestoreWorkspaceURL(url) && !prototype::IsSettingsTabUrl(url)))
       return false;
     tabs.Append(prototype::WriteWorkspaceSessionTab(
         url, base::UTF8ToUTF16(std::string(tab.title)).substr(0, 8192)));
@@ -10498,6 +10544,9 @@ GURL WorkspaceLab::TabUrl(std::optional<size_t> tab, std::string_view pin) const
     return {};
   const auto& entry = tabs[*tab];
   auto* page = entry.view->web_contents();
+  if (prototype::IsSettingsTabUrl(entry.deferred_url) &&
+      (!page || page->GetController().IsInitialNavigation()))
+    return entry.deferred_url;
   return page && !page->GetVisibleURL().is_empty() ? page->GetVisibleURL()
                                                   : entry.deferred_url;
 }
@@ -10834,7 +10883,7 @@ void WorkspaceLab::RefreshShell() {
   state.configuration_ready = true;
   state.onboarding_complete = !startup_import_pending_;
   state.profiles_busy = saving_catalogue_;
-  state.url = web_contents()->GetVisibleURL();
+  state.url = TabUrl(selected_[active_index_], {});
   state.can_go_back = web_contents()->GetController().CanGoBack();
   state.can_go_forward = web_contents()->GetController().CanGoForward();
   state.loading = web_contents()->IsLoading();
@@ -10865,7 +10914,8 @@ void WorkspaceLab::RefreshShell() {
     const auto pinned = pinned_urls.find(tabs[index].pin);
     if (pinned != pinned_urls.end() && !url.is_empty() && url != *pinned->second)
       state.departed_pins.insert(tabs[index].pin);
-    auto title = prototype::IsRssTabUrl(url) ? prototype::T(u"Czytnik RSS")
+    auto title = prototype::IsSettingsTabUrl(url) ? prototype::T(u"Preferencje")
+        : prototype::IsRssTabUrl(url) ? prototype::T(u"Czytnik RSS")
         : page && !page->GetTitle().empty() ? page->GetTitle()
                                           : tabs[index].deferred_title;
     if (smoke_)
@@ -11048,6 +11098,7 @@ void WorkspaceLab::LoadFingerprintProbeStep() {
     Finish(false);
     return;
   }
+  const size_t site_tab = selected_[active_index_];
   shell_->OpenPrivacySettings();
   auto* control = shell_->preference_switch_for_testing("fingerprint_protection");
   if (control) {
@@ -11073,7 +11124,7 @@ void WorkspaceLab::LoadFingerprintProbeStep() {
       return;
     }
   }
-  shell_->CloseOverlays(true);
+  SelectTab(site_tab);
 
   if (step.action == Action::kRotate || step.action == Action::kDisable) {
     widget_->LayoutRootViewIfNecessary();
@@ -11866,7 +11917,8 @@ base::DictValue WorkspaceLab::CaptureWorkspaceSession(size_t workspace) const {
     const auto title = page && !page->GetTitle().empty() ? page->GetTitle()
                                                        : tab.deferred_title;
     auto entry = prototype::WriteWorkspaceSessionTab(
-        CanRestoreWorkspaceURL(url) && url.spec().size() <= 32768 ? url : GURL(),
+        (CanRestoreWorkspaceURL(url) || prototype::IsSettingsTabUrl(url)) &&
+                url.spec().size() <= 32768 ? url : GURL(),
         url.SchemeIs(content::kViewSourceScheme) ? std::u16string()
                                                   : title.substr(0, 8192));
     if (!tab.pin.empty())
@@ -12267,6 +12319,8 @@ void WorkspaceLab::AdvanceSessionProbe() {
             content::HostZoomMap::GetZoomLevel(page),
             blink::ZoomFactorToZoomLevel(factor));
       };
+      const size_t site_tab = selected_[active_index_];
+      auto* site_page = web_contents();
       shell_->OpenGeneralSettings();
       auto* search = shell_->preferences_search();
       search->input_client()->InsertText(
@@ -12278,7 +12332,7 @@ void WorkspaceLab::AdvanceSessionProbe() {
       if (!picker || !picker->IsDrawn() ||
           shell_->preference_choice_selection_for_testing("zoom") !=
               (reopening ? 5u : 4u) ||
-          !has_zoom(web_contents(), reopening ? 1.75 : 1.25) ||
+          !has_zoom(site_page, reopening ? 1.75 : 1.25) ||
           !has_zoom(personal, 0.9)) {
         LOG(ERROR) << "Page zoom did not match the profile and settings picker";
         Finish(false);
@@ -12286,7 +12340,7 @@ void WorkspaceLab::AdvanceSessionProbe() {
       }
       if (!reopening)
         shell_->ActivatePreferenceChoiceForTesting("zoom", 5);
-      shell_->CloseOverlays(true);
+      SelectTab(site_tab);
       auto* page = web_contents();
       auto* delegate = page->GetDelegate();
       auto zoom_key = [&](ui::KeyboardCode key) {
@@ -13301,6 +13355,7 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
             fail();
             return;
           }
+          const size_t site_tab = first->selected_[first->active_index_];
           first->shell_->CloseOverlays(true);
           if (native_menu_probe_.Run("history") ||
               !native_menu_probe_.Run("settings") ||
@@ -13311,7 +13366,8 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
             fail();
             return;
           }
-          first->shell_->CloseOverlays(true);
+          first->CloseTab(first->selected_[first->active_index_]);
+          first->SelectTab(site_tab);
           if (!native_menu_probe_.Run("close_tab") || first->done_ || !done_) {
             fail();
             return;
