@@ -1,8 +1,8 @@
 # Builds the NativeLink image and (re)starts the server + local worker on this
 # PC in Docker Desktop. Siso connects to port 50051; remote workers to 50061.
-#   powershell -ExecutionPolicy Bypass -File tools\remote_build\start_server.ps1 [-Slots 16] [-CasGB 25]
+#   powershell -ExecutionPolicy Bypass -File tools\remote_build\start_server.ps1 [-Slots 12] [-CasGB 25]
 param(
-  [int]$Slots = 16,
+  [int]$Slots = 12,
   [int]$CasGB = 25
 )
 $ErrorActionPreference = 'Stop'

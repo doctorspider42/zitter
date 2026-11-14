@@ -1,9 +1,9 @@
 # Registers a per-user logon task that keeps the WSL NativeLink worker running
 # in a hidden window, then starts it now. No admin rights needed.
-#   powershell -ExecutionPolicy Bypass -File install_logon_task.ps1 -SchedulerHost 192.168.100.41 -Slots 14
+#   powershell -ExecutionPolicy Bypass -File install_logon_task.ps1 -SchedulerHost 192.168.100.41 -Slots 16
 param(
   [Parameter(Mandatory = $true)][string]$SchedulerHost,
-  [int]$Slots = 14,
+  [int]$Slots = 16,
   [string]$Distro = 'Ubuntu'
 )
 $ErrorActionPreference = 'Stop'
