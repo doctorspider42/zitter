@@ -59,7 +59,8 @@ def env(hermetic):
     e["PATH"] = DEPOT_TOOLS + os.pathsep + e.get("PATH", "")
     e["DEPOT_TOOLS_WIN_TOOLCHAIN"] = "1" if hermetic else "0"
     e["vs2026_install"] = VS2026
-    e["PYTHONUTF8"] = "1"
+    # Chromium's scripts decode tool output (icacls) in the console code page.
+    e.pop("PYTHONUTF8", None)
     # Chromium needs LF checkouts; override autocrlf for these commands only.
     e["GIT_CONFIG_COUNT"] = "1"
     e["GIT_CONFIG_KEY_0"] = "core.autocrlf"

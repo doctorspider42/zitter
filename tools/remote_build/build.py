@@ -48,6 +48,12 @@ def main():
 
     env = dict(os.environ, DEPOT_TOOLS_WIN_TOOLCHAIN="1",
                PATH=DEPOT_TOOLS + os.pathsep + os.environ.get("PATH", ""))
+    # Python must decode tool output (icacls) in the console code page.
+    env.pop("PYTHONUTF8", None)
+    # setup_toolchain.py compares PATH with what `SetEnv.cmd` leaves, and
+    # cmd.exe runs the user's AutoRun first: `conda init` prepends condabin on
+    # every start unless CONDA_SHLVL is set, which the hook sets itself too.
+    env.setdefault("CONDA_SHLVL", "0")
     start = time.monotonic()
     rc = subprocess.run(cmd, cwd=src, env=env).returncode
     print(f"remote build: exit {rc} after {time.monotonic() - start:.0f} s")
