@@ -1,0 +1,95 @@
+// NativeLink on the main build PC (Docker): CAS, action cache, scheduler and
+// a local worker. Remote workers connect to port 50061; Siso talks to 50051.
+{
+  stores: [
+    {
+      name: "AC_STORE",
+      filesystem: {
+        content_path: "/data/ac",
+        temp_path: "/data/ac-tmp",
+        eviction_policy: { max_bytes: 2000000000 },
+      },
+    },
+    {
+      name: "CAS_STORE",
+      fast_slow: {
+        // The worker hardlinks inputs from the fast store, so it must be a
+        // filesystem store. There is no slower tier on this machine.
+        fast: {
+          filesystem: {
+            content_path: "/data/cas",
+            temp_path: "/data/cas-tmp",
+            eviction_policy: { max_bytes: "${ZITTER_CAS_BYTES:-25000000000}" },
+          },
+        },
+        slow: { noop: {} },
+      },
+    },
+  ],
+  schedulers: [
+    {
+      name: "MAIN_SCHEDULER",
+      simple: {
+        supported_platform_properties: {
+          OSFamily: "ignore",
+          "container-image": "ignore",
+          InputRootAbsolutePath: "ignore",
+        },
+      },
+    },
+  ],
+  workers: [
+    {
+      local: {
+        name: "main-pc",
+        worker_api_endpoint: { uri: "grpc://127.0.0.1:50061" },
+        cas_fast_slow_store: "CAS_STORE",
+        upload_action_result: { ac_store: "AC_STORE" },
+        work_directory: "/data/work",
+        entrypoint: "/usr/local/bin/worker_action.sh",
+        max_inflight_tasks: "${ZITTER_WORKER_SLOTS:-16}",
+        max_action_timeout_s: 900,
+        platform_properties: {},
+      },
+    },
+  ],
+  servers: [
+    {
+      name: "public",
+      listener: { http: { socket_address: "0.0.0.0:50051" } },
+      services: {
+        // "" for remote workers, "default_instance" for Siso's default.
+        cas: [
+          { instance_name: "", cas_store: "CAS_STORE" },
+          { instance_name: "default_instance", cas_store: "CAS_STORE" },
+        ],
+        ac: [
+          { instance_name: "", ac_store: "AC_STORE" },
+          { instance_name: "default_instance", ac_store: "AC_STORE" },
+        ],
+        execution: [
+          { instance_name: "", cas_store: "CAS_STORE", scheduler: "MAIN_SCHEDULER" },
+          { instance_name: "default_instance", cas_store: "CAS_STORE", scheduler: "MAIN_SCHEDULER" },
+        ],
+        capabilities: [
+          { instance_name: "", remote_execution: { scheduler: "MAIN_SCHEDULER" } },
+          { instance_name: "default_instance", remote_execution: { scheduler: "MAIN_SCHEDULER" } },
+        ],
+        bytestream: [
+          { instance_name: "", cas_store: "CAS_STORE" },
+          { instance_name: "default_instance", cas_store: "CAS_STORE" },
+        ],
+      },
+    },
+    {
+      name: "workers",
+      listener: { http: { socket_address: "0.0.0.0:50061" } },
+      services: {
+        worker_api: { scheduler: "MAIN_SCHEDULER" },
+        admin: {},
+        health: {},
+      },
+    },
+  ],
+  global: { max_open_files: 24576 },
+}

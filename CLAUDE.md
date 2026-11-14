@@ -33,6 +33,25 @@ Several sessions stage into `.chromium/src/zitter` (through `./build.sh`) and bu
 no other session is building, and agree on the window with the sessions that use it.
 Never stage into `.chromium/src/zitter_ui_lab`: it is a frozen benchmark reference.
 
+## Build directories and disk space
+
+- Build in the existing output directories: `out/ZitterOptimized` on macOS;
+  `out/ZitterWin`, `out/ZitterWinDev`, `out/ZitterDevInstaller` (zitter-dev-install
+  skill) and `out/ZitterWinOfficial` on Windows.
+- Create a new `.chromium/src/out/*` directory only after the user explicitly
+  agrees, asked each time. A Chromium output directory takes 10–40 GB and hours
+  to build and to delete. When asking, give the expected size and build time.
+  Delete it when the task ends unless the user wants to keep it.
+- Keep `build/` lean: delete test profiles, Dev packages, logs and scratch
+  scripts when the task that made them ends. Published release files live on
+  GitHub; don't keep local copies of older versions.
+- On Windows, delete large trees with `cmd /c rmdir /s /q <dir>`, which removes
+  junctions without entering them. Never delete with `robocopy /MIR`: it follows
+  junctions, and a junction to `.chromium` in an old worktree once made it wipe
+  the Chromium checkout. Before deleting a worktree or anything outside `out/`,
+  list its reparse points (`Get-ChildItem -Recurse -Attributes ReparsePoint`).
+  Bash `rm -rf` takes hours on Chromium output directories.
+
 ## Windows
 
 - The port's decisions, build steps and status live in `docs/windows-port.md`.

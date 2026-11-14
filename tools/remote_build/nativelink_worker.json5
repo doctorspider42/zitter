@@ -1,0 +1,53 @@
+// NativeLink worker on another PC (WSL2). It only opens outbound connections
+// to the main build PC: ZITTER_SCHEDULER_HOST is that PC's LAN address.
+{
+  stores: [
+    {
+      name: "SERVER_CAS",
+      grpc: {
+        instance_name: "",
+        endpoints: [{ address: "grpc://${ZITTER_SCHEDULER_HOST}:50051" }],
+        store_type: "cas",
+        connections_per_endpoint: 4,
+      },
+    },
+    {
+      name: "SERVER_AC",
+      grpc: {
+        instance_name: "",
+        endpoints: [{ address: "grpc://${ZITTER_SCHEDULER_HOST}:50051" }],
+        store_type: "ac",
+      },
+    },
+    {
+      name: "WORKER_CAS",
+      fast_slow: {
+        fast: {
+          filesystem: {
+            content_path: "${HOME}/nativelink/cas",
+            temp_path: "${HOME}/nativelink/cas-tmp",
+            eviction_policy: { max_bytes: "${ZITTER_CAS_BYTES:-25000000000}" },
+          },
+        },
+        slow: { ref_store: { name: "SERVER_CAS" } },
+      },
+    },
+  ],
+  workers: [
+    {
+      local: {
+        name: "${ZITTER_WORKER_NAME:-laptop}",
+        worker_api_endpoint: { uri: "grpc://${ZITTER_SCHEDULER_HOST}:50061" },
+        cas_fast_slow_store: "WORKER_CAS",
+        upload_action_result: { ac_store: "SERVER_AC" },
+        work_directory: "${HOME}/nativelink/work",
+        entrypoint: "${HOME}/nativelink/worker_action.sh",
+        max_inflight_tasks: "${ZITTER_WORKER_SLOTS:-14}",
+        max_action_timeout_s: 900,
+        platform_properties: {},
+      },
+    },
+  ],
+  servers: [],
+  global: { max_open_files: 24576 },
+}

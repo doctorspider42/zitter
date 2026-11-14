@@ -1,0 +1,6 @@
+# Add to a Windows output directory's args.gn to send its clang-cl compiles to
+# the LAN NativeLink cluster (tools/remote_build, docs/remote-builds.md).
+# Build it with tools/remote_build/build.py, not autoninja. Commands and
+# outputs match a local build, so this only changes where compiles run.
+use_siso = true
+use_remoteexec = true

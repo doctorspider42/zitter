@@ -351,6 +351,11 @@ Notes:
   window's thread. Checked with a UIA client on the install and remove pages:
   every control is listed with its state, and Toggle, Select, SetFocus and
   Invoke work. Keyboard: Tab, Enter, Space, Esc.
+## Remote builds on the LAN
+
+Compiles can run on other PCs through Siso and a self-hosted NativeLink
+cluster. See [remote-builds.md](remote-builds.md).
+
 ## Zitter Dev for side-by-side testing
 
 For the incremental component browser and standalone setup workflow, see the

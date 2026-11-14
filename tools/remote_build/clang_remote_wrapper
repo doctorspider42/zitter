@@ -1,0 +1,51 @@
+#!/bin/bash
+# Runs a Windows clang-cl compile on a Linux worker with the Linux build of the
+# same clang revision (third_party/llvm-build/Release+Asserts_linux).
+#
+# Siso sends files from a Windows host without the executable bit, so the worker
+# starts this script through bash (see worker_action.sh) and the script copies
+# clang into a local cache where it can be executed.
+#
+# This file is an input of every remote compile: changing it invalidates the
+# remote cache.
+set -euo pipefail
+
+clang_base_path="../../third_party/llvm-build/Release+Asserts"
+linux_clang_base_path="../../third_party/llvm-build/Release+Asserts_linux"
+
+# A Windows host sends PATH with backslashes and semicolons.
+PATH="${PATH//\\//}"
+export PATH="${PATH//;/:}"
+
+src="$linux_clang_base_path/bin/clang"
+if [[ -x "$src" ]]; then
+  clang="$src"
+else
+  # The CAS hardlinks inputs into the action directory, so the inode names
+  # this clang binary for as long as the worker keeps it cached.
+  cache_root="${ZITTER_CLANG_CACHE:-/tmp/zitter-clang}"
+  cache="$cache_root/$(stat -L -c '%d-%i-%s' "$src")"
+  if [[ ! -x "$cache/clang" ]]; then
+    mkdir -p "$cache_root"
+    tmp="$(mktemp -d "$cache_root/tmp.XXXXXX")"
+    cp "$src" "$tmp/clang"
+    chmod 755 "$tmp/clang"
+    mv -T "$tmp" "$cache" 2>/dev/null || rm -rf "$tmp"
+  fi
+  clang="$cache/clang"
+fi
+
+# Use the headers sent with the action (the Windows clang's resource dir), not
+# the ones next to the cached binary. Keep the path relative: libc++ module
+# files (.pcm) record header paths, and every action runs in its own directory.
+resource_dir=""
+for inc in "$clang_base_path"/lib/clang/*/include; do
+  resource_dir="$(dirname "$inc")"
+done
+if [[ -z "$resource_dir" ]]; then
+  echo "clang_remote_wrapper: no $clang_base_path/lib/clang/*/include in the action inputs" >&2
+  exit 1
+fi
+
+# $1 is the Windows clang-cl.exe path; the rest are its arguments.
+exec "$clang" --driver-mode=cl -resource-dir "$resource_dir" "${@:2}"
