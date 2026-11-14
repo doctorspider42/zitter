@@ -135,7 +135,7 @@ DownloadInterruptReason PublishWithoutReplacing(
   alignas(FILE_RENAME_INFO)
       std::array<uint8_t, sizeof(FILE_RENAME_INFO) +
                               kMaxNameLength * sizeof(wchar_t)> buffer{};
-  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());
+  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(&buffer);
   rename_info->ReplaceIfExists = FALSE;
   rename_info->RootDirectory = dir.get();
   const auto name_bytes = base::as_byte_span(target_name.value());
@@ -360,11 +360,6 @@ CHECKPOINT_PATCHES = {
 }
 
 std::string BaseFile::DebugString() const {"""),
-        # Windows builds -Wunsafe-buffer-usage this file.
-        ("  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());",
-         """  // SAFETY: `buffer` is aligned for and larger than FILE_RENAME_INFO.
-  auto* rename_info =
-      UNSAFE_BUFFERS(reinterpret_cast<FILE_RENAME_INFO*>(buffer.data()));"""),
     ),
     DESTINATION_OBSERVER: (
         ("#include <optional>\n", "#include <optional>\n#include <string>\n"),
@@ -448,6 +443,16 @@ def _replace(source, old, new, name):
     return source.replace(old, new, 1)
 
 
+# Earlier stagings used `buffer.data()`, which -Wunsafe-buffer-usage rejects
+# on Windows. Upgrade those checkouts in place before checking the layout.
+LEGACY_REWRITES = {
+    BASE_FILE: (
+        ("reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());",
+         "reinterpret_cast<FILE_RENAME_INFO*>(&buffer);"),
+    ),
+}
+
+
 def prepare(checkout):
     root = Path(checkout).resolve()
     plan = {}
@@ -458,6 +463,8 @@ def prepare(checkout):
             raise ValueError(f"Download publication path escapes the checkout: {name}")
         original = path.read_bytes()
         patched = original.decode()
+        for legacy, current in LEGACY_REWRITES.get(name, ()):
+            patched = patched.replace(legacy, current)
         publication = VERIFIED_PUBLICATION_PATCHES.get(name, ())
         for old, new in replacements:
             for earlier, verified in publication:

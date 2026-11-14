@@ -637,6 +637,7 @@ if (is_mac) {
              "//services/network/public/mojom",
              "//sql",
              "//ui/wm",
+             "//zitter:devtools_console",
            ]
     data_deps = [
       ":night_shift_resources",
