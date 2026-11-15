@@ -2153,7 +2153,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                                                        std::move(callbacks));
   delegate_ = std::make_unique<views::WidgetDelegate>();
   delegate_->SetTitle(private_owner_ ? prototype::T(u"Zitter — tryb prywatny")
-                                    : u"Zitter Content Workspace");
+                                    : u"Zitter");
   delegate_->SetHasWindowSizeControls(true);
   delegate_->SetContentsView(shell_->Build());
   prototype::FingerprintToolbar::Callbacks fingerprint;
