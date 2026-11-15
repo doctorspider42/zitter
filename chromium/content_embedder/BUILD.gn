@@ -88,6 +88,8 @@ lab_sources = [
   "bluetooth_access.cc",
   "bluetooth_access.h",
   "device_chooser.cc",
+  "file_system_access.cc",
+  "file_system_access.h",
   "device_chooser.h",
   "hid_access.cc",
   "hid_access.h",

@@ -828,4 +828,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Sprawdź, czy {} pokazuje kod {}.", "Check that {} shows the code {}."),
     ("Sparować z {}?", "Pair with {}?"),
     ("Kod PIN", "PIN"),
+    ("Nie można otworzyć tego folderu", "Can't open this folder"),
+    ("Wybierz inny", "Choose another"),
+    ("Zawiera pliki systemu lub programów. Wybierz folder ze swoimi dokumentami.", "It holds system or program files. Choose a folder with your own documents."),
 ];

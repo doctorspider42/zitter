@@ -38,6 +38,8 @@ namespace zitter::prototype { class RssReader; }
 
 namespace zitter::content_embedder {
 
+class LabFileSystemAccess;
+
 class ProfileDownloadDelegate;
 class ProfilePermissionController;
 class ProfileContext final : public content::BrowserContext {
@@ -172,6 +174,8 @@ class ProfileContext final : public content::BrowserContext {
   content::SSLHostStateDelegate* GetSSLHostStateDelegate() override;
   content::PermissionControllerDelegate* GetPermissionControllerDelegate()
       override;
+  content::FileSystemAccessPermissionContext* GetFileSystemAccessPermissionContext()
+      override;
   content::ReduceAcceptLanguageControllerDelegate*
   GetReduceAcceptLanguageControllerDelegate() override;
   content::ClientHintsControllerDelegate* GetClientHintsControllerDelegate()
@@ -207,6 +211,7 @@ class ProfileContext final : public content::BrowserContext {
   std::string download_safe_browsing_key_;
   std::vector<uint8_t> download_probe_certificate_;
   std::unique_ptr<ProfilePermissionController> permissions_;
+  std::unique_ptr<LabFileSystemAccess> file_system_access_;
   std::unique_ptr<content::PlatformNotificationService> notifications_;
   std::unique_ptr<PrefService> file_chooser_prefs_;
   std::unique_ptr<PrefService> page_zoom_prefs_;

@@ -90,6 +90,7 @@
 #include "page_password_manager.h"
 #include "download_url_reputation.h"
 #include "profile_download_delegate.h"
+#include "file_system_access.h"
 #include "profile_permission_controller.h"
 #include "third_party/blink/public/common/page/page_zoom.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -2177,6 +2178,13 @@ content::SSLHostStateDelegate* ProfileContext::GetSSLHostStateDelegate() {
 content::PermissionControllerDelegate*
 ProfileContext::GetPermissionControllerDelegate() {
   return permissions_.get();
+}
+
+content::FileSystemAccessPermissionContext*
+ProfileContext::GetFileSystemAccessPermissionContext() {
+  if (!file_system_access_)
+    file_system_access_ = std::make_unique<LabFileSystemAccess>(*this);
+  return file_system_access_.get();
 }
 
 content::ReduceAcceptLanguageControllerDelegate*
