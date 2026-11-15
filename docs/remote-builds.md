@@ -50,7 +50,7 @@ All in [`tools/remote_build/`](../tools/remote_build/):
 | `fresh_build.py` | New Chromium revision: fresh checkout, overlay, setup and a full remote build, timed per step. |
 | `windows-remote.args.gn` | The two GN args that turn remote compiles on. |
 | `start_server.ps1`, `Dockerfile`, `nativelink_server.json5` | NativeLink server + local worker in Docker Desktop. |
-| `nativelink_worker.json5`, `install_wsl_worker.sh`, `run_wsl_worker.sh`, `install_logon_task.ps1` | Worker on another PC in WSL2. |
+| `nativelink_worker.json5`, `install_wsl_worker.sh`, `run_wsl_worker.sh`, `install_logon_task.ps1`, `run_worker_task.ps1` | Worker on another PC in WSL2. |
 | `clang_remote_wrapper`, `worker_action.sh`, `rewrapper_windows.cfg`, `backend.star` | What Siso sends and how workers run it. |
 
 ## Setup
@@ -89,7 +89,9 @@ Needs WSL2 with Ubuntu and SSH access from the build PC. From the build PC:
    ```
    WSL stops the worker when its last `wsl.exe` session ends, for example when
    an RDP session disconnects. The task starts it at logon and restarts it every
-   5 minutes when it is down.
+   5 minutes when it is down. It runs `run_worker_task.ps1` (copy it next to the
+   installer), which keeps the PC awake while the worker runs without changing
+   power settings.
 
 Current cluster: the build PC (Threadripper 1920X, 12 slots, 192.168.100.41)
 and `PPAJAK-LAP` (Ryzen 7 PRO 5850U, 16 slots, Wi-Fi at 270–350 Mbit/s, SSH alias
@@ -114,9 +116,11 @@ a first build on a new revision or platform.
 python tools/remote_build/fresh_build.py --keep-going
 ```
 
-Slots: the build PC's worker gets 12 of its 24 threads, so Siso keeps CPU for
-hashing inputs, scanning dependencies, Rust and links; the laptop gets all 16.
-Siso keeps 44 compiles in flight (`--remote-jobs`).
+Slots: the build PC's worker gets 12 of its 24 threads by default, so Siso
+keeps CPU for hashing inputs, scanning dependencies, Rust and links; the laptop
+gets all 16. Once the generators and Rust are done, Siso needs little local CPU
+and `start_server.ps1 -Slots 20` finishes the C++ faster. Siso keeps 44
+compiles in flight (`--remote-jobs`).
 
 Use `--strict-remote` to fail instead of compiling locally when a remote compile
 fails, which is useful to check the setup. The server's worker list and errors:
@@ -128,8 +132,16 @@ fails, which is useful to check the setup. The server's worker list and errors:
 |---|---|---|---|
 | `base_unittests` (6,338 steps) | build PC + laptop | 15 min 51 s | first run, cold cache, default `-remote_jobs` (37 compiles timed out in the queue and ran locally), disk busy with a cleanup |
 
-Not measured yet: the same target built locally, a run with `--remote-jobs 48`,
-and a full `zitter` build.
+| `zitter_content`, fresh checkout (34,423 steps) | build PC + laptop | 3 h 13 min compile, 3 h 52 min with checkout and setup | `--remote-jobs 44`, 31,000 remote compiles and 30 local fallbacks; the same build on the build PC alone took about 8 hours |
+| `zitter_content`, full rebuild after a toolchain re-download (26,764 steps) | build PC (20 slots) + laptop (asleep for part of the run) | 3 h 51 min | the laptop slept at 02:42, which led to `run_worker_task.ps1` |
+
+The laptop's 16 slots roughly halve a fresh build, as long as both workers stay
+busy: the queue of ready compiles never emptied in either run.
+
+Re-downloading clang (`tools/clang/scripts/update.py`) gives its files new
+timestamps and rebuilds everything. Do not fetch extra LLVM packages into a
+built checkout; `--package=objdump` replaces the whole `Release+Asserts`
+directory.
 
 ## Known limits
 
