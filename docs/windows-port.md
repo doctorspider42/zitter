@@ -558,10 +558,18 @@ the updater's installation check stay the same as for the Chrome-based build.
   `serial_access.cc`) and Web Bluetooth (`bluetooth_access.cc`) use a shared
   device chooser (`device_chooser.cc`). File System Access has its own context
   (`file_system_access.cc`).
+- **Site protocol handlers.** `protocol_handlers.cc` serves
+  `navigator.registerProtocolHandler()` with Chrome's
+  `components/custom_handlers`. The page delegate asks through the Zitter site
+  prompt unless Settings block the "protocol-handler" category. Accepted
+  handlers are stored in the profile's site permission store, owned by
+  `ProfilePermissionController`. `ProtocolHandlerThrottle` sends mailto: and
+  web+… navigations to the handler page, and typed addresses are rewritten
+  too. The site panel lists a site's handlers so the user can revoke them.
 - **Not in Content.** Settings hide what Content does not have: installable web
-  apps, FedCM, automatic picture-in-picture, site protocol handlers, automatic
-  sign-in and enhanced (Google) spell check, plus the ChromeOS and Android
-  categories that desktop Chrome hides too.
+  apps, FedCM, automatic picture-in-picture, automatic sign-in and enhanced
+  (Google) spell check, plus the ChromeOS and Android categories that desktop
+  Chrome hides too.
 
 Package and check:
 

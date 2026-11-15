@@ -23,6 +23,7 @@
 class PrefService;
 
 namespace content { class BrowserContext; }
+namespace custom_handlers { class ProtocolHandlerRegistry; }
 
 namespace zitter::content_embedder {
 
@@ -142,6 +143,12 @@ class ProfilePermissionController final
   void RunSitePrompt(content::RenderFrameHost& frame, std::string_view key,
                      base::OnceCallback<void(bool)> answer);
 
+  // navigator.registerProtocolHandler(): the handlers people accepted, kept
+  // in the site permission store. Null without that store (private sessions).
+  custom_handlers::ProtocolHandlerRegistry* protocol_handlers() {
+    return protocol_handlers_.get();
+  }
+
   // Profile browsing preferences from Settings (privacy, content and
   // readability, languages, downloads). Unknown keys and invalid values read
   // as the defaults; the Set functions reject them.
@@ -193,6 +200,8 @@ class ProfilePermissionController final
   void NotifyNotificationPermissionChanged(std::optional<url::Origin> origin);
 
   std::unique_ptr<PrefService> site_permission_prefs_;
+  // Uses `site_permission_prefs_`; declared after it to be destroyed first.
+  std::unique_ptr<custom_handlers::ProtocolHandlerRegistry> protocol_handlers_;
   base::RepeatingClosureList browsing_observers_;
   SitePrompt site_prompt_;
   // "api|origin" -> device keys granted for this session only.

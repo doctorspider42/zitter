@@ -11,9 +11,11 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include <algorithm>
+#include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/permission_request_description.h"
 #include "content/public/browser/permission_status_subscription.h"
 #include "content/public/browser/render_frame_host.h"
@@ -120,6 +122,27 @@ bool WriteSiteSetting(PrefService* prefs, const char* pref, const char* times_pr
   return true;
 }
 
+// Site handlers only. Blink lets sites claim mailto, web+… and a few other
+// schemes, none of which Zitter loads itself; Zitter never becomes the
+// system's default app for them.
+class SiteProtocolHandlerDelegate final
+    : public custom_handlers::ProtocolHandlerRegistry::Delegate {
+ public:
+  void RegisterExternalHandler(const std::string& protocol) override {
+    auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
+    if (!policy->IsWebSafeScheme(protocol))
+      policy->RegisterWebSafeScheme(protocol);
+  }
+  bool IsExternalHandlerRegistered(const std::string& protocol) override {
+    return false;
+  }
+  void RegisterWithOSAsDefaultClient(const std::string& protocol,
+                                     DefaultClientCallback callback) override {}
+  void CheckDefaultClientWithOS(const std::string& protocol,
+                                DefaultClientCallback callback) override {}
+  bool ShouldRemoveHandlersNotInOS() override { return false; }
+};
+
 }  // namespace
 
 ProfilePermissionController::ProfilePermissionController(
@@ -146,6 +169,8 @@ void ProfilePermissionController::SetSitePermissionPreferences(
     std::unique_ptr<PrefService> prefs) {
   CHECK(prefs && !site_permission_prefs_ && !context_->IsOffTheRecord());
   site_permission_prefs_ = std::move(prefs);
+  protocol_handlers_ = custom_handlers::ProtocolHandlerRegistry::Create(
+      site_permission_prefs_.get(), std::make_unique<SiteProtocolHandlerDelegate>());
 }
 
 bool ProfilePermissionController::CanEditSitePermissions() const {
@@ -188,6 +213,8 @@ void ProfilePermissionController::ClearSitePermissions(base::Time begin,
   clear(kPopupPrefs, kPopupRuleTimes);
   clear(kMediaRules, kMediaRuleTimes);
   clear(kExternalProtocolPrefs, kExternalProtocolRuleTimes);
+  if (protocol_handlers_)
+    protocol_handlers_->ClearUserDefinedHandlers(begin, end, /*save=*/true);
   site_permission_prefs_->CommitPendingWrite();
   for (const auto& key : clipboard)
     NotifyClipboardPermissionChanged(url::Origin::Create(GURL(key)));
@@ -998,6 +1025,9 @@ constexpr Category kSiteCategories[] = {
     {"javascript-optimizer", PermissionType::NUM, 1, false},
     {"mixed-script", PermissionType::NUM, 2, false},
     {"automatic-downloads", PermissionType::NUM, 3, true},
+    // navigator.registerProtocolHandler(): a site asks, Settings offer block
+    // or ask (Chrome's choices).
+    {"protocol-handler", PermissionType::NUM, 3, true, false},
 };
 
 bool IsValidSiteSetting(const Category& category, int setting) {

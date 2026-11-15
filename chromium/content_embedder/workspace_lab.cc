@@ -160,6 +160,7 @@
 #include "net/dns/public/secure_dns_mode.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "profile_permission_controller.h"
+#include "protocol_handlers.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/web_authentication_delegate.h"
@@ -1411,6 +1412,20 @@ class WorkspaceWebView final : public LabWebView {
                          const content::ContextMenuParams& params) override {
     return show_page_menu_.Run(frame, params);
   }
+
+  void RegisterProtocolHandler(content::RenderFrameHost* frame,
+                               const std::string& protocol, const GURL& url,
+                               bool user_gesture) override {
+    if (frame)
+      RegisterPageProtocolHandler(*frame, protocol, url, user_gesture);
+  }
+
+  void UnregisterProtocolHandler(content::RenderFrameHost* frame,
+                                 const std::string& protocol, const GURL& url,
+                                 bool user_gesture) override {
+    if (frame)
+      UnregisterPageProtocolHandler(*frame, protocol, url);
+  }
   content::JavaScriptDialogManager* GetJavaScriptDialogManager(
       content::WebContents* source) override;
   using content::WebContentsObserver::BeforeUnloadFired;
@@ -1799,10 +1814,9 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
 #endif
   callbacks.private_mode = private_owner_ != nullptr;
   // Chrome features the Content browser does not have: installable web
-  // apps, FedCM sign-in, automatic picture-in-picture and site protocol
-  // handlers.
+  // apps, FedCM sign-in and automatic picture-in-picture.
   callbacks.hidden_site_categories = {"web-app-installation", "webid-api",
-                                      "auto-picture-in-picture", "protocol-handler"};
+                                      "auto-picture-in-picture"};
   // Automatic sign-in needs the Credential Management API and enhanced
   // spell check Google's spelling service; Content has neither.
   callbacks.hidden_preferences = {"auto_signin", "online_spellcheck"};
@@ -1912,6 +1926,13 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
         return lab && lab->Navigate(url, new_tab);
       }, weak);
   callbacks.search = base::BindRepeating(&WorkspaceLab::SearchAddress, weak);
+  callbacks.protocol_handler_url = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, const GURL& url) {
+        return lab && lab->model_.active()
+                   ? TranslateProtocolHandlerURL(*lab->WorkspaceProfile(lab->active_index_),
+                                                 url)
+                   : GURL();
+      }, weak);
   if (timeline_) {
     callbacks.timeline = base::BindRepeating(
         [](base::WeakPtr<WorkspaceLab> lab) -> const sidebar::Timeline* {
@@ -5084,6 +5105,8 @@ void WorkspaceLab::OpenSitePanel() {
           }
           for (const auto& scheme : current->AllowedExternalProtocols(origin))
             summary.permissions.push_back({.key = "protocol:" + scheme, .setting = 1});
+          for (const auto& scheme : ProtocolHandlerSchemes(*current, origin))
+            summary.permissions.push_back({.key = "handler:" + scheme, .setting = 1});
         }
         return summary;
       },
@@ -5104,6 +5127,11 @@ void WorkspaceLab::OpenSitePanel() {
           return current->SetMediaSetting(origin, prototype::SiteDefaultKey(key), setting);
         if (key.starts_with("protocol:"))
           return (setting == 0 || setting == 3) && current->ForgetExternalProtocol(origin, key.substr(9));
+        if (constexpr std::string_view kHandler = "handler:"; key.starts_with(kHandler)) {
+          const auto scheme = std::string_view(key).substr(kHandler.size());
+          return (setting == 0 || setting == 3) && !scheme.empty() &&
+                 RemoveProtocolHandlers(*current, origin, scheme);
+        }
         return key == "popups" && current->SetPopupSetting(
             origin, setting ? std::optional(static_cast<Permissions::PopupSetting>(setting)) : std::nullopt);
       },
@@ -5119,6 +5147,7 @@ void WorkspaceLab::OpenSitePanel() {
           current->SetMediaSetting(origin, "microphone", 0);
           for (const auto& scheme : current->AllowedExternalProtocols(origin))
             current->ForgetExternalProtocol(origin, scheme);
+          RemoveProtocolHandlers(*current, origin);
         }
       },
       resolve, origin);
@@ -5208,18 +5237,25 @@ void WorkspaceLab::ShowSitePermissionPrompt(
     std::move(answer).Run(false);
     return;
   }
-  std::u16string title;
-  for (const auto& group : prototype::kSiteCategoryGroups) {
-    for (const auto& category : group) {
-      if (key == category.key)
-        title = prototype::T(category.title);
+  const auto origin = base::UTF8ToUTF16(
+      frame.GetOutermostMainFrame()->GetLastCommittedOrigin().Serialize());
+  std::u16string detail;
+  if (const auto handler = std::string(kProtocolHandlerCategory) + ":";
+      key.starts_with(handler)) {
+    detail = prototype::TF(u"{} chce otwierać wszystkie linki {}.",
+                           {origin, base::UTF8ToUTF16(key.substr(handler.size())) + u":"});
+  } else {
+    std::u16string title;
+    for (const auto& group : prototype::kSiteCategoryGroups) {
+      for (const auto& category : group) {
+        if (key == category.key)
+          title = prototype::T(category.title);
+      }
     }
+    detail = prototype::TF(u"{} prosi o dostęp: {}.", {origin, title});
   }
-  const auto origin = frame.GetOutermostMainFrame()->GetLastCommittedOrigin();
   ShowPermissionPrompt(
-      prototype::T(u"Zezwolić witrynie?"),
-      prototype::TF(u"{} prosi o dostęp: {}.",
-                    {base::UTF8ToUTF16(origin.Serialize()), title}),
+      prototype::T(u"Zezwolić witrynie?"), std::move(detail),
       prototype::T(u"Zezwól dla witryny"), PermissionPrompt::kNotification,
       {}, 0, {}, base::BindOnce(
           [](base::OnceCallback<void(bool)> done, std::optional<size_t> accepted, bool) {

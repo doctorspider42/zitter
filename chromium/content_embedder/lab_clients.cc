@@ -5,6 +5,7 @@
 #include "navigation_reputation.h"
 #include "browsing_preferences.h"
 #include "content/public/browser/site_instance.h"
+#include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "bluetooth_access.h"
 #include "hid_access.h"
@@ -129,6 +130,7 @@
 #include "net/base/url_util.h"
 #include "profile_context.h"
 #include "profile_permission_controller.h"
+#include "protocol_handlers.h"
 #include "sandbox/policy/sandbox.h"
 #include "sandbox/policy/switches.h"
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
@@ -1033,6 +1035,10 @@ bool LabBrowserClientBase::HandleExternalProtocol(
     return false;
   }
   auto* page = web_contents_getter.Run();
+  // A site's handler takes the scheme: ProtocolHandlerThrottle sends the
+  // navigation to the handler page before this factory is used.
+  if (page && IsProtocolHandled(*page->GetBrowserContext(), url.scheme()))
+    return false;
   if (!page || page->GetVisibility() != content::Visibility::VISIBLE ||
       (initiator_document &&
                 (!initiator_document->IsActive() ||
@@ -1068,6 +1074,28 @@ bool LabBrowserClientBase::HandleExternalProtocol(
           },
           page->GetWeakPtr(), *initiating_origin, escaped));
   return true;
+}
+
+bool LabBrowserClientBase::HasCustomSchemeHandler(
+    content::BrowserContext* browser_context,
+    const std::string& scheme) {
+  return browser_context && IsProtocolHandled(*browser_context, scheme);
+}
+
+std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
+LabBrowserClientBase::CreateURLLoaderThrottles(
+    const network::ResourceRequest& request,
+    content::BrowserContext* browser_context,
+    const base::RepeatingCallback<content::WebContents*()>& wc_getter,
+    content::NavigationUIData* navigation_ui_data,
+    content::FrameTreeNodeId frame_tree_node_id,
+    std::optional<int64_t> navigation_id) {
+  std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles;
+  // navigator.registerProtocolHandler(): mailto: and web+... navigations load
+  // the handler page the person accepted.
+  if (auto throttle = CreateProtocolHandlerThrottle(browser_context))
+    throttles.push_back(std::move(throttle));
+  return throttles;
 }
 
 void LabBrowserClientBase::CreateThrottlesForNavigation(

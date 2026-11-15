@@ -35,6 +35,7 @@
 #include "chromium/prototype/adblock_filter_lists.h"
 #include "chromium/prototype/adblock_network.h"
 #include "chromium/prototype/fingerprint_session.h"
+#include "components/custom_handlers/protocol_handler_registry.h"
 #include "components/download/public/common/download_item.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/favicon/core/favicon_client.h"
@@ -1500,6 +1501,7 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
   registry->RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
   registry->RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
   registry->RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
+  custom_handlers::ProtocolHandlerRegistry::RegisterProfilePrefs(registry.get());
   PrefServiceFactory factory;
   factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(path));
   auto prefs = factory.Create(registry);
@@ -1853,6 +1855,7 @@ void ProfileContext::InitializeNewWorkspacePreferences() {
   site->RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
   site->RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
   site->RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
+  custom_handlers::ProtocolHandlerRegistry::RegisterProfilePrefs(site.get());
   site_permissions().SetSitePermissionPreferences(
       preferences(kContentSitePermissionPrefs, std::move(site)));
   auto chooser = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();

@@ -662,6 +662,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Czcionki na komputerze", "Fonts on this computer"),
     ("Wykrywanie bezczynności", "Idle detection"),
     ("Otwieranie linków", "Link handling"),
+    ("Otwieranie linków ({})", "Link handling ({})"),
+    ("{} chce otwierać wszystkie linki {}.", "{} wants to open all {} links."),
     ("Dostęp do danych w ramkach", "Storage access in frames"),
     ("Synchronizacja w tle", "Background sync"),
     ("Wirtualna rzeczywistość", "Virtual reality"),

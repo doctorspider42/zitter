@@ -236,6 +236,9 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<GURL(std::optional<size_t>, std::string_view)> tab_menu_url;
     base::RepeatingCallback<bool()> clean_address_copies;
     base::RepeatingCallback<void(std::u16string)> search;
+    // A typed address in a scheme a site handles (navigator.registerProtocolHandler:
+    // mailto:, web+…): the handler page, or an empty URL.
+    base::RepeatingCallback<GURL(const GURL&)> protocol_handler_url;
     base::RepeatingCallback<void(PaletteResult)> activate_result;
     base::RepeatingCallback<std::vector<PaletteResult>(std::u16string)> commands;
     base::RepeatingClosure passwords;

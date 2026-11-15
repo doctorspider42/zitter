@@ -11703,8 +11703,12 @@ const SitePermissionLook* SiteLook(const std::string& key){
   for(const auto& look:*looks)if(look.key==key)return &look;
   return nullptr;
 }
-std::u16string SitePermissionName(const std::string& key){if(key.starts_with("protocol:"))return TF(u"Otwieranie aplikacji ({})",{base::UTF8ToUTF16(key.substr(9))+u":"});const auto* look=SiteLook(key);return look?T(look->name):base::UTF8ToUTF16(key);}
-const gfx::VectorIcon& SitePermissionIcon(const std::string& key){const auto* look=SiteLook(key);return look?*look->icon:vector_icons::kTuneIcon;}
+// "protocol:<scheme>": the site may open an app; "handler:<scheme>": the
+// site's page opens that scheme's links (navigator.registerProtocolHandler).
+// Both are grants the person can only revoke.
+bool IsRevocableSiteGrant(const std::string& key){return key.starts_with("protocol:")||key.starts_with("handler:");}
+std::u16string SitePermissionName(const std::string& key){if(key.starts_with("protocol:"))return TF(u"Otwieranie aplikacji ({})",{base::UTF8ToUTF16(key.substr(9))+u":"});if(key.starts_with("handler:"))return TF(u"Otwieranie linków ({})",{base::UTF8ToUTF16(key.substr(8))+u":"});const auto* look=SiteLook(key);return look?T(look->name):base::UTF8ToUTF16(key);}
+const gfx::VectorIcon& SitePermissionIcon(const std::string& key){const auto* look=SiteLook(key.starts_with("handler:")?std::string("protocol-handler"):key);return look?*look->icon:vector_icons::kTuneIcon;}
 // 1 wizyta, 2–4 wizyty, 5 wizyt (12–14 wizyt).
 std::u16string VisitsText(int count){
   const int tens=count%100,ones=count%10;
@@ -11883,9 +11887,9 @@ class SitePermissionMenu final : public ui::SimpleMenuModel,public ui::SimpleMen
  public:
   enum : int { kDefault=0, kAllow=1, kBlock=2, kAsk=3, kForget=10 };
   SitePermissionMenu(const SitePermissionState& state, bool can_reset, base::RepeatingCallback<void(int)> chosen):ui::SimpleMenuModel(this),current_(state.setting),chosen_(std::move(chosen)){
-    if (state.can_allow && !state.key.starts_with("protocol:"))
+    if (state.can_allow && !IsRevocableSiteGrant(state.key))
       AddRadioItem(kAllow,T(u"Zezwalaj"),1);
-    if (state.key.starts_with("protocol:")) {
+    if (IsRevocableSiteGrant(state.key)) {
       AddItem(kDefault, T(u"Cofnij zgodę"));
     } else {
       if (state.can_ask) AddRadioItem(kAsk, T(u"Pytaj za każdym razem"), 1);
@@ -12535,6 +12539,14 @@ GURL WorkspaceShell::ResolveInput(std::string text, std::u16string* provider_nam
   const GURL local = ExternalOpenArgument(base::FilePath::FromUTF8Unsafe(text));
   if (IsLocalHtmlUrl(local))
     return local;
+  // A site's handler for this scheme (mailto:, web+…) opens its page.
+  if (callbacks_.protocol_handler_url && internal.is_valid() &&
+      !internal.SchemeIsHTTPOrHTTPS() && text.find_first_of(" \t") == std::string::npos) {
+    if (const GURL handled = callbacks_.protocol_handler_url.Run(internal);
+        handled.SchemeIsHTTPOrHTTPS()) {
+      return handled;
+    }
+  }
   const GURL resolved = ResolveTyped(text, search_engine_);
   GURL direct(text);
   const bool query = text.find_first_of(" \t") != std::string::npos || (!direct.has_scheme() && text.find('.') == std::string::npos && !text.starts_with("localhost") && !text.starts_with("[::1]"));
