@@ -806,4 +806,6 @@ pub static EN: &[(&str, &str)] = &[
     ("Usuń słownik: {}", "Remove dictionary: {}"),
     ("Dodano: {}", "Added: {}"),
     ("Usunięto: {}", "Removed: {}"),
+    ("Zezwolić witrynie?", "Allow this site?"),
+    ("{} prosi o dostęp: {}.", "{} asks for access to: {}."),
 ];

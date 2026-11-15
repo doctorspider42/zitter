@@ -1485,6 +1485,9 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
   registry->RegisterInt64Pref(Permissions::kNotificationNextId, 0);
   registry->RegisterDictionaryPref(Permissions::kSpellingPrefs);
   registry->RegisterDictionaryPref(Permissions::kBrowsingPrefs);
+  registry->RegisterDictionaryPref(Permissions::kSiteDefaults);
+  registry->RegisterDictionaryPref(Permissions::kSiteRules);
+  registry->RegisterDictionaryPref(Permissions::kSiteRuleTimes);
   registry->RegisterDictionaryPref(Permissions::kPromptDefaults);
   registry->RegisterDictionaryPref(Permissions::kMediaRules);
   registry->RegisterDictionaryPref(Permissions::kMediaRuleTimes);

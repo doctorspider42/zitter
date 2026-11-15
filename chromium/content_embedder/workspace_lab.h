@@ -484,6 +484,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void OpenSitePanel();
   void ShowClipboardReadPrompt(content::RenderFrameHost& frame,
                                base::OnceCallback<void(bool)> answer);
+  void ShowSitePermissionPrompt(content::RenderFrameHost& frame,
+                                std::string_view key,
+                                base::OnceCallback<void(bool)> answer);
   void ShowNotificationPrompt(content::RenderFrameHost& frame,
                               base::OnceCallback<void(bool)> answer);
   enum class PermissionPrompt { kClipboard, kNotification, kDeviceCapture, kTabCapture, kExtension };

@@ -79,6 +79,7 @@
 #include "chromium/prototype/adblock_filter_lists.h"
 #include "chromium/prototype/arc_importer.h"
 #include "chromium/prototype/assistant_panel.h"
+#include "chromium/prototype/browser_data.h"
 #include "chromium/prototype/browser_import_data.h"
 #include "chromium/prototype/browser_tools.h"
 #include "chromium/prototype/clean_url.h"
@@ -3027,6 +3028,8 @@ void WorkspaceLab::ConfigureProfileForWorkspace(ProfileContext& profile) {
       &WorkspaceLab::ShowClipboardReadPrompt, weak_factory_.GetWeakPtr()));
   profile.site_permissions().SetNotificationPrompt(base::BindRepeating(
       &WorkspaceLab::ShowNotificationPrompt, weak_factory_.GetWeakPtr()));
+  profile.site_permissions().SetSitePrompt(base::BindRepeating(
+      &WorkspaceLab::ShowSitePermissionPrompt, weak_factory_.GetWeakPtr()));
 }
 
 bool WorkspaceLab::CanImportBrowser() const {
@@ -5148,6 +5151,35 @@ void WorkspaceLab::ShowClipboardReadPrompt(
                                          std::optional<size_t> accepted, bool) {
                          std::move(done).Run(accepted.has_value());
                        }, std::move(answer)));
+}
+
+void WorkspaceLab::ShowSitePermissionPrompt(
+    content::RenderFrameHost& frame, std::string_view key,
+    base::OnceCallback<void(bool)> answer) {
+  auto* page = content::WebContents::FromRenderFrameHost(&frame);
+  if (!page || page != web_contents() || !widget_ || !widget_->IsActive() ||
+      page->GetVisibility() != content::Visibility::VISIBLE) {
+    std::move(answer).Run(false);
+    return;
+  }
+  std::u16string title;
+  for (const auto& group : prototype::kSiteCategoryGroups) {
+    for (const auto& category : group) {
+      if (key == category.key)
+        title = prototype::T(category.title);
+    }
+  }
+  const auto origin = frame.GetOutermostMainFrame()->GetLastCommittedOrigin();
+  ShowPermissionPrompt(
+      prototype::T(u"Zezwolić witrynie?"),
+      prototype::TF(u"{} prosi o dostęp: {}.",
+                    {base::UTF8ToUTF16(origin.Serialize()), title}),
+      prototype::T(u"Zezwól dla witryny"), PermissionPrompt::kNotification,
+      {}, 0, {}, base::BindOnce(
+          [](base::OnceCallback<void(bool)> done, std::optional<size_t> accepted, bool) {
+            std::move(done).Run(accepted.has_value());
+          },
+          std::move(answer)));
 }
 
 void WorkspaceLab::ShowNotificationPrompt(
@@ -8320,6 +8352,20 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
           .value = permissions.PromptByDefault("notifications"),
           .editable = permissions.CanClearSitePermissions(), .text = "p"};
     }
+    // Settings > Site permissions: [block, ask (p), allow (a)].
+    for (const auto key : ProfilePermissionController::SiteCategoryKeys()) {
+      const auto& category = *ProfilePermissionController::FindSiteCategory(key);
+      const int setting = permissions.SiteDefault(key);
+      const int index = setting == 2 ? 0 : setting == 3 ? 1 : category.can_ask ? 2 : 1;
+      settings[std::string(prototype::kSiteDefaultPrefix) + std::string(key)] = {
+          .value = index, .editable = permissions.CanClearSitePermissions(),
+          .text = category.can_ask ? "pa" : "a"};
+    }
+    for (const auto* key : {"javascript", "images", "sound"}) {
+      settings[std::string(prototype::kSiteDefaultPrefix) + key] = {
+          .value = permissions.BrowsingFlag(key),
+          .editable = permissions.CanClearSitePermissions(), .text = "a"};
+    }
     for (const auto* key : {"media-stream-camera", "media-stream-mic", "clipboard"}) {
       settings[std::string(prototype::kSiteDefaultPrefix) + key] = {
           .value = permissions.PromptByDefault(prototype::SiteDefaultKey(key)),
@@ -8357,6 +8403,19 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
            static_cast<size_t>(value) < zoom_values.size() &&
            profile.SetDefaultPageZoomLevel(
                blink::ZoomFactorToZoomLevel(zoom_values[value] / 100.0));
+  }
+  if (key.starts_with(prototype::kSiteDefaultPrefix)) {
+    const auto category_key = std::string_view(key).substr(prototype::kSiteDefaultPrefix.size());
+    if (const auto* category = ProfilePermissionController::FindSiteCategory(category_key)) {
+      const int setting = value == 0 ? 2 : value == 1 ? (category->can_ask ? 3 : 1)
+                        : value == 2 && category->can_ask ? 1 : 0;
+      return CanEditWorkspace() && setting != 0 &&
+             profile.site_permissions().SetSiteDefault(category_key, setting);
+    }
+    if (category_key == "javascript" || category_key == "images" || category_key == "sound") {
+      return CanEditWorkspace() && (value == 0 || value == 1) &&
+             profile.site_permissions().SetBrowsingFlag(category_key, value == 1);
+    }
   }
   if (key == "dns_mode") {
     if (private_owner_ || !CanEditWorkspace() || value < 0 || value > 2 ||

@@ -15,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "content/public/browser/permission_controller_delegate.h"
+#include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "url/origin.h"
 
 class PrefService;
@@ -93,6 +94,29 @@ class ProfilePermissionController final
   bool SelectSpellingDictionary(const std::u16string& code);
   void SetNotificationPrompt(ClipboardReadPrompt prompt);
 
+  // Settings > Site permissions for the web APIs beyond camera, microphone,
+  // notifications, clipboard and pop-ups. Settings: 1 allow, 2 block, 3 ask.
+  static constexpr char kSiteDefaults[] = "zitter.site_defaults";
+  static constexpr char kSiteRules[] = "zitter.site_rules";
+  static constexpr char kSiteRuleTimes[] = "zitter.site_rule_times";
+  struct SiteCategory {
+    std::string_view key;
+    blink::PermissionType type;
+    int fallback;
+    bool can_ask;
+  };
+  static const SiteCategory* FindSiteCategory(std::string_view key);
+  static const SiteCategory* FindSiteCategory(blink::PermissionType type);
+  static std::vector<std::string_view> SiteCategoryKeys();
+  int SiteDefault(std::string_view key) const;
+  bool SetSiteDefault(std::string_view key, int setting);
+  int SiteSetting(std::string_view key, const url::Origin& origin) const;
+  bool SetSiteRule(std::string_view key, const url::Origin& origin,
+                   std::optional<int> setting);
+  using SitePrompt = base::RepeatingCallback<void(
+      content::RenderFrameHost&, std::string_view key, base::OnceCallback<void(bool)>)>;
+  void SetSitePrompt(SitePrompt prompt);
+
   // Profile browsing preferences from Settings (privacy, content and
   // readability, languages, downloads). Unknown keys and invalid values read
   // as the defaults; the Set functions reject them.
@@ -145,6 +169,9 @@ class ProfilePermissionController final
 
   std::unique_ptr<PrefService> site_permission_prefs_;
   base::RepeatingClosureList browsing_observers_;
+  SitePrompt site_prompt_;
+  content::PermissionResult SiteResult(const SiteCategory& category,
+                                       const url::Origin& origin) const;
   base::DictValue private_clipboard_rules_;
   base::DictValue private_popup_rules_;
   bool private_popups_allowed_ = false;

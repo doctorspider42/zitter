@@ -647,9 +647,44 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
             std::move(callback)));
     return;
   }
+  if (frame && request.permissions.size() == 1 && site_prompt_ &&
+      CanEditSitePermissions() && frame->IsActive() &&
+      frame->GetBrowserContext() == &*context_) {
+    const auto type = blink::PermissionDescriptorToPermissionType(request.permissions.front());
+    const auto* category = FindSiteCategory(type);
+    const auto origin = url::Origin::Create(request.requesting_origin);
+    if (category && network::IsOriginPotentiallyTrustworthy(origin) &&
+        SiteSetting(category->key, origin) == 3) {
+      const std::string key(category->key);
+      site_prompt_.Run(
+          *frame, key,
+          base::BindOnce(
+              [](base::WeakPtr<ProfilePermissionController> self, std::string key,
+                 url::Origin origin,
+                 base::OnceCallback<void(const std::vector<PermissionResult>&)> reply,
+                 bool accepted) {
+                if (!self) {
+                  std::move(reply).Run({PermissionResult(PermissionStatus::DENIED)});
+                  return;
+                }
+                self->SetSiteRule(key, origin, accepted ? 1 : 2);
+                std::move(reply).Run({PermissionResult(
+                    accepted ? PermissionStatus::GRANTED : PermissionStatus::DENIED)});
+              },
+              weak_factory_.GetWeakPtr(), key, origin, std::move(callback)));
+      return;
+    }
+  }
   for (const auto& descriptor : request.permissions) {
     if (!is_document_request) {
-      results.emplace_back(PermissionStatus::DENIED);
+      const auto* category = frame
+          ? FindSiteCategory(blink::PermissionDescriptorToPermissionType(descriptor))
+          : nullptr;
+      const auto requester = url::Origin::Create(request.requesting_origin);
+      results.push_back(category && network::IsOriginPotentiallyTrustworthy(requester) &&
+                                SiteSetting(category->key, requester) == 1
+                            ? PermissionResult(PermissionStatus::GRANTED)
+                            : PermissionResult(PermissionStatus::DENIED));
     } else if (CanUseExtensionClipboard(descriptor, frame, &*context_)) {
       results.emplace_back(PermissionStatus::GRANTED);
     } else if (IsClipboardReadDescriptor(descriptor)) {
@@ -687,6 +722,13 @@ ProfilePermissionController::GetPermissionResultForOriginWithoutContext(
     const url::Origin& embedder) {
   if (IsNotification(descriptor) && requester == embedder)
     return NotificationResult(NotificationSetting(requester));
+  if (descriptor && network::IsOriginPotentiallyTrustworthy(embedder)) {
+    const auto type = blink::PermissionDescriptorToPermissionType(descriptor);
+    if (type == blink::PermissionType::MIDI)
+      return PermissionResult(PermissionStatus::GRANTED);
+    if (const auto* category = FindSiteCategory(type))
+      return SiteResult(*category, embedder);
+  }
   return PermissionResult(PermissionStatus::DENIED);
 }
 
@@ -721,6 +763,16 @@ ProfilePermissionController::GetPermissionResultForCurrentDocument(
                                   ? PermissionStatus::DENIED : PermissionStatus::ASK);
     }
   }
+  if (descriptor && frame && frame->IsActive() && frame->GetBrowserContext() == &*context_ &&
+      network::IsOriginPotentiallyTrustworthy(frame->GetLastCommittedOrigin())) {
+    const auto type = blink::PermissionDescriptorToPermissionType(descriptor);
+    if (type == blink::PermissionType::MIDI)
+      return PermissionResult(PermissionStatus::GRANTED);
+    if (const auto* category = FindSiteCategory(type)) {
+      // The main document's site decides for its frames, as in Chrome.
+      return SiteResult(*category, frame->GetOutermostMainFrame()->GetLastCommittedOrigin());
+    }
+  }
   if (descriptor &&
       descriptor->name == blink::mojom::PermissionName::PERSISTENT_STORAGE &&
       storage_probe_origin_ && frame &&
@@ -738,14 +790,28 @@ PermissionResult ProfilePermissionController::GetPermissionResultForWorker(
     const GURL& origin) {
   if (IsNotification(descriptor))
     return NotificationResult(NotificationSetting(url::Origin::Create(origin)));
+  const auto worker_origin = url::Origin::Create(origin);
+  if (descriptor && network::IsOriginPotentiallyTrustworthy(worker_origin)) {
+    if (const auto* category =
+            FindSiteCategory(blink::PermissionDescriptorToPermissionType(descriptor))) {
+      return SiteResult(*category, worker_origin);
+    }
+  }
   return PermissionResult(PermissionStatus::DENIED);
 }
 
 PermissionResult
 ProfilePermissionController::GetPermissionResultForEmbeddedRequester(
-    const blink::mojom::PermissionDescriptorPtr&,
-    content::RenderFrameHost*,
-    const url::Origin&) {
+    const blink::mojom::PermissionDescriptorPtr& descriptor,
+    content::RenderFrameHost* frame,
+    const url::Origin& requesting_origin) {
+  if (descriptor && frame && frame->IsActive() &&
+      network::IsOriginPotentiallyTrustworthy(requesting_origin)) {
+    if (const auto* category =
+            FindSiteCategory(blink::PermissionDescriptorToPermissionType(descriptor))) {
+      return SiteResult(*category, requesting_origin);
+    }
+  }
   return PermissionResult(PermissionStatus::DENIED);
 }
 
@@ -753,6 +819,10 @@ void ProfilePermissionController::ResetPermission(
     blink::PermissionType type,
     const GURL& requesting_origin,
     const GURL& embedding_origin) {
+  if (const auto* category = FindSiteCategory(type)) {
+    SetSiteRule(category->key, url::Origin::Create(requesting_origin), std::nullopt);
+    return;
+  }
   if (type == blink::PermissionType::NOTIFICATIONS &&
       url::Origin::Create(requesting_origin) == url::Origin::Create(embedding_origin)) {
     SetNotificationSetting(url::Origin::Create(requesting_origin), 0);
@@ -885,6 +955,137 @@ bool ProfilePermissionController::SetBrowsingText(std::string_view key, std::str
 base::CallbackListSubscription ProfilePermissionController::ObserveBrowsingPreferences(
     base::RepeatingClosure callback) {
   return browsing_observers_.Add(std::move(callback));
+}
+
+namespace {
+
+using Category = ProfilePermissionController::SiteCategory;
+using blink::PermissionType;
+// Defaults follow Chrome: sensors, background sync and payment handlers are
+// allowed, automatic fullscreen is blocked, the rest ask.
+constexpr Category kSiteCategories[] = {
+    {"geolocation", PermissionType::GEOLOCATION, 3, true},
+    {"sensors", PermissionType::SENSORS, 1, false},
+    {"midi-sysex", PermissionType::MIDI_SYSEX, 3, true},
+    {"speaker-selection", PermissionType::SPEAKER_SELECTION, 3, true},
+    {"idle-detection", PermissionType::IDLE_DETECTION, 3, true},
+    {"local-fonts", PermissionType::LOCAL_FONTS, 3, true},
+    {"window-placement", PermissionType::WINDOW_MANAGEMENT, 3, true},
+    {"keyboard-lock", PermissionType::KEYBOARD_LOCK, 3, true},
+    {"storage-access", PermissionType::STORAGE_ACCESS_GRANT, 3, true},
+    {"top-level-storage-access", PermissionType::TOP_LEVEL_STORAGE_ACCESS, 3, true},
+    {"captured-surface-control", PermissionType::CAPTURED_SURFACE_CONTROL, 3, true},
+    {"automatic-fullscreen", PermissionType::AUTOMATIC_FULLSCREEN, 2, false},
+    {"background-sync", PermissionType::BACKGROUND_SYNC, 1, false},
+    {"payment-handler", PermissionType::PAYMENT_HANDLER, 1, false},
+    {"local-network-access", PermissionType::LOCAL_NETWORK_ACCESS, 3, true},
+    {"local-network", PermissionType::LOCAL_NETWORK, 3, true},
+    {"loopback-network", PermissionType::LOOPBACK_NETWORK, 3, true},
+    {"vr", PermissionType::VR, 3, true},
+    {"ar", PermissionType::AR, 3, true},
+    {"hand-tracking", PermissionType::HAND_TRACKING, 3, true},
+};
+
+bool IsValidSiteSetting(const Category& category, int setting) {
+  return setting == 1 || setting == 2 || (setting == 3 && category.can_ask);
+}
+
+}  // namespace
+
+const ProfilePermissionController::SiteCategory*
+ProfilePermissionController::FindSiteCategory(std::string_view key) {
+  const auto found = std::ranges::find(kSiteCategories, key, &Category::key);
+  return found == std::end(kSiteCategories) ? nullptr : &*found;
+}
+
+const ProfilePermissionController::SiteCategory*
+ProfilePermissionController::FindSiteCategory(blink::PermissionType type) {
+  if (type == PermissionType::PERIODIC_BACKGROUND_SYNC)
+    type = PermissionType::BACKGROUND_SYNC;
+  if (type == PermissionType::GEOLOCATION_APPROXIMATE)
+    type = PermissionType::GEOLOCATION;
+  const auto found = std::ranges::find(kSiteCategories, type, &Category::type);
+  return found == std::end(kSiteCategories) ? nullptr : &*found;
+}
+
+std::vector<std::string_view> ProfilePermissionController::SiteCategoryKeys() {
+  std::vector<std::string_view> keys;
+  for (const auto& category : kSiteCategories)
+    keys.push_back(category.key);
+  return keys;
+}
+
+int ProfilePermissionController::SiteDefault(std::string_view key) const {
+  const auto* category = FindSiteCategory(key);
+  if (!category)
+    return 2;
+  const auto value = site_permission_prefs_
+      ? site_permission_prefs_->GetDict(kSiteDefaults).FindInt(key) : std::nullopt;
+  return value && IsValidSiteSetting(*category, *value) ? *value : category->fallback;
+}
+
+bool ProfilePermissionController::SetSiteDefault(std::string_view key, int setting) {
+  const auto* category = FindSiteCategory(key);
+  if (!CanClearSitePermissions() || !category || !IsValidSiteSetting(*category, setting))
+    return false;
+  ScopedDictPrefUpdate(site_permission_prefs_.get(), kSiteDefaults)->Set(key, setting);
+  return true;
+}
+
+int ProfilePermissionController::SiteSetting(std::string_view key,
+                                             const url::Origin& origin) const {
+  const auto* category = FindSiteCategory(key);
+  if (!category || origin.opaque())
+    return 2;
+  if (site_permission_prefs_) {
+    if (const auto* rules = site_permission_prefs_->GetDict(kSiteRules).FindDict(key)) {
+      if (const auto rule = rules->FindInt(origin.Serialize());
+          rule && IsValidSiteSetting(*category, *rule)) {
+        return *rule;
+      }
+    }
+  }
+  return SiteDefault(key);
+}
+
+bool ProfilePermissionController::SetSiteRule(std::string_view key,
+                                              const url::Origin& origin,
+                                              std::optional<int> setting) {
+  const auto* category = FindSiteCategory(key);
+  if (!CanClearSitePermissions() || !category || origin.opaque() ||
+      (setting && !IsValidSiteSetting(*category, *setting))) {
+    return false;
+  }
+  ScopedDictPrefUpdate rules(site_permission_prefs_.get(), kSiteRules);
+  ScopedDictPrefUpdate times(site_permission_prefs_.get(), kSiteRuleTimes);
+  auto* list = rules->EnsureDict(key);
+  auto* stamps = times->EnsureDict(key);
+  const auto serialized = origin.Serialize();
+  if (setting) {
+    list->Set(serialized, *setting);
+    stamps->Set(serialized, base::NumberToString(
+        base::Time::Now().ToDeltaSinceWindowsEpoch().InMicroseconds()));
+  } else {
+    list->Remove(serialized);
+    stamps->Remove(serialized);
+  }
+  return true;
+}
+
+void ProfilePermissionController::SetSitePrompt(SitePrompt prompt) {
+  site_prompt_ = std::move(prompt);
+}
+
+content::PermissionResult ProfilePermissionController::SiteResult(
+    const SiteCategory& category, const url::Origin& origin) const {
+  switch (SiteSetting(category.key, origin)) {
+    case 1:
+      return content::PermissionResult(blink::mojom::PermissionStatus::GRANTED);
+    case 3:
+      return content::PermissionResult(blink::mojom::PermissionStatus::ASK);
+    default:
+      return content::PermissionResult(blink::mojom::PermissionStatus::DENIED);
+  }
 }
 
 }  // namespace zitter::content_embedder
