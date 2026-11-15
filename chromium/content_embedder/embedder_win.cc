@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <shobjidl.h>
+#include <knownfolders.h>
+#include <shlobj.h>
 
 #include <array>
 #include <cstdio>
@@ -34,6 +36,7 @@
 #include "base/values.h"
 #include "base/win/dark_mode_support.h"
 #include "base/win/win_util.h"
+#include "chromium/app/network_policy.h"
 #include "chromium/app/updater_win.h"
 #include "chromium/app/windows_channel.h"
 #include "chromium/prototype/jump_list_win.h"
@@ -80,6 +83,9 @@
 #include "profile_context.h"
 #include "profile_permission_controller.h"
 #include "workspace_lab.h"
+#include "base/memory/raw_ref.h"
+#include "base/threading/thread_restrictions.h"
+#include "extension_registry_probe.h"
 #include "updates_win.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
@@ -99,6 +105,10 @@ void LaunchExternalProtocol(const GURL& url) {
 }
 
 namespace {
+
+// Set for the user's ordinary Workspace: their Downloads folder, Safe
+// Browsing, bundled Night Shift, the startup import and automatic updates.
+bool g_ordinary_launch = false;
 
 // Writes a fixed diagnostic line for the probe scripts that read stderr.
 void WriteStderr(const char* message) {
@@ -138,9 +148,9 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
                                   private content::WebContentsObserver,
                                   private views::WidgetObserver {
  public:
-  explicit WindowsLabMainParts(
-      OpenEncryptionCallback open_encryption)
-      : open_encryption_(std::move(open_encryption)) {}
+  WindowsLabMainParts(OpenEncryptionCallback open_encryption,
+                      LabBrowserClientBase& browser)
+      : open_encryption_(std::move(open_encryption)), browser_(browser) {}
 
   int PreCreateThreads() override {
     const auto& command_line = *base::CommandLine::ForCurrentProcess();
@@ -204,6 +214,21 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     if (workspace_lab_) {
       if (!ConfigureWorkspaceExtensionProbe(workspace_extension_profiles_)) {
         return 1;
+      }
+      if (g_ordinary_launch) {
+        base::ScopedAllowBlocking allow_startup_io;
+        // Bundled Night Shift, as macOS configures it from its Resources.
+        base::FilePath exe_dir;
+        if (!base::PathService::Get(base::DIR_EXE, &exe_dir) ||
+            !ConfigureBundledNightShift(
+                exe_dir.AppendASCII("resources").AppendASCII("night_shift"))) {
+          LOG(ERROR) << "Could not configure bundled Night Shift";
+        }
+        // Safe Browsing checks of navigations and downloads, when the user
+        // configured a key file (chromium/app/network_policy.cc).
+        safe_browsing_key_ = zitter::LoadSafeBrowsingKeyFile();
+        if (!safe_browsing_key_.empty())
+          browser_->StartNavigationReputation(workspace_root_, safe_browsing_key_);
       }
       if (!IsWorkspaceExtensionReviewOnly())
         CreateWorkspace();
@@ -469,13 +494,27 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     for (auto& startup : additional_profile_startup_)
       additional_profiles_.push_back(startup->Open(*os_crypt_));
     additional_profile_startup_.clear();
+    // The user's own Workspace saves downloads to their Downloads folder and
+    // offers a browser import on its first start, as on macOS.
+    base::FilePath user_downloads;
+    bool offer_startup_import = false;
+    if (g_ordinary_launch && durable) {
+      wchar_t* known = nullptr;
+      if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_Downloads, 0, nullptr, &known)))
+        user_downloads = base::FilePath(known);
+      ::CoTaskMemFree(known);
+      offer_startup_import =
+          workspace_session_.empty() ||
+          workspace_session_.FindBool("startup_import_pending").value_or(false);
+    }
     workspace_ = std::make_unique<WorkspaceLab>(
         root.AppendASCII("WorkspaceSettings.json"), directory_.GetPath(),
         durable ? root.AppendASCII(kWorkspaceSession) : base::FilePath(),
         std::move(workspace_session_), std::move(workspace_timeline_),
         workspace_probe_url_, *context_,
         personal_context_.get(), dark, /*metal=*/false, workspace_smoke_,
-        nullptr, additional_profiles_, os_crypt_);
+        nullptr, additional_profiles_, os_crypt_, std::move(user_downloads),
+        safe_browsing_key_, offer_startup_import);
   }
 
   void FinishWorkspace(bool success) {
@@ -556,6 +595,8 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
   std::vector<base::FilePath> workspace_extension_profiles_;
   std::vector<std::unique_ptr<ProfileContext>> additional_profiles_;
   std::unique_ptr<DownloadProbe> download_probe_;
+  const raw_ref<LabBrowserClientBase> browser_;
+  std::string safe_browsing_key_;
   std::unique_ptr<WindowsContentUpdates> updates_;
   std::unique_ptr<WorkspaceLab> workspace_;
   std::unique_ptr<views::WidgetDelegate> delegate_;
@@ -572,7 +613,8 @@ class WindowsLabBrowserClient final : public LabBrowserClientBase {
       bool) override {
     return std::make_unique<WindowsLabMainParts>(
         base::BindOnce(&WindowsLabBrowserClient::OpenEncryption,
-                       base::Unretained(this)));
+                       base::Unretained(this)),
+        *this);
   }
 
   std::string GetApplicationLocale() override { return "en-US"; }
@@ -631,9 +673,6 @@ void WindowsLabUtilityClient::RegisterMainThreadServices(
         return std::make_unique<quarantine::QuarantineImpl>(std::move(receiver));
       });
 }
-
-// Set for the user's ordinary Workspace, which gets automatic updates.
-bool g_ordinary_launch = false;
 
 // Explorer, a shortcut, the jump list or another app's link: at most the
 // jump list's --zitter-command and HTTP(S) or local page arguments.

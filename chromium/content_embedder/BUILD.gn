@@ -680,6 +680,8 @@ if (is_mac) {
                 "updates_win.cc",
                 "updates_win.h",
                 "zitter_content_win.rc",
+                "//zitter/chromium/app/network_policy.cc",
+                "//zitter/chromium/app/network_policy.h",
                 "//zitter/chromium/app/updater_win.cc",
                 "//zitter/chromium/app/updater_win.h",
               ]
