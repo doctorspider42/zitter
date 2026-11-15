@@ -2,6 +2,8 @@
 
 #include "federated_identity.h"
 
+#include <array>
+
 #include <algorithm>
 #include <iterator>
 #include <utility>
@@ -54,8 +56,8 @@ constexpr char kRequiresMediation[] = "requires_mediation";
 
 // Chrome's FedCM embargo after the user closes a passive prompt: 2 hours,
 // then a day, a week and four weeks.
-constexpr base::TimeDelta kDismissEmbargo[] = {base::Hours(2), base::Days(1), base::Days(7),
-                                               base::Days(28)};
+constexpr auto kDismissEmbargo = std::to_array<base::TimeDelta>(
+    {base::Hours(2), base::Days(1), base::Days(7), base::Days(28)});
 // Chrome's embargo between two automatic re-authentications on a site.
 constexpr base::TimeDelta kReauthnEmbargoDuration = base::Minutes(10);
 // Keeps the stored state small: oldest grants beyond this are dropped.
@@ -129,9 +131,9 @@ void LabFederatedIdentity::RecordDismissAndEmbargo(const url::Origin& relying_pa
   permissions().UpdateFederatedIdentityState([&](base::DictValue& state) {
     auto* entry = state.EnsureDict(kEmbargo)->EnsureDict(relying_party_embedder.Serialize());
     const int count = std::min(entry->FindInt(kEmbargoCount).value_or(0) + 1,
-                               static_cast<int>(std::size(kDismissEmbargo)));
+                               static_cast<int>(kDismissEmbargo.size()));
     entry->Set(kEmbargoCount, count);
-    entry->Set(kEmbargoUntil, TimeText(base::Time::Now() + kDismissEmbargo[count - 1]));
+    entry->Set(kEmbargoUntil, TimeText(base::Time::Now() + kDismissEmbargo[static_cast<size_t>(count - 1)]));
   });
 }
 
