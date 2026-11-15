@@ -690,6 +690,10 @@ bool IsOrdinaryLaunch(const base::CommandLine& command) {
   });
 }
 
+// zitter.exe --import-legacy-workspace=<Chrome-based profile>
+//            --zitter-content-workspace-root=<new Content root>
+constexpr char kImportLegacyWorkspace[] = "import-legacy-workspace";
+
 base::FilePath OrdinaryWorkspaceRoot() {
   base::FilePath app_data;
   if (!base::PathService::Get(base::DIR_LOCAL_APP_DATA, &app_data))
@@ -720,10 +724,19 @@ bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
   // The first Content start for a user of the Chrome-based Windows build
   // brings over their spaces, tabs, pins, passwords, history and settings
   // from %LOCALAPPDATA%\Zitter (tools/profile_migration_trial.py in C++).
+  // Releases up to 0.4.x kept it in Chromium's default %LOCALAPPDATA%\Chromium\User
+  // Data; ZitterWorkspaces.json tells a Zitter profile from a plain Chromium one.
   if (base::IsDirectoryEmpty(root)) {
-    const auto legacy = root.DirName().Append(windows::kProductName);
-    if (HasLegacyWindowsWorkspace(legacy) && !ImportLegacyWindowsWorkspace(legacy, root))
-      LOG(ERROR) << "Could not import the Chrome-based Zitter profile";
+    const auto local = root.DirName();
+    for (const auto& legacy :
+         {local.Append(windows::kProductName),
+          local.Append(FILE_PATH_LITERAL("Chromium")).Append(FILE_PATH_LITERAL("User Data"))}) {
+      if (!HasLegacyWindowsWorkspace(legacy))
+        continue;
+      if (!ImportLegacyWindowsWorkspace(legacy, root))
+        LOG(ERROR) << "Could not import the Chrome-based Zitter profile";
+      break;
+    }
   }
   if (base::IsDirectoryEmpty(root)) {
     base::File marker(root.AppendASCII("ContentWorkspaceLayout"),
@@ -764,6 +777,18 @@ class WindowsLabMainDelegate final : public content::ContentMainDelegate {
         for (auto path = fonts.Next(); !path.empty(); path = fonts.Next())
           gfx::win::SideLoadFontForTesting(path);
       }
+    }
+    // Imports a Chrome-based profile into an empty Content root and exits:
+    // the first ordinary start's migration, run on copies to check it.
+    if (command.HasSwitch(kImportLegacyWorkspace)) {
+      const auto legacy = command.GetSwitchValuePath(kImportLegacyWorkspace);
+      const auto root = command.GetSwitchValuePath(kWorkspaceRoot);
+      if (root.empty() || (base::PathExists(root) && !base::IsDirectoryEmpty(root)) ||
+          !HasLegacyWindowsWorkspace(legacy) || !ImportLegacyWindowsWorkspace(legacy, root)) {
+        WriteStderr("Could not import the Chrome-based Zitter profile\n");
+        return 1;
+      }
+      return 0;
     }
     if (IsOrdinaryLaunch(command)) {
       const auto root = OrdinaryWorkspaceRoot();
