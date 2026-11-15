@@ -276,8 +276,40 @@ class FramelessDelegate final : public views::WidgetDelegate {
   FramelessFrameView::HitTest hit_test_;
 };
 
-std::unique_ptr<views::Widget> CreateFramelessWidget(views::WidgetDelegate* delegate,
-                                                     const gfx::Rect& bounds) {
+// Most of a frameless window is HTCAPTION so it can be dragged, and Windows
+// reports the pointer there as non-client: the root view never sees it. The
+// widget gets every mouse event, as Chrome's VideoOverlayWindowViews uses.
+class FramelessWidget final : public views::Widget {
+ public:
+  explicit FramelessWidget(base::RepeatingCallback<void(bool)> hover)
+      : hover_(std::move(hover)) {}
+  FramelessWidget(const FramelessWidget&) = delete;
+  FramelessWidget& operator=(const FramelessWidget&) = delete;
+  ~FramelessWidget() override = default;
+
+  void OnMouseEvent(ui::MouseEvent* event) override {
+    switch (event->type()) {
+      case ui::EventType::kMouseEntered:
+      case ui::EventType::kMouseMoved:
+        hover_.Run(true);
+        break;
+      case ui::EventType::kMouseExited:
+        hover_.Run(false);
+        break;
+      default:
+        break;
+    }
+    views::Widget::OnMouseEvent(event);
+  }
+
+ private:
+  base::RepeatingCallback<void(bool)> hover_;
+};
+
+std::unique_ptr<views::Widget> CreateFramelessWidget(
+    views::WidgetDelegate* delegate,
+    const gfx::Rect& bounds,
+    base::RepeatingCallback<void(bool)> hover = base::DoNothing()) {
   views::Widget::InitParams params(views::Widget::InitParams::CLIENT_OWNS_WIDGET,
                                    views::Widget::InitParams::TYPE_WINDOW);
   params.delegate = delegate;
@@ -286,7 +318,7 @@ std::unique_ptr<views::Widget> CreateFramelessWidget(views::WidgetDelegate* dele
   params.visible_on_all_workspaces = true;
   params.remove_standard_frame = true;
   params.name = "PictureInPictureWindow";
-  auto widget = std::make_unique<views::Widget>();
+  auto widget = std::make_unique<FramelessWidget>(std::move(hover));
   widget->Init(std::move(params));
   return widget;
 }
@@ -442,7 +474,10 @@ class VideoPictureInPictureWindow final : public content::VideoOverlayWindow,
         WorkAreaFor(page ? page->GetTopLevelNativeWindow() : gfx::NativeWindow());
     contents->SetSizeLimits(kMinimumSize, MaximumSizeFor(work_area));
     delegate_.SetContentsView(std::move(contents));
-    widget_ = CreateFramelessWidget(&delegate_, PlaceWindow(work_area, kMinimumSize, {}));
+    widget_ = CreateFramelessWidget(
+        &delegate_, PlaceWindow(work_area, kMinimumSize, {}),
+        base::BindRepeating(&VideoPictureInPictureWindow::SetControlsShown,
+                            base::Unretained(this)));
     widget_observation_.Observe(widget_.get());
   }
 
