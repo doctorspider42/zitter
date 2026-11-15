@@ -131,6 +131,9 @@ class ProfilePermissionController final
   using SitePrompt = base::RepeatingCallback<void(
       content::RenderFrameHost&, std::string_view key, base::OnceCallback<void(bool)>)>;
   void SetSitePrompt(SitePrompt prompt);
+  // Asks the user through the Zitter prompt; answers false without one.
+  void RunSitePrompt(content::RenderFrameHost& frame, std::string_view key,
+                     base::OnceCallback<void(bool)> answer);
 
   // Profile browsing preferences from Settings (privacy, content and
   // readability, languages, downloads). Unknown keys and invalid values read

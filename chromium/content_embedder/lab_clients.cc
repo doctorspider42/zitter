@@ -4,6 +4,7 @@
 
 #include "navigation_reputation.h"
 #include "browsing_preferences.h"
+#include "bluetooth_access.h"
 #include "hid_access.h"
 #include "serial_access.h"
 #include "usb_access.h"
@@ -1164,6 +1165,12 @@ content::SerialDelegate* LabBrowserClientBase::GetSerialDelegate() {
   if (!serial_delegate_)
     serial_delegate_ = std::make_unique<LabSerialDelegate>();
   return serial_delegate_.get();
+}
+
+content::BluetoothDelegate* LabBrowserClientBase::GetBluetoothDelegate() {
+  if (!bluetooth_delegate_)
+    bluetooth_delegate_ = std::make_unique<LabBluetoothDelegate>();
+  return bluetooth_delegate_.get();
 }
 
 void LabBrowserClientBase::OverrideWebPreferences(

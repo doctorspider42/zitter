@@ -1151,6 +1151,16 @@ std::vector<std::string> ProfilePermissionController::DeviceGrants(
   return keys;
 }
 
+void ProfilePermissionController::RunSitePrompt(content::RenderFrameHost& frame,
+                                                std::string_view key,
+                                                base::OnceCallback<void(bool)> answer) {
+  if (!site_prompt_ || !CanEditSitePermissions()) {
+    std::move(answer).Run(false);
+    return;
+  }
+  site_prompt_.Run(frame, key, std::move(answer));
+}
+
 void ProfilePermissionController::SetSitePrompt(SitePrompt prompt) {
   site_prompt_ = std::move(prompt);
 }

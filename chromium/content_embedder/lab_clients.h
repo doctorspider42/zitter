@@ -18,6 +18,7 @@ class GURL;
 
 namespace zitter::content_embedder {
 
+class LabBluetoothDelegate;
 class LabHidDelegate;
 class LabSerialDelegate;
 class LabUsbDelegate;
@@ -167,6 +168,7 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   content::UsbDelegate* GetUsbDelegate() override;
   content::HidDelegate* GetHidDelegate() override;
   content::SerialDelegate* GetSerialDelegate() override;
+  content::BluetoothDelegate* GetBluetoothDelegate() override;
   void OverrideWebPreferences(content::WebContents* web_contents,
                               content::SiteInstance& main_frame_site,
                               blink::web_pref::WebPreferences* prefs) override;
@@ -197,6 +199,7 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   std::unique_ptr<LabUsbDelegate> usb_delegate_;
   std::unique_ptr<LabHidDelegate> hid_delegate_;
   std::unique_ptr<LabSerialDelegate> serial_delegate_;
+  std::unique_ptr<LabBluetoothDelegate> bluetooth_delegate_;
   ClipboardCopyProbe clipboard_copy_probe_;
   std::unique_ptr<NavigationReputation> navigation_reputation_;
 

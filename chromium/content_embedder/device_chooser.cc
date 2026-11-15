@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromium/prototype/i18n.h"
 #include "content/public/browser/render_frame_host.h"
@@ -23,18 +24,18 @@
 
 namespace zitter::content_embedder {
 
-class DeviceChooserView final : public views::DialogDelegateView {
+class DeviceChooserView final : public views::View {
  public:
-  DeviceChooserView(std::u16string title, std::u16string site, DeviceChooser::Done done)
-      : done_(std::move(done)) {
-    SetModalType(ui::mojom::ModalType::kWindow);
-    SetTitle(prototype::TF(u"Połącz z urządzeniem {}", {title}));
-    SetButtonLabel(ui::mojom::DialogButton::kOk, prototype::T(u"Połącz"));
-    SetButtonLabel(ui::mojom::DialogButton::kCancel, prototype::T(u"Anuluj"));
-    SetButtonEnabled(ui::mojom::DialogButton::kOk, false);
-    SetAcceptCallback(base::BindOnce(&DeviceChooserView::Finish, base::Unretained(this), true));
-    SetCancelCallback(base::BindOnce(&DeviceChooserView::Finish, base::Unretained(this), false));
-    SetCloseCallback(base::BindOnce(&DeviceChooserView::Finish, base::Unretained(this), false));
+  DeviceChooserView(views::DialogDelegate& dialog, std::u16string site,
+                    DeviceChooser::Done done)
+      : dialog_(dialog), done_(std::move(done)) {
+    dialog.SetButtonEnabled(ui::mojom::DialogButton::kOk, false);
+    dialog.SetAcceptCallback(
+        base::BindOnce(&DeviceChooserView::Finish, base::Unretained(this), true));
+    dialog.SetCancelCallback(
+        base::BindOnce(&DeviceChooserView::Finish, base::Unretained(this), false));
+    dialog.SetCloseCallback(
+        base::BindOnce(&DeviceChooserView::Finish, base::Unretained(this), false));
     auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
         views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(16, 20), 10));
     layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStretch);
@@ -107,7 +108,7 @@ class DeviceChooserView final : public views::DialogDelegateView {
   };
 
   void Selected() {
-    SetButtonEnabled(ui::mojom::DialogButton::kOk, SelectedId().has_value());
+    dialog_->SetButtonEnabled(ui::mojom::DialogButton::kOk, SelectedId().has_value());
   }
 
   std::optional<std::string> SelectedId() const {
@@ -142,6 +143,7 @@ class DeviceChooserView final : public views::DialogDelegateView {
     std::move(done_).Run(accepted ? SelectedId() : std::nullopt);
   }
 
+  const raw_ref<views::DialogDelegate> dialog_;
   DeviceChooser::Done done_;
   raw_ptr<views::Label> status_ = nullptr;
   raw_ptr<views::View> list_ = nullptr;
@@ -169,10 +171,16 @@ std::unique_ptr<DeviceChooser> DeviceChooser::Show(content::RenderFrameHost& fra
   }
   const auto site = base::UTF8ToUTF16(
       frame.GetOutermostMainFrame()->GetLastCommittedOrigin().Serialize());
-  auto view = std::make_unique<DeviceChooserView>(std::move(title), site, std::move(done));
+  auto dialog = std::make_unique<views::DialogDelegate>();
+  dialog->SetModalType(ui::mojom::ModalType::kWindow);
+  dialog->SetTitle(prototype::TF(u"Połącz z urządzeniem {}", {title}));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, prototype::T(u"Połącz"));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, prototype::T(u"Anuluj"));
+  auto* view = dialog->SetContentsView(
+      std::make_unique<DeviceChooserView>(*dialog, site, std::move(done)));
   chooser->view_ = view->GetWeakPtr();
   auto* widget = views::DialogDelegate::CreateDialogWidget(
-      std::move(view), /*context=*/nullptr, contents->GetTopLevelNativeWindow());
+      std::move(dialog), /*context=*/nullptr, contents->GetTopLevelNativeWindow());
   widget->Show();
   return chooser;
 }

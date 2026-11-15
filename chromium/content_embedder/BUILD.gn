@@ -85,6 +85,8 @@ lab_includes = [ "$root_gen_dir/zitter" ]
 lab_sources = [
   "browsing_preferences.cc",
   "browsing_preferences.h",
+  "bluetooth_access.cc",
+  "bluetooth_access.h",
   "device_chooser.cc",
   "device_chooser.h",
   "hid_access.cc",
@@ -158,6 +160,7 @@ lab_sources = [
 ]
 
 lab_deps = [
+  "//device/bluetooth",
   "//device/bluetooth/public/cpp",
   "//services/device/public/cpp/usb",
   "//services/device/public/mojom",
