@@ -11697,6 +11697,7 @@ const SitePermissionLook* SiteLook(const std::string& key){
       {"keyboard-lock",u"Przejmowanie klawiatury",&vector_icons::kDevicesIcon},
       {"pointer-lock",u"Przejmowanie kursora",&vector_icons::kDevicesIcon},
       {"automatic-fullscreen",u"Pełny ekran bez pytania",&vector_icons::kDesktopWindowsIcon},
+      {"auto-picture-in-picture",u"Automatyczny obraz w obrazie",&vector_icons::kPictureInPictureAltIcon},
       {"web-printing",u"Drukowanie",&vector_icons::kDevicesIcon},
       {"payment-handler",u"Obsługa płatności",&vector_icons::kDevicesIcon},
   });

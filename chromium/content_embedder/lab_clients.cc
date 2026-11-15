@@ -4,6 +4,7 @@
 
 #include "navigation_reputation.h"
 #include "browsing_preferences.h"
+#include "picture_in_picture.h"
 #include "content/public/browser/site_instance.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
@@ -81,6 +82,7 @@
 #include "content/public/browser/devtools_manager_delegate.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/overlay_window.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/service_worker_version_base_info.h"
@@ -996,6 +998,13 @@ bool LabBrowserClientBase::CanCreateWindow(
   *no_javascript_access = false;
   if (user_gesture)
     return true;
+  // Automatic document picture-in-picture is authorised by the browser
+  // rather than a user gesture, like Chrome.
+  if (disposition == WindowOpenDisposition::NEW_PICTURE_IN_PICTURE && opener &&
+      PictureInPicture::Get().AllowsAutomaticWindow(
+          content::WebContents::FromRenderFrameHost(opener))) {
+    return true;
+  }
   if (!opener || !opener->IsActive())
     return false;
   const auto& origin = opener->GetLastCommittedOrigin();
@@ -1182,6 +1191,12 @@ void LabBrowserClientBase::OnWebContentsCreated(content::WebContents* contents) 
   headless::HeadlessPrintManager::CreateForWebContents(contents);
   printing::CreateCompositeClientIfNeeded(contents, GetUserAgent());
 #endif
+}
+
+std::unique_ptr<content::VideoOverlayWindow>
+LabBrowserClientBase::CreateWindowForVideoPictureInPicture(
+    content::VideoPictureInPictureWindowController* controller) {
+  return CreateVideoOverlayWindow(controller);
 }
 
 content::UsbDelegate* LabBrowserClientBase::GetUsbDelegate() {

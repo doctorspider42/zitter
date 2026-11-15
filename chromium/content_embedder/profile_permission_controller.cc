@@ -1051,6 +1051,8 @@ constexpr Category kSiteCategories[] = {
     // FedCM ("Third-party sign-in"): allowed like Chrome; block turns the
     // API off for the relying party.
     {"webid-api", PermissionType::NUM, 1, false},
+    // Asked inside the window that opened automatically (picture_in_picture.cc).
+    {"auto-picture-in-picture", PermissionType::NUM, 3, true},
 };
 
 bool IsValidSiteSetting(const Category& category, int setting) {

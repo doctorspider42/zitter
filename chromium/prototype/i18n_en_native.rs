@@ -957,4 +957,13 @@ pub static EN: &[(&str, &str)] = &[
     ("Nadawca wiadomości:", "Allowed message sender:"),
     ("Odczyt adresów i tytułów kart w tym profilu.", "Read tab addresses and titles in this profile."),
     ("Odczyt listy zainstalowanych czcionek.", "Read the list of installed fonts."),
+    ("Obraz w obrazie", "Picture-in-picture"),
+    ("Wróć do karty", "Back to tab"),
+    ("Odtwórz", "Play"),
+    ("Następny utwór", "Next track"),
+    ("Poprzedni utwór", "Previous track"),
+    ("Wycisz", "Mute"),
+    ("Włącz dźwięk", "Unmute"),
+    ("Pomiń reklamę", "Skip ad"),
+    ("Automatycznie otwierać obraz w obrazie?", "Open picture-in-picture automatically?"),
 ];

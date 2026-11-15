@@ -428,6 +428,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void FinishOpeningPage(std::string workspace, uint64_t tab_id, bool background,
                          bool resume_requests, bool from_peek);
   void ClosePopup(content::WebContents* page);
+  // Brings the window, workspace and tab that show `page` to the front.
+  void ActivatePage(content::WebContents* page);
   std::optional<std::pair<size_t, size_t>> TabForPage(
       content::WebContents* page) const;
   void AttachPageServices(content::WebContents& page, size_t workspace);

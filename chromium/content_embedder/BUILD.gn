@@ -97,6 +97,8 @@ lab_sources = [
   "//zitter/chromium/prototype/image_link_preview.cc",
   "//zitter/chromium/prototype/image_link_preview.h",
   "device_chooser.h",
+  "picture_in_picture.cc",
+  "picture_in_picture.h",
   "hid_access.cc",
   "hid_access.h",
   "serial_access.cc",
@@ -170,6 +172,12 @@ lab_sources = [
 ]
 
 lab_deps = [
+  "//cc",
+  "//components/vector_icons",
+  "//components/viz/common",
+  "//services/media_session/public/cpp:base_cpp",
+  "//services/media_session/public/mojom",
+  "//ui/compositor",
   "//device/bluetooth",
   "//device/bluetooth/public/cpp",
   "//services/device/public/cpp/usb",

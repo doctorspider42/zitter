@@ -6,6 +6,7 @@
 
 #include "content/public/browser/file_select_listener.h"
 #include "page_file_chooser.h"
+#include "picture_in_picture.h"
 #include "printing/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PRINTING)
@@ -41,6 +42,31 @@ void LabWebView::EnumerateDirectory(
     scoped_refptr<content::FileSelectListener> listener,
     const base::FilePath& path) {
   EnumeratePageDirectory(contents, std::move(listener), path);
+}
+
+content::WebContents* LabWebView::AddNewContents(
+    content::WebContents* source, std::unique_ptr<content::WebContents> new_contents,
+    const GURL& target_url, WindowOpenDisposition disposition,
+    const blink::mojom::WindowFeatures& window_features, bool user_gesture,
+    bool* was_blocked) {
+  if (disposition != WindowOpenDisposition::NEW_PICTURE_IN_PICTURE) {
+    return views::WebView::AddNewContents(source, std::move(new_contents), target_url,
+                                          disposition, window_features, user_gesture,
+                                          was_blocked);
+  }
+  auto* page = PictureInPicture::Get().OpenDocument(source, std::move(new_contents));
+  if (!page && was_blocked)
+    *was_blocked = true;
+  return page;
+}
+
+content::PictureInPictureResult LabWebView::EnterPictureInPicture(
+    content::WebContents* page) {
+  return PictureInPicture::Get().EnterVideo(page);
+}
+
+void LabWebView::ExitPictureInPicture() {
+  PictureInPicture::Get().Exit();
 }
 
 BEGIN_METADATA(LabWebView)

@@ -175,6 +175,8 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   void CreateThrottlesForNavigation(
       content::NavigationThrottleRegistry& registry) override;
   void OnWebContentsCreated(content::WebContents* contents) override;
+  std::unique_ptr<content::VideoOverlayWindow> CreateWindowForVideoPictureInPicture(
+      content::VideoPictureInPictureWindowController* controller) override;
   content::UsbDelegate* GetUsbDelegate() override;
   content::HidDelegate* GetHidDelegate() override;
   content::SerialDelegate* GetSerialDelegate() override;

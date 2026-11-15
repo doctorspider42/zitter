@@ -28,6 +28,7 @@
 #include "workspace_devtools.h"
 #include "workspace_media_access.h"
 #include "night_shift_site.h"
+#include "picture_in_picture.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
 
@@ -1084,6 +1085,11 @@ class WorkspaceWebView final : public LabWebView {
     presentation_changed_ = std::move(callback);
   }
 
+  // Picture-in-picture's back-to-tab control selects the page's tab.
+  void SetActivatePageCallback(base::RepeatingCallback<void(content::WebContents*)> callback) {
+    activate_page_ = std::move(callback);
+  }
+
   prototype::RssPanel* MountReader() {
     if (!rss_) {
       CloseExtensionSidePanel();
@@ -1197,6 +1203,20 @@ class WorkspaceWebView final : public LabWebView {
   void OnAudioStateChanged(bool audible) override {
     if (presentation_changed_)
       presentation_changed_.Run();
+  }
+
+  // Switching away from a tab (another tab, workspace, a minimised or covered
+  // window) may enter picture-in-picture automatically; coming back exits it.
+  void OnVisibilityChanged(content::Visibility visibility) override {
+    if (auto* page = web_contents()) {
+      PictureInPicture::Get().OnTabVisibilityChanged(
+          *page, visibility, media_access_ && media_access_->IsCapturing(page));
+    }
+  }
+
+  void ActivateContents(content::WebContents* page) override {
+    if (activate_page_)
+      activate_page_.Run(page);
   }
 
   void DidUpdateAudioMutingState(bool muted) override {
@@ -1380,8 +1400,12 @@ class WorkspaceWebView final : public LabWebView {
   content::WebContents* AddNewContents(
       content::WebContents* source, std::unique_ptr<content::WebContents> page,
       const GURL& target_url, WindowOpenDisposition disposition,
-      const blink::mojom::WindowFeatures&, bool user_gesture,
+      const blink::mojom::WindowFeatures& features, bool user_gesture,
       bool* was_blocked) override {
+    if (disposition == WindowOpenDisposition::NEW_PICTURE_IN_PICTURE) {
+      return LabWebView::AddNewContents(source, std::move(page), target_url, disposition,
+                                        features, user_gesture, was_blocked);
+    }
     const bool shift_link = user_gesture &&
         disposition == WindowOpenDisposition::NEW_WINDOW && ConsumeShiftLink(target_url);
     auto* adopted = adopt_page_.Run(source, std::move(page), target_url,
@@ -1457,6 +1481,7 @@ class WorkspaceWebView final : public LabWebView {
   std::unique_ptr<prototype::RssPanel> rss_;
   base::RepeatingCallback<void(content::WebContents*)> navigation_changed_;
   base::RepeatingClosure presentation_changed_;
+  base::RepeatingCallback<void(content::WebContents*)> activate_page_;
   base::RepeatingCallback<bool(const ui::Accelerator&)> page_zoom_shortcut_filter_;
   std::set<ui::KeyboardCode> page_zoom_keys_;
   bool suppress_page_zoom_char_ = false;
@@ -1814,8 +1839,8 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
 #endif
   callbacks.private_mode = private_owner_ != nullptr;
   // Chrome features the Content browser does not have: installable web
-  // apps and automatic picture-in-picture.
-  callbacks.hidden_site_categories = {"web-app-installation", "auto-picture-in-picture"};
+  // apps.
+  callbacks.hidden_site_categories = {"web-app-installation"};
   // Enhanced spell check needs Google's spelling service; Content has none.
   callbacks.hidden_preferences = {"online_spellcheck"};
   if (!private_owner_ && IsManagedExtensionSession()) {
@@ -6959,6 +6984,20 @@ std::optional<std::pair<size_t, size_t>> WorkspaceLab::TabForPage(
   return std::nullopt;
 }
 
+void WorkspaceLab::ActivatePage(content::WebContents* page) {
+  const auto location = TabForPage(page);
+  if (!location || saving_session_ || before_unload_batch_.pending())
+    return;
+  if (widget_->IsMinimized())
+    widget_->Restore();
+  widget_->Show();
+  widget_->Activate();
+  if (location->first != active_index_)
+    SelectWorkspace(model_.workspaces()[location->first].id);
+  if (location->first == active_index_)
+    SelectTab(location->second);
+}
+
 content::WebContents* WorkspaceLab::AdoptPage(
     content::WebContents* source, std::unique_ptr<content::WebContents> page,
     const GURL& target_url, WindowOpenDisposition disposition, bool user_gesture,
@@ -9085,6 +9124,8 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View& host) {
         return lab && lab->CanEditWorkspace() &&
                lab->shell_->ShortcutFor(accelerator).empty();
       }, weak_factory_.GetWeakPtr()));
+  view->SetActivatePageCallback(
+      base::BindRepeating(&WorkspaceLab::ActivatePage, weak_factory_.GetWeakPtr()));
   view->SetPresentationChangedCallback(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab) {
         if (!lab || std::exchange(lab->tab_audio_refresh_pending_, true))
