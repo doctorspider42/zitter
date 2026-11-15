@@ -2559,8 +2559,8 @@ impl ActionGraph {
         let previous_by_id=self.nodes.iter().filter(|(key,_)|key.0==3).map(|(key,node)|(node.borrow().id,key.3.as_str())).collect::<BTreeMap<_,_>>();
         let previous=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).collect::<Vec<_>>();
         let geometry_changed=previous.into_iter().ne(items.iter().map(|i|i.key.as_str()))||items.iter().any(|item|self.nodes.get(&(3,0,0,item.key.clone())).is_some_and(|node|{let n=node.borrow();matches!(n.model.as_deref(),Some(NodeModel::Workspace(p)) if p.label!=item.label)}));
-        let mut keys=Vec::with_capacity(10+items.len());
-        for name in ["sidebar.add","sidebar.downloads","header.sidebar","header.back","header.forward","header.reload","sidebar.address"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
+        let mut keys=Vec::with_capacity(11+items.len());
+        for name in ["sidebar.add","sidebar.downloads","header.sidebar","header.back","header.forward","header.reload","header.notifications","sidebar.address"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
         keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});
         for item in &items{keys.push(ffi::ActionNodeKey{kind:3,high:0,low:0,name:item.key.clone()});}
         let plan=self.reconcile(keys);if !plan.admitted{return plan;}
