@@ -215,7 +215,9 @@ bool ContainsVisible(const views::View* view, const gfx::Point& point) {
 
 // The frame of a frameless picture-in-picture window: the client area fills
 // it, its edges resize the window and `client_hit_test` says which client
-// points are controls (HTCLIENT) and which drag the window (HTCAPTION).
+// points are controls (HTCLIENT) and which drag the window (HTCAPTION). The
+// client view is the frame's child, so the frame keeps the default event
+// targeting that passes clicks down to the controls.
 class FramelessFrameView final : public views::FrameView {
  public:
   using HitTest = base::RepeatingCallback<int(const gfx::Point&)>;
@@ -242,11 +244,6 @@ class FramelessFrameView final : public views::FrameView {
     if (edge != HTNOWHERE && edge != HTCLIENT)
       return edge;
     return client_hit_test_.Run(point);
-  }
-
-  // Events reach the client view; the frame only answers hit tests.
-  bool DoesIntersectRect(const views::View* target, const gfx::Rect& rect) const override {
-    return false;
   }
 
  private:
