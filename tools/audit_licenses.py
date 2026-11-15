@@ -147,7 +147,7 @@ def main():
             with zipfile.ZipFile(app) as archive:
                 archive.extractall(unpacked)
             app = next(Path(unpacked).iterdir())
-        windows = (app / 'zitter.exe').is_file()
+        windows = any((app / name).is_file() for name in ('zitter.exe', 'zitter_content.exe'))
         files, binaries = inventory(app)
     target = args.target or (WINDOWS_TARGET if windows else '//zitter_optimized:zitter_optimized')
     # Main, framework, helpers and all bundled dylibs (including dlopen-only
@@ -215,7 +215,11 @@ def main():
                     encoding='utf-8',
                 )
                 env = dict(os.environ, LICENSES_GN_PATH=str(shim))
-            result = subprocess.run(command, capture_output=True, text=True, env=env)
+            for _ in range(5):
+                result = subprocess.run(command, capture_output=True, text=True, env=env)
+                # On Windows GN's toolchains can race to write gn_logs.txt.
+                if not (result.returncode and 'gn_logs.txt' in result.stdout + result.stderr):
+                    break
         if result.returncode:
             raise RuntimeError(target + ': ' + result.stdout + result.stderr)
         return target, parse_metadata(result.stdout + result.stderr)

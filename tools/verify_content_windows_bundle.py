@@ -230,6 +230,8 @@ def main():
     parser.add_argument("--legacy", type=Path,
                         help="Also verify DPAPI migration from this portable stable zitter.exe")
     parser.add_argument("--node", type=Path, help="Node.js executable for the legacy migration probe")
+    parser.add_argument("--third-party-licenses", type=Path,
+                        help="THIRD_PARTY_LICENSES.txt from tools/audit_licenses.py, shipped in the ZIP")
     archive = parser.add_mutually_exclusive_group()
     archive.add_argument("--archive", type=Path, help="Keep the generated ZIP at this new path")
     archive.add_argument("--input-archive", type=Path,
@@ -268,7 +270,10 @@ def main():
 
     try:
         files = select_runtime_files(manifest.read_text(encoding="utf-8-sig"))
-        notices = package_notices()
+        licenses = args.third_party_licenses
+        if licenses and not licenses.is_file():
+            parser.error(f"Third-party licenses not found: {licenses}")
+        notices = package_notices(licenses.resolve() if licenses else None)
         if not args.input_archive:
             validate_sources(out, files)
         system32 = system_directory()
