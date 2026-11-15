@@ -845,6 +845,11 @@ struct Catalogue {
   OrderedMap workspaces;     // Legacy workspace ID to its legacy profile ID.
   OrderedMap profile_ids;    // Legacy profile ID to Content profile ID.
   OrderedMap workspace_ids;  // Legacy workspace ID to Content workspace ID.
+  // Profiles and spaces an Arc or Firefox import made keep their source ID as
+  // Content's import_source, so a later import of the same browser updates
+  // them instead of adding copies (WorkspaceLab::StartBrowserImport).
+  std::set<std::string> imported_profiles;           // Legacy profile IDs.
+  std::map<std::string, std::string> workspace_sources;  // Content ID to legacy ID.
 };
 
 bool IsLegacyProfileDirectory(std::string_view directory) {
@@ -889,6 +894,10 @@ std::optional<Catalogue> ReadCatalogue(const base::FilePath& root,
           "Invalid, duplicate or missing profile directory");
     }
     catalogue.profiles.emplace_back(*id, *directory);
+    if (const auto* source = profile->FindString("source_id");
+        source && !source->empty() && IsCatalogueName(*id)) {
+      catalogue.imported_profiles.insert(*id);
+    }
   }
 
   const auto* workspaces = config.FindList("workspaces");
@@ -955,6 +964,11 @@ bool AssignContentIds(Catalogue& catalogue) {
       mapped = workspace;
     } else if (const auto uuid = ParsePythonUuid(workspace)) {
       mapped = "space-" + *uuid;
+    } else if (IsCatalogueName(workspace)) {
+      // An imported space ("arc-space-<Arc ID>"): a stable Content ID, and
+      // the legacy one as its import source.
+      mapped = "space-" + NameBasedUuid(base::StrCat({"zitter-legacy-workspace:", workspace}));
+      catalogue.workspace_sources.emplace(mapped, workspace);
     } else {
       return Refuse("Unsupported legacy workspace identifier");
     }
@@ -1333,8 +1347,12 @@ bool ConvertWorkspaceSession(const base::DictValue& config,
     }
     if (!IsCatalogueName(name))
       return Refuse("Unsupported legacy catalogue name");
-    if (!default_name)
-      extra_profiles.Append(base::DictValue().Set("id", mapped).Set("name", name));
+    if (!default_name) {
+      auto extra = base::DictValue().Set("id", mapped).Set("name", name);
+      if (catalogue.imported_profiles.contains(profile))
+        extra.Set("import_source", profile);
+      extra_profiles.Append(std::move(extra));
+    }
     else if (name != *default_name)
       profile_names.Set(mapped, name);
     const base::Value* pins = metadata ? metadata->Find("pins") : nullptr;
@@ -1368,7 +1386,12 @@ bool ConvertWorkspaceSession(const base::DictValue& config,
       return Refuse("Unsupported legacy catalogue name");
     const auto default_name = BuiltinName(mapped);
     if (!default_name) {
-      extra_workspaces.Append(base::DictValue().Set("id", mapped).Set("name", name));
+      auto extra = base::DictValue().Set("id", mapped).Set("name", name);
+      if (const auto source = catalogue.workspace_sources.find(mapped);
+          source != catalogue.workspace_sources.end()) {
+        extra.Set("import_source", source->second);
+      }
+      extra_workspaces.Append(std::move(extra));
     } else {
       if (name != *default_name)
         workspace_names.Set(mapped, name);
