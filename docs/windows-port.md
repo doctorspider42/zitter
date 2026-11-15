@@ -518,6 +518,22 @@ the updater's installation check stay the same as for the Chrome-based build.
   window forward. Processes launched from an MSIX-packaged parent (such as the
   Claude desktop app) see a virtualized `AppData\Local`, which the layout check
   rejects; start test copies through `explorer.exe`.
+- **Migration from the Chrome-based build.** When `Zitter Content` is still
+  empty, the first plain launch imports the Chrome-based profile
+  (`legacy_import_win.cc`, the C++ port of `tools/profile_migration_trial.py`):
+  spaces, tabs, pins, profiles, passwords, history and settings. It looks in
+  `%LOCALAPPDATA%\Zitter` and in `%LOCALAPPDATA%\Chromium\User Data`, where
+  0.4.x kept it, and accepts a directory only when `ZitterWorkspaces.json` is
+  present. If the old Zitter is still running (its `lockfile` is held open),
+  Zitter asks the user to quit it and leaves the directory empty for the next
+  start. Spaces and profiles that came from Arc (`arc-space-…`,
+  `arc-profile-…`) get stable Content IDs and keep the old ID as
+  `import_source`, so a later Arc import updates them. The import opens
+  SQLite and therefore runs in `PreBrowserMain`, after Content creates its
+  `FeatureList`. To check a migration on a copy:
+  `zitter.exe --import-legacy-workspace=<copy> --zitter-content-workspace-root=<empty dir>`.
+  An MSIX-packaged parent sees an overlay of `AppData\Local`, so copy the profile
+  through `explorer.exe`.
 - **Shell integration.** Zitter's icon, version resource and AppUserModelID,
   the taskbar jump list, the design fonts beside `zitter.exe`, popups as
   frameless top-level windows (`LabViewsDelegate::OnBeforeWidgetInit`), the
