@@ -1053,6 +1053,9 @@ constexpr Category kSiteCategories[] = {
     {"webid-api", PermissionType::NUM, 1, false},
     // Asked inside the window that opened automatically (picture_in_picture.cc).
     {"auto-picture-in-picture", PermissionType::NUM, 3, true},
+    // Whether Zitter offers to install a site as an app (web_apps.h); the Web
+    // Install API it stands for in Chrome is not exposed by Content.
+    {"web-app-installation", PermissionType::NUM, 3, true},
 };
 
 bool IsValidSiteSetting(const Category& category, int setting) {

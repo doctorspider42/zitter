@@ -174,6 +174,7 @@ class WorkspaceExtensionInstall;
 class WorkspaceFaviconRefresh;
 class WorkspacePasswordClear;
 class WorkspacePasswordCsvImport;
+class WorkspaceWebApps;
 
 class WorkspaceLab final : private WorkspaceRuntime,
                            private prototype::AssistantHost,
@@ -995,6 +996,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   raw_ptr<views::View> assistant_toolbar_button_ = nullptr;
   raw_ptr<views::View> extensions_toolbar_button_ = nullptr;
   raw_ptr<views::View> web_store_install_button_ = nullptr;
+  // Installed web apps and their windows; the toolbar's install button.
+  std::unique_ptr<WorkspaceWebApps> web_apps_;
+  raw_ptr<views::View> web_app_install_button_ = nullptr;
   std::unique_ptr<views::BubbleDialogDelegate> extensions_toolbar_menu_;
   std::unique_ptr<views::Widget> extensions_toolbar_menu_widget_;
   raw_ptr<views::View> night_shift_button_ = nullptr;

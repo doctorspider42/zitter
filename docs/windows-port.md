@@ -542,6 +542,20 @@ the updater's installation check stay the same as for the Chrome-based build.
 - **Updates.** Installed copies use `WindowsUpdater` from
   `chromium/app/updater_win.cc` (`updates_win.cc`). The interface language is
   saved in `ContentInterfacePreferences.json`.
+- **Installable web apps** (`web_apps.cc`, `web_app_window.cc`,
+  `web_apps_win.cc`). A page with a manifest (a name, a start URL in its scope,
+  an icon) gets an install button in the toolbar, „Zainstaluj …” in the page
+  menu and the Command Center; other pages offer „Utwórz skrót do strony…”.
+  Apps live per profile in `<profile>\WebApps` (`Apps.json`, a PNG and an
+  `.ico` per app). An install adds a Start menu shortcut in `Zitter Apps` that
+  runs `zitter.exe --zitter-content-app=<id> --zitter-content-app-profile=<profile>`
+  with its own AppUserModelID (`Zitter.Browser.App.<hash>`). The launch becomes
+  `--zitter-command=app:<profile>/<id>`, so a running Zitter takes it over
+  `WM_COPYDATA`. The app window has no sidebar or tabs; out-of-scope links and
+  new tabs open in a space of the app's profile. The Command Center's
+  „Zainstalowane aplikacje” opens and uninstalls apps. The site setting
+  „Instalowanie aplikacji internetowych” blocks the install offers for a site;
+  Content does not expose `navigator.install`.
 - **Settings.** Browsing preferences (`browsing_preferences.cc`): referrers, Do
   Not Track, images, JavaScript, link auditing, caret browsing, sound,
   third-party cookies, HTTPS only, text sizes, fonts, site languages,

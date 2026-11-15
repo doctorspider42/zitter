@@ -91,6 +91,7 @@
 #include "extension_registry_probe.h"
 #include "legacy_import_win.h"
 #include "updates_win.h"
+#include "web_apps.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
 
@@ -679,7 +680,10 @@ void WindowsLabUtilityClient::RegisterMainThreadServices(
 }
 
 // Explorer, a shortcut, the jump list or another app's link: at most the
-// jump list's --zitter-command and HTTP(S) or local page arguments.
+// jump list's --zitter-command and HTTP(S) or local page arguments. An
+// installed web app's Start menu shortcut (--zitter-content-app and
+// --zitter-content-app-profile) arrives here as --zitter-command=app:...
+// (TranslateWebAppLaunch), so it is forwarded like the jump list's commands.
 bool IsOrdinaryLaunch(const base::CommandLine& command) {
   for (const auto& [name, value] : command.GetSwitches()) {
     if (name != prototype::kZitterCommandSwitch && name != "single-argument")
@@ -849,6 +853,7 @@ class WindowsLabMainDelegate final : public content::ContentMainDelegate {
     // PreBrowserMain runs the import-only mode.
     if (command.HasSwitch(kImportLegacyWorkspace))
       return std::nullopt;
+    TranslateWebAppLaunch(command);
     if (IsOrdinaryLaunch(command)) {
       const auto root = OrdinaryWorkspaceRoot();
       if (!root.empty() && ForwardToRunningWorkspace(command, root))

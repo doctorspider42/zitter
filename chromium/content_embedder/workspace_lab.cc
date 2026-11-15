@@ -31,6 +31,7 @@
 #include "picture_in_picture.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
+#include "web_apps.h"
 
 #include <algorithm>
 #include <array>
@@ -470,6 +471,7 @@ constexpr char kExtensionsPuzzle[] =
 constexpr char kNightShiftMoon[] =
     "M12.8 9.8A5.3 5.3 0 0 1 6.2 3.2a5.2 5.2 0 1 0 6.6 6.6z";
 constexpr char kNightShiftSpark[] = "M12 2v4m-2-2h4";
+constexpr char kWebAppInstall[] = "M2.5 3.5h11v7h-11zM6 13h4M8 5v3.5M6.5 7 8 8.5 9.5 7";
 using ToolbarPalette = base::RepeatingCallback<sidebar::DesignPalette()>;
 
 class ContentToolbarButton final : public views::Button,
@@ -1838,9 +1840,6 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   callbacks.show_web_notifications = !private_owner_;
 #endif
   callbacks.private_mode = private_owner_ != nullptr;
-  // Chrome features the Content browser does not have: installable web
-  // apps.
-  callbacks.hidden_site_categories = {"web-app-installation"};
   // Enhanced spell check needs Google's spelling service; Content has none.
   callbacks.hidden_preferences = {"online_spellcheck"};
   if (!private_owner_ && IsManagedExtensionSession()) {
@@ -2263,6 +2262,58 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
           if (lab)
             lab->OpenNightShiftSettings(nullptr, true);
         }, weak), palette, kNightShiftSpark));
+  }
+  if (!private_owner_ && !session_path_.empty() && !smoke_) {
+    WorkspaceWebApps::Host apps;
+    apps.find_profile = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, std::string_view id) -> ProfileContext* {
+          for (size_t index = 0; lab && index < lab->profiles_.size(); ++index) {
+            if (lab->profiles_[index].id == id)
+              return lab->contexts_[index].get();
+          }
+          return nullptr;
+        }, weak);
+    apps.profile_id = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, const content::BrowserContext* context) {
+          for (size_t index = 0; lab && index < lab->contexts_.size(); ++index) {
+            if (lab->contexts_[index].get() == context)
+              return lab->profiles_[index].id;
+          }
+          return std::string();
+        }, weak);
+    apps.open_in_browser = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, const std::string& profile, const GURL& url) {
+          if (!lab || !lab->model_.active() || !lab->CanEditWorkspace())
+            return;
+          if (lab->model_.active()->profile_id != profile) {
+            for (const auto& workspace : lab->model_.workspaces()) {
+              if (workspace.profile_id == profile) {
+                lab->SelectWorkspace(workspace.id);
+                break;
+              }
+            }
+          }
+          lab->OpenExternalUrl(url);
+        }, weak);
+    apps.main_window = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab) -> views::Widget* {
+          return lab ? lab->widget_.get() : nullptr;
+        }, weak);
+    apps.changed = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+      if (lab && lab->web_app_install_button_ && lab->web_apps_) {
+        auto* button = static_cast<views::Button*>(lab->web_app_install_button_.get());
+        button->SetVisible(lab->web_apps_->CanOfferInstall());
+        button->SetTooltipText(lab->web_apps_->InstallOfferTitle());
+      }
+    }, weak);
+    web_apps_ = std::make_unique<WorkspaceWebApps>(std::move(apps));
+    web_app_install_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
+        kWebAppInstall, prototype::T(u"Zainstaluj aplikację"),
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab && lab->web_apps_)
+            lab->web_apps_->InstallTrackedPage();
+        }, weak), palette));
+    web_app_install_button_->SetVisible(false);
   }
   if (IsManagedExtensionSession() && !private_owner_) {
     pinned_extension_toolbar_ = trailing->AddChildView(std::make_unique<views::View>());
@@ -3672,6 +3723,8 @@ WorkspaceLab::~WorkspaceLab() {
   assistant_toolbar_button_ = nullptr;
   extensions_toolbar_button_ = nullptr;
   web_store_install_button_ = nullptr;
+  web_apps_.reset();
+  web_app_install_button_ = nullptr;
   pinned_extension_toolbar_ = nullptr;
   extension_toolbar_divider_ = nullptr;
   webauthn_probe_.reset();
@@ -7320,6 +7373,8 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
   }
   if (!preview && !private_owner_) {
     navigation.extension_items = WorkspaceExtensionPageMenu(frame, params);
+    if (web_apps_)
+      web_apps_->AppendPageMenuItems(*page, navigation.extension_items);
     auto& document = *page->GetPrimaryMainFrame();
     if (CanSetNightShiftSiteMode(document)) {
       prototype::PageMenuItem night_shift{.title = u"Night Shift"};
@@ -8840,6 +8895,8 @@ std::vector<prototype::PaletteResult> WorkspaceLab::WorkspaceCommandResults(
     }
     results.push_back(std::move(result));
   }
+  if (web_apps_)
+    web_apps_->AppendPaletteResults(query, active, page, profile, results);
   shell_->RankCommandResults(results);
   if (compact && results.size() > 6)
     results.resize(6);
@@ -8861,6 +8918,8 @@ void WorkspaceLab::ActivateWorkspaceCommand(prototype::PaletteResult result) {
     return;
   }
   shell_->RecordCommandUse(result.command_id, result.target_workspace_id);
+  if (web_apps_ && web_apps_->RunPaletteCommand(result))
+    return;
   if (result.command_id == "select_space") {
     SelectWorkspace(std::move(result.target_workspace_id));
   } else if (result.command_id == "sleep_space") {
@@ -11288,6 +11347,9 @@ void WorkspaceLab::RefreshExtensionActionAppearance() {
 bool WorkspaceLab::RunExternalCommand(std::string command) {
   if (!widget_ || private_owner_)
     return false;
+  // An installed web app from its Start menu shortcut: only its window.
+  if (command.starts_with(kWebAppCommandPrefix))
+    return web_apps_ && web_apps_->RunExternalCommand(command);
   const GURL url(command.starts_with("url:") ? command.substr(4) : "");
   const bool url_command = url.is_valid() && url.SchemeIsHTTPOrHTTPS();
   if (!url_command && !command.starts_with("space:") && command != "new_tab" &&
@@ -11329,6 +11391,8 @@ void WorkspaceLab::RefreshShell() {
     }
   }
 #endif
+  if (web_apps_)
+    web_apps_->Track(web_contents());
   if (web_store_install_button_) {
     auto* frame = web_contents()->GetPrimaryMainFrame();
     web_store_install_button_->SetVisible(
