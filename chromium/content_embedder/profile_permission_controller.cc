@@ -8,6 +8,7 @@
 #include "base/check.h"
 #include "base/functional/bind.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include <algorithm>
 #include "components/prefs/pref_service.h"
@@ -769,6 +770,121 @@ void ProfilePermissionController::ResetPermission(
       url::Origin::Create(embedding_origin) == *storage_probe_origin_) {
     storage_probe_origin_.reset();
   }
+}
+
+namespace {
+
+struct BrowsingFlagSpec {
+  std::string_view key;
+  bool fallback;
+};
+constexpr BrowsingFlagSpec kBrowsingFlags[] = {
+    {"referrers", true},        {"do_not_track", false},
+    {"images", true},           {"javascript", true},
+    {"link_auditing", true},    {"caret_browsing", false},
+    {"sound", true},            {"third_party_cookies", false},
+    {"https_only", false},      {"download_prompt", false},
+};
+struct BrowsingNumberSpec {
+  std::string_view key;
+  int fallback;
+  int minimum;
+  int maximum;
+};
+// Pixel sizes; Settings maps them to its picker rows.
+constexpr BrowsingNumberSpec kBrowsingNumbers[] = {
+    {"font_size", 16, 6, 72},
+    {"fixed_font_size", 13, 6, 72},
+    {"minimum_font_size", 0, 0, 24},
+};
+constexpr std::string_view kBrowsingTexts[] = {
+    "accept_languages", "font_standard", "font_serif", "font_sans", "font_fixed"};
+
+bool IsValidBrowsingText(std::string_view key, std::string_view value) {
+  if (value.size() > 256)
+    return false;
+  if (key == "accept_languages") {
+    return std::ranges::all_of(value, [](char c) {
+      return base::IsAsciiAlphaNumeric(c) || c == '-' || c == ',' || c == ' ';
+    });
+  }
+  return value.size() <= 100 &&
+         std::ranges::none_of(value, [](char c) {
+           return static_cast<unsigned char>(c) < 0x20 || c == 0x7f;
+         });
+}
+
+}  // namespace
+
+bool ProfilePermissionController::IsBrowsingFlag(std::string_view key) {
+  return std::ranges::any_of(kBrowsingFlags, [&](const auto& spec) { return spec.key == key; });
+}
+
+bool ProfilePermissionController::IsBrowsingNumber(std::string_view key) {
+  return std::ranges::any_of(kBrowsingNumbers, [&](const auto& spec) { return spec.key == key; });
+}
+
+bool ProfilePermissionController::IsBrowsingText(std::string_view key) {
+  return std::ranges::contains(kBrowsingTexts, key);
+}
+
+bool ProfilePermissionController::BrowsingFlag(std::string_view key) const {
+  const auto spec = std::ranges::find(kBrowsingFlags, key, &BrowsingFlagSpec::key);
+  if (spec == std::end(kBrowsingFlags))
+    return false;
+  const auto* prefs = site_permission_prefs_.get();
+  return prefs ? prefs->GetDict(kBrowsingPrefs).FindBool(key).value_or(spec->fallback)
+               : spec->fallback;
+}
+
+int ProfilePermissionController::BrowsingNumber(std::string_view key) const {
+  const auto spec = std::ranges::find(kBrowsingNumbers, key, &BrowsingNumberSpec::key);
+  if (spec == std::end(kBrowsingNumbers))
+    return 0;
+  const auto value = site_permission_prefs_
+      ? site_permission_prefs_->GetDict(kBrowsingPrefs).FindInt(key) : std::nullopt;
+  return value && *value >= spec->minimum && *value <= spec->maximum ? *value
+                                                                    : spec->fallback;
+}
+
+std::string ProfilePermissionController::BrowsingText(std::string_view key) const {
+  const auto* value = site_permission_prefs_ && IsBrowsingText(key)
+      ? site_permission_prefs_->GetDict(kBrowsingPrefs).FindString(key) : nullptr;
+  return value && IsValidBrowsingText(key, *value) ? *value : std::string();
+}
+
+bool ProfilePermissionController::SetBrowsingFlag(std::string_view key, bool value) {
+  if (!CanClearSitePermissions() || !IsBrowsingFlag(key))
+    return false;
+  ScopedDictPrefUpdate(site_permission_prefs_.get(), kBrowsingPrefs)->Set(key, value);
+  browsing_observers_.Notify();
+  return true;
+}
+
+bool ProfilePermissionController::SetBrowsingNumber(std::string_view key, int value) {
+  const auto spec = std::ranges::find(kBrowsingNumbers, key, &BrowsingNumberSpec::key);
+  if (!CanClearSitePermissions() || spec == std::end(kBrowsingNumbers) ||
+      value < spec->minimum || value > spec->maximum) {
+    return false;
+  }
+  ScopedDictPrefUpdate(site_permission_prefs_.get(), kBrowsingPrefs)->Set(key, value);
+  browsing_observers_.Notify();
+  return true;
+}
+
+bool ProfilePermissionController::SetBrowsingText(std::string_view key, std::string value) {
+  if (!CanClearSitePermissions() || !IsBrowsingText(key) ||
+      !IsValidBrowsingText(key, value)) {
+    return false;
+  }
+  ScopedDictPrefUpdate(site_permission_prefs_.get(), kBrowsingPrefs)->Set(key, std::move(value));
+  browsing_observers_.Notify();
+  return true;
+}
+
+base::CallbackListSubscription ProfilePermissionController::ObserveBrowsingPreferences(
+    base::RepeatingClosure callback) {
+  return browsing_observers_.Add(std::move(callback));
 }
 
 }  // namespace zitter::content_embedder

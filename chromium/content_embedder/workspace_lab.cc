@@ -32,10 +32,12 @@
 #include "workspace_timeline.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <iterator>
 #include <map>
+#include <span>
 #include <set>
 #include <string>
 #include <type_traits>
@@ -138,6 +140,8 @@
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "zitter_content/fingerprint_state.mojom.h"
+#include "browsing_preferences.h"
+#include "profile_permission_controller.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/web_authentication_delegate.h"
@@ -1455,6 +1459,10 @@ GURL WorkspaceDocumentURL(content::WebContents& page) {
                                             : page.GetLastCommittedURL();
 }
 
+// Settings picker rows for text sizes, in pixels (as in workspace_window.cc).
+constexpr std::array kFontSizes = {12, 14, 16, 18, 20, 24};
+constexpr std::array kMinimumFontSizes = {0, 10, 12, 14, 16, 18};
+
 bool IsPageOpeningURL(const GURL& url) {
   return url.is_empty() || url == GURL("about:blank") ||
          (url.SchemeIsHTTPOrHTTPS() && CanRestoreWorkspaceURL(url));
@@ -1857,6 +1865,15 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   callbacks.write_preference = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string key, int value) {
         return lab && lab->WritePreference(std::move(key), value);
+      }, weak);
+  callbacks.write_text_preference = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, std::string key, std::string value) {
+        if (!lab || !lab->model_.active() || !lab->CanEditWorkspace() ||
+            !ProfilePermissionController::IsBrowsingText(key)) {
+          return false;
+        }
+        return lab->WorkspaceProfile(lab->active_index_)
+            ->site_permissions().SetBrowsingText(key, std::move(value));
       }, weak);
   if (CanConfigureAssistant()) {
     callbacks.read_assistant = base::BindRepeating(
@@ -8173,6 +8190,31 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
         .value = assistant_settings_ && assistant_settings_->defaults.web,
         .editable = enabled && CanEditWorkspace()};
   }
+  {
+    auto& browsing = profile.site_permissions();
+    const bool editable = CanEditWorkspace() && browsing.CanClearSitePermissions();
+    for (const auto* key : {"referrers", "do_not_track", "images", "javascript",
+                            "link_auditing", "caret_browsing", "sound",
+                            "third_party_cookies", "https_only"}) {
+      settings[key] = {.value = browsing.BrowsingFlag(key), .editable = editable};
+    }
+    auto index = [](const auto& values, int value) {
+      const auto found = std::ranges::find(values, value);
+      return found == values.end() ? -1 : static_cast<int>(found - values.begin());
+    };
+    settings["font_size"] = {.value = index(kFontSizes, browsing.BrowsingNumber("font_size")),
+                             .editable = editable};
+    settings["fixed_font_size"] = {
+        .value = index(kFontSizes, browsing.BrowsingNumber("fixed_font_size")),
+        .editable = editable};
+    settings["minimum_font_size"] = {
+        .value = index(kMinimumFontSizes, browsing.BrowsingNumber("minimum_font_size")),
+        .editable = editable};
+    for (const auto* key : {"font_standard", "font_serif", "font_sans", "font_fixed"})
+      settings[key] = {.editable = editable, .text = browsing.BrowsingText(key)};
+    settings["accept_languages"] = {.editable = editable,
+                                    .text = BrowsingAcceptLanguages(browsing)};
+  }
   settings["shift_click_peek"] = {.value = shift_click_peek_, .editable = true};
   settings["clean_address_copies"] = {
       .value = CleanAddressCopies(), .editable = !private_owner_};
@@ -8231,8 +8273,16 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
            profile.SetDefaultPageZoomLevel(
                blink::ZoomFactorToZoomLevel(zoom_values[value] / 100.0));
   }
+  if (key == "font_size" || key == "fixed_font_size" || key == "minimum_font_size") {
+    const auto& sizes = key == "minimum_font_size" ? std::span<const int>(kMinimumFontSizes)
+                                                   : std::span<const int>(kFontSizes);
+    return CanEditWorkspace() && value >= 0 && static_cast<size_t>(value) < sizes.size() &&
+           profile.site_permissions().SetBrowsingNumber(key, sizes[value]);
+  }
   if (value != 0 && value != 1)
     return false;
+  if (ProfilePermissionController::IsBrowsingFlag(key))
+    return CanEditWorkspace() && profile.site_permissions().SetBrowsingFlag(key, value == 1);
   if (key.starts_with("assistant_"))
     return WriteAssistantPreference(key, value == 1);
   if (std::string_view preference = key; preference.starts_with("extension_enabled.")) {

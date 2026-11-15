@@ -80,6 +80,8 @@ if (enable_printing && enable_pdf) {
 lab_includes = [ "$root_gen_dir/zitter" ]
 
 lab_sources = [
+  "browsing_preferences.cc",
+  "browsing_preferences.h",
   "//zitter/chromium/prototype/link_navigation.cc",
   "//zitter/chromium/prototype/link_navigation.h",
   "adblock_cache_probe.cc",

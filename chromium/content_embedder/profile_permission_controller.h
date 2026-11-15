@@ -5,9 +5,11 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
+#include "base/callback_list.h"
 #include "base/time/time.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
@@ -91,6 +93,21 @@ class ProfilePermissionController final
   bool SelectSpellingDictionary(const std::u16string& code);
   void SetNotificationPrompt(ClipboardReadPrompt prompt);
 
+  // Profile browsing preferences from Settings (privacy, content and
+  // readability, languages, downloads). Unknown keys and invalid values read
+  // as the defaults; the Set functions reject them.
+  static constexpr char kBrowsingPrefs[] = "zitter.browsing";
+  static bool IsBrowsingFlag(std::string_view key);
+  static bool IsBrowsingNumber(std::string_view key);
+  static bool IsBrowsingText(std::string_view key);
+  bool BrowsingFlag(std::string_view key) const;
+  int BrowsingNumber(std::string_view key) const;
+  std::string BrowsingText(std::string_view key) const;
+  bool SetBrowsingFlag(std::string_view key, bool value);
+  bool SetBrowsingNumber(std::string_view key, int value);
+  bool SetBrowsingText(std::string_view key, std::string value);
+  base::CallbackListSubscription ObserveBrowsingPreferences(base::RepeatingClosure callback);
+
   void OnPermissionStatusChangeSubscriptionAdded(
       content::PermissionController::SubscriptionId id) override;
   void RequestPermissionsFromCurrentDocument(
@@ -127,6 +144,7 @@ class ProfilePermissionController final
   void NotifyNotificationPermissionChanged(std::optional<url::Origin> origin);
 
   std::unique_ptr<PrefService> site_permission_prefs_;
+  base::RepeatingClosureList browsing_observers_;
   base::DictValue private_clipboard_rules_;
   base::DictValue private_popup_rules_;
   bool private_popups_allowed_ = false;

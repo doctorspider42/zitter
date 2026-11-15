@@ -3,6 +3,7 @@
 #include "lab_clients.h"
 
 #include "navigation_reputation.h"
+#include "browsing_preferences.h"
 #include "http_auth_prompt.h"
 
 #include "base/functional/callback_helpers.h"
@@ -1066,6 +1067,7 @@ bool LabBrowserClientBase::HandleExternalProtocol(
 void LabBrowserClientBase::CreateThrottlesForNavigation(
     content::NavigationThrottleRegistry& registry) {
   WorkspaceDevTools::AddNavigationThrottle(registry);
+  AddHttpsOnlyThrottle(registry);
   prototype::LinkNavigation::CreateThrottle(registry);
   AddExtensionProbeNavigationThrottle(registry);
   if (navigation_reputation_)
@@ -1136,10 +1138,20 @@ void LabBrowserClientBase::OnWebContentsCreated(content::WebContents* contents) 
   CHECK(!command_line.HasSwitch(switches::kSingleProcess));
   AttachExtensionWebContents(*contents);
   ProfileContext::AttachPage(*contents);
+  AttachBrowsingPreferences(*contents);
 #if BUILDFLAG(ENABLE_PRINTING)
   headless::HeadlessPrintManager::CreateForWebContents(contents);
   printing::CreateCompositeClientIfNeeded(contents, GetUserAgent());
 #endif
+}
+
+void LabBrowserClientBase::OverrideWebPreferences(
+    content::WebContents* web_contents,
+    content::SiteInstance& main_frame_site,
+    blink::web_pref::WebPreferences* prefs) {
+  ApplyBrowsingWebPreferences(
+      static_cast<ProfileContext*>(web_contents->GetBrowserContext())->site_permissions(),
+      *prefs);
 }
 
 network::mojom::IPAddressSpace LabBrowserClientBase::DetermineAddressSpaceFromURL(
