@@ -9,9 +9,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $name = 'Zitter NativeLink worker'
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-$wsl = "wsl.exe -d $Distro -- bash -lc '~/nativelink/run_wsl_worker.sh --foreground $SchedulerHost $Slots'"
+# run_worker_task.ps1 sits next to this script and keeps the PC awake while
+# the worker runs.
+$runner = Join-Path $PSScriptRoot 'run_worker_task.ps1'
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-  -Argument "-NoProfile -WindowStyle Hidden -Command `"$wsl`""
+  -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runner`" -SchedulerHost $SchedulerHost -Slots $Slots -Distro $Distro"
 # At logon, and every 5 minutes as a watchdog: WSL can stop the worker (for
 # example when an RDP session disconnects), and IgnoreNew skips the run while
 # the worker is still up.

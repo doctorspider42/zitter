@@ -27,6 +27,7 @@ ROOT_ENTRY = re.compile(r"[a-zA-Z0-9_+.-]+\.(?:exe|dll|pak|dat|bin|json)", re.IG
 LOCALE_ENTRY = re.compile(r"locales/[a-zA-Z0-9_-]+\.pak")
 RUNTIME_CRT = re.compile(r"(?:msvcp|vcruntime|concrt|vccorlib)\d.*\.dll", re.IGNORECASE)
 PE_IMPORT = re.compile(r"^(?:Import|DelayImport) \{\s*Name: ([^\r\n]+)", re.MULTILINE)
+SYSTEM_CPL_IMPORTS = {"bthprops.cpl"}
 RESERVED_DEVICE = re.compile(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])", re.IGNORECASE)
 
 
@@ -103,6 +104,10 @@ def validate_imports(layout, files, readobj, system32):
             raise ValueError(f"Expected an AMD64 PE image: {name}")
         for imported in PE_IMPORT.findall(result.stdout):
             key = imported.strip().casefold()
+            # Chromium's Bluetooth code (via //device/fido) delay-loads the
+            # system Bluetooth API, which Windows ships as a .cpl library.
+            if key in SYSTEM_CPL_IMPORTS and key in system:
+                continue
             if not ROOT_ENTRY.fullmatch(key) or not key.endswith(".dll"):
                 raise ValueError(f"{name} has an invalid import name: {imported}")
             if key in executables or key.startswith(("api-ms-win-", "ext-ms-win-")):
