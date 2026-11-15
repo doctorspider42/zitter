@@ -10492,7 +10492,7 @@ void WorkspaceLab::RemoveTab(size_t index) {
     auto& tabs = tabs_[active_index_];
     const auto original = std::ranges::find(tabs, *opener, &Tab::id);
     if (original != tabs.end())
-      selected_[active_index_] = original - tabs.begin();
+      SelectTab(original - tabs.begin());
   }
   RefreshShell();
   if (was_active)
