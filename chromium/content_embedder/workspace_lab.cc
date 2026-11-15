@@ -142,6 +142,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "zitter_content/fingerprint_state.mojom.h"
 #include "browsing_preferences.h"
+#include "chromium/prototype/image_link_preview.h"
 #include "base/i18n/rtl.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/prefs/json_pref_store.h"
@@ -1284,8 +1285,18 @@ class WorkspaceWebView final : public LabWebView {
     holder()->SetBoundsRect(bounds);
   }
 
-  void UpdateTargetURL(content::WebContents*, const GURL& url) override {
+  void UpdateTargetURL(content::WebContents* source, const GURL& url) override {
     hovered_link_ = url;
+    if (!image_previews_)
+      return;
+    if (!image_preview_ || image_preview_->web_contents() != source)
+      image_preview_ = std::make_unique<prototype::ImageLinkPreview>(source, this, image_previews_);
+    image_preview_->Hover(url);
+  }
+
+  // Settings > Magic image preview, read on each hover.
+  void SetImagePreviews(base::RepeatingCallback<bool()> enabled) {
+    image_previews_ = std::move(enabled);
   }
 
   bool PreHandleMouseEvent(content::WebContents* source,
@@ -1410,6 +1421,8 @@ class WorkspaceWebView final : public LabWebView {
   base::RepeatingCallback<void(GURL)> open_article_;
   ShowPageMenu show_page_menu_;
   GURL hovered_link_;
+  base::RepeatingCallback<bool()> image_previews_;
+  std::unique_ptr<prototype::ImageLinkPreview> image_preview_;
   GURL shift_link_url_;
   base::TimeTicks shift_link_click_;
   AdoptPage adopt_page_;
@@ -2397,6 +2410,8 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   shift_click_peek_ = private_owner_ ? private_owner_->shift_click_peek_
                                      : session.FindBool("shift_click_peek").value_or(true);
   clean_address_copies_ = session.FindBool("clean_address_copies").value_or(true);
+  image_link_previews_ = private_owner_ ? private_owner_->image_link_previews_
+                                        : session.FindBool("image_link_previews").value_or(false);
   if (!private_owner_) {
     hardware_acceleration_ = session.FindBool("hardware_acceleration").value_or(true);
     dns_mode_ = session.FindInt("dns_mode").value_or(0);
@@ -8337,6 +8352,8 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     settings["dns_mode"] = {.value = dns_mode_, .editable = CanEditWorkspace()};
     settings["dns_templates"] = {.editable = CanEditWorkspace(), .text = dns_templates_};
   }
+  settings["image_link_previews"] = {.value = image_link_previews_,
+                                     .editable = CanEditWorkspace() && !private_owner_};
   settings["shift_click_peek"] = {.value = shift_click_peek_, .editable = true};
   settings["clean_address_copies"] = {
       .value = CleanAddressCopies(), .editable = !private_owner_};
@@ -8476,6 +8493,13 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
     if (private_owner_ || !CanEditWorkspace())
       return false;
     hardware_acceleration_ = value == 1;
+    PersistWorkspaceChanges();
+    return true;
+  }
+  if (key == "image_link_previews") {
+    if (private_owner_ || !CanEditWorkspace())
+      return false;
+    image_link_previews_ = value == 1;
     PersistWorkspaceChanges();
     return true;
   }
@@ -8929,6 +8953,9 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View& host) {
                 return lab && lab->CanFullscreenPage(page);
               }, weak_factory_.GetWeakPtr()),
           base::BindRepeating(&WorkspaceLab::SetPageFullscreen, weak_factory_.GetWeakPtr())));
+  view->SetImagePreviews(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab) { return lab && lab->image_link_previews_; },
+      weak_factory_.GetWeakPtr()));
   view->SetPageZoomShortcutFilter(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, const ui::Accelerator& accelerator) {
         return lab && lab->CanEditWorkspace() &&
@@ -12194,6 +12221,8 @@ base::DictValue WorkspaceLab::CaptureSession() const {
     session.Set("clean_address_copies", false);
   if (!hardware_acceleration_)
     session.Set("hardware_acceleration", false);
+  if (image_link_previews_)
+    session.Set("image_link_previews", true);
   if (dns_mode_ != 0)
     session.Set("dns_mode", dns_mode_);
   if (!dns_templates_.empty())

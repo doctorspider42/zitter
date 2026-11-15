@@ -1152,6 +1152,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
 #endif
   // App-wide: GPU use (applied at the next start) and secure DNS.
   bool hardware_acceleration_ = true;
+  bool image_link_previews_ = false;
   int dns_mode_ = 0;
   std::string dns_templates_;
   void ApplySecureDns();

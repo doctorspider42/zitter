@@ -90,6 +90,8 @@ lab_sources = [
   "device_chooser.cc",
   "file_system_access.cc",
   "file_system_access.h",
+  "//zitter/chromium/prototype/image_link_preview.cc",
+  "//zitter/chromium/prototype/image_link_preview.h",
   "device_chooser.h",
   "hid_access.cc",
   "hid_access.h",

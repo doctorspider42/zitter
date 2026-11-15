@@ -29,6 +29,8 @@
 #include "ui/views/window/dialog_delegate.h"
 
 #if BUILDFLAG(IS_WIN)
+#include <windows.h>
+
 #include <knownfolders.h>
 #include <shlobj.h>
 

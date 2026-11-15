@@ -58,6 +58,7 @@ bool IsValidSession(const base::DictValue& session) {
                                          session.contains("clean_address_copies") +
                                          session.contains("shift_click_peek") +
                                          session.contains("hardware_acceleration") +
+                                         session.contains("image_link_previews") +
                                          session.contains("dns_mode") +
                                          session.contains("dns_templates") +
                                          session.contains("assistant") +
@@ -89,6 +90,8 @@ bool IsValidSession(const base::DictValue& session) {
   if (session.contains("assistant") && !session.FindDict("assistant"))
     return false;
   if (session.contains("shift_click_peek") && !session.FindBool("shift_click_peek"))
+    return false;
+  if (session.contains("image_link_previews") && !session.FindBool("image_link_previews"))
     return false;
   if (session.contains("hardware_acceleration") &&
       !session.FindBool("hardware_acceleration")) {
