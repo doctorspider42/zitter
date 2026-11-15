@@ -4,6 +4,7 @@
 
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ref.h"
 #include "base/i18n/rtl.h"

@@ -16,6 +16,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "content/public/browser/web_contents.h"
 #include "ui/views/widget/widget_observer.h"
 #include "url/gurl.h"
 #include "web_apps.h"
