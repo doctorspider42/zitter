@@ -188,7 +188,7 @@ struct SidebarNodeBinding {std::shared_ptr<SidebarNodeGraphState> scope;uint32_t
 rust::Box<sidebar::ActionControl> AcquireSidebarInput(const SidebarNodeBinding& binding){
   auto state=binding.scope?binding.scope->graph->acquire({binding.kind,binding.identity[0],binding.identity[1],binding.name}):sidebar::new_action_control();
   // Kind zero in a scope is an intentionally inactive adapter, with a retired handle.
-  CHECK(!binding.scope||binding.kind==0||state->action_node_id()!=0)<<"Unreconciled sidebar node";return state;
+  CHECK(!binding.scope||binding.kind==0||state->action_node_id()!=0)<<"Unreconciled sidebar node: kind "<<binding.kind<<" name \""<<binding.name<<"\"";return state;
 }
 class ImportFormState {
  public:
