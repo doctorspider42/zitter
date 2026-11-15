@@ -19,6 +19,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
+#include "content/public/common/referrer.h"
 #include "net/base/url_util.h"
 #include "net/http/http_util.h"
 #include "profile_context.h"
@@ -80,7 +81,8 @@ class HttpsOnlyThrottle final : public content::NavigationThrottle {
     }
     content::NavigationController::LoadURLParams params(upgraded);
     params.transition_type = navigation.GetPageTransition();
-    params.referrer = navigation.GetReferrer();
+    params.referrer = content::Referrer(navigation.GetReferrer().url,
+                                        navigation.GetReferrer().policy);
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE,
         base::BindOnce(
@@ -101,8 +103,8 @@ class BrowsingPage final : public content::WebContentsUserData<BrowsingPage> {
  private:
   friend WebContentsUserData;
 
-  explicit BrowsingPage(content::WebContents& page)
-      : WebContentsUserData(page),
+  explicit BrowsingPage(content::WebContents* page)
+      : WebContentsUserData(*page),
         subscription_(Preferences().ObserveBrowsingPreferences(base::BindRepeating(
             &BrowsingPage::Apply, base::Unretained(this), /*initial=*/false))) {
     Apply(/*initial=*/true);

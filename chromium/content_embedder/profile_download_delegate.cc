@@ -3,6 +3,7 @@
 #include "profile_download_delegate.h"
 #include "base/files/file_util.h"
 #include "profile_context.h"
+#include "profile_permission_controller.h"
 #include "download_file_reputation.h"
 #include "download_save_picker.h"
 #include "download_url_reputation.h"
