@@ -4,6 +4,8 @@
 
 #include "navigation_reputation.h"
 #include "browsing_preferences.h"
+#include "content/public/browser/site_instance.h"
+#include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "bluetooth_access.h"
 #include "hid_access.h"
 #include "serial_access.h"
@@ -1173,13 +1175,40 @@ content::BluetoothDelegate* LabBrowserClientBase::GetBluetoothDelegate() {
   return bluetooth_delegate_.get();
 }
 
+namespace {
+// Settings > Site permissions for a site, or the default without one.
+bool SiteBlocked(content::BrowserContext* context, std::string_view key, const GURL& site) {
+  if (!context)
+    return false;
+  auto& permissions = static_cast<ProfileContext*>(context)->site_permissions();
+  return (site.is_empty() ? permissions.SiteDefault(key)
+                          : permissions.SiteSetting(key, url::Origin::Create(site))) == 2;
+}
+}  // namespace
+
+bool LabBrowserClientBase::IsJitDisabledForSite(content::BrowserContext* context,
+                                                const GURL& site_url) {
+  return SiteBlocked(context, "javascript-jit", site_url);
+}
+
+bool LabBrowserClientBase::AreV8OptimizationsEnabledForSite(
+    content::BrowserContext* context,
+    const std::optional<base::SafeRef<content::ProcessSelectionUserData>>&,
+    const GURL& site_url) {
+  return !SiteBlocked(context, "javascript-optimizer", site_url);
+}
+
 void LabBrowserClientBase::OverrideWebPreferences(
     content::WebContents* web_contents,
     content::SiteInstance& main_frame_site,
     blink::web_pref::WebPreferences* prefs) {
-  ApplyBrowsingWebPreferences(
-      static_cast<ProfileContext*>(web_contents->GetBrowserContext())->site_permissions(),
-      *prefs);
+  auto& permissions =
+      static_cast<ProfileContext*>(web_contents->GetBrowserContext())->site_permissions();
+  ApplyBrowsingWebPreferences(permissions, *prefs);
+  const auto site = main_frame_site.GetSiteURL();
+  prefs->allow_running_insecure_content =
+      site.is_valid() &&
+      permissions.SiteSetting("mixed-script", url::Origin::Create(site)) == 1;
 }
 
 network::mojom::IPAddressSpace LabBrowserClientBase::DetermineAddressSpaceFromURL(

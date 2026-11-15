@@ -202,6 +202,8 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<void(std::string)> open_extension_popup;
     std::vector<std::pair<std::string, std::u16string>> extension_preferences;
     raw_ptr<PrefService> locale_preferences = nullptr;
+    // Site permission categories this browser does not offer.
+    std::vector<std::string> hidden_site_categories;
     Callbacks();
     Callbacks(Callbacks&&);
     Callbacks& operator=(Callbacks&&);

@@ -992,6 +992,11 @@ constexpr Category kSiteCategories[] = {
     {"bluetooth-guard", PermissionType::NUM, 3, true, false},
     {"bluetooth-scanning", PermissionType::NUM, 3, true, false},
     {"file-system-write-guard", PermissionType::NUM, 3, true, false},
+    // Content settings without a permission request.
+    {"javascript-jit", PermissionType::NUM, 1, false},
+    {"javascript-optimizer", PermissionType::NUM, 1, false},
+    {"mixed-script", PermissionType::NUM, 2, false},
+    {"automatic-downloads", PermissionType::NUM, 3, true},
 };
 
 bool IsValidSiteSetting(const Category& category, int setting) {

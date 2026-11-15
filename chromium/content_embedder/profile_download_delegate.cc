@@ -831,6 +831,32 @@ void ProfileDownloadDelegate::CheckDownloadAllowed(
       user_download = frame && frame->IsActive() &&
           frame->GetLastCommittedOrigin() == *request_initiator &&
           frame->ConsumeTransientUserActivation();
+      // Settings > Site permissions > Automatic downloads: a page starting a
+      // download without a click.
+      if (!user_download && frame && frame->IsActive() &&
+          frame->GetLastCommittedOrigin() == *request_initiator) {
+        auto& permissions =
+            static_cast<ProfileContext*>(page->GetBrowserContext())->site_permissions();
+        const int setting = permissions.SiteSetting("automatic-downloads", *request_initiator);
+        if (setting == 3) {
+          permissions.RunSitePrompt(
+              *frame, "automatic-downloads",
+              base::BindOnce(
+                  [](base::WeakPtr<content::BrowserContext> context, url::Origin origin,
+                     content::CheckDownloadAllowedCallback callback, bool allowed) {
+                    if (context) {
+                      static_cast<ProfileContext*>(context.get())
+                          ->site_permissions()
+                          .SetSiteRule("automatic-downloads", origin, allowed ? 1 : 2);
+                    }
+                    std::move(callback).Run(allowed && context);
+                  },
+                  page->GetBrowserContext()->GetWeakPtr(), *request_initiator,
+                  std::move(callback)));
+          return;
+        }
+        user_download = setting == 1;
+      }
     }
   }
   const bool fixture = (http_fixture || secure_transport) &&

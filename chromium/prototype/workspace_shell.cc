@@ -10085,6 +10085,14 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     copy(card, T(kGroupTitles[i]), kInk, 1, gfx::Font::Weight::SEMIBOLD, true);
     preference_groups_.push_back({card, {}});
     for (const auto& category : kSiteCategoryGroups[i]) {
+      // Smart cards, web printing and protected media identifiers are
+      // ChromeOS and Android APIs; desktop Chrome does not list them either.
+      static constexpr std::string_view kOtherPlatforms[] = {
+          "smart-card-guard", "web-printing", "protected-media-identifier"};
+      if (std::ranges::contains(kOtherPlatforms, std::string_view(category.key)) ||
+          std::ranges::contains(callbacks_.hidden_site_categories, category.key)) {
+        continue;
+      }
       const auto title = T(category.title);
       const std::string key = std::string(kSiteDefaultPrefix) + category.key;
       auto* row = card->AddChildView(std::make_unique<views::View>());

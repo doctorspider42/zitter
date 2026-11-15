@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
+#include "base/i18n/case_conversion.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -144,123 +145,11 @@ constexpr gfx::Size kPopupMax(800, 600);
 // Design-system line icons on the 16 px grid, stroke 1.6.
 constexpr char kPuzzleIcon[] = "M3 5.5h3V4a1.5 1.5 0 0 1 3 0v1.5h3v3h-1.5a1.5 1.5 0 0 0 0 3H12v2H3v-2h1.5a1.5 1.5 0 0 0 0-3H3z";
 constexpr char kPinIcon[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
-constexpr char kPlusIcon[] = "M8 3v10M3 8h10";
-constexpr char kWarnIcon[] = "M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1";
 constexpr char kStoreIcon[] = "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
-// Fingerprint protection: ridges, a turn arrow, a crossed-out shield.
 constexpr char kTurnIcon[] = "M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3";
-constexpr char kShieldOffIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM2.5 2.5l11 11";
-// Ad blocking: a shield with a bar across, the assistant's spark.
-constexpr char kShieldIcon[] = "M8 2.5 13 4.5V8a5 6 0 0 1-5 5.5A5 6 0 0 1 3 8V4.5zM5.5 7.5h5";
 // Night Shift: a crescent, crossed out where the site stays light.
 constexpr char kMoonIcon[] = "M12.8 9.8A5.3 5.3 0 0 1 6.2 3.2a5.2 5.2 0 1 0 6.6 6.6z";
 constexpr char kMoonSparkIcon[] = "M12 2v4m-2-2h4";
-
-// The subset of SVG path data the design icons use: M L H V A Z, absolute or
-// relative, with implicit repeats.
-SkPath SvgPath(std::string_view d, const SkMatrix& transform) {
-  SkPathBuilder path;
-  SkPoint current{0, 0}, start{0, 0};
-  char command = 0;
-  size_t i = 0;
-  auto skip = [&] { while (i < d.size() && (d[i] == ' ' || d[i] == ',')) ++i; };
-  auto number = [&]() -> float {
-    skip();
-    size_t j = i;
-    if (j < d.size() && (d[j] == '-' || d[j] == '+')) ++j;
-    bool dot = false;
-    while (j < d.size() && (std::isdigit(static_cast<unsigned char>(d[j])) || (d[j] == '.' && !dot))) {
-      dot |= d[j] == '.';
-      ++j;
-    }
-    double value = 0;
-    base::StringToDouble(d.substr(i, j - i), &value);
-    i = j;
-    return static_cast<float>(value);
-  };
-  while (true) {
-    skip();
-    if (i >= d.size()) break;
-    if (std::isalpha(static_cast<unsigned char>(d[i]))) {
-      command = d[i++];
-      if (command == 'z' || command == 'Z') { path.close(); current = start; continue; }
-    }
-    const bool relative = std::islower(static_cast<unsigned char>(command));
-    switch (std::tolower(static_cast<unsigned char>(command))) {
-      case 'm': {
-        SkPoint p{number(), number()};
-        if (relative) p += current;
-        path.moveTo(p);
-        current = start = p;
-        command = relative ? 'l' : 'L';  // Further pairs are lines.
-        break;
-      }
-      case 'l': {
-        SkPoint p{number(), number()};
-        if (relative) p += current;
-        path.lineTo(p);
-        current = p;
-        break;
-      }
-      case 'h': {
-        const float x = number();
-        current.fX = relative ? current.fX + x : x;
-        path.lineTo(current);
-        break;
-      }
-      case 'v': {
-        const float y = number();
-        current.fY = relative ? current.fY + y : y;
-        path.lineTo(current);
-        break;
-      }
-      case 'a': {
-        const float rx = number(), ry = number(), rotation = number();
-        const bool large = number() != 0, sweep = number() != 0;
-        SkPoint p{number(), number()};
-        if (relative) p += current;
-        // SVG sweep-flag 1 is clockwise.
-        path.rArcTo({rx, ry}, rotation, large ? SkPathBuilder::kLarge_ArcSize : SkPathBuilder::kSmall_ArcSize,
-                    sweep ? SkPathDirection::kCW : SkPathDirection::kCCW, p - current);
-        current = p;
-        break;
-      }
-      default:
-        return path.detach(&transform);
-    }
-  }
-  return path.detach(&transform);
-}
-
-void StrokeIcon(gfx::Canvas* canvas, std::string_view d, gfx::RectF box, SkColor color) {
-  if (d == kAssistantSparkIcon) { PaintAssistantSpark(canvas, box, color); return; }
-  const float scale = box.width() / kIcon;
-  SkMatrix transform = SkMatrix::Translate(box.x(), box.y());
-  transform.preScale(scale, scale);
-  cc::PaintFlags flags;
-  flags.setAntiAlias(true);
-  flags.setStyle(cc::PaintFlags::kStroke_Style);
-  flags.setStrokeWidth(1.6f * scale);
-  flags.setStrokeCap(cc::PaintFlags::kRound_Cap);
-  flags.setStrokeJoin(cc::PaintFlags::kRound_Join);
-  flags.setColor(color);
-  canvas->DrawPath(SvgPath(d, transform), flags);
-}
-
-void FillCircle(gfx::Canvas* canvas, gfx::PointF center, float radius, SkColor color, bool stroke = false) {
-  cc::PaintFlags flags;
-  flags.setAntiAlias(true);
-  flags.setColor(color);
-  if (stroke) { flags.setStyle(cc::PaintFlags::kStroke_Style); flags.setStrokeWidth(1.6f); }
-  canvas->DrawCircle(center, radius, flags);
-}
-
-void FillRound(gfx::Canvas* canvas, gfx::RectF rect, float radius, SkColor color) {
-  cc::PaintFlags flags;
-  flags.setAntiAlias(true);
-  flags.setColor(color);
-  canvas->DrawRoundRect(rect, radius, flags);
-}
 
 bool IsDark(const views::View* view) {
   return view && view->GetWidget() &&
@@ -677,10 +566,10 @@ END_METADATA
 
 // Ad blocking in the bar, first: an IconButton with the
 // page's blocked count in a small pill, crossed out where the site is allowed.
-class ShieldButton final : public views::Button {
-  METADATA_HEADER(ShieldButton, views::Button)
+class ExtensionsShieldButton final : public views::Button {
+  METADATA_HEADER(ExtensionsShieldButton, views::Button)
  public:
-  ShieldButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette)
+  ExtensionsShieldButton(PressedCallback callback, base::RepeatingCallback<sidebar::DesignPalette()> palette)
       : views::Button(std::move(callback)), palette_(std::move(palette)) {
     SetPreferredSize(gfx::Size(kButton, kButton));
     GetViewAccessibility().SetHasPopup(ax::mojom::HasPopup::kDialog);
@@ -722,15 +611,15 @@ class ShieldButton final : public views::Button {
   bool open_ = false;
   int count_ = 0;
 };
-BEGIN_METADATA(ShieldButton)
+BEGIN_METADATA(ExtensionsShieldButton)
 END_METADATA
 
 // The shield panel's first block, built like the fingerprint card: a tile,
 // what was blocked here in `url`, and the site.
-class ShieldCard final : public views::View {
-  METADATA_HEADER(ShieldCard, views::View)
+class ExtensionsShieldCard final : public views::View {
+  METADATA_HEADER(ExtensionsShieldCard, views::View)
  public:
-  explicit ShieldCard(const sidebar::DesignPalette& palette) : palette_(palette) {
+  explicit ExtensionsShieldCard(const sidebar::DesignPalette& palette) : palette_(palette) {
     SetPreferredSize(gfx::Size(kMenuWidth - 8, 88));
     GetViewAccessibility().SetRole(ax::mojom::Role::kStatus);
   }
@@ -766,7 +655,7 @@ class ShieldCard final : public views::View {
   int count_ = 0;
   std::u16string site_;
 };
-BEGIN_METADATA(ShieldCard)
+BEGIN_METADATA(ExtensionsShieldCard)
 END_METADATA
 
 // A menu row: an extension (icon, name, site access, pin and more) or a
@@ -780,10 +669,10 @@ struct MenuGlyph {
   raw_ptr<const gfx::VectorIcon> icon = nullptr;
 };
 
-class MenuRow final : public views::Button {
-  METADATA_HEADER(MenuRow, views::Button)
+class ExtensionsMenuRow final : public views::Button {
+  METADATA_HEADER(ExtensionsMenuRow, views::Button)
  public:
-  MenuRow(PressedCallback callback, const sidebar::DesignPalette& palette, int height)
+  ExtensionsMenuRow(PressedCallback callback, const sidebar::DesignPalette& palette, int height)
       : views::Button(std::move(callback)), palette_(palette) {
     SetPreferredSize(gfx::Size(kMenuWidth - 8, height));
     SetNotifyEnterExitOnChild(true);
@@ -867,14 +756,14 @@ class MenuRow final : public views::Button {
   raw_ptr<views::View> slot_ = nullptr;
   std::vector<std::pair<raw_ptr<views::View>, bool>> trailing_;
 };
-BEGIN_METADATA(MenuRow)
+BEGIN_METADATA(ExtensionsMenuRow)
 END_METADATA
 
 // The eyebrow above the rows: "ROZSZERZENIA" (or the panel's own label).
-class MenuHeader final : public views::View {
-  METADATA_HEADER(MenuHeader, views::View)
+class ExtensionsMenuHeader final : public views::View {
+  METADATA_HEADER(ExtensionsMenuHeader, views::View)
  public:
-  explicit MenuHeader(const sidebar::DesignPalette& palette, std::u16string eyebrow = {})
+  explicit ExtensionsMenuHeader(const sidebar::DesignPalette& palette, std::u16string eyebrow = {})
       : eyebrow_(eyebrow.empty() ? T(u"Rozszerzenia") : std::move(eyebrow)), palette_(palette) {
     SetPreferredSize(gfx::Size(kMenuWidth - 8, 26));
   }
@@ -886,18 +775,18 @@ class MenuHeader final : public views::View {
   std::u16string eyebrow_;
   sidebar::DesignPalette palette_;
 };
-BEGIN_METADATA(MenuHeader)
+BEGIN_METADATA(ExtensionsMenuHeader)
 END_METADATA
 
-class MenuSeparator final : public views::View {
-  METADATA_HEADER(MenuSeparator, views::View)
+class ExtensionsMenuSeparator final : public views::View {
+  METADATA_HEADER(ExtensionsMenuSeparator, views::View)
  public:
-  explicit MenuSeparator(SkColor color) : color_(color) { SetPreferredSize(gfx::Size(kMenuWidth - 8, 9)); }
+  explicit ExtensionsMenuSeparator(SkColor color) : color_(color) { SetPreferredSize(gfx::Size(kMenuWidth - 8, 9)); }
   void OnPaint(gfx::Canvas* canvas) override { canvas->FillRect(gfx::Rect(8, 4, width() - 16, 1), color_); }
  private:
   SkColor color_;
 };
-BEGIN_METADATA(MenuSeparator)
+BEGIN_METADATA(ExtensionsMenuSeparator)
 END_METADATA
 
 // Night Shift in the bar: the shield's IconButton with a crescent, crossed
@@ -1186,7 +1075,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
     rows_.clear();
     auto* model = ToolbarActionsModel::Get(bar_->profile());
     const GURL url = bar_->page() ? bar_->page()->GetLastCommittedURL() : GURL();
-    body_->AddChildView(std::make_unique<MenuHeader>(palette_));
+    body_->AddChildView(std::make_unique<ExtensionsMenuHeader>(palette_));
     std::vector<const Extension*> extensions;
     for (const auto& id : model->action_ids())
       if (const auto* extension = bar_->ExtensionFor(id)) extensions.push_back(extension);
@@ -1194,7 +1083,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
       return base::ToLowerASCII(a->name()) < base::ToLowerASCII(b->name());
     });
     if (extensions.empty() && !bar_->ExtensionFor(kNightShiftId)) {
-      auto* row = body_->AddChildView(std::make_unique<MenuRow>(views::Button::PressedCallback(), palette_, kRowHeight));
+      auto* row = body_->AddChildView(std::make_unique<ExtensionsMenuRow>(views::Button::PressedCallback(), palette_, kRowHeight));
       row->Init();
       row->SetText(T(u"Ten profil nie ma rozszerzeń"), T(u"Dodaj je z Chrome Web Store"), false, 0);
       row->SetEnabled(false);
@@ -1205,7 +1094,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
     bool night_shift_added = false;
     auto add_night_shift = [&] {
       night_shift_added = true;
-      auto* row = body_->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+      auto* row = body_->AddChildView(std::make_unique<ExtensionsMenuRow>(base::BindRepeating(
           [](base::WeakPtr<ExtensionsBar> bar) {
             if (!bar) return;
             bar->CloseMenus();
@@ -1234,7 +1123,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
       if (night_shift && !night_shift_added && base::ToLowerASCII(extension->name()) > "night shift") add_night_shift();
       auto* action = extensions::ExtensionActionManager::Get(bar_->profile())->GetExtensionAction(*extension);
       if (!action) continue;
-      auto* row = body_->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+      auto* row = body_->AddChildView(std::make_unique<ExtensionsMenuRow>(base::BindRepeating(
           [](base::WeakPtr<ExtensionsBar> bar, std::string id) { if (bar) bar->RunAction(id); }, weak, id),
           palette_, kRowHeight));
       row->AddChildView(std::make_unique<ActionButton>(bar_, *extension, *action, 20, false));
@@ -1266,9 +1155,9 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
       rows_.push_back({id, row});
     }
     if (night_shift && !night_shift_added) add_night_shift();
-    body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+    body_->AddChildView(std::make_unique<ExtensionsMenuSeparator>(palette_.line));
     auto add_footer = [&](std::u16string text, MenuGlyph glyph, GURL url) {
-      auto* row = body_->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+      auto* row = body_->AddChildView(std::make_unique<ExtensionsMenuRow>(base::BindRepeating(
           [](base::WeakPtr<ExtensionsBar> bar, GURL url) { if (bar) { bar->CloseMenus(); bar->OpenPage(url); } },
           weak, url), palette_, kFooterHeight));
       row->SetGlyph(glyph);
@@ -1286,7 +1175,7 @@ class ExtensionsBar::Menu final : public views::BubbleDialogDelegate {
     return result;
   }
  private:
-  struct Row { std::string id; raw_ptr<MenuRow> view; };
+  struct Row { std::string id; raw_ptr<ExtensionsMenuRow> view; };
   raw_ptr<ExtensionsBar> bar_;
   sidebar::DesignPalette palette_;
   raw_ptr<views::View> body_ = nullptr;
@@ -1437,12 +1326,12 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
     SetShowTitle(false);
     auto body = std::make_unique<views::View>();
     body->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kVertical));
-    body->AddChildView(std::make_unique<MenuHeader>(palette_, T(u"Blokowanie reklam")));
-    card_ = body->AddChildView(std::make_unique<ShieldCard>(palette_));
-    body->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+    body->AddChildView(std::make_unique<ExtensionsMenuHeader>(palette_, T(u"Blokowanie reklam")));
+    card_ = body->AddChildView(std::make_unique<ExtensionsShieldCard>(palette_));
+    body->AddChildView(std::make_unique<ExtensionsMenuSeparator>(palette_.line));
     auto weak = bar_->weak_factory_.GetWeakPtr();
     auto add_row = [&](MenuGlyph glyph, void (ExtensionsBar::*command)()) {
-      auto* row = body->AddChildView(std::make_unique<MenuRow>(base::BindRepeating(
+      auto* row = body->AddChildView(std::make_unique<ExtensionsMenuRow>(base::BindRepeating(
           [](base::WeakPtr<ExtensionsBar> bar, void (ExtensionsBar::*command)()) { if (bar) (bar.get()->*command)(); },
           weak, command), palette_, kFooterHeight));
       row->SetGlyph(glyph);
@@ -1483,10 +1372,10 @@ class ExtensionsBar::ShieldPanel final : public views::BubbleDialogDelegate {
  private:
   raw_ptr<ExtensionsBar> bar_;
   sidebar::DesignPalette palette_;
-  raw_ptr<ShieldCard> card_ = nullptr;
-  raw_ptr<MenuRow> site_row_ = nullptr;
-  raw_ptr<MenuRow> assistant_row_ = nullptr;
-  raw_ptr<MenuRow> diagnose_row_ = nullptr;
+  raw_ptr<ExtensionsShieldCard> card_ = nullptr;
+  raw_ptr<ExtensionsMenuRow> site_row_ = nullptr;
+  raw_ptr<ExtensionsMenuRow> assistant_row_ = nullptr;
+  raw_ptr<ExtensionsMenuRow> diagnose_row_ = nullptr;
 };
 
 // Night Shift under the moon (design: Night Shift): the site and its switch,
@@ -1577,8 +1466,8 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
     if (site_.mode == "on" || site_.mode == "dark") return T(u"Tryb ciemny włączony");
     return site_.enabled ? T(u"Tryb automatyczny") : T(u"Wyłączone w tym profilu");
   }
-  MenuRow* AddRow(MenuGlyph glyph, std::u16string text, base::RepeatingClosure run) {
-    auto* row = body_->AddChildView(std::make_unique<MenuRow>(std::move(run), palette_, kFooterHeight));
+  ExtensionsMenuRow* AddRow(MenuGlyph glyph, std::u16string text, base::RepeatingClosure run) {
+    auto* row = body_->AddChildView(std::make_unique<ExtensionsMenuRow>(std::move(run), palette_, kFooterHeight));
     row->SetGlyph(glyph);
     row->Init();
     row->SetText(std::move(text), {}, false, 16);
@@ -1599,7 +1488,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
     profile_switch->GetViewAccessibility().SetName(T(u"Night Shift domyślnie w tym profilu"));
     profile_switch->SetTooltipText(T(u"Domyślnie dla witryn w tym profilu"));
     profile_switch->SetEnabled(!busy_ && bool(bar_->callbacks_.set_night_shift_enabled));
-    body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+    body_->AddChildView(std::make_unique<ExtensionsMenuSeparator>(palette_.line));
     const std::string host = site_.key.empty() ? std::string() : site_.key.substr(5);
     body_->AddChildView(std::make_unique<NightCard>(palette_))->Set(
         StateText(), host.empty() ? u"Night Shift" : base::UTF8ToUTF16(host));
@@ -1617,7 +1506,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
       mode_layout->SetFlexForView(button, 1);
     }
     if (site_.on()) {
-      body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+      body_->AddChildView(std::make_unique<ExtensionsMenuSeparator>(palette_.line));
       const auto tune = [](base::WeakPtr<NightShiftPanel> panel, const std::string& name, int value, bool commit) {
         if (panel) panel->Tune(name, value, commit);
       };
@@ -1629,7 +1518,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
           Command(1), T(u"Stosuj także na stronach z własnym trybem ciemnym"), site_.force, palette_));
       if (site_.tuned || site_.mode == "on") AddRow(kTurnIcon, T(u"Przywróć ustawienia"), Command(2));
       if (site_.draft) {
-        body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+        body_->AddChildView(std::make_unique<ExtensionsMenuSeparator>(palette_.line));
         body_->AddChildView(std::make_unique<NoteBlock>(T(u"Propozycja asystenta · tylko dla tej witryny"),
                                                         base::UTF8ToUTF16(site_.draft_label), palette_));
         auto pair = [&](std::u16string left, int left_command, std::u16string right, int right_command) {
@@ -1656,7 +1545,7 @@ class ExtensionsBar::NightShiftPanel final : public views::BubbleDialogDelegate 
         AddRow(kTurnIcon, T(u"Cofnij ostatnią zmianę"), Command(7));
       AddRow(kTurnIcon, T(u"Resetuj poprawkę"), Command(14));
     }
-    body_->AddChildView(std::make_unique<MenuSeparator>(palette_.line));
+    body_->AddChildView(std::make_unique<ExtensionsMenuSeparator>(palette_.line));
     AddRow(&kSettingsGearIcon, T(u"Ustawienia Night Shift"), Command(9));
     if (!GetWidget() || GetWidget()->IsClosed()) return;
     SizeToContents();
@@ -1909,10 +1798,10 @@ void ExtensionsBar::Rebuild() {
     assistant_button_ = AddChildView(std::move(button));
   }
   if (blocking) {
-    shield_button_ = AddChildView(std::make_unique<ShieldButton>(
+    shield_button_ = AddChildView(std::make_unique<ExtensionsShieldButton>(
         base::BindRepeating(&ExtensionsBar::ToggleShieldPanel, base::Unretained(this)), palette));
-    if (shield_widget_) static_cast<ShieldButton*>(shield_button_.get())->SetOpen(true);
-    static_cast<ShieldButton*>(shield_button_.get())->SetCount(ShieldCount());
+    if (shield_widget_) static_cast<ExtensionsShieldButton*>(shield_button_.get())->SetOpen(true);
+    static_cast<ExtensionsShieldButton*>(shield_button_.get())->SetCount(ShieldCount());
   }
   if (protection) {
     fingerprint_button_ =
@@ -2199,7 +2088,7 @@ int ExtensionsBar::ShieldCount() const {
 }
 void ExtensionsBar::RefreshShield() {
   if (reinterpret_cast<uintptr_t>(page_.get()) != counted_page_) { ObservePageCount(); return; }
-  if (auto* button = views::AsViewClass<ShieldButton>(shield_button_.get())) button->SetCount(ShieldCount());
+  if (auto* button = views::AsViewClass<ExtensionsShieldButton>(shield_button_.get())) button->SetCount(ShieldCount());
   if (shield_panel_) shield_panel_->Refresh();
 }
 void ExtensionsBar::ToggleShieldPanel() {
@@ -2215,13 +2104,13 @@ void ExtensionsBar::ToggleShieldPanel() {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
             base::BindOnce(&ExtensionsBar::DestroyShieldPanel, bar));
       }, weak_factory_.GetWeakPtr()), /*fade_out=*/true);
-  static_cast<ShieldButton*>(shield_button_.get())->SetOpen(true);
+  static_cast<ExtensionsShieldButton*>(shield_button_.get())->SetOpen(true);
   shield_widget_->Show();
 }
 void ExtensionsBar::DestroyShieldPanel() {
   shield_widget_.reset();
   shield_panel_.reset();
-  if (shield_button_) static_cast<ShieldButton*>(shield_button_.get())->SetOpen(false);
+  if (shield_button_) static_cast<ExtensionsShieldButton*>(shield_button_.get())->SetOpen(false);
 }
 void ExtensionsBar::ToggleSiteBlocking() {
   if (!profile_ || !page_) return;
@@ -2302,7 +2191,7 @@ void ExtensionsBar::SetNightShiftBrightnessForTesting(int value) {
   if (night_shift_panel_) night_shift_panel_->SetBrightnessForTesting(value);
 }
 int ExtensionsBar::shield_count_for_testing() const {
-  return shield_button_ ? static_cast<const ShieldButton*>(shield_button_.get())->count() : 0;
+  return shield_button_ ? static_cast<const ExtensionsShieldButton*>(shield_button_.get())->count() : 0;
 }
 void ExtensionsBar::RunShieldCommandForTesting(int command) {
   if (command == 0) ToggleSiteBlocking();

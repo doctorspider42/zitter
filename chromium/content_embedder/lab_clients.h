@@ -169,6 +169,13 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   content::HidDelegate* GetHidDelegate() override;
   content::SerialDelegate* GetSerialDelegate() override;
   content::BluetoothDelegate* GetBluetoothDelegate() override;
+  bool IsJitDisabledForSite(content::BrowserContext* browser_context,
+                            const GURL& site_url) override;
+  bool AreV8OptimizationsEnabledForSite(
+      content::BrowserContext* browser_context,
+      const std::optional<base::SafeRef<content::ProcessSelectionUserData>>&
+          process_selection_user_data,
+      const GURL& site_url) override;
   void OverrideWebPreferences(content::WebContents* web_contents,
                               content::SiteInstance& main_frame_site,
                               blink::web_pref::WebPreferences* prefs) override;

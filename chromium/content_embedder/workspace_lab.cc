@@ -1762,6 +1762,11 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   callbacks.show_web_notifications = !private_owner_;
 #endif
   callbacks.private_mode = private_owner_ != nullptr;
+  // Chrome features the Content browser does not have: installable web
+  // apps, FedCM sign-in, automatic picture-in-picture and site protocol
+  // handlers.
+  callbacks.hidden_site_categories = {"web-app-installation", "webid-api",
+                                      "auto-picture-in-picture", "protocol-handler"};
   if (!private_owner_ && IsManagedExtensionSession()) {
     for (const auto& context : contexts_) {
       for (const auto& extension : GetConfiguredExtensions(*context)) {
@@ -8361,6 +8366,11 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
           .value = index, .editable = permissions.CanClearSitePermissions(),
           .text = std::string(category.can_ask ? "p" : "") + (category.can_allow ? "a" : "")};
     }
+    if (const auto blocking = profile.GetAdblockEnabled()) {
+      // Intrusive ads: Zitter's ad blocking covers them; block is index 0.
+      settings[std::string(prototype::kSiteDefaultPrefix) + "subresource-filter"] = {
+          .value = *blocking ? 0 : 1, .editable = CanEditWorkspace(), .text = "a"};
+    }
     for (const auto* key : {"javascript", "images", "sound"}) {
       settings[std::string(prototype::kSiteDefaultPrefix) + key] = {
           .value = permissions.BrowsingFlag(key),
@@ -8411,6 +8421,10 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
                         : value == 2 && category->can_ask ? 1 : 0;
       return CanEditWorkspace() && setting != 0 &&
              profile.site_permissions().SetSiteDefault(category_key, setting);
+    }
+    if (category_key == "subresource-filter") {
+      return CanEditWorkspace() && (value == 0 || value == 1) &&
+             profile.SetAdblockEnabled(value == 0);
     }
     if (category_key == "javascript" || category_key == "images" || category_key == "sound") {
       return CanEditWorkspace() && (value == 0 || value == 1) &&
