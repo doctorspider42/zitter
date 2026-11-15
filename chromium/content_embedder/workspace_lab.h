@@ -1133,6 +1133,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
   };
   bool shift_click_peek_ = true;
   bool clean_address_copies_ = true;
+  // App-wide: GPU use (applied at the next start) and secure DNS.
+  bool hardware_acceleration_ = true;
+  int dns_mode_ = 0;
+  std::string dns_templates_;
+  void ApplySecureDns();
   std::optional<prototype::AssistantSettings> assistant_settings_;
   bool claude_login_pending_ = false;
   prototype::NightShiftConfig night_shift_config_;

@@ -57,6 +57,9 @@ bool IsValidSession(const base::DictValue& session) {
                                          session.contains("link_rules") +
                                          session.contains("clean_address_copies") +
                                          session.contains("shift_click_peek") +
+                                         session.contains("hardware_acceleration") +
+                                         session.contains("dns_mode") +
+                                         session.contains("dns_templates") +
                                          session.contains("assistant") +
                                          session.contains("night_shift") +
                                          session.contains("startup_import_pending") +
@@ -87,6 +90,18 @@ bool IsValidSession(const base::DictValue& session) {
     return false;
   if (session.contains("shift_click_peek") && !session.FindBool("shift_click_peek"))
     return false;
+  if (session.contains("hardware_acceleration") &&
+      !session.FindBool("hardware_acceleration")) {
+    return false;
+  }
+  if (const auto* mode = session.Find("dns_mode");
+      mode && (!mode->is_int() || mode->GetInt() < 0 || mode->GetInt() > 2)) {
+    return false;
+  }
+  if (const auto* templates = session.Find("dns_templates");
+      templates && (!templates->is_string() || templates->GetString().size() > 4096)) {
+    return false;
+  }
   if (session.contains("clean_address_copies") &&
       !session.FindBool("clean_address_copies")) {
     return false;

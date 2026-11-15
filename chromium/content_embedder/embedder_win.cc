@@ -36,6 +36,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/services/quarantine/quarantine_impl.h"
 #include "content/public/app/content_main.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/app/sandbox_helper_win.h"
 #include "content/public/browser/browser_main_parts.h"
@@ -622,6 +623,11 @@ bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
   }
   if (!IsPreparedContentWorkspace(root, "windows-dpapi"))
     return false;
+  // Settings > Hardware acceleration takes effect at the next start.
+  if (const auto session = ReadContentWorkspaceSession(root.AppendASCII(kWorkspaceSession));
+      session && !session->FindBool("hardware_acceleration").value_or(true)) {
+    command.AppendSwitch(switches::kDisableGpu);
+  }
   command.AppendSwitch(kWorkspaceLab);
   command.AppendSwitchPath(kWorkspaceRoot, root);
   command.AppendSwitch(kOpenPreparedWorkspace);

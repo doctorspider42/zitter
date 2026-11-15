@@ -1,6 +1,8 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
 #include "profile_download_delegate.h"
+#include "base/files/file_util.h"
+#include "profile_context.h"
 #include "download_file_reputation.h"
 #include "download_save_picker.h"
 #include "download_url_reputation.h"
@@ -672,7 +674,13 @@ void ProfileDownloadDelegate::ReserveDownloadTarget(
   }
 
   const auto suggested = probe_directory_.Append(name);
-  if (prompt_for_probe_) {
+  // Settings: "Ask where to save each file". The user may pick any folder;
+  // the file keeps its type.
+  const bool user_prompt =
+      !prompt_for_probe_ && manager_ &&
+      static_cast<ProfileContext*>(manager_->GetBrowserContext())
+          ->site_permissions().BrowsingFlag("download_prompt");
+  if (prompt_for_probe_ || user_prompt) {
     auto* contents = content::DownloadItemUtils::GetWebContents(item);
     if (!contents || (save_picker_ && save_picker_->pending())) {
       download::DownloadTargetInfo target;
@@ -683,14 +691,15 @@ void ProfileDownloadDelegate::ReserveDownloadTarget(
     save_picker_ = base::MakeRefCounted<DownloadSavePicker>(
         *item, *contents, suggested,
         base::BindRepeating(
-            [](const base::FilePath& directory,
+            [](const base::FilePath& directory, bool any_directory,
                const base::FilePath::StringType& extension,
                const base::FilePath& path) {
-              return path.DirName() == directory &&
+              return (any_directory ? path.IsAbsolute() && !base::IsLink(path.DirName())
+                                    : path.DirName() == directory) &&
                      path.MatchesFinalExtension(extension) &&
                      IsLowRiskDownloadName(path.BaseName());
             },
-            probe_directory_, name.FinalExtension()),
+            probe_directory_, user_prompt, name.FinalExtension()),
         std::move(callback));
     save_picker_->Show();
     return;

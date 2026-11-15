@@ -141,6 +141,11 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "zitter_content/fingerprint_state.mojom.h"
 #include "browsing_preferences.h"
+#include "content/public/browser/network_service_instance.h"
+#include "net/dns/public/dns_over_https_config.h"
+#include "net/dns/public/insecure_dns_mode.h"
+#include "net/dns/public/secure_dns_mode.h"
+#include "services/network/public/mojom/network_service.mojom.h"
 #include "profile_permission_controller.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/weak_document_ptr.h"
@@ -1868,10 +1873,21 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       }, weak);
   callbacks.write_text_preference = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string key, std::string value) {
-        if (!lab || !lab->model_.active() || !lab->CanEditWorkspace() ||
-            !ProfilePermissionController::IsBrowsingText(key)) {
+        if (!lab || !lab->model_.active() || !lab->CanEditWorkspace())
           return false;
+        if (key == "dns_templates") {
+          if (lab->private_owner_ || value.size() > 4096 ||
+              (!value.empty() && !net::DnsOverHttpsConfig::FromString(value)) ||
+              (value.empty() && lab->dns_mode_ == 2)) {
+            return false;
+          }
+          lab->dns_templates_ = std::move(value);
+          lab->ApplySecureDns();
+          lab->PersistWorkspaceChanges();
+          return true;
         }
+        if (!ProfilePermissionController::IsBrowsingText(key))
+          return false;
         return lab->WorkspaceProfile(lab->active_index_)
             ->site_permissions().SetBrowsingText(key, std::move(value));
       }, weak);
@@ -2333,6 +2349,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   shift_click_peek_ = private_owner_ ? private_owner_->shift_click_peek_
                                      : session.FindBool("shift_click_peek").value_or(true);
   clean_address_copies_ = session.FindBool("clean_address_copies").value_or(true);
+  if (!private_owner_) {
+    hardware_acceleration_ = session.FindBool("hardware_acceleration").value_or(true);
+    dns_mode_ = session.FindInt("dns_mode").value_or(0);
+    if (const auto* templates = session.FindString("dns_templates"))
+      dns_templates_ = *templates;
+    if (dns_mode_ != 0)
+      ApplySecureDns();
+  }
   if (!private_owner_) {
     if (const auto* settings = session.FindDict("assistant"))
       assistant_settings_ = prototype::AssistantSettings::FromValue(settings);
@@ -8131,6 +8155,17 @@ void WorkspaceLab::RefreshAdBlockingRules() {
       }, weak_factory_.GetWeakPtr()));
 }
 
+void WorkspaceLab::ApplySecureDns() {
+  const auto config = net::DnsOverHttpsConfig::FromString(dns_templates_);
+  const auto mode = dns_mode_ == 2 && config ? net::SecureDnsMode::kSecure
+                    : dns_mode_ >= 1           ? net::SecureDnsMode::kAutomatic
+                                               : net::SecureDnsMode::kOff;
+  content::GetNetworkService()->ConfigureStubHostResolver(
+      net::InsecureDnsMode::kEnabledPlatform, /*happy_eyeballs_v3_enabled=*/false, mode,
+      config.value_or(net::DnsOverHttpsConfig()),
+      /*additional_dns_types_enabled=*/true, /*fallback_doh_nameservers=*/{});
+}
+
 BrowserPreferences WorkspaceLab::ReadPreferences() const {
   if (!model_.active())
     return {};
@@ -8195,7 +8230,7 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     const bool editable = CanEditWorkspace() && browsing.CanClearSitePermissions();
     for (const auto* key : {"referrers", "do_not_track", "images", "javascript",
                             "link_auditing", "caret_browsing", "sound",
-                            "third_party_cookies", "https_only"}) {
+                            "third_party_cookies", "https_only", "download_prompt"}) {
       settings[key] = {.value = browsing.BrowsingFlag(key), .editable = editable};
     }
     auto index = [](const auto& values, int value) {
@@ -8214,6 +8249,14 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
       settings[key] = {.editable = editable, .text = browsing.BrowsingText(key)};
     settings["accept_languages"] = {.editable = editable,
                                     .text = BrowsingAcceptLanguages(browsing)};
+  }
+  if (!private_owner_) {
+#if BUILDFLAG(IS_WIN)
+    settings["hardware_acceleration"] = {.value = hardware_acceleration_,
+                                         .editable = CanEditWorkspace()};
+#endif
+    settings["dns_mode"] = {.value = dns_mode_, .editable = CanEditWorkspace()};
+    settings["dns_templates"] = {.editable = CanEditWorkspace(), .text = dns_templates_};
   }
   settings["shift_click_peek"] = {.value = shift_click_peek_, .editable = true};
   settings["clean_address_copies"] = {
@@ -8273,6 +8316,16 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
            profile.SetDefaultPageZoomLevel(
                blink::ZoomFactorToZoomLevel(zoom_values[value] / 100.0));
   }
+  if (key == "dns_mode") {
+    if (private_owner_ || !CanEditWorkspace() || value < 0 || value > 2 ||
+        (value == 2 && !net::DnsOverHttpsConfig::FromString(dns_templates_))) {
+      return false;
+    }
+    dns_mode_ = value;
+    ApplySecureDns();
+    PersistWorkspaceChanges();
+    return true;
+  }
   if (key == "font_size" || key == "fixed_font_size" || key == "minimum_font_size") {
     const auto& sizes = key == "minimum_font_size" ? std::span<const int>(kMinimumFontSizes)
                                                    : std::span<const int>(kFontSizes);
@@ -8303,6 +8356,13 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
       return false;
     auto* probe = ExtensionProbeForProfile(profile);
     return probe && probe->SetUserEnabled(value == 1);
+  }
+  if (key == "hardware_acceleration") {
+    if (private_owner_ || !CanEditWorkspace())
+      return false;
+    hardware_acceleration_ = value == 1;
+    PersistWorkspaceChanges();
+    return true;
   }
   if (key == "shift_click_peek") {
     if (!CanEditWorkspace())
@@ -11976,6 +12036,12 @@ base::DictValue WorkspaceLab::CaptureSession() const {
     session.Set("shift_click_peek", false);
   if (!clean_address_copies_)
     session.Set("clean_address_copies", false);
+  if (!hardware_acceleration_)
+    session.Set("hardware_acceleration", false);
+  if (dns_mode_ != 0)
+    session.Set("dns_mode", dns_mode_);
+  if (!dns_templates_.empty())
+    session.Set("dns_templates", dns_templates_);
   if (assistant_settings_)
     session.Set("assistant", assistant_settings_->ToValue());
   if (night_shift_config_.managed)
