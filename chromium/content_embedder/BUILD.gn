@@ -692,6 +692,8 @@ if (is_mac) {
                 "cookie_encryption_win.h",
                 "download_file_actions_win.cc",
                 "embedder_win.cc",
+                "legacy_import_win.cc",
+                "legacy_import_win.h",
                 "password_authenticator_win.cc",
                 "password_authenticator_win.h",
                 "spelling_win.cc",
