@@ -1490,6 +1490,7 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
   registry->RegisterDictionaryPref(Permissions::kSiteRules);
   registry->RegisterDictionaryPref(Permissions::kSiteRuleTimes);
   registry->RegisterDictionaryPref(Permissions::kDeviceGrants);
+  registry->RegisterDictionaryPref(Permissions::kDeviceGrantDetails);
   registry->RegisterDictionaryPref(Permissions::kPromptDefaults);
   registry->RegisterDictionaryPref(Permissions::kMediaRules);
   registry->RegisterDictionaryPref(Permissions::kMediaRuleTimes);

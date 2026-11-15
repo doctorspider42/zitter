@@ -1136,8 +1136,34 @@ bool ProfilePermissionController::RevokeDevice(std::string_view api,
     ScopedDictPrefUpdate update(site_permission_prefs_.get(), kDeviceGrants);
     if (auto* grants = update->FindDictByDottedPath(std::string(api) + "." + origin.Serialize()))
       removed |= grants->Remove(key);
+    ScopedDictPrefUpdate details(site_permission_prefs_.get(), kDeviceGrantDetails);
+    if (auto* entries = details->FindDict(api)) {
+      if (auto* site = entries->FindDict(origin.Serialize()))
+        site->Remove(key);
+    }
   }
   return removed;
+}
+
+void ProfilePermissionController::SetDeviceGrantDetails(std::string_view api,
+                                                        const url::Origin& origin,
+                                                        const std::string& key,
+                                                        base::DictValue details) {
+  if (origin.opaque() || key.empty() || !site_permission_prefs_ ||
+      !CanClearSitePermissions()) {
+    return;
+  }
+  ScopedDictPrefUpdate update(site_permission_prefs_.get(), kDeviceGrantDetails);
+  update->EnsureDict(api)->EnsureDict(origin.Serialize())->Set(key, std::move(details));
+}
+
+const base::DictValue* ProfilePermissionController::DeviceGrantDetails(
+    std::string_view api, const url::Origin& origin, const std::string& key) const {
+  if (origin.opaque() || key.empty() || !site_permission_prefs_)
+    return nullptr;
+  const auto* entries = site_permission_prefs_->GetDict(kDeviceGrantDetails).FindDict(api);
+  const auto* site = entries ? entries->FindDict(origin.Serialize()) : nullptr;
+  return site ? site->FindDict(key) : nullptr;
 }
 
 std::vector<std::string> ProfilePermissionController::DeviceGrants(

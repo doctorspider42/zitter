@@ -128,6 +128,13 @@ class ProfilePermissionController final
                     const std::string& key);
   std::vector<std::string> DeviceGrants(std::string_view api,
                                         const url::Origin& origin) const;
+  // What an API keeps with a persistent grant besides its name (Web
+  // Bluetooth's device ID and allowed services). Revoking the grant drops it.
+  static constexpr char kDeviceGrantDetails[] = "zitter.device_grant_details";
+  void SetDeviceGrantDetails(std::string_view api, const url::Origin& origin,
+                             const std::string& key, base::DictValue details);
+  const base::DictValue* DeviceGrantDetails(std::string_view api, const url::Origin& origin,
+                                            const std::string& key) const;
   using SitePrompt = base::RepeatingCallback<void(
       content::RenderFrameHost&, std::string_view key, base::OnceCallback<void(bool)>)>;
   void SetSitePrompt(SitePrompt prompt);

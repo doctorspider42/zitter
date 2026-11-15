@@ -7,6 +7,7 @@
 
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/values.h"
 #include "chromium/prototype/i18n.h"
 #include "content/public/browser/bluetooth_chooser.h"
 #include "content/public/browser/bluetooth_scanning_prompt.h"
@@ -14,6 +15,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "device/bluetooth/bluetooth_device.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "device_chooser.h"
 #include "profile_context.h"
 #include "profile_permission_controller.h"
@@ -31,6 +33,7 @@
 namespace zitter::content_embedder {
 namespace {
 
+constexpr char kApi[] = "bluetooth";
 constexpr char kGuard[] = "bluetooth-guard";
 constexpr char kScanning[] = "bluetooth-scanning";
 
@@ -211,8 +214,39 @@ void LabBluetoothDelegate::ShowDevicePairPrompt(content::RenderFrameHost* frame,
 
 LabBluetoothDelegate::AddressToId& LabBluetoothDelegate::AddressesFor(
     content::RenderFrameHost* frame) {
-  return addresses_[{reinterpret_cast<uintptr_t>(frame->GetBrowserContext()),
-                     frame->GetLastCommittedOrigin(), SiteOf(*frame)}];
+  const auto origin = frame->GetLastCommittedOrigin();
+  const auto [entry, created] = addresses_.try_emplace(
+      {reinterpret_cast<uintptr_t>(frame->GetBrowserContext()), origin, SiteOf(*frame)});
+  // Devices a top-level site was granted before the last restart keep their
+  // ID and services, as Chrome's Bluetooth chooser context keeps them.
+  if (created && origin == SiteOf(*frame)) {
+    auto& permissions = Permissions(*frame);
+    for (const auto& address : permissions.DeviceGrants(kApi, origin)) {
+      const auto* details = permissions.DeviceGrantDetails(kApi, origin, address);
+      const auto* encoded = details ? details->FindString("id") : nullptr;
+      if (!encoded || !blink::WebBluetoothDeviceId::IsValid(*encoded))
+        continue;
+      const blink::WebBluetoothDeviceId id(*encoded);
+      Grant grant;
+      if (const auto* name = details->FindString("name"))
+        grant.name = *name;
+      if (const auto* services = details->FindList("services")) {
+        for (const auto& service : *services) {
+          if (service.is_string() && device::BluetoothUUID(service.GetString()).IsValid())
+            grant.services.insert(device::BluetoothUUID(service.GetString()));
+        }
+      }
+      if (const auto* codes = details->FindList("manufacturer_codes")) {
+        for (const auto& code : *codes) {
+          if (code.is_int() && code.GetInt() >= 0 && code.GetInt() <= 0xFFFF)
+            grant.manufacturer_codes.insert(static_cast<uint16_t>(code.GetInt()));
+        }
+      }
+      entry->second[address] = id;
+      grants_[id] = std::move(grant);
+    }
+  }
+  return entry->second;
 }
 
 blink::WebBluetoothDeviceId LabBluetoothDelegate::IdFor(content::RenderFrameHost* frame,
@@ -267,18 +301,43 @@ blink::WebBluetoothDeviceId LabBluetoothDelegate::GrantServiceAccessPermission(
     grant.manufacturer_codes.insert(options->optional_manufacturer_data.begin(),
                                     options->optional_manufacturer_data.end());
   }
+  // A grant to a top-level site lasts until the user or the site revokes it.
+  const auto origin = frame->GetLastCommittedOrigin();
+  if (origin == SiteOf(*frame)) {
+    auto& permissions = Permissions(*frame);
+    permissions.GrantDevice(kApi, origin, device->GetAddress(), grant.name, /*persistent=*/true);
+    base::ListValue services;
+    for (const auto& service : grant.services)
+      services.Append(service.canonical_value());
+    base::ListValue codes;
+    for (const auto code : grant.manufacturer_codes)
+      codes.Append(static_cast<int>(code));
+    permissions.SetDeviceGrantDetails(kApi, origin, device->GetAddress(),
+                                      base::DictValue()
+                                          .Set("id", id.str())
+                                          .Set("name", grant.name)
+                                          .Set("services", std::move(services))
+                                          .Set("manufacturer_codes", std::move(codes)));
+  }
   return id;
 }
 
 bool LabBluetoothDelegate::HasDevicePermission(content::RenderFrameHost* frame,
                                                const blink::WebBluetoothDeviceId& device_id) {
-  return MayUseBluetooth(frame) && grants_.contains(device_id) &&
-         !GetDeviceAddress(frame, device_id).empty();
+  if (!MayUseBluetooth(frame) || !grants_.contains(device_id))
+    return false;
+  const auto address = GetDeviceAddress(frame, device_id);
+  // Settings may have revoked a persistent grant since it was loaded.
+  return !address.empty() &&
+         (frame->GetLastCommittedOrigin() != SiteOf(*frame) ||
+          Permissions(*frame).HasDeviceGrant(kApi, frame->GetLastCommittedOrigin(), address));
 }
 
 void LabBluetoothDelegate::RevokeDevicePermissionWebInitiated(
     content::RenderFrameHost* frame,
     const blink::WebBluetoothDeviceId& device_id) {
+  if (const auto address = GetDeviceAddress(frame, device_id); !address.empty())
+    Permissions(*frame).RevokeDevice(kApi, frame->GetLastCommittedOrigin(), address);
   grants_.erase(device_id);
   std::erase_if(AddressesFor(frame), [&](const auto& entry) { return entry.second == device_id; });
   for (auto& observer : observers_) {
