@@ -727,6 +727,41 @@ base::FilePath OrdinaryWorkspaceRoot() {
   return app_data.AppendASCII("Zitter Content");
 }
 
+// The Chrome-based profile the first ordinary start imports in PreBrowserMain.
+base::FilePath* g_pending_legacy_import = nullptr;
+
+// The DPAPI layout marker of a new, empty Content root.
+bool WriteWorkspaceMarker(const base::FilePath& root) {
+  if (!base::IsDirectoryEmpty(root))
+    return true;
+  base::File marker(root.AppendASCII("ContentWorkspaceLayout"),
+                    base::File::FLAG_CREATE | base::File::FLAG_WRITE);
+  constexpr std::string_view layout = "zitter-content-workspace-v1 windows-dpapi\n";
+  return marker.IsValid() && marker.WriteAtCurrentPosAndCheck(base::as_byte_span(layout));
+}
+
+// Runs the pending import; a failed one leaves a fresh Workspace and says so.
+bool ImportPendingLegacyWorkspace() {
+  const base::FilePath legacy = *g_pending_legacy_import;
+  const auto root = OrdinaryWorkspaceRoot();
+  if (ImportLegacyWindowsWorkspace(legacy, root))
+    return IsPreparedContentWorkspace(root, "windows-dpapi");
+  LOG(ERROR) << "Could not import the Chrome-based Zitter profile";
+  if (!base::DeletePathRecursively(root) || !base::CreateDirectory(root) ||
+      !WriteWorkspaceMarker(root)) {
+    return false;
+  }
+  ShowMigrationMessage(
+      base::StrCat({L"Nie udało się przenieść danych z poprzedniej wersji Zitter. "
+                    L"Zitter zaczyna z pustym profilem; stare dane zostają w ",
+                    legacy.value(), L"."}),
+      base::StrCat({L"Zitter could not bring over the data of the previous version "
+                    L"and starts with an empty profile. The old data stays in ",
+                    legacy.value(), L"."}),
+      MB_ICONWARNING);
+  return true;
+}
+
 // Hands the launch to a running Zitter for the same executable and profile
 // directory, as Chrome's process singleton does. A plain launch asks it to
 // come to the front.
@@ -770,36 +805,20 @@ bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
             MB_ICONINFORMATION);
         return false;
       }
-      if (!ImportLegacyWindowsWorkspace(legacy, root)) {
-        LOG(ERROR) << "Could not import the Chrome-based Zitter profile";
-        base::DeletePathRecursively(root);
-        if (!base::CreateDirectory(root))
-          return false;
-        ShowMigrationMessage(
-            base::StrCat({L"Nie udało się przenieść danych z poprzedniej wersji Zitter. "
-                          L"Zitter zaczyna z pustym profilem; stare dane zostają w ",
-                          legacy.value(), L"."}),
-            base::StrCat({L"Zitter could not bring over the data of the previous version "
-                          L"and starts with an empty profile. The old data stays in ",
-                          legacy.value(), L"."}),
-            MB_ICONWARNING);
-      }
+      // The import opens SQLite databases, which need the FeatureList that
+      // Content creates later; PreBrowserMain runs it.
+      g_pending_legacy_import = new base::FilePath(legacy);
       break;
     }
   }
-  if (base::IsDirectoryEmpty(root)) {
-    base::File marker(root.AppendASCII("ContentWorkspaceLayout"),
-                      base::File::FLAG_CREATE | base::File::FLAG_WRITE);
-    constexpr std::string_view layout = "zitter-content-workspace-v1 windows-dpapi\n";
-    if (!marker.IsValid() || !marker.WriteAtCurrentPosAndCheck(base::as_byte_span(layout)))
+  if (!g_pending_legacy_import) {
+    if (!WriteWorkspaceMarker(root) || !IsPreparedContentWorkspace(root, "windows-dpapi"))
       return false;
-  }
-  if (!IsPreparedContentWorkspace(root, "windows-dpapi"))
-    return false;
-  // Settings > Hardware acceleration takes effect at the next start.
-  if (const auto session = ReadContentWorkspaceSession(root.AppendASCII(kWorkspaceSession));
-      session && !session->FindBool("hardware_acceleration").value_or(true)) {
-    command.AppendSwitch(switches::kDisableGpu);
+    // Settings > Hardware acceleration takes effect at the next start.
+    if (const auto session = ReadContentWorkspaceSession(root.AppendASCII(kWorkspaceSession));
+        session && !session->FindBool("hardware_acceleration").value_or(true)) {
+      command.AppendSwitch(switches::kDisableGpu);
+    }
   }
   command.AppendSwitch(kWorkspaceLab);
   command.AppendSwitchPath(kWorkspaceRoot, root);
@@ -827,18 +846,9 @@ class WindowsLabMainDelegate final : public content::ContentMainDelegate {
           gfx::win::SideLoadFontForTesting(path);
       }
     }
-    // Imports a Chrome-based profile into an empty Content root and exits:
-    // the first ordinary start's migration, run on copies to check it.
-    if (command.HasSwitch(kImportLegacyWorkspace)) {
-      const auto legacy = command.GetSwitchValuePath(kImportLegacyWorkspace);
-      const auto root = command.GetSwitchValuePath(kWorkspaceRoot);
-      if (root.empty() || (base::PathExists(root) && !base::IsDirectoryEmpty(root)) ||
-          !HasLegacyWindowsWorkspace(legacy) || !ImportLegacyWindowsWorkspace(legacy, root)) {
-        WriteStderr("Could not import the Chrome-based Zitter profile\n");
-        return 1;
-      }
-      return 0;
-    }
+    // PreBrowserMain runs the import-only mode.
+    if (command.HasSwitch(kImportLegacyWorkspace))
+      return std::nullopt;
     if (IsOrdinaryLaunch(command)) {
       const auto root = OrdinaryWorkspaceRoot();
       if (!root.empty() && ForwardToRunningWorkspace(command, root))
@@ -858,6 +868,23 @@ class WindowsLabMainDelegate final : public content::ContentMainDelegate {
   }
 
   std::optional<int> PreBrowserMain() override {
+    const auto& command = *base::CommandLine::ForCurrentProcess();
+    // Imports a Chrome-based profile into an empty Content root and exits:
+    // the first ordinary start's migration, run on copies to check it.
+    if (command.HasSwitch(kImportLegacyWorkspace)) {
+      const auto legacy = command.GetSwitchValuePath(kImportLegacyWorkspace);
+      const auto root = command.GetSwitchValuePath(kWorkspaceRoot);
+      if (root.empty() || (base::PathExists(root) && !base::IsDirectoryEmpty(root)) ||
+          !HasLegacyWindowsWorkspace(legacy) || !ImportLegacyWindowsWorkspace(legacy, root)) {
+        WriteStderr("Could not import the Chrome-based Zitter profile\n");
+        return 1;
+      }
+      return 0;
+    }
+    if (g_pending_legacy_import && !ImportPendingLegacyWorkspace()) {
+      WriteStderr("Could not open the Zitter Content profile directory\n");
+      return 1;
+    }
     return ConfigureExtensionProbes();
   }
 
