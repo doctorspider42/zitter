@@ -132,13 +132,14 @@ DownloadInterruptReason PublishWithoutReplacing(
   constexpr size_t kMaxNameLength = 255;
   if (target_name.value().size() > kMaxNameLength)
     return DOWNLOAD_INTERRUPT_REASON_FILE_NAME_TOO_LONG;
-  alignas(FILE_RENAME_INFO)
-      std::array<uint8_t, sizeof(FILE_RENAME_INFO) +
-                              kMaxNameLength * sizeof(wchar_t)> buffer{};
-  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(&buffer);
+  // FileRenameInfo rejects a RootDirectory handle with ERROR_INVALID_PARAMETER,
+  // so name the target by its full path; it shares the validated directory.
+  const auto name_bytes = base::as_byte_span(target.value());
+  std::vector<uint8_t> buffer(sizeof(FILE_RENAME_INFO) + name_bytes.size() +
+                              sizeof(wchar_t));
+  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(&buffer[0]);
   rename_info->ReplaceIfExists = FALSE;
-  rename_info->RootDirectory = dir.get();
-  const auto name_bytes = base::as_byte_span(target_name.value());
+  rename_info->RootDirectory = nullptr;
   rename_info->FileNameLength = static_cast<DWORD>(name_bytes.size());
   base::span(buffer)
       .subspan(offsetof(FILE_RENAME_INFO, FileName), name_bytes.size())
@@ -443,12 +444,42 @@ def _replace(source, old, new, name):
     return source.replace(old, new, 1)
 
 
+LEGACY_RENAME = """  alignas(FILE_RENAME_INFO)
+      std::array<uint8_t, sizeof(FILE_RENAME_INFO) +
+                              kMaxNameLength * sizeof(wchar_t)> buffer{};
+  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(&buffer);
+  rename_info->ReplaceIfExists = FALSE;
+  rename_info->RootDirectory = dir.get();
+  const auto name_bytes = base::as_byte_span(target_name.value());
+  rename_info->FileNameLength = static_cast<DWORD>(name_bytes.size());
+  base::span(buffer)
+      .subspan(offsetof(FILE_RENAME_INFO, FileName), name_bytes.size())
+      .copy_from(name_bytes);
+  if (::SetFileInformationByHandle(handle, FileRenameInfo, rename_info,
+                                   static_cast<DWORD>(buffer.size()))) {"""
+VERIFIED_RENAME = """  // FileRenameInfo rejects a RootDirectory handle with ERROR_INVALID_PARAMETER,
+  // so name the target by its full path; it shares the validated directory.
+  const auto name_bytes = base::as_byte_span(target.value());
+  std::vector<uint8_t> buffer(sizeof(FILE_RENAME_INFO) + name_bytes.size() +
+                              sizeof(wchar_t));
+  auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(&buffer[0]);
+  rename_info->ReplaceIfExists = FALSE;
+  rename_info->RootDirectory = nullptr;
+  rename_info->FileNameLength = static_cast<DWORD>(name_bytes.size());
+  base::span(buffer)
+      .subspan(offsetof(FILE_RENAME_INFO, FileName), name_bytes.size())
+      .copy_from(name_bytes);
+  if (::SetFileInformationByHandle(handle, FileRenameInfo, rename_info,
+                                   static_cast<DWORD>(buffer.size()))) {"""
+
+
 # Earlier stagings used `buffer.data()`, which -Wunsafe-buffer-usage rejects
 # on Windows. Upgrade those checkouts in place before checking the layout.
 LEGACY_REWRITES = {
     BASE_FILE: (
         ("reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());",
          "reinterpret_cast<FILE_RENAME_INFO*>(&buffer);"),
+        (LEGACY_RENAME, VERIFIED_RENAME),
     ),
 }
 
