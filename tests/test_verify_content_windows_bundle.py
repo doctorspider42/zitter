@@ -26,7 +26,7 @@ class WindowsContentBundleTest(unittest.TestCase):
         )
         self.assertEqual(bundle.select_runtime_files(manifest), [
             "icudtl.dat", "libEGL.dll", "locales/en-US.pak",
-            "zitter_assistant.exe", "zitter.exe", "zitter_content.pak",
+            "zitter.exe", "zitter_assistant.exe", "zitter_content.pak",
         ])
 
     def test_manifest_requires_packaged_assistant(self):
