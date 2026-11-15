@@ -10484,7 +10484,16 @@ void WorkspaceLab::RemoveTab(size_t index) {
   RecordTimeline(true);
   RecordClosedTab(active_index_, index);
   const bool was_active = selected_[active_index_] == index;
+  const auto opener = tabs_[active_index_][index].opener_id;
   auto detached = DetachTab(active_index_, index);
+  // Closing the active tab a page opened returns to that page, as in Chrome.
+  // Popups are appended at the end, so the neighbour is often unrelated.
+  if (was_active && opener && splits_[active_index_].tabs.empty()) {
+    auto& tabs = tabs_[active_index_];
+    const auto original = std::ranges::find(tabs, *opener, &Tab::id);
+    if (original != tabs.end())
+      selected_[active_index_] = original - tabs.begin();
+  }
   RefreshShell();
   if (was_active)
     tabs_[active_index_][selected_[active_index_]].view->RequestFocus();
