@@ -984,10 +984,23 @@ constexpr Category kSiteCategories[] = {
     {"vr", PermissionType::VR, 3, true},
     {"ar", PermissionType::AR, 3, true},
     {"hand-tracking", PermissionType::HAND_TRACKING, 3, true},
+    // Device and file access: a site asks through a chooser or picker, so
+    // Settings offers block or ask.
+    {"usb-guard", PermissionType::NUM, 3, true, false},
+    {"hid-guard", PermissionType::NUM, 3, true, false},
+    {"serial-guard", PermissionType::NUM, 3, true, false},
+    {"bluetooth-guard", PermissionType::NUM, 3, true, false},
+    {"bluetooth-scanning", PermissionType::NUM, 3, true, false},
+    {"file-system-write-guard", PermissionType::NUM, 3, true, false},
 };
 
 bool IsValidSiteSetting(const Category& category, int setting) {
-  return setting == 1 || setting == 2 || (setting == 3 && category.can_ask);
+  return (setting == 1 && category.can_allow) || setting == 2 ||
+         (setting == 3 && category.can_ask);
+}
+
+std::string SessionDeviceKey(std::string_view api, const url::Origin& origin) {
+  return std::string(api) + "|" + origin.Serialize();
 }
 
 }  // namespace
@@ -1004,6 +1017,8 @@ ProfilePermissionController::FindSiteCategory(blink::PermissionType type) {
     type = PermissionType::BACKGROUND_SYNC;
   if (type == PermissionType::GEOLOCATION_APPROXIMATE)
     type = PermissionType::GEOLOCATION;
+  if (type == PermissionType::NUM)
+    return nullptr;
   const auto found = std::ranges::find(kSiteCategories, type, &Category::type);
   return found == std::end(kSiteCategories) ? nullptr : &*found;
 }
@@ -1070,6 +1085,70 @@ bool ProfilePermissionController::SetSiteRule(std::string_view key,
     stamps->Remove(serialized);
   }
   return true;
+}
+
+bool ProfilePermissionController::HasDeviceGrant(std::string_view api,
+                                                 const url::Origin& origin,
+                                                 const std::string& key) const {
+  if (origin.opaque() || key.empty())
+    return false;
+  if (const auto session = session_device_grants_.find(SessionDeviceKey(api, origin));
+      session != session_device_grants_.end() && session->second.contains(key)) {
+    return true;
+  }
+  const auto* grants = site_permission_prefs_
+      ? site_permission_prefs_->GetDict(kDeviceGrants).FindDictByDottedPath(
+            std::string(api) + "." + origin.Serialize())
+      : nullptr;
+  return grants && grants->Find(key);
+}
+
+void ProfilePermissionController::GrantDevice(std::string_view api,
+                                              const url::Origin& origin,
+                                              const std::string& key,
+                                              const std::string& name,
+                                              bool persistent) {
+  if (origin.opaque() || key.empty())
+    return;
+  if (!persistent || !CanClearSitePermissions()) {
+    session_device_grants_[SessionDeviceKey(api, origin)].insert(key);
+    return;
+  }
+  ScopedDictPrefUpdate update(site_permission_prefs_.get(), kDeviceGrants);
+  update->EnsureDict(api)->EnsureDict(origin.Serialize())->Set(key, name);
+}
+
+bool ProfilePermissionController::RevokeDevice(std::string_view api,
+                                               const url::Origin& origin,
+                                               const std::string& key) {
+  bool removed = false;
+  if (auto session = session_device_grants_.find(SessionDeviceKey(api, origin));
+      session != session_device_grants_.end()) {
+    removed = session->second.erase(key) > 0;
+  }
+  if (site_permission_prefs_ && CanClearSitePermissions()) {
+    ScopedDictPrefUpdate update(site_permission_prefs_.get(), kDeviceGrants);
+    if (auto* grants = update->FindDictByDottedPath(std::string(api) + "." + origin.Serialize()))
+      removed |= grants->Remove(key);
+  }
+  return removed;
+}
+
+std::vector<std::string> ProfilePermissionController::DeviceGrants(
+    std::string_view api, const url::Origin& origin) const {
+  std::vector<std::string> keys;
+  if (const auto session = session_device_grants_.find(SessionDeviceKey(api, origin));
+      session != session_device_grants_.end()) {
+    keys.assign(session->second.begin(), session->second.end());
+  }
+  if (const auto* grants = site_permission_prefs_
+          ? site_permission_prefs_->GetDict(kDeviceGrants).FindDictByDottedPath(
+                std::string(api) + "." + origin.Serialize())
+          : nullptr) {
+    for (const auto [key, value] : *grants)
+      keys.push_back(key);
+  }
+  return keys;
 }
 
 void ProfilePermissionController::SetSitePrompt(SitePrompt prompt) {

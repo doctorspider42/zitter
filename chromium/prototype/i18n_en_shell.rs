@@ -808,4 +808,13 @@ pub static EN: &[(&str, &str)] = &[
     ("Usunięto: {}", "Removed: {}"),
     ("Zezwolić witrynie?", "Allow this site?"),
     ("{} prosi o dostęp: {}.", "{} asks for access to: {}."),
+    ("Połącz z urządzeniem {}", "Connect to a {} device"),
+    ("{} chce połączyć się z urządzeniem.", "{} wants to connect to a device."),
+    ("Szukanie urządzeń…", "Looking for devices…"),
+    ("Nie znaleziono pasujących urządzeń.", "No matching devices found."),
+    ("Wybierz urządzenie:", "Choose a device:"),
+    ("Urządzenie USB {}", "USB device {}"),
+    ("Urządzenie HID {}", "HID device {}"),
+    ("portu szeregowego", "serial port"),
+    ("Połącz", "Connect"),
 ];

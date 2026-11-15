@@ -85,6 +85,14 @@ lab_includes = [ "$root_gen_dir/zitter" ]
 lab_sources = [
   "browsing_preferences.cc",
   "browsing_preferences.h",
+  "device_chooser.cc",
+  "device_chooser.h",
+  "hid_access.cc",
+  "hid_access.h",
+  "serial_access.cc",
+  "serial_access.h",
+  "usb_access.cc",
+  "usb_access.h",
   "//zitter/chromium/prototype/link_navigation.cc",
   "//zitter/chromium/prototype/link_navigation.h",
   "adblock_cache_probe.cc",
@@ -150,6 +158,9 @@ lab_sources = [
 ]
 
 lab_deps = [
+  "//device/bluetooth/public/cpp",
+  "//services/device/public/cpp/usb",
+  "//services/device/public/mojom",
   ":adblock_probe",
   ":content_blocking_probe_script",
   ":extension_archive",

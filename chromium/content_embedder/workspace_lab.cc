@@ -8359,7 +8359,7 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
       const int index = setting == 2 ? 0 : setting == 3 ? 1 : category.can_ask ? 2 : 1;
       settings[std::string(prototype::kSiteDefaultPrefix) + std::string(key)] = {
           .value = index, .editable = permissions.CanClearSitePermissions(),
-          .text = category.can_ask ? "pa" : "a"};
+          .text = std::string(category.can_ask ? "p" : "") + (category.can_allow ? "a" : "")};
     }
     for (const auto* key : {"javascript", "images", "sound"}) {
       settings[std::string(prototype::kSiteDefaultPrefix) + key] = {

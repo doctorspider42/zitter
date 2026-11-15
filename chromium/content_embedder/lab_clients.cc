@@ -4,6 +4,9 @@
 
 #include "navigation_reputation.h"
 #include "browsing_preferences.h"
+#include "hid_access.h"
+#include "serial_access.h"
+#include "usb_access.h"
 #include "http_auth_prompt.h"
 
 #include "base/functional/callback_helpers.h"
@@ -1143,6 +1146,24 @@ void LabBrowserClientBase::OnWebContentsCreated(content::WebContents* contents) 
   headless::HeadlessPrintManager::CreateForWebContents(contents);
   printing::CreateCompositeClientIfNeeded(contents, GetUserAgent());
 #endif
+}
+
+content::UsbDelegate* LabBrowserClientBase::GetUsbDelegate() {
+  if (!usb_delegate_)
+    usb_delegate_ = std::make_unique<LabUsbDelegate>();
+  return usb_delegate_.get();
+}
+
+content::HidDelegate* LabBrowserClientBase::GetHidDelegate() {
+  if (!hid_delegate_)
+    hid_delegate_ = std::make_unique<LabHidDelegate>();
+  return hid_delegate_.get();
+}
+
+content::SerialDelegate* LabBrowserClientBase::GetSerialDelegate() {
+  if (!serial_delegate_)
+    serial_delegate_ = std::make_unique<LabSerialDelegate>();
+  return serial_delegate_.get();
 }
 
 void LabBrowserClientBase::OverrideWebPreferences(

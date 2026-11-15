@@ -18,6 +18,10 @@ class GURL;
 
 namespace zitter::content_embedder {
 
+class LabHidDelegate;
+class LabSerialDelegate;
+class LabUsbDelegate;
+
 class LabContentClient final : public content::ContentClient {
  public:
   void AddAdditionalSchemes(Schemes* schemes) override;
@@ -160,6 +164,9 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   void CreateThrottlesForNavigation(
       content::NavigationThrottleRegistry& registry) override;
   void OnWebContentsCreated(content::WebContents* contents) override;
+  content::UsbDelegate* GetUsbDelegate() override;
+  content::HidDelegate* GetHidDelegate() override;
+  content::SerialDelegate* GetSerialDelegate() override;
   void OverrideWebPreferences(content::WebContents* web_contents,
                               content::SiteInstance& main_frame_site,
                               blink::web_pref::WebPreferences* prefs) override;
@@ -187,6 +194,9 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
       scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner,
       bool is_for_network_service) override;
  private:
+  std::unique_ptr<LabUsbDelegate> usb_delegate_;
+  std::unique_ptr<LabHidDelegate> hid_delegate_;
+  std::unique_ptr<LabSerialDelegate> serial_delegate_;
   ClipboardCopyProbe clipboard_copy_probe_;
   std::unique_ptr<NavigationReputation> navigation_reputation_;
 

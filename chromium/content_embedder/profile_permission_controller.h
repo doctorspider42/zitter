@@ -3,7 +3,9 @@
 #ifndef ZITTER_CONTENT_PROFILE_PERMISSION_CONTROLLER_H_
 #define ZITTER_CONTENT_PROFILE_PERMISSION_CONTROLLER_H_
 
+#include <map>
 #include <memory>
+#include <set>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -104,6 +106,7 @@ class ProfilePermissionController final
     blink::PermissionType type;
     int fallback;
     bool can_ask;
+    bool can_allow = true;
   };
   static const SiteCategory* FindSiteCategory(std::string_view key);
   static const SiteCategory* FindSiteCategory(blink::PermissionType type);
@@ -113,6 +116,18 @@ class ProfilePermissionController final
   int SiteSetting(std::string_view key, const url::Origin& origin) const;
   bool SetSiteRule(std::string_view key, const url::Origin& origin,
                    std::optional<int> setting);
+  // Devices a site may use (WebUSB, WebHID, Web Serial, Web Bluetooth) and
+  // files it may edit, by API ("usb", "hid", "serial", "bluetooth") and a
+  // device key. Devices without a stable key stay granted until exit.
+  static constexpr char kDeviceGrants[] = "zitter.device_grants";
+  bool HasDeviceGrant(std::string_view api, const url::Origin& origin,
+                      const std::string& key) const;
+  void GrantDevice(std::string_view api, const url::Origin& origin,
+                   const std::string& key, const std::string& name, bool persistent);
+  bool RevokeDevice(std::string_view api, const url::Origin& origin,
+                    const std::string& key);
+  std::vector<std::string> DeviceGrants(std::string_view api,
+                                        const url::Origin& origin) const;
   using SitePrompt = base::RepeatingCallback<void(
       content::RenderFrameHost&, std::string_view key, base::OnceCallback<void(bool)>)>;
   void SetSitePrompt(SitePrompt prompt);
@@ -170,6 +185,8 @@ class ProfilePermissionController final
   std::unique_ptr<PrefService> site_permission_prefs_;
   base::RepeatingClosureList browsing_observers_;
   SitePrompt site_prompt_;
+  // "api|origin" -> device keys granted for this session only.
+  std::map<std::string, std::set<std::string>> session_device_grants_;
   content::PermissionResult SiteResult(const SiteCategory& category,
                                        const url::Origin& origin) const;
   base::DictValue private_clipboard_rules_;
