@@ -20,6 +20,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "content/public/common/referrer.h"
+#include "third_party/blink/public/mojom/loader/referrer.mojom.h"
 #include "net/base/url_util.h"
 #include "net/http/http_util.h"
 #include "profile_context.h"
