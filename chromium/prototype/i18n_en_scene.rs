@@ -241,7 +241,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Podaj nazwę przestrzeni.", "Enter a space name."),
     ("Podaj poprawne kody języków oddzielone przecinkami, np. pl, en-US, en.", "Enter valid language codes separated by commas, e.g. pl, en-US, en."),
     ("Podaj poprawny szablon DNS-over-HTTPS. W trybie ścisłym adres nie może być pusty.", "Enter a valid DNS-over-HTTPS template. In strict mode the address can’t be empty."),
-    ("Podkreślaj błędy w polach tekstowych na stronach. Na macOS słowniki wybiera system.", "Underline mistakes in text fields on pages. On macOS the system chooses the dictionaries."),
+    ("Podkreślaj błędy w polach tekstowych na stronach. Słowniki wybierasz w sekcji poniżej.", "Underline mistakes in text fields on pages. Choose the dictionaries below."),
     ("Podział pionowy (jedna nad drugą)", "Vertical split (one above the other)"),
     ("Podział poziomy (obok siebie)", "Horizontal split (side by side)"),
     ("Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart.", "Show the name next to the active space’s dot at the bottom of the tab panel."),

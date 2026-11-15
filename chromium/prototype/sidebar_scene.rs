@@ -1168,7 +1168,7 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(6,K::Toggle,"download_prompt",t("Pytaj, gdzie zapisać każdy plik"),t("Wybieraj miejsce zapisu przy każdym pobieraniu."),vec![],"",A::None));
     rows.push(preference_spec(6,K::Directory,"",t("Folder pobierania"),t("Domyślne miejsce zapisu plików w tym profilu."),vec![],"",A::None));
     rows.push(preference_spec(7,K::Text,"accept_languages",t("Preferowane języki witryn"),t("Kody języków w kolejności preferencji, oddzielone przecinkami. Np. pl, en-US, en. Zmiana dotyczy treści witryn; język interfejsu Zitter wybierasz osobno."),vec![],"pl, en-US, en",A::None));
-    rows.push(preference_spec(7,K::Toggle,"spellcheck",t("Sprawdzaj pisownię"),t("Podkreślaj błędy w polach tekstowych na stronach. Na macOS słowniki wybiera system."),vec![],"",A::None));
+    rows.push(preference_spec(7,K::Toggle,"spellcheck",t("Sprawdzaj pisownię"),t("Podkreślaj błędy w polach tekstowych na stronach. Słowniki wybierasz w sekcji poniżej."),vec![],"",A::None));
     rows.push(preference_spec(7,K::Toggle,"online_spellcheck",t("Rozszerzone sprawdzanie pisowni"),t("Wysyłaj wpisywany tekst do usługi Google w celu sprawdzania pisowni. Wymaga włączonego sprawdzania pisowni."),vec![],"",A::None));
     rows.push(preference_spec(9,K::Toggle,"caret_browsing",t("Nawigacja kursorem tekstowym"),t("Poruszaj się po tekstach witryn za pomocą klawiatury i zaznaczaj je bez myszy."),vec![],"",A::None));
     rows.push(preference_spec(9,K::Toggle,"hardware_acceleration",t("Akceleracja sprzętowa"),t("Używaj procesora graficznego do renderowania. Ustawienie wspólne dla całej aplikacji; działa po ponownym uruchomieniu Zitter."),vec![],"",A::None));

@@ -629,6 +629,7 @@ if (is_mac) {
                 "embedder_win.cc",
                 "password_authenticator_win.cc",
                 "password_authenticator_win.h",
+                "spelling_win.cc",
               ]
     include_dirs = lab_includes
     deps = lab_deps + [

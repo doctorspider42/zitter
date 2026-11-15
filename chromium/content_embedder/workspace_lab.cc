@@ -252,14 +252,14 @@ CONTENT_EXPORT bool ZitterGoThroughHistory(NavigationController& controller,
 }  // namespace content
 
 namespace zitter::content_embedder {
-#if BUILDFLAG(IS_MAC)
-std::vector<mojom::SpellingMatchPtr> CheckMacSpelling(
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+std::vector<mojom::SpellingMatchPtr> CheckSystemSpelling(
     const std::u16string& text, const std::vector<std::u16string>& dictionaries,
     const std::u16string& selected);
-std::vector<gfx::Range> MacSpellingRanges(
+std::vector<gfx::Range> SystemSpellingRanges(
     std::u16string_view text, const std::vector<std::u16string>& dictionaries,
     const std::u16string& selected);
-std::vector<std::pair<std::u16string, std::u16string>> MacSpellingLanguages();
+std::vector<std::pair<std::u16string, std::u16string>> SystemSpellingLanguages();
 #endif
 
 class WorkspacePasswordClear final : public password_manager::PasswordStoreConsumer {
@@ -1673,7 +1673,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     views_delegate_ = std::make_unique<LabViewsDelegate>();
   prototype::ApplyUiLanguage("en-US");
   prototype::WorkspaceShell::Callbacks callbacks;
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   if (!private_owner_) {
     callbacks.read_spelling = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
       prototype::WorkspaceShell::Callbacks::Spelling state;
@@ -1683,8 +1683,12 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       const auto added = prefs.SpellingDictionaries();
       state.selected = prefs.ActiveSpellingDictionary();
       state.enabled = prefs.SpellingEnabled();
-      for (const auto& [name, code] : MacSpellingLanguages())
-        state.dictionaries.push_back({code, name, std::ranges::contains(added, code)});
+      for (const auto& [name, code] : SystemSpellingLanguages()) {
+        // Windows lists regional codes (pl-PL) for the short defaults (pl).
+        const bool on = std::ranges::contains(added, code) ||
+                        std::ranges::contains(added, code.substr(0, code.find(u'-')));
+        state.dictionaries.push_back({code, name, on});
+      }
       return state;
     }, weak_factory_.GetWeakPtr());
     callbacks.check_spelling = base::BindRepeating(
@@ -1694,7 +1698,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
           const auto& prefs = lab->WorkspaceProfile(lab->active_index_)->site_permissions();
           if (!prefs.SpellingEnabled())
             return std::vector<gfx::Range>();
-          return MacSpellingRanges(text, prefs.SpellingDictionaries(),
+          return SystemSpellingRanges(text, prefs.SpellingDictionaries(),
                                    prefs.ActiveSpellingDictionary());
         }, weak_factory_.GetWeakPtr());
     callbacks.change_dictionary = base::BindRepeating(
@@ -6976,7 +6980,7 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
           .enabled = (params.edit_flags & command.flag) != 0,
           .accelerator = ui::Accelerator(command.key, modifier | command.extra_modifiers)});
     }
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     if (params.form_control_type != blink::mojom::FormControlType::kInputPassword) {
       navigation.editing_items.push_back({.separator = true});
       auto* profile = static_cast<ProfileContext*>(frame.GetBrowserContext());
@@ -6988,7 +6992,7 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
         // Prefilled fields may not have Blink spelling markers yet. A context
         // click still selects the word, so check that selection with the
         // current dictionaries and replace only that selection.
-        const auto matches = CheckMacSpelling(word, settings.SpellingDictionaries(),
+        const auto matches = CheckSystemSpelling(word, settings.SpellingDictionaries(),
                                               settings.ActiveSpellingDictionary());
         if (matches.size() == 1 && matches.front()->offset == 0 &&
             matches.front()->length == word.size()) {
@@ -7027,7 +7031,7 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
             .title = prototype::T(u"Wszystkie moje języki"),
             .run = base::BindRepeating(select, std::u16string()),
             .checked = active.empty(), .radio = true});
-        for (const auto& [name, code] : MacSpellingLanguages()) {
+        for (const auto& [name, code] : SystemSpellingLanguages()) {
           if (std::ranges::contains(dictionaries, code)) {
             spelling.children.push_back({
                 .title = name, .run = base::BindRepeating(select, code),
@@ -8115,7 +8119,7 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     return {};
   auto& profile = *WorkspaceProfile(active_index_);
   BrowserPreferences settings;
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   settings["spellcheck"] = {.value = profile.site_permissions().SpellingEnabled(),
                             .editable = profile.site_permissions().CanClearSitePermissions()};
 #endif
@@ -8216,7 +8220,7 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
   if (!model_.active())
     return false;
   auto& profile = *WorkspaceProfile(active_index_);
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   if (key == "spellcheck")
     return (value == 0 || value == 1) && profile.site_permissions().SetSpellingEnabled(value == 1);
 #endif

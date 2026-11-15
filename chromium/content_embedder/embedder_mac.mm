@@ -451,7 +451,7 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 
 namespace zitter::content_embedder {
 
-std::vector<mojom::SpellingMatchPtr> CheckMacSpelling(
+std::vector<mojom::SpellingMatchPtr> CheckSystemSpelling(
     const std::u16string& input, const std::vector<std::u16string>& dictionaries,
     const std::u16string& selected) {
   NSSpellChecker* checker = NSSpellChecker.sharedSpellChecker;
@@ -507,16 +507,16 @@ std::vector<mojom::SpellingMatchPtr> CheckMacSpelling(
   return matches;
 }
 
-std::vector<gfx::Range> MacSpellingRanges(
+std::vector<gfx::Range> SystemSpellingRanges(
     std::u16string_view text, const std::vector<std::u16string>& dictionaries,
     const std::u16string& selected) {
   std::vector<gfx::Range> ranges;
-  for (const auto& match : CheckMacSpelling(std::u16string(text), dictionaries, selected))
+  for (const auto& match : CheckSystemSpelling(std::u16string(text), dictionaries, selected))
     ranges.emplace_back(match->offset, match->offset + match->length);
   return ranges;
 }
 
-std::vector<std::pair<std::u16string, std::u16string>> MacSpellingLanguages() {
+std::vector<std::pair<std::u16string, std::u16string>> SystemSpellingLanguages() {
   NSLocale* locale = [NSLocale localeWithLocaleIdentifier:
       prototype::UiLanguageIsEnglish() ? @"en" : @"pl"];
   std::vector<std::pair<std::u16string, std::u16string>> choices;

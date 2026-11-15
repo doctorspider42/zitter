@@ -149,14 +149,14 @@
 #include "zitter_content/fingerprint_state.mojom.h"
 
 namespace zitter::content_embedder {
-#if BUILDFLAG(IS_MAC)
-std::vector<mojom::SpellingMatchPtr> CheckMacSpelling(
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+std::vector<mojom::SpellingMatchPtr> CheckSystemSpelling(
     const std::u16string& text, const std::vector<std::u16string>& dictionaries,
     const std::u16string& selected);
 #endif
 namespace {
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 class LocalSpellingHost final : public mojom::LocalSpelling {
  public:
   explicit LocalSpellingHost(content::BrowserContext& context) : context_(context.GetWeakPtr()) {}
@@ -165,7 +165,7 @@ class LocalSpellingHost final : public mojom::LocalSpelling {
     if (context_ && !context_->ShutdownStarted() && text.size() <= 32768) {
       const auto& prefs = static_cast<ProfileContext*>(context_.get())->site_permissions();
       if (prefs.SpellingEnabled())
-        matches = CheckMacSpelling(text, prefs.SpellingDictionaries(),
+        matches = CheckSystemSpelling(text, prefs.SpellingDictionaries(),
                                   prefs.ActiveSpellingDictionary());
     }
     std::move(reply).Run(std::move(matches));
@@ -1075,7 +1075,7 @@ void LabBrowserClientBase::CreateThrottlesForNavigation(
 void LabBrowserClientBase::RegisterBrowserInterfaceBindersForFrame(
     content::RenderFrameHost* frame,
     mojo::BinderMapWithContext<content::RenderFrameHost*>* map) {
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   map->Add<mojom::LocalSpelling>(base::BindRepeating(
       [](content::RenderFrameHost* frame, mojo::PendingReceiver<mojom::LocalSpelling> receiver) {
         mojo::MakeSelfOwnedReceiver(
@@ -1263,7 +1263,7 @@ void LabRendererClient::WebViewCreated(blink::WebView* view,
 }
 
 void LabRendererClient::RenderFrameCreated(content::RenderFrame* frame) {
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   new LocalSpellingClient(frame);
 #endif
   if (frame->IsMainFrame() && !frame->IsInFencedFrameTree())
