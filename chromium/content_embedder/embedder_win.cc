@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/base_paths.h"
@@ -31,6 +33,7 @@
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/values.h"
@@ -690,6 +693,29 @@ bool IsOrdinaryLaunch(const base::CommandLine& command) {
   });
 }
 
+// Chrome's process singleton holds `lockfile` open (delete-on-close) while
+// the browser runs, so it exists and cannot be opened exclusively.
+bool IsLegacyBrowserRunning(const base::FilePath& legacy) {
+  const auto lock = legacy.AppendASCII("lockfile");
+  if (!base::PathExists(lock))
+    return false;
+  const HANDLE file = ::CreateFileW(lock.value().c_str(), GENERIC_READ, 0, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE)
+    return ::GetLastError() == ERROR_SHARING_VIOLATION;
+  ::CloseHandle(file);
+  return false;
+}
+
+// Shown before the UI and its locale exist, so it follows Windows' language.
+void ShowMigrationMessage(std::wstring_view polish,
+                          std::wstring_view english,
+                          UINT icon) {
+  const bool pl = PRIMARYLANGID(::GetUserDefaultUILanguage()) == LANG_POLISH;
+  const std::wstring text(pl ? polish : english);
+  ::MessageBoxW(nullptr, text.c_str(), windows::kProductName, MB_OK | icon);
+}
+
 // zitter.exe --import-legacy-workspace=<Chrome-based profile>
 //            --zitter-content-workspace-root=<new Content root>
 constexpr char kImportLegacyWorkspace[] = "import-legacy-workspace";
@@ -733,8 +759,31 @@ bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
           local.Append(FILE_PATH_LITERAL("Chromium")).Append(FILE_PATH_LITERAL("User Data"))}) {
       if (!HasLegacyWindowsWorkspace(legacy))
         continue;
-      if (!ImportLegacyWindowsWorkspace(legacy, root))
+      // The running Chrome-based Zitter keeps changing the profile; the root
+      // stays empty so the next start imports it.
+      if (IsLegacyBrowserRunning(legacy)) {
+        ShowMigrationMessage(
+            L"Zamknij poprzednią wersję Zitter, a potem uruchom Zitter ponownie, "
+            L"żeby przenieść przestrzenie, karty, hasła i historię.",
+            L"Quit the previous version of Zitter, then start Zitter again to bring "
+            L"over your spaces, tabs, passwords and history.",
+            MB_ICONINFORMATION);
+        return false;
+      }
+      if (!ImportLegacyWindowsWorkspace(legacy, root)) {
         LOG(ERROR) << "Could not import the Chrome-based Zitter profile";
+        base::DeletePathRecursively(root);
+        if (!base::CreateDirectory(root))
+          return false;
+        ShowMigrationMessage(
+            base::StrCat({L"Nie udało się przenieść danych z poprzedniej wersji Zitter. "
+                          L"Zitter zaczyna z pustym profilem; stare dane zostają w ",
+                          legacy.value(), L"."}),
+            base::StrCat({L"Zitter could not bring over the data of the previous version "
+                          L"and starts with an empty profile. The old data stays in ",
+                          legacy.value(), L"."}),
+            MB_ICONWARNING);
+      }
       break;
     }
   }
