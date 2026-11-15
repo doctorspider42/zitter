@@ -5251,14 +5251,24 @@ for index in 0..<document.pageCount {
                         scratch = Path(temporary).resolve()
                         env = dict(os.environ, TMPDIR=str(scratch), TMP=str(scratch),
                                    TEMP=str(scratch))
-                        result = launch(executable, root, origin, [*extra_flags, flag], env=env)
+                        launch_root = root
+                        if windows:
+                            # Windows resolves the probe root against TEMP, so run a
+                            # copy of the root inside the scratch temporary directory.
+                            launch_root = scratch / root.name
+                            shutil.copytree(root, launch_root)
+                        result = launch(executable, launch_root, origin, [*extra_flags, flag],
+                                        env=env)
                         markers = result.stdout.splitlines()
                         if (result.returncode or PRIVATE_WINDOW_MARKER not in markers
                                 or MARKER not in markers or (phase and
                                     "Zitter Content verified profile page zoom" not in markers)):
                             raise SystemExit(f"Private window probe failed.\n{result.stdout}\n{result.stderr}")
-                        if any(scratch.iterdir()):
+                        if any(path != launch_root for path in scratch.iterdir()):
                             raise SystemExit("Private windows left files in the temporary root")
+                        if launch_root != root:
+                            shutil.rmtree(root)
+                            shutil.copytree(launch_root, root)
                     expected = list(zip(PRIVATE_WINDOW_PATHS, ("", "shared", "shared", "")))
                     if phase:
                         expected.append((PRIVATE_WINDOW_PATHS[-1], ""))

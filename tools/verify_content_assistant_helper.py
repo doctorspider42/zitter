@@ -44,7 +44,7 @@ def verify_assistant_helper(executable, working_directory, environment):
                 cwd=working_directory,
                 env=dict(isolated_environment,
                          ZITTER_OLLAMA_URL=f"http://127.0.0.1:{server.server_port}"),
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, encoding="utf-8", timeout=30,
             )
         finally:
             server.shutdown()
@@ -60,7 +60,7 @@ def verify_assistant_helper(executable, working_directory, environment):
             [executable, f"--check-provider={provider}", f"--check-model={check_model}"],
             cwd=working_directory,
             env=dict(isolated_environment, ZITTER_OLLAMA_URL="http://example.invalid:11434"),
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
         if rejected.returncode != 1 or json.loads(rejected.stdout) != {
             "ok": False, "error": expected,
