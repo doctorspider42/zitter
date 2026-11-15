@@ -86,6 +86,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/threading/thread_restrictions.h"
 #include "extension_registry_probe.h"
+#include "legacy_import_win.h"
 #include "updates_win.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
@@ -716,6 +717,14 @@ bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
   const auto root = OrdinaryWorkspaceRoot();
   if (root.empty() || base::IsLink(root) || !base::CreateDirectory(root))
     return false;
+  // The first Content start for a user of the Chrome-based Windows build
+  // brings over their spaces, tabs, pins, passwords, history and settings
+  // from %LOCALAPPDATA%\Zitter (tools/profile_migration_trial.py in C++).
+  if (base::IsDirectoryEmpty(root)) {
+    const auto legacy = root.DirName().Append(windows::kProductName);
+    if (HasLegacyWindowsWorkspace(legacy) && !ImportLegacyWindowsWorkspace(legacy, root))
+      LOG(ERROR) << "Could not import the Chrome-based Zitter profile";
+  }
   if (base::IsDirectoryEmpty(root)) {
     base::File marker(root.AppendASCII("ContentWorkspaceLayout"),
                       base::File::FLAG_CREATE | base::File::FLAG_WRITE);
