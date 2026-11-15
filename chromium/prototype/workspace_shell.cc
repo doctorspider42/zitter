@@ -10118,6 +10118,8 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
   }
   for(const auto& spec:catalogue.rows){
     const std::string key(spec.key);
+    if (!key.empty() && std::ranges::contains(callbacks_.hidden_preferences, key))
+      continue;
     if (spec.kind == Kind::Toggle &&
         std::ranges::find(kSitePreferenceKeys, key) != kSitePreferenceKeys.end())
       continue;

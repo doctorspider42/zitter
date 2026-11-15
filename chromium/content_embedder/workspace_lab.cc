@@ -1802,6 +1802,9 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   // handlers.
   callbacks.hidden_site_categories = {"web-app-installation", "webid-api",
                                       "auto-picture-in-picture", "protocol-handler"};
+  // Automatic sign-in needs the Credential Management API and enhanced
+  // spell check Google's spelling service; Content has neither.
+  callbacks.hidden_preferences = {"auto_signin", "online_spellcheck"};
   if (!private_owner_ && IsManagedExtensionSession()) {
     for (const auto& context : contexts_) {
       for (const auto& extension : GetConfiguredExtensions(*context)) {

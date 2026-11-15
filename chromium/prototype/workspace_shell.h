@@ -204,6 +204,8 @@ class WorkspaceShell final : public ui::EventHandler,
     raw_ptr<PrefService> locale_preferences = nullptr;
     // Site permission categories this browser does not offer.
     std::vector<std::string> hidden_site_categories;
+    // Settings rows (preference keys) this browser does not offer.
+    std::vector<std::string> hidden_preferences;
     Callbacks();
     Callbacks(Callbacks&&);
     Callbacks& operator=(Callbacks&&);
