@@ -503,3 +503,58 @@ open during resizing, dragging, and its menus or settings.
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, CSV passwords, no cookie option, sandbox checked, network audit clean after two fixes |
 | 5 — tests and tools | Done but the docs: the full browser suite passes (226), Rust (532) and Python (83) tests pass, verify-ui works on Windows. Open: Windows sections in CLAUDE.md and README, waiting on their rewrite |
 | 6 — packaging | Done but signing: static release and ThinLTO + PGO builds (188 MB package), portable ZIP and standalone installer (191 MB), install, update and quiet remove checked for one user and for everyone, browser registration, network sandbox, license audit, installer accessibility. Open: Authenticode signing (no certificate) |
+
+## Content on Windows
+
+The Content embedder (`//zitter_content:zitter_content`, `out/ZitterWinContent`)
+builds as `zitter.exe`, so the installer, browser registration, shortcuts and
+the updater's installation check stay the same as for the Chrome-based build.
+
+- **Startup.** A plain launch (Explorer, a shortcut, the jump list, a link from
+  another app) opens the durable Workspace in `%LOCALAPPDATA%\Zitter Content`
+  with the `windows-dpapi` layout. The first launch writes the layout marker
+  into the empty directory. A second launch hands its URLs or jump-list command
+  to the running window over `WM_COPYDATA` and exits; a plain one brings the
+  window forward. Processes launched from an MSIX-packaged parent (such as the
+  Claude desktop app) see a virtualized `AppData\Local`, which the layout check
+  rejects; start test copies through `explorer.exe`.
+- **Shell integration.** Zitter's icon, version resource and AppUserModelID,
+  the taskbar jump list, the design fonts beside `zitter.exe`, popups as
+  frameless top-level windows (`LabViewsDelegate::OnBeforeWidgetInit`), the
+  Downloads folder, Safe Browsing with a configured key file, bundled Night
+  Shift and the startup browser import.
+- **Updates.** Installed copies use `WindowsUpdater` from
+  `chromium/app/updater_win.cc` (`updates_win.cc`). The interface language is
+  saved in `ContentInterfacePreferences.json`.
+- **Settings.** Browsing preferences (`browsing_preferences.cc`): referrers, Do
+  Not Track, images, JavaScript, link auditing, caret browsing, sound,
+  third-party cookies, HTTPS only, text sizes, fonts, site languages,
+  preconnect while typing an address, download prompts. App-wide: secure DNS
+  and hardware acceleration. Spelling uses the Windows spell checker
+  (`spelling_win.cc`).
+- **Site permissions.** `ProfilePermissionController` stores a default and
+  per-site rules for location, sensors, MIDI, speaker selection, idle
+  detection, local fonts, window management, keyboard lock, storage access,
+  captured surface control, automatic fullscreen, background sync, payment
+  handlers, local network access, XR, JavaScript JIT and optimizer, insecure
+  content and automatic downloads, and asks through the Zitter prompt.
+  WebUSB, WebHID, Web Serial (`usb_access.cc`, `hid_access.cc`,
+  `serial_access.cc`) and Web Bluetooth (`bluetooth_access.cc`) use a shared
+  device chooser (`device_chooser.cc`). File System Access has its own context
+  (`file_system_access.cc`).
+- **Not in Content.** Settings hide what Content does not have: installable web
+  apps, FedCM, automatic picture-in-picture, site protocol handlers, automatic
+  sign-in and enhanced (Google) spell check, plus the ChromeOS and Android
+  categories that desktop Chrome hides too.
+
+Package and check:
+
+```powershell
+python tools/verify_content_windows_bundle.py .chromium/src/out/ZitterWinContent --third-party-licenses build/license-audit/windows-content/THIRD_PARTY_LICENSES.txt --archive build/Zitter-content.zip
+python tools/package_win.py --out .chromium/src/out/ZitterWinContent --runtime-deps .chromium/src/out/ZitterWinContent/zitter_content.runtime_deps --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe --destination build/content-installer --third-party-licenses build/license-audit/windows-content/THIRD_PARTY_LICENSES.txt
+```
+
+The bundle verifier needs `llvm-readobj`; a fresh checkout has only the Linux
+one in `Release+Asserts_linux`, which runs through WSL. Do not fetch LLVM's
+`objdump` package into a built checkout: it replaces `Release+Asserts` and the
+re-downloaded clang rebuilds everything.
