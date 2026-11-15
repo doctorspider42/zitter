@@ -12,6 +12,10 @@
 #include "serial_access.h"
 #include "usb_access.h"
 #include "http_auth_prompt.h"
+#include "federated_identity.h"
+#include "page_password_manager.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
+#include "third_party/blink/public/mojom/credentialmanagement/credential_manager.mojom.h"
 
 #include "base/functional/callback_helpers.h"
 #include "base/memory/weak_ptr.h"
@@ -1121,6 +1125,7 @@ void LabBrowserClientBase::RegisterBrowserInterfaceBindersForFrame(
 #if BUILDFLAG(ENABLE_PRINTING) && BUILDFLAG(ENABLE_PDF)
   map->Add<mojom::ScriptedPrint>(base::BindRepeating(&BindScriptedPrint));
 #endif
+  map->Add<blink::mojom::CredentialManager>(base::BindRepeating(&BindPageCredentialManager));
 }
 
 void LabBrowserClientBase::RegisterAssociatedInterfaceBindersForRenderFrameHost(
@@ -1201,6 +1206,12 @@ content::BluetoothDelegate* LabBrowserClientBase::GetBluetoothDelegate() {
   if (!bluetooth_delegate_)
     bluetooth_delegate_ = std::make_unique<LabBluetoothDelegate>();
   return bluetooth_delegate_.get();
+}
+
+std::unique_ptr<content::IdentityRequestDialogController>
+LabBrowserClientBase::CreateIdentityRequestDialogController(
+    content::WebContents* web_contents) {
+  return CreateLabIdentityDialog(web_contents);
 }
 
 namespace {

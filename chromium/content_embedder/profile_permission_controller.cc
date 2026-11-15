@@ -22,6 +22,7 @@
 #include "content/public/browser/weak_document_ptr.h"
 #include "content/public/browser/web_contents.h"
 #include "extension_registry_probe.h"
+#include "federated_identity.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
@@ -215,11 +216,30 @@ void ProfilePermissionController::ClearSitePermissions(base::Time begin,
   clear(kExternalProtocolPrefs, kExternalProtocolRuleTimes);
   if (protocol_handlers_)
     protocol_handlers_->ClearUserDefinedHandlers(begin, end, /*save=*/true);
+  {
+    ScopedDictPrefUpdate federated(site_permission_prefs_.get(), kFederatedIdentity);
+    ClearFederatedSharingGrants(*federated, begin, end);
+  }
   site_permission_prefs_->CommitPendingWrite();
   for (const auto& key : clipboard)
     NotifyClipboardPermissionChanged(url::Origin::Create(GURL(key)));
   for (const auto& key : notifications)
     NotifyNotificationPermissionChanged(url::Origin::Create(GURL(key)));
+}
+
+const base::DictValue& ProfilePermissionController::FederatedIdentityState() const {
+  return CanClearSitePermissions() ? site_permission_prefs_->GetDict(kFederatedIdentity)
+                                   : session_federated_identity_;
+}
+
+void ProfilePermissionController::UpdateFederatedIdentityState(
+    base::FunctionRef<void(base::DictValue&)> update) {
+  if (!CanClearSitePermissions()) {
+    update(session_federated_identity_);
+    return;
+  }
+  ScopedDictPrefUpdate state(site_permission_prefs_.get(), kFederatedIdentity);
+  update(*state);
 }
 
 bool ProfilePermissionController::PromptByDefault(std::string_view key) const {
@@ -1028,6 +1048,9 @@ constexpr Category kSiteCategories[] = {
     // navigator.registerProtocolHandler(): a site asks, Settings offer block
     // or ask (Chrome's choices).
     {"protocol-handler", PermissionType::NUM, 3, true, false},
+    // FedCM ("Third-party sign-in"): allowed like Chrome; block turns the
+    // API off for the relying party.
+    {"webid-api", PermissionType::NUM, 1, false},
 };
 
 bool IsValidSiteSetting(const Category& category, int setting) {

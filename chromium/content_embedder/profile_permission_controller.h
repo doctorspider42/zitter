@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/callback_list.h"
+#include "base/functional/function_ref.h"
 #include "base/time/time.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
@@ -148,6 +149,13 @@ class ProfilePermissionController final
   custom_handlers::ProtocolHandlerRegistry* protocol_handlers() {
     return protocol_handlers_.get();
   }
+  // FedCM state kept with the site permissions: sharing grants per relying
+  // party, identity provider and account, identity provider sign-in status
+  // and embargo. Private profiles and unwritable preferences keep it for the
+  // session only.
+  static constexpr char kFederatedIdentity[] = "zitter.federated_identity";
+  const base::DictValue& FederatedIdentityState() const;
+  void UpdateFederatedIdentityState(base::FunctionRef<void(base::DictValue&)> update);
 
   // Profile browsing preferences from Settings (privacy, content and
   // readability, languages, downloads). Unknown keys and invalid values read
@@ -209,6 +217,7 @@ class ProfilePermissionController final
   content::PermissionResult SiteResult(const SiteCategory& category,
                                        const url::Origin& origin) const;
   base::DictValue private_clipboard_rules_;
+  base::DictValue session_federated_identity_;
   base::DictValue private_popup_rules_;
   bool private_popups_allowed_ = false;
   const raw_ref<content::BrowserContext> context_;

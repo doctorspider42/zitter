@@ -38,6 +38,7 @@ namespace zitter::prototype { class RssReader; }
 
 namespace zitter::content_embedder {
 
+class LabFederatedIdentity;
 class LabFileSystemAccess;
 
 class ProfileDownloadDelegate;
@@ -157,6 +158,10 @@ class ProfileContext final : public content::BrowserContext {
   PrefService* GetPasswordPrefs() const { return password_prefs_.get(); }
   std::optional<bool> GetPasswordSavingSetting() const;
   bool SetPasswordSavingSetting(bool enabled);
+  // Automatic sign-in through the Credential Management API, stored with the
+  // password settings; nullopt where they can't be edited.
+  std::optional<bool> GetAutoSignInSetting() const;
+  bool SetAutoSignInSetting(bool enabled);
 
   base::FilePath GetPath() const override;
   base::FilePath GetNetworkPath() const;
@@ -184,6 +189,12 @@ class ProfileContext final : public content::BrowserContext {
   content::BackgroundSyncController* GetBackgroundSyncController() override;
   content::BrowsingDataRemoverDelegate* GetBrowsingDataRemoverDelegate()
       override;
+  content::FederatedIdentityApiPermissionContextDelegate*
+  GetFederatedIdentityApiPermissionContext() override;
+  content::FederatedIdentityAutoReauthnPermissionContextDelegate*
+  GetFederatedIdentityAutoReauthnPermissionContext() override;
+  content::FederatedIdentityPermissionContextDelegate*
+  GetFederatedIdentityPermissionContext() override;
 
  private:
   class FingerprintPage;
@@ -212,6 +223,7 @@ class ProfileContext final : public content::BrowserContext {
   std::vector<uint8_t> download_probe_certificate_;
   std::unique_ptr<ProfilePermissionController> permissions_;
   std::unique_ptr<LabFileSystemAccess> file_system_access_;
+  std::unique_ptr<LabFederatedIdentity> federated_identity_;
   std::unique_ptr<content::PlatformNotificationService> notifications_;
   std::unique_ptr<PrefService> file_chooser_prefs_;
   std::unique_ptr<PrefService> page_zoom_prefs_;

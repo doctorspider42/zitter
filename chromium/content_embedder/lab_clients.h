@@ -179,6 +179,8 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   content::HidDelegate* GetHidDelegate() override;
   content::SerialDelegate* GetSerialDelegate() override;
   content::BluetoothDelegate* GetBluetoothDelegate() override;
+  std::unique_ptr<content::IdentityRequestDialogController>
+  CreateIdentityRequestDialogController(content::WebContents* web_contents) override;
   bool IsJitDisabledForSite(content::BrowserContext* browser_context,
                             const GURL& site_url) override;
   bool AreV8OptimizationsEnabledForSite(

@@ -21,11 +21,14 @@
 #if BUILDFLAG(IS_MAC)
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #endif
+#include "components/credential_management/content_credential_manager.h"
 #include "components/metrics/profile_metrics_service.h"
 #include "components/password_manager/content/browser/content_password_manager_driver_factory.h"
+#include "components/password_manager/core/browser/credential_manager_impl.h"
 #include "components/password_manager/core/browser/credentials_filter.h"
 #include "components/password_manager/core/browser/features/password_manager_features_util.h"
 #include "components/password_manager/core/browser/password_feature_manager.h"
+#include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_form_manager_for_ui.h"
 #include "components/password_manager/core/browser/password_manager.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
@@ -56,6 +59,7 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
+#include "account_chooser.h"
 #include "profile_context.h"
 
 namespace zitter::content_embedder {
@@ -96,12 +100,28 @@ class PagePasswordManager final
       public content::WebContentsObserver,
       public content::WebContentsUserData<PagePasswordManager> {
  public:
-  ~PagePasswordManager() override { DismissPrompt(); }
+  ~PagePasswordManager() override {
+    // Pending API callbacks must not outlive the pipe; see
+    // ChromePasswordManagerClient::WebContentsDestroyed().
+    credential_manager_.DisconnectBinding();
+    CloseCredentialChooser();
+    DismissPrompt();
+  }
 
   void ConfigurePrompt(std::u16string profile_label,
                        base::RepeatingCallback<gfx::Rect()> anchor) {
     profile_label_ = std::move(profile_label);
     anchor_ = std::move(anchor);
+  }
+
+  void ConfigureSignInNotice(base::RepeatingCallback<void(std::u16string)> notice) {
+    sign_in_notice_ = std::move(notice);
+  }
+
+  void BindCredentialManager(
+      content::RenderFrameHost* frame,
+      mojo::PendingReceiver<blink::mojom::CredentialManager> receiver) {
+    credential_manager_.BindRequest(frame, std::move(receiver));
   }
 
   views::Widget* prompt() const { return prompt_.get(); }
@@ -146,7 +166,9 @@ class PagePasswordManager final
     return !profile_label_.empty() && IsFillingEnabled(origin, url) &&
            profile_->GetPasswordSavingSetting().value_or(false);
   }
-  bool IsAutoSignInEnabled() const override { return false; }
+  bool IsAutoSignInEnabled() const override {
+    return GetPrefs()->GetBoolean(pm::prefs::kCredentialsEnableAutosignin);
+  }
 
   PrefService* GetPrefs() const override { return profile_->GetPasswordPrefs(); }
   PrefService* GetLocalStatePrefs() const override { return nullptr; }
@@ -295,13 +317,57 @@ class PagePasswordManager final
   void HideManualFallbackForSaving() override {}
   void FocusedInputChanged(pm::PasswordManagerDriver*, autofill::FieldRendererId,
                            autofill::mojom::FocusedFieldType) override {}
+  // navigator.credentials.get() with several credentials, with mediation
+  // "required" or with automatic sign-in off: the user picks one.
   bool PromptUserToChooseCredentials(
-      std::vector<std::unique_ptr<pm::PasswordForm>>, const url::Origin&,
-      CredentialsCallback) override {
-    return false;
+      std::vector<std::unique_ptr<pm::PasswordForm>> forms,
+      const url::Origin& origin, CredentialsCallback callback) override {
+    if (forms.empty() || origin.opaque() || !web_contents() ||
+        contents_->GetVisibility() != content::Visibility::VISIBLE) {
+      return false;
+    }
+    CloseCredentialChooser();
+    AccountChooser::Page page;
+    page.title = prototype::T(u"Wybierz konto");
+    page.message = prototype::TF(u"Zaloguj się w {} zapisanym kontem.",
+                                 {base::UTF8ToUTF16(origin.host())});
+    for (const auto& form : forms) {
+      AccountChooser::Account account;
+      account.name = DisplayText(form->display_name.empty() ? form->username_value
+                                                            : form->display_name);
+      if (!form->display_name.empty())
+        account.detail = DisplayText(form->username_value);
+      if (form->IsFederatedCredential()) {
+        const auto via = prototype::TF(
+            u"przez {}", {base::UTF8ToUTF16(form->federation_origin.host())});
+        account.detail = account.detail.empty() ? via : account.detail + u" " + via;
+      }
+      page.accounts.push_back(std::move(account));
+    }
+    page.accept = prototype::T(u"Zaloguj się");
+    page.cancel = prototype::T(u"Anuluj");
+    chooser_ = AccountChooser::Show(
+        *contents_, std::move(page), /*modal=*/true,
+        base::BindOnce(&PagePasswordManager::OnCredentialChosen,
+                       chooser_weak_.GetWeakPtr()));
+    if (!chooser_)
+      return false;
+    chooser_forms_ = std::move(forms);
+    chooser_callback_ = std::move(callback);
+    return true;
   }
-  void NotifyUserAutoSignin(std::vector<std::unique_ptr<pm::PasswordForm>>,
-                            const url::Origin&) override {}
+  void NotifyUserAutoSignin(std::vector<std::unique_ptr<pm::PasswordForm>> forms,
+                            const url::Origin&) override {
+    // The site signs in with the credential; the forms on its next pages are
+    // not offered for saving.
+    manager_.DropFormManagers();
+    if (!forms.empty() && sign_in_notice_ &&
+        contents_->GetVisibility() == content::Visibility::VISIBLE) {
+      const auto& form = *forms.front();
+      sign_in_notice_.Run(DisplayText(form.display_name.empty() ? form.username_value
+                                                                 : form.display_name));
+    }
+  }
   void NotifyUserCouldBeAutoSignedIn(std::unique_ptr<pm::PasswordForm>) override {}
   void NotifySuccessfulLoginWithExistingPassword(
       std::unique_ptr<pm::PasswordFormManagerForUI>) override {}
@@ -337,12 +403,43 @@ class PagePasswordManager final
         content::WebContentsUserData<PagePasswordManager>(*contents),
         contents_(*contents),
         profile_(profile),
-        manager_(this) {
+        manager_(this),
+        credential_manager_(std::make_unique<pm::CredentialManagerImpl>(this)) {
     saving_preference_.Init(GetPrefs());
     saving_preference_.Add(
         pm::prefs::kCredentialsEnableService,
         base::BindRepeating(&PagePasswordManager::OnSavingPreferenceChanged,
                             base::Unretained(this)));
+  }
+
+  static std::u16string DisplayText(const std::u16string& text) {
+    auto shown = base::CollapseWhitespace(text.substr(0, 128), false);
+    base::i18n::SanitizeUserSuppliedString(&shown);
+    return shown;
+  }
+
+  void OnCredentialChosen(AccountChooser::Answer answer, std::optional<size_t> index) {
+    chooser_.reset();
+    auto forms = std::move(chooser_forms_);
+    auto callback = std::move(chooser_callback_);
+    const pm::PasswordForm* form =
+        answer == AccountChooser::Answer::kAccepted && index && *index < forms.size()
+            ? forms[*index].get()
+            : nullptr;
+    if (callback)
+      std::move(callback).Run(form);
+    // As PasswordManagerClientHelper::OnCredentialsChosen(): the site signs
+    // in with the chosen credential, so its forms are not offered for saving.
+    if (form)
+      manager_.DropFormManagers();
+  }
+
+  void CloseCredentialChooser() {
+    chooser_weak_.InvalidateWeakPtrs();
+    chooser_.reset();
+    chooser_forms_.clear();
+    if (auto callback = std::move(chooser_callback_))
+      std::move(callback).Run(nullptr);
   }
 
   void OnSavingPreferenceChanged() {
@@ -400,12 +497,25 @@ class PagePasswordManager final
       DismissPrompt();
   }
 
-  void OnVisibilityChanged(content::Visibility visibility) override {
-    if (visibility != content::Visibility::VISIBLE)
-      DismissPrompt();
+  void PrimaryPageChanged(content::Page&) override {
+    // The API now serves the new page, which may be cross-origin: drop the
+    // old page's pipe and pending requests.
+    credential_manager_.DisconnectBinding();
+    CloseCredentialChooser();
   }
 
-  void WebContentsDestroyed() override { DismissPrompt(); }
+  void OnVisibilityChanged(content::Visibility visibility) override {
+    if (visibility != content::Visibility::VISIBLE) {
+      CloseCredentialChooser();
+      DismissPrompt();
+    }
+  }
+
+  void WebContentsDestroyed() override {
+    credential_manager_.DisconnectBinding();
+    CloseCredentialChooser();
+    DismissPrompt();
+  }
 
   content::NavigationEntry* Entry() const {
     return contents_->GetController().GetLastCommittedEntry();
@@ -417,6 +527,11 @@ class PagePasswordManager final
   metrics::ProfileMetricsService metrics_;
   pm::UndoPasswordChangeController undo_;
   pm::PasswordManager manager_;
+  credential_management::ContentCredentialManager credential_manager_;
+  std::unique_ptr<AccountChooser> chooser_;
+  std::vector<std::unique_ptr<pm::PasswordForm>> chooser_forms_;
+  CredentialsCallback chooser_callback_;
+  base::RepeatingCallback<void(std::u16string)> sign_in_notice_;
   std::u16string profile_label_;
   base::RepeatingCallback<gfx::Rect()> anchor_;
   std::unique_ptr<pm::PasswordFormManagerForUI> pending_form_;
@@ -426,6 +541,7 @@ class PagePasswordManager final
   std::unique_ptr<prototype::PanelScene> scene_;
   PrefChangeRegistrar saving_preference_;
   base::WeakPtrFactory<PagePasswordManager> prompt_weak_{this};
+  base::WeakPtrFactory<PagePasswordManager> chooser_weak_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
@@ -447,6 +563,20 @@ void ConfigurePagePasswordPrompt(content::WebContents& contents,
                                  base::RepeatingCallback<gfx::Rect()> anchor) {
   if (auto* client = PagePasswordManager::FromWebContents(&contents))
     client->ConfigurePrompt(std::move(profile_label), std::move(anchor));
+}
+
+void ConfigurePageSignInNotice(content::WebContents& contents,
+                               base::RepeatingCallback<void(std::u16string)> notice) {
+  if (auto* client = PagePasswordManager::FromWebContents(&contents))
+    client->ConfigureSignInNotice(std::move(notice));
+}
+
+void BindPageCredentialManager(
+    content::RenderFrameHost* frame,
+    mojo::PendingReceiver<blink::mojom::CredentialManager> receiver) {
+  auto* contents = content::WebContents::FromRenderFrameHost(frame);
+  if (auto* client = contents ? PagePasswordManager::FromWebContents(contents) : nullptr)
+    client->BindCredentialManager(frame, std::move(receiver));
 }
 
 views::Widget* GetPagePasswordPromptForTesting(content::WebContents& contents) {

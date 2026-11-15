@@ -1814,12 +1814,10 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
 #endif
   callbacks.private_mode = private_owner_ != nullptr;
   // Chrome features the Content browser does not have: installable web
-  // apps, FedCM sign-in and automatic picture-in-picture.
-  callbacks.hidden_site_categories = {"web-app-installation", "webid-api",
-                                      "auto-picture-in-picture"};
-  // Automatic sign-in needs the Credential Management API and enhanced
-  // spell check Google's spelling service; Content has neither.
-  callbacks.hidden_preferences = {"auto_signin", "online_spellcheck"};
+  // apps and automatic picture-in-picture.
+  callbacks.hidden_site_categories = {"web-app-installation", "auto-picture-in-picture"};
+  // Enhanced spell check needs Google's spelling service; Content has none.
+  callbacks.hidden_preferences = {"online_spellcheck"};
   if (!private_owner_ && IsManagedExtensionSession()) {
     for (const auto& context : contexts_) {
       for (const auto& extension : GetConfiguredExtensions(*context)) {
@@ -8511,6 +8509,8 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
   }
   if (const auto saving = profile.GetPasswordSavingSetting())
     settings["save_passwords"] = {.value = *saving, .editable = true};
+  if (const auto auto_signin = profile.GetAutoSignInSetting())
+    settings["auto_signin"] = {.value = *auto_signin, .editable = true};
   if (const auto protection = profile.GetFingerprintProtection())
     settings["fingerprint_protection"] = {.value = *protection,
                                           .editable = true};
@@ -8669,6 +8669,8 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
       AdblockLists()->Refresh(false);
     return builtin && warning;
   }
+  if (key == "auto_signin")
+    return profile.SetAutoSignInSetting(value == 1);
   return key == "save_passwords" && profile.SetPasswordSavingSetting(value == 1);
 }
 
@@ -9811,6 +9813,13 @@ void WorkspaceLab::AttachPageServices(content::WebContents& page,
           [](base::WeakPtr<WorkspaceLab> lab) {
             return lab ? lab->shell_->password_anchor_in_screen() : gfx::Rect();
           }, weak_factory_.GetWeakPtr()));
+  ConfigurePageSignInNotice(
+      page, base::BindRepeating(
+                [](base::WeakPtr<WorkspaceLab> lab, std::u16string account) {
+                  if (lab)
+                    lab->shell_->ShowToast(prototype::T(u"Logowanie jako "),
+                                           std::move(account), {});
+                }, weak_factory_.GetWeakPtr()));
   prototype::PageDialogs::Attach(
       &page, base::BindRepeating(
                 [](std::u16string label, content::BrowserContext*) { return label; },

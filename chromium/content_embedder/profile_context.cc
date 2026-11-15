@@ -5,6 +5,7 @@
 #include "chromium/prototype/rss_reader.h"
 
 #include "extension_registry_probe.h"
+#include "federated_identity.h"
 
 #include <algorithm>
 #include <iterator>
@@ -1461,6 +1462,7 @@ void RegisterSitePermissionPreferences(user_prefs::PrefRegistrySyncable& registr
   registry.RegisterDictionaryPref(Permissions::kPopupRuleTimes);
   registry.RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
   registry.RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
+  registry.RegisterDictionaryPref(Permissions::kFederatedIdentity);
   registry.RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
   custom_handlers::ProtocolHandlerRegistry::RegisterProfilePrefs(&registry);
 }
@@ -1757,6 +1759,11 @@ ProfileContext::ProfileContext(
   password_prefs_->SetDefaultPrefValue(
       pm::prefs::kCredentialsEnableService,
       base::Value(password_saving_default.value_or(false)));
+  // Chrome holds automatic sign-in back until a first-run bubble explains it.
+  // Zitter has no such bubble: the "auto_signin" setting (on by default, as
+  // in Chrome) is the opt-in.
+  password_prefs_->SetDefaultPrefValue(
+      pm::prefs::kWasAutoSignInFirstRunExperienceShown, base::Value(true));
   password_privacy_registrar_ = std::make_unique<PrefChangeRegistrar>();
   password_privacy_registrar_->Init(password_prefs_.get());
   password_privacy_registrar_->Add(pm::prefs::kCredentialsEnableService, base::BindRepeating(
@@ -1953,6 +1960,20 @@ bool ProfileContext::SetPasswordSavingSetting(bool enabled) {
   if (!GetPasswordSavingSetting().has_value())
     return false;
   password_prefs_->SetBoolean(pm::prefs::kCredentialsEnableService, enabled);
+  password_prefs_->CommitPendingWrite();
+  return true;
+}
+
+std::optional<bool> ProfileContext::GetAutoSignInSetting() const {
+  if (!GetPasswordSavingSetting().has_value())
+    return std::nullopt;
+  return password_prefs_->GetBoolean(pm::prefs::kCredentialsEnableAutosignin);
+}
+
+bool ProfileContext::SetAutoSignInSetting(bool enabled) {
+  if (!GetPasswordSavingSetting().has_value())
+    return false;
+  password_prefs_->SetBoolean(pm::prefs::kCredentialsEnableAutosignin, enabled);
   password_prefs_->CommitPendingWrite();
   return true;
 }
@@ -2182,6 +2203,25 @@ ProfileContext::GetFileSystemAccessPermissionContext() {
   if (!file_system_access_)
     file_system_access_ = std::make_unique<LabFileSystemAccess>(*this);
   return file_system_access_.get();
+}
+
+content::FederatedIdentityApiPermissionContextDelegate*
+ProfileContext::GetFederatedIdentityApiPermissionContext() {
+  if (!federated_identity_)
+    federated_identity_ = std::make_unique<LabFederatedIdentity>(*this);
+  return federated_identity_.get();
+}
+
+content::FederatedIdentityAutoReauthnPermissionContextDelegate*
+ProfileContext::GetFederatedIdentityAutoReauthnPermissionContext() {
+  GetFederatedIdentityApiPermissionContext();
+  return federated_identity_.get();
+}
+
+content::FederatedIdentityPermissionContextDelegate*
+ProfileContext::GetFederatedIdentityPermissionContext() {
+  GetFederatedIdentityApiPermissionContext();
+  return federated_identity_.get();
 }
 
 content::ReduceAcceptLanguageControllerDelegate*
