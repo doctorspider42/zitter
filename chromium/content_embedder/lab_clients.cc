@@ -1202,10 +1202,18 @@ void LabBrowserClientBase::WillCreateURLLoaderFactory(
   }
 }
 
+void LabRendererClient::PostSandboxInitialized() {
+  // Windows renderers lower their token after RenderThreadImpl exists.
+  CHECK(sandbox::policy::Sandbox::IsProcessSandboxed());
+}
+
 void LabRendererClient::RenderThreadStarted() {
   CHECK(!base::CommandLine::ForCurrentProcess()->HasSwitch(
       sandbox::policy::switches::kNoSandbox));
+#if !BUILDFLAG(IS_WIN)
+  // macOS applies the Seatbelt profile before the renderer thread starts.
   CHECK(sandbox::policy::Sandbox::IsProcessSandboxed());
+#endif
   if (IsWorkspaceExtensionRuntime()) {
     InitializeLabExtensionsClient();
     static base::NoDestructor<LabExtensionsRendererClient> client;

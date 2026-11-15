@@ -192,6 +192,7 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
 class LabRendererClient final : public content::ContentRendererClient {
  public:
   void RenderThreadStarted() override;
+  void PostSandboxInitialized() override;
   void WebViewCreated(blink::WebView* view,
                       bool was_created_by_renderer,
                       const url::Origin* outermost_origin) override;
