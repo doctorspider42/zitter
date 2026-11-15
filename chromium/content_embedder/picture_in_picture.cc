@@ -294,7 +294,13 @@ class FramelessWidget final : public views::Widget {
         hover_.Run(true);
         break;
       case ui::EventType::kMouseExited:
-        hover_.Run(false);
+        // Windows also reports an exit when the pointer moves between the
+        // draggable (non-client) area and a control; only leaving the window
+        // hides the controls.
+        if (!GetWindowBoundsInScreen().Contains(
+                display::Screen::Get()->GetCursorScreenPoint())) {
+          hover_.Run(false);
+        }
         break;
       default:
         break;
