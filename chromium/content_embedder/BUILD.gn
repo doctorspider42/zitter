@@ -334,6 +334,12 @@ repack("resources") {
         [ "$root_gen_dir/components/strings/components_strings_en-US.pak" ]
     deps += [ "//components/strings:components_strings_grit" ]
   }
+  if (!is_mac) {
+    # Views frames on Windows (DefaultFrameView) draw bitmaps from here.
+    sources +=
+        [ "$root_gen_dir/ui/views/resources/views_resources_100_percent.pak" ]
+    deps += [ "//ui/views/resources" ]
+  }
 }
 
 if (is_mac) {
