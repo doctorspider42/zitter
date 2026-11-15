@@ -1294,10 +1294,13 @@ class WorkspaceWebView final : public LabWebView {
     image_preview_->Hover(url);
   }
 
+ public:
   // Settings > Magic image preview, read on each hover.
   void SetImagePreviews(base::RepeatingCallback<bool()> enabled) {
     image_previews_ = std::move(enabled);
   }
+
+ private:
 
   bool PreHandleMouseEvent(content::WebContents* source,
                            const blink::WebMouseEvent& event) override {
@@ -8318,6 +8321,19 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     settings["assistant_web"] = {
         .value = assistant_settings_ && assistant_settings_->defaults.web,
         .editable = enabled && CanEditWorkspace()};
+    settings["assistant_background"] = {
+        .value = !assistant_settings_ || assistant_settings_->background,
+        .editable = enabled && CanEditWorkspace()};
+    settings["assistant_confirm_background"] = {
+        .value = !assistant_settings_ || assistant_settings_->confirm_background,
+        .editable = enabled && CanEditWorkspace()};
+    constexpr auto kConcurrency = std::to_array({2, 4, 8, 12});
+    const auto concurrency = std::ranges::find(
+        kConcurrency, assistant_settings_ ? assistant_settings_->concurrency : 12);
+    settings["assistant_concurrency"] = {
+        .value = concurrency == kConcurrency.end()
+                     ? 3 : static_cast<int>(concurrency - kConcurrency.begin()),
+        .editable = enabled && CanEditWorkspace()};
   }
   {
     auto& browsing = profile.site_permissions();
@@ -8456,6 +8472,18 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
     dns_mode_ = value;
     ApplySecureDns();
     PersistWorkspaceChanges();
+    return true;
+  }
+  if (key == "assistant_concurrency") {
+    constexpr auto kConcurrency = std::to_array({2, 4, 8, 12});
+    if (!CanConfigureAssistant() || !CanEditWorkspace() || !assistant_settings_ ||
+        !assistant_settings_->enabled || value < 0 ||
+        value >= static_cast<int>(kConcurrency.size())) {
+      return false;
+    }
+    auto settings = *assistant_settings_;
+    settings.concurrency = kConcurrency[value];
+    StoreAssistantSettings(std::move(settings));
     return true;
   }
   if (key == "font_size" || key == "fixed_font_size" || key == "minimum_font_size") {

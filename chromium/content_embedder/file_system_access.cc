@@ -286,7 +286,8 @@ bool LabFileSystemAccess::IsFileTypeDangerous(const base::FilePath& path) {
       "scr",  "sh",        "url",         "vb",  "vbe",  "vbs",   "website", "ws",
       "wsc",  "wsf",       "wsh",         "pkg", "dmg",  "terminal", "workflow",
   });
-  const auto extension = base::ToLowerASCII(path.FinalExtension());
+  const std::string extension =
+      base::ToLowerASCII(base::FilePath(path.FinalExtension()).AsUTF8Unsafe());
   return extension.size() > 1 &&
          std::ranges::contains(kDangerous, std::string_view(extension).substr(1));
 }

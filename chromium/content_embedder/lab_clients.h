@@ -179,6 +179,10 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   void OverrideWebPreferences(content::WebContents* web_contents,
                               content::SiteInstance& main_frame_site,
                               blink::web_pref::WebPreferences* prefs) override;
+  bool OverrideWebPreferencesAfterNavigation(
+      content::WebContents* web_contents,
+      content::SiteInstance& main_frame_site,
+      blink::web_pref::WebPreferences* prefs) override;
   void RegisterBrowserInterfaceBindersForFrame(
       content::RenderFrameHost* frame,
       mojo::BinderMapWithContext<content::RenderFrameHost*>* map) override;

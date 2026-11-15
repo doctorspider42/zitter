@@ -1205,10 +1205,24 @@ void LabBrowserClientBase::OverrideWebPreferences(
   auto& permissions =
       static_cast<ProfileContext*>(web_contents->GetBrowserContext())->site_permissions();
   ApplyBrowsingWebPreferences(permissions, *prefs);
-  const auto site = main_frame_site.GetSiteURL();
+  const auto origin = web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin();
   prefs->allow_running_insecure_content =
-      site.is_valid() &&
-      permissions.SiteSetting("mixed-script", url::Origin::Create(site)) == 1;
+      !origin.opaque() && permissions.SiteSetting("mixed-script", origin) == 1;
+}
+
+bool LabBrowserClientBase::OverrideWebPreferencesAfterNavigation(
+    content::WebContents* web_contents,
+    content::SiteInstance&,
+    blink::web_pref::WebPreferences* prefs) {
+  // Insecure content is allowed per site, so it follows each navigation.
+  const bool before = prefs->allow_running_insecure_content;
+  const auto origin = web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin();
+  prefs->allow_running_insecure_content =
+      !origin.opaque() &&
+      static_cast<ProfileContext*>(web_contents->GetBrowserContext())
+              ->site_permissions()
+              .SiteSetting("mixed-script", origin) == 1;
+  return before != prefs->allow_running_insecure_content;
 }
 
 network::mojom::IPAddressSpace LabBrowserClientBase::DetermineAddressSpaceFromURL(

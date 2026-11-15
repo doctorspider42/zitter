@@ -616,6 +616,14 @@ class WorkspaceLab final : private WorkspaceRuntime,
                         base::OnceCallback<void(base::Value)> done);
   void WithAssistantApiKey(base::OnceCallback<void(std::string)>) override;
   bool AssistantStartBackground(const std::string&, const std::string&, const GURL&) override;
+  // Hidden pages the Assistant works on in the background, by session key.
+  struct AssistantBackgroundPage {
+    std::unique_ptr<content::WebContents> page;
+    base::ScopedClosureRunner rendering;
+    size_t workspace = 0;
+  };
+  std::map<std::string, AssistantBackgroundPage> assistant_background_;
+  bool IsAssistantBackgroundPage(const content::WebContents* page) const;
   bool AssistantHasBackground(const std::string&) const override;
   bool AssistantTakeOver(const std::string&) override;
   void AssistantDiscardBackground(const std::string&) override;

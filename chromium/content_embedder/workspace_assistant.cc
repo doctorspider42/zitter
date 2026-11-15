@@ -221,7 +221,8 @@ void WorkspaceLab::UpdateAssistantHostSettings() {
   const bool enabled = CanConfigureAssistant() && assistant_settings_ &&
       assistant_settings_->enabled && !assistant_host_settings_.PanelModels().empty();
   assistant_host_settings_.enabled = enabled;
-  assistant_host_settings_.background = false;
+  assistant_host_settings_.background =
+      assistant_settings_ && assistant_settings_->background && CanEditWorkspace();
   shell_->SetAssistantAllowed(enabled);
   if (assistant_toolbar_button_)
     assistant_toolbar_button_->SetVisible(CanConfigureAssistant() && assistant_settings_ &&
@@ -305,11 +306,16 @@ bool WorkspaceLab::WriteAssistantPreference(std::string_view key, bool value) {
   if (!assistant_settings_ || !assistant_settings_->enabled ||
       (key != "assistant_tabs" && key != "assistant_pages" &&
        key != "assistant_actions" && key != "assistant_history" &&
-       key != "assistant_confirm_clicks" &&
-       key != "assistant_web")) {
+       key != "assistant_confirm_clicks" && key != "assistant_background" &&
+       key != "assistant_confirm_background" && key != "assistant_web")) {
     return false;
   }
   auto settings = *assistant_settings_;
+  if (key == "assistant_background" || key == "assistant_confirm_background") {
+    (key == "assistant_background" ? settings.background : settings.confirm_background) = value;
+    StoreAssistantSettings(std::move(settings));
+    return true;
+  }
   if (key == "assistant_tabs")
     settings.defaults.tabs = value;
   else if (key == "assistant_pages")
@@ -942,7 +948,20 @@ void WorkspaceLab::AssistantTool(
       return;
     }
   }
-  if (profile_id.empty() || !background.empty() ||
+  content::WebContents* background_page = nullptr;
+  if (!background.empty()) {
+    const auto found = assistant_background_.find(background);
+    if (found == assistant_background_.end() || !assistant_host_settings_.background) {
+      std::move(done).Run(AssistantToolError("The background page is unavailable."));
+      return;
+    }
+    background_page = found->second.page.get();
+    if (workspace_action || history || (tab_action && !navigate)) {
+      std::move(done).Run(AssistantToolError("This tool works on visible tabs only."));
+      return;
+    }
+  }
+  if (profile_id.empty() ||
       (tool != "list_tabs" && tool != "read_page" && tool != "click" &&
        !edit && !key && !screenshot && !adblock && !adblock_rules &&
        !debug && !tab_action && !history &&
@@ -1008,6 +1027,49 @@ void WorkspaceLab::AssistantTool(
       std::move(done).Run(AssistantToolError("Only HTTP(S) URLs without credentials are allowed."));
       return;
     }
+  }
+  if (background_page) {
+    auto* page = background_page;
+    if (navigate) {
+      page->GetController().LoadURL(destination, content::Referrer(),
+                                    ui::PAGE_TRANSITION_TYPED, {});
+      std::move(done).Run(base::Value(base::DictValue().Set("ok", true).Set(
+          "detail", "Loading in the background page; read it to check the result.")));
+      return;
+    }
+    if (adblock_rules) {
+      RunAssistantAdblockRules(page, args, user_confirmed, std::move(done));
+      return;
+    }
+    if (debug) {
+      RunAssistantDebugTool(page, tool, args, user_confirmed, std::move(done));
+      return;
+    }
+    if (tool == "click") {
+      ClickAssistantTab(page, args, permissions, user_confirmed, std::move(done));
+      return;
+    }
+    if (key) {
+      PressAssistantPageKey(page, args, permissions, user_confirmed, std::move(done));
+      return;
+    }
+    if (edit) {
+      EditAssistantPage(page, tool, args, std::move(done));
+      return;
+    }
+    if (tool == "list_tabs") {
+      std::move(done).Run(base::Value(AssistantContext(permissions)));
+      return;
+    }
+    const size_t workspace = assistant_background_[background].workspace;
+    InspectAssistantTab(page->GetWeakPtr(),
+                        model_.workspaces()[std::min(workspace, model_.workspaces().size() - 1)].id,
+                        screenshot ? AssistantInspection::kScreenshot
+                        : adblock  ? AssistantInspection::kAdblock
+                                   : AssistantInspection::kPage,
+                        assistant_provider_generation_,
+                        base::TimeTicks::Now() + base::Seconds(20), std::move(done));
+    return;
   }
   if (open) {
     if (!SelectAssistantWorkspace(active_index_) ||
@@ -1974,8 +2036,12 @@ bool WorkspaceLab::CanInspectAssistantTab(content::WebContents* page,
 }
 
 bool WorkspaceLab::CanActOnAssistantPage(content::WebContents* page) const {
-  if (!page || page != web_contents() || PeekPage() || !CanEditWorkspace() ||
-      !widget_->IsVisible() || page->GetVisibility() == content::Visibility::HIDDEN ||
+  // Background pages are hidden on purpose; visible ones must be the
+  // selected page in a shown window.
+  const bool background = IsAssistantBackgroundPage(page);
+  if (!page || !CanEditWorkspace() ||
+      (!background && (page != web_contents() || PeekPage() || !widget_->IsVisible() ||
+                       page->GetVisibility() == content::Visibility::HIDDEN)) ||
       (permission_prompt_widget_ && permission_prompt_widget_->IsVisible()) ||
       page->IsLoading() || page->IsCrashed() ||
       page->GetBrowserContext() != AssistantBrowserContext() ||
@@ -2306,20 +2372,81 @@ void WorkspaceLab::WithAssistantApiKey(
       }, weak_factory_.GetWeakPtr(), assistant_settings_->encrypted_api_key, std::move(done)));
 }
 
-bool WorkspaceLab::AssistantStartBackground(
-    const std::string&, const std::string&, const GURL&) {
-  return false;
+bool WorkspaceLab::AssistantStartBackground(const std::string& key,
+                                            const std::string& from_tab,
+                                            const GURL& url) {
+  auto* profile = AssistantBrowserContext();
+  if (!profile || profile->IsOffTheRecord() || key.empty() || !widget_ ||
+      assistant_background_.contains(key) || !assistant_host_settings_.background ||
+      !CanEditWorkspace()) {
+    return false;
+  }
+  // The background page starts from a tab's address or the given one; the
+  // tab itself stays where the user left it.
+  GURL start = url;
+  if (!from_tab.empty()) {
+    const auto position = FindAssistantTab(from_tab);
+    if (!position)
+      return false;
+    start = GURL(AssistantTabUrl(tabs_[position->first][position->second]));
+  }
+  content::WebContents::CreateParams params(profile);
+  params.initially_hidden = true;
+  auto page = content::WebContents::Create(params);
+  AttachPageServices(*page, active_index_);
+  // Hidden, but sized like the page area so layout and visibility checks hold.
+  page->Resize(gfx::Rect(shell_->content_host()->size()));
+  AssistantBackgroundPage entry;
+  entry.rendering = page->IncrementCapturerCount(gfx::Size(), /*stay_hidden=*/true,
+                                                 /*stay_awake=*/true, /*is_activity=*/false);
+  entry.workspace = active_index_;
+  if (start.SchemeIsHTTPOrHTTPS() && !start.has_username() && !start.has_password())
+    page->GetController().LoadURL(start, content::Referrer(), ui::PAGE_TRANSITION_TYPED, {});
+  entry.page = std::move(page);
+  assistant_background_[key] = std::move(entry);
+  RefreshShell();
+  return true;
 }
 
-bool WorkspaceLab::AssistantHasBackground(const std::string&) const {
-  return false;
+bool WorkspaceLab::AssistantHasBackground(const std::string& key) const {
+  return assistant_background_.contains(key);
 }
 
-bool WorkspaceLab::AssistantTakeOver(const std::string&) {
-  return false;
+bool WorkspaceLab::IsAssistantBackgroundPage(const content::WebContents* page) const {
+  return page && std::ranges::any_of(assistant_background_, [&](const auto& entry) {
+           return entry.second.page.get() == page;
+         });
 }
 
-void WorkspaceLab::AssistantDiscardBackground(const std::string&) {}
+bool WorkspaceLab::AssistantTakeOver(const std::string& key) {
+  auto found = assistant_background_.find(key);
+  if (found == assistant_background_.end() || !CanEditWorkspace())
+    return false;
+  const size_t workspace =
+      found->second.workspace < tabs_.size() ? found->second.workspace : active_index_;
+  if (WorkspaceProfile(workspace) != found->second.page->GetBrowserContext() ||
+      tabs_[workspace].size() >= prototype::kMaxWorkspaceSessionTabs ||
+      !SelectAssistantWorkspace(workspace)) {
+    return false;
+  }
+  auto entry = std::move(found->second);
+  assistant_background_.erase(found);
+  entry.rendering.RunAndReset();
+  AddTab(workspace);
+  auto& tab = tabs_[workspace].back();
+  auto* adopted = entry.page.get();
+  tab.view->SetOwnedWebContents(std::move(entry.page));
+  SetWorkspaceExtensionTabPage(tab.extension_tab.get(), adopted);
+  SelectTab(tabs_[workspace].size() - 1);
+  RefreshShell();
+  PersistWorkspaceChanges();
+  return true;
+}
+
+void WorkspaceLab::AssistantDiscardBackground(const std::string& key) {
+  if (assistant_background_.erase(key))
+    RefreshShell();
+}
 
 void WorkspaceLab::AssistantElementBounds(
     std::string target, std::string element,
