@@ -632,6 +632,7 @@ if (is_mac) {
                 "password_authenticator_win.cc",
                 "password_authenticator_win.h",
                 "spelling_win.cc",
+                "zitter_content_win.rc",
               ]
     include_dirs = lab_includes
     deps = lab_deps + [

@@ -16,6 +16,10 @@
 #include <utility>
 #include <vector>
 
+#include "build/build_config.h"
+#if BUILDFLAG(IS_WIN)
+#include "base/win/windows_types.h"
+#endif
 #include "base/callback_list.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
@@ -148,6 +152,7 @@ class LabViewsDelegate final : public views::ViewsDelegate {
   // classic DefaultFrameView inside the parent window.
   void OnBeforeWidgetInit(views::Widget::InitParams* params,
                           views::internal::NativeWidgetDelegate* delegate) override;
+  HICON GetDefaultWindowIcon() const override;
 #endif
 };
 
@@ -273,6 +278,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
                          base::OnceClosure action,
                          base::OnceClosure cancelled = {});
   void SelectWorkspace(std::string id);
+  // A command from another zitter_content.exe or the taskbar jump list:
+  // "url:<http(s) URL>", "space:<id>", "new_tab" or "palette".
+  bool RunExternalCommand(std::string command);
   std::vector<prototype::PaletteResult> WorkspaceCommandResults(
       std::u16string query) const;
   void ActivateWorkspaceCommand(prototype::PaletteResult result);
@@ -1133,6 +1141,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   };
   bool shift_click_peek_ = true;
   bool clean_address_copies_ = true;
+#if BUILDFLAG(IS_WIN)
+  std::vector<std::pair<std::string, std::string>> jump_list_spaces_;
+#endif
   // App-wide: GPU use (applied at the next start) and secure DNS.
   bool hardware_acceleration_ = true;
   int dns_mode_ = 0;

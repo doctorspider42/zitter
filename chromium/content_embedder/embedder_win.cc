@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <shobjidl.h>
 
 #include <array>
 #include <cstdio>
@@ -32,6 +33,8 @@
 #include "base/values.h"
 #include "base/win/dark_mode_support.h"
 #include "base/win/win_util.h"
+#include "chromium/app/windows_channel.h"
+#include "chromium/prototype/jump_list_win.h"
 #include "chromium/prototype/workspace_urls.h"
 #include "components/prefs/pref_service.h"
 #include "components/services/quarantine/quarantine_impl.h"
@@ -245,6 +248,11 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
             prototype::ExternalOpenArgument(base::FilePath(arg)));
       workspace_->Start(base::BindOnce(
           &WindowsLabMainParts::FinishWorkspace, weak_factory_.GetWeakPtr()));
+      if (const auto command = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+              prototype::kZitterCommandSwitch);
+          !command.empty() && command != "focus") {
+        workspace_->RunExternalCommand(command);
+      }
     } else if (download_probe_) {
       download_probe_->Start(*web_contents(), quit_);
     }
@@ -603,16 +611,47 @@ void WindowsLabUtilityClient::RegisterMainThreadServices(
       });
 }
 
+// Explorer, a shortcut, the jump list or another app's link: at most the
+// jump list's --zitter-command and HTTP(S) or local page arguments.
+bool IsOrdinaryLaunch(const base::CommandLine& command) {
+  for (const auto& [name, value] : command.GetSwitches()) {
+    if (name != prototype::kZitterCommandSwitch && name != "single-argument")
+      return false;
+  }
+  const auto args = command.GetArgs();
+  return args.size() <= 32 && std::ranges::all_of(args, [](const auto& arg) {
+    const auto value = base::WideToUTF8(arg);
+    return value.starts_with("http://") || value.starts_with("https://") ||
+           prototype::IsLocalHtmlUrl(prototype::ExternalOpenArgument(base::FilePath(arg)));
+  });
+}
+
+base::FilePath OrdinaryWorkspaceRoot() {
+  base::FilePath app_data;
+  if (!base::PathService::Get(base::DIR_LOCAL_APP_DATA, &app_data))
+    return {};
+  return app_data.AppendASCII("Zitter Content");
+}
+
+// Hands the launch to a running Zitter for the same executable and profile
+// directory, as Chrome's process singleton does. A plain launch asks it to
+// come to the front.
+bool ForwardToRunningWorkspace(const base::CommandLine& command,
+                               const base::FilePath& root) {
+  base::CommandLine forward(command);
+  forward.AppendSwitchPath(windows::kUserDataDirSwitch, root);
+  if (forward.GetArgs().empty() && !forward.HasSwitch(prototype::kZitterCommandSwitch))
+    forward.AppendSwitchASCII(prototype::kZitterCommandSwitch, "focus");
+  return prototype::ForwardCommandToRunningZitter(forward);
+}
+
 // A plain launch (no switches or arguments, as from Explorer or a shortcut)
 // opens the user's durable Workspace in %LOCALAPPDATA%\Zitter Content, as
 // macOS opens its Application Support root. The first launch writes the
 // DPAPI layout marker into the new, empty directory.
 bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
-  base::FilePath app_data;
-  if (!base::PathService::Get(base::DIR_LOCAL_APP_DATA, &app_data))
-    return false;
-  const auto root = app_data.AppendASCII("Zitter Content");
-  if (base::IsLink(root) || !base::CreateDirectory(root))
+  const auto root = OrdinaryWorkspaceRoot();
+  if (root.empty() || base::IsLink(root) || !base::CreateDirectory(root))
     return false;
   if (base::IsDirectoryEmpty(root)) {
     base::File marker(root.AppendASCII("ContentWorkspaceLayout"),
@@ -641,10 +680,14 @@ class WindowsLabMainDelegate final : public content::ContentMainDelegate {
  public:
   std::optional<int> BasicStartupComplete() override {
     auto& command = *base::CommandLine::ForCurrentProcess();
-    if (command.GetSwitches().empty() && command.GetArgs().empty() &&
-        !PrepareOrdinaryWorkspace(command)) {
-      WriteStderr("Could not open the Zitter Content profile directory\n");
-      return 1;
+    if (IsOrdinaryLaunch(command)) {
+      const auto root = OrdinaryWorkspaceRoot();
+      if (!root.empty() && ForwardToRunningWorkspace(command, root))
+        return 0;
+      if (!PrepareOrdinaryWorkspace(command)) {
+        WriteStderr("Could not open the Zitter Content profile directory\n");
+        return 1;
+      }
     }
     return CheckLabStartupFlags();
   }
@@ -684,6 +727,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
   base::win::PinUser32();
   base::win::AllowDarkModeForApp(true);
   base::CommandLine::Init(0, nullptr);
+  // The taskbar groups Zitter's windows, pins and jump list under this ID;
+  // the installer's shortcuts carry the same one.
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kProcessType))
+    ::SetCurrentProcessExplicitAppUserModelID(zitter::windows::kAppId);
 
   sandbox::SandboxInterfaceInfo sandbox_info = {};
   content::InitializeSandboxInfo(&sandbox_info);

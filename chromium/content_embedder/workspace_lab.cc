@@ -207,6 +207,7 @@
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #if BUILDFLAG(IS_WIN)
+#include "chromium/prototype/jump_list_win.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #endif
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
@@ -1500,6 +1501,11 @@ void LabViewsDelegate::OnBeforeWidgetInit(
   if (desktop || (!params->parent && !params->context && !params->child))
     params->native_widget = new views::DesktopNativeWidgetAura(delegate);
 }
+
+HICON LabViewsDelegate::GetDefaultWindowIcon() const {
+  // zitter_content_win.rc's first icon group.
+  return ::LoadIconW(::GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+}
 #endif
 
 struct WorkspaceLab::PrivateSession {
@@ -2214,6 +2220,19 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   prototype::ConfigureWorkspaceNativeWidget(widget_.get(), params, {});
 #endif
   widget_->Init(std::move(params));
+#if BUILDFLAG(IS_WIN)
+  if (!private_owner_ && !session_path_.empty()) {
+    prototype::SetWorkspaceCommandHandler(
+        widget_.get(),
+        base::BindRepeating(
+            [](base::WeakPtr<WorkspaceLab> lab, std::string command) {
+              if (lab)
+                lab->RunExternalCommand(std::move(command));
+            },
+            weak),
+        session_path_.DirName());
+  }
+#endif
   fullscreen_observation_.Observe(widget_.get());
   media_access_ = std::make_unique<WorkspaceMediaAccess>(
       *widget_, base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
@@ -10971,9 +10990,50 @@ void WorkspaceLab::RefreshExtensionActionAppearance() {
   }
 }
 
+bool WorkspaceLab::RunExternalCommand(std::string command) {
+  if (!widget_ || private_owner_)
+    return false;
+  const GURL url(command.starts_with("url:") ? command.substr(4) : "");
+  const bool url_command = url.is_valid() && url.SchemeIsHTTPOrHTTPS();
+  if (!url_command && !command.starts_with("space:") && command != "new_tab" &&
+      command != "palette" && command != "focus") {
+    return false;
+  }
+  if (widget_->IsMinimized())
+    widget_->Restore();
+  widget_->Activate();
+  if (command == "focus")
+    return true;
+  if (url_command) {
+    OpenExternalUrl(url);
+    return true;
+  }
+  if (command.starts_with("space:")) {
+    if (!WorkspaceIndex(command.substr(6)))
+      return false;
+    SelectWorkspace(command.substr(6));
+    return true;
+  }
+  return RunShortcut(command);
+}
+
 void WorkspaceLab::RefreshShell() {
   if (!web_contents() || !model_.active())
     return;
+#if BUILDFLAG(IS_WIN)
+  if (!private_owner_ && !session_path_.empty()) {
+    std::vector<std::pair<std::string, std::string>> listed;
+    for (const auto& workspace : model_.workspaces())
+      listed.emplace_back(workspace.id, workspace.name);
+    if (listed != jump_list_spaces_) {
+      jump_list_spaces_ = listed;
+      std::vector<prototype::JumpListSpace> spaces;
+      for (const auto& [id, name] : listed)
+        spaces.push_back({id, base::UTF8ToUTF16(name)});
+      prototype::UpdateJumpList(std::move(spaces));
+    }
+  }
+#endif
   if (web_store_install_button_) {
     auto* frame = web_contents()->GetPrimaryMainFrame();
     web_store_install_button_->SetVisible(

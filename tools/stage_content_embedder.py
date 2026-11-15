@@ -449,6 +449,7 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
         if source.is_file() and source.name != "presentation_root.gn":
             copy(source, lab_root / source.name)
     copy(ROOT / "assets/icon/Zitter.icns", lab_root / "Zitter.icns")
+    copy(ROOT / "chromium/app/zitter.ico", lab_root / "zitter.ico")
     # Reuse Chromium's renderer hooks and function signatures without linking
     # the Chrome renderer target or exposing the rest of the tabs namespace.
     def pinned_source(relative_path):
