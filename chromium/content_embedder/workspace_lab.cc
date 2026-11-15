@@ -146,6 +146,7 @@
 #include "net/base/schemeful_site.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/constants.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "chromium/prototype/image_link_preview.h"
 #include "base/i18n/rtl.h"
 #include "components/language/core/browser/pref_names.h"
