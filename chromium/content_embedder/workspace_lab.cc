@@ -197,6 +197,9 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/mojom/dialog_button.mojom.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#if BUILDFLAG(IS_WIN)
+#include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
+#endif
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/label_button.h"
@@ -1462,6 +1465,27 @@ bool IsPageOpeningURL(const GURL& url) {
 #if BUILDFLAG(IS_MAC)
 ui::ContextFactory* LabViewsDelegate::GetContextFactory() {
   return content::GetContextFactory();
+}
+#elif BUILDFLAG(IS_WIN)
+void LabViewsDelegate::OnBeforeWidgetInit(
+    views::Widget::InitParams* params,
+    views::internal::NativeWidgetDelegate* delegate) {
+  if (params->opacity == views::Widget::InitParams::WindowOpacity::kInferred)
+    params->opacity = views::Widget::InitParams::WindowOpacity::kOpaque;
+  if (params->native_widget)
+    return;
+  // Mirrors ChromeViewsDelegate::CreateNativeWidget on Windows.
+  bool desktop = !(params->parent && params->child &&
+                   !params->force_software_compositing &&
+                   params->type != views::Widget::InitParams::TYPE_TOOLTIP);
+  if (params->parent && params->type != views::Widget::InitParams::TYPE_CONTROL &&
+      params->type != views::Widget::InitParams::TYPE_WINDOW) {
+    desktop = true;
+  }
+  if (params->delegate && params->delegate->use_desktop_widget_override())
+    desktop = true;
+  if (desktop || (!params->parent && !params->context && !params->child))
+    params->native_widget = new views::DesktopNativeWidgetAura(delegate);
 }
 #endif
 

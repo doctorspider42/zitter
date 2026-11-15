@@ -141,6 +141,13 @@ class LabViewsDelegate final : public views::ViewsDelegate {
 #if BUILDFLAG(IS_MAC)
  public:
   ui::ContextFactory* GetContextFactory() override;
+#elif BUILDFLAG(IS_WIN)
+ public:
+  // Gives bubbles and other parented popups their own top-level window, as
+  // Chrome does, so they get a frameless native frame instead of views'
+  // classic DefaultFrameView inside the parent window.
+  void OnBeforeWidgetInit(views::Widget::InitParams* params,
+                          views::internal::NativeWidgetDelegate* delegate) override;
 #endif
 };
 

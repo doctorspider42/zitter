@@ -602,9 +602,44 @@ void WindowsLabUtilityClient::RegisterMainThreadServices(
       });
 }
 
+// A plain launch (no switches or arguments, as from Explorer or a shortcut)
+// opens the user's durable Workspace in %LOCALAPPDATA%\Zitter Content, as
+// macOS opens its Application Support root. The first launch writes the
+// DPAPI layout marker into the new, empty directory.
+bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
+  base::FilePath app_data;
+  if (!base::PathService::Get(base::DIR_LOCAL_APP_DATA, &app_data))
+    return false;
+  const auto root = app_data.AppendASCII("Zitter Content");
+  if (base::IsLink(root) || !base::CreateDirectory(root))
+    return false;
+  if (base::IsDirectoryEmpty(root)) {
+    base::File marker(root.AppendASCII("ContentWorkspaceLayout"),
+                      base::File::FLAG_CREATE | base::File::FLAG_WRITE);
+    constexpr std::string_view layout = "zitter-content-workspace-v1 windows-dpapi\n";
+    if (!marker.IsValid() || !marker.WriteAtCurrentPosAndCheck(base::as_byte_span(layout)))
+      return false;
+  }
+  if (!IsPreparedContentWorkspace(root, "windows-dpapi"))
+    return false;
+  command.AppendSwitch(kWorkspaceLab);
+  command.AppendSwitchPath(kWorkspaceRoot, root);
+  command.AppendSwitch(kOpenPreparedWorkspace);
+  // Register extension schemes before Content initializes them; the switch
+  // also reaches child processes for the renderer bindings.
+  command.AppendSwitch(kRestoreWorkspaceExtensions);
+  return true;
+}
+
 class WindowsLabMainDelegate final : public content::ContentMainDelegate {
  public:
   std::optional<int> BasicStartupComplete() override {
+    auto& command = *base::CommandLine::ForCurrentProcess();
+    if (command.GetSwitches().empty() && command.GetArgs().empty() &&
+        !PrepareOrdinaryWorkspace(command)) {
+      WriteStderr("Could not open the Zitter Content profile directory\n");
+      return 1;
+    }
     return CheckLabStartupFlags();
   }
 
