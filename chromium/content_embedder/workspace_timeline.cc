@@ -15,6 +15,7 @@
 #include "base/strings/string_util.h"
 #include "base/uuid.h"
 #include "chromium/prototype/workspace_session.h"
+#include "chromium/prototype/workspace_urls.h"
 #include "workspace_session_store.h"
 
 namespace zitter::content_embedder {
@@ -74,7 +75,10 @@ bool LoadLine(sidebar::Timeline& timeline, std::string_view text,
     const auto& spec = (*pair)[0].GetString();
     const auto& title = (*pair)[1].GetString();
     const GURL url(spec);
-    if (url.is_empty() || !CanRestoreWorkspaceURL(url) || spec.size() > 32768 ||
+    // Settings tabs are part of the session (see RecordClosedTab).
+    if (url.is_empty() ||
+        (!CanRestoreWorkspaceURL(url) && !prototype::IsSettingsTabUrl(url)) ||
+        spec.size() > 32768 ||
         title.size() > 32768) {
       return false;
     }
