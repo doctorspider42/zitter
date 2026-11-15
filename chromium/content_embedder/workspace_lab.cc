@@ -11271,9 +11271,21 @@ void WorkspaceLab::CheckFingerprintPopup(
       Finish(false);
       return;
     }
+    const auto popup_page = page->GetWeakPtr();
+    const bool popup_beforeunload = page->NeedToFireBeforeUnload();
     CloseTab(popup - tabs.begin());
     if (web_contents() != opener.get()) {
-      LOG(ERROR) << "The fingerprint popup did not return focus to its opener";
+      LOG(ERROR) << "The fingerprint popup did not return focus to its opener"
+                 << " (tabs " << tabs_[active_index_].size() << ", selected "
+                 << selected_[active_index_] << ", popup open "
+                 << (popup_page && TabForPage(popup_page.get()).has_value())
+                 << ", editable " << CanEditWorkspace() << ", beforeunload "
+                 << popup_beforeunload << ", opener at "
+                 << (TabForPage(opener.get()) ? TabForPage(opener.get())->second : 99)
+                 << ", splits " << splits_[active_index_].tabs.size()
+                 << ", observed tab "
+                 << (TabForPage(web_contents()) ? TabForPage(web_contents())->second : 99)
+                 << ")";
       Finish(false);
       return;
     }
