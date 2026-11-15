@@ -141,6 +141,12 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "zitter_content/fingerprint_state.mojom.h"
 #include "browsing_preferences.h"
+#include "base/i18n/rtl.h"
+#include "components/language/core/browser/pref_names.h"
+#include "components/prefs/json_pref_store.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/pref_service_factory.h"
 #include "content/public/browser/network_service_instance.h"
 #include "net/dns/public/dns_over_https_config.h"
 #include "net/dns/public/insecure_dns_mode.h"
@@ -1690,8 +1696,25 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     layout_provider_ = std::make_unique<views::LayoutProvider>();
   if (!views::ViewsDelegate::GetInstance())
     views_delegate_ = std::make_unique<LabViewsDelegate>();
+#if BUILDFLAG(IS_WIN)
+  // Settings > Interface language: a small app-wide store beside the
+  // session, read before the shell builds its text.
+  if (!private_owner_ && !session_path_.empty()) {
+    auto registry = base::MakeRefCounted<PrefRegistrySimple>();
+    registry->RegisterStringPref(language::prefs::kApplicationLocale, std::string());
+    PrefServiceFactory factory;
+    factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(
+        session_path_.DirName().AppendASCII("ContentInterfacePreferences.json")));
+    ui_preferences_ = factory.Create(registry);
+  }
+  prototype::ApplyUiLanguage(base::i18n::GetConfiguredLocale(), ui_preferences_.get());
+#else
   prototype::ApplyUiLanguage("en-US");
+#endif
   prototype::WorkspaceShell::Callbacks callbacks;
+#if BUILDFLAG(IS_WIN)
+  callbacks.locale_preferences = ui_preferences_.get();
+#endif
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   if (!private_owner_) {
     callbacks.read_spelling = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {

@@ -690,6 +690,7 @@ if (is_mac) {
              "//build/win:default_exe_manifest",
              "//components/os_crypt/async/browser",
              "//components/os_crypt/async/browser:dpapi_key_provider",
+             "//components/language/core/browser",
              "//components/pref_registry",
              "//components/prefs",
              "//components/services/quarantine",

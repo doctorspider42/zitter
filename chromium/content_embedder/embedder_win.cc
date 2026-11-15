@@ -216,7 +216,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         return 1;
       }
       if (g_ordinary_launch) {
-        base::ScopedAllowBlocking allow_startup_io;
+        base::ScopedAllowBlockingForTesting allow_startup_io;
         // Bundled Night Shift, as macOS configures it from its Resources.
         base::FilePath exe_dir;
         if (!base::PathService::Get(base::DIR_EXE, &exe_dir) ||

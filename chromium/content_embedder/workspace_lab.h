@@ -108,6 +108,8 @@ class Extension;
 class PermissionSet;
 }  // namespace extensions
 
+class PrefService;
+
 namespace zitter::content_embedder {
 
 inline constexpr char kInteractiveImportProbe[] =
@@ -1143,6 +1145,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool clean_address_copies_ = true;
 #if BUILDFLAG(IS_WIN)
   std::vector<std::pair<std::string, std::string>> jump_list_spaces_;
+  std::unique_ptr<PrefService> ui_preferences_;
 #endif
   // App-wide: GPU use (applied at the next start) and secure DNS.
   bool hardware_acceleration_ = true;
