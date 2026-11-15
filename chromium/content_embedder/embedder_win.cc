@@ -650,5 +650,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
   content::ContentMainParams params(&delegate);
   params.instance = instance;
   params.sandbox_info = &sandbox_info;
-  return content::ContentMain(std::move(params));
+  const int exit_code = content::ContentMain(std::move(params));
+  // An early startup failure returns while pool threads still run; CRT
+  // teardown then races them (a DNS hosts read crashed in fopen). End the
+  // process now, as Chrome does for utility processes, after flushing output.
+  std::fflush(nullptr);
+  base::Process::TerminateCurrentProcessImmediately(exit_code);
 }
