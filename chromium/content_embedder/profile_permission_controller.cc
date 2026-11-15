@@ -854,6 +854,7 @@ constexpr BrowsingFlagSpec kBrowsingFlags[] = {
     {"link_auditing", true},    {"caret_browsing", false},
     {"sound", true},            {"third_party_cookies", false},
     {"https_only", false},      {"download_prompt", false},
+    {"preconnect", true},
 };
 struct BrowsingNumberSpec {
   std::string_view key;

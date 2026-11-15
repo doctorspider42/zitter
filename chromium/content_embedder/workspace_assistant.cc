@@ -2413,9 +2413,13 @@ bool WorkspaceLab::AssistantHasBackground(const std::string& key) const {
 }
 
 bool WorkspaceLab::IsAssistantBackgroundPage(const content::WebContents* page) const {
-  return page && std::ranges::any_of(assistant_background_, [&](const auto& entry) {
-           return entry.second.page.get() == page;
-         });
+  if (!page)
+    return false;
+  for (const auto& [key, entry] : assistant_background_) {
+    if (entry.page.get() == page)
+      return true;
+  }
+  return false;
 }
 
 bool WorkspaceLab::AssistantTakeOver(const std::string& key) {

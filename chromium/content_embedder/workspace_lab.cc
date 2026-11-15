@@ -142,6 +142,10 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "zitter_content/fingerprint_state.mojom.h"
 #include "browsing_preferences.h"
+#include "net/base/network_anonymization_key.h"
+#include "net/base/schemeful_site.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/constants.h"
 #include "chromium/prototype/image_link_preview.h"
 #include "base/i18n/rtl.h"
 #include "components/language/core/browser/pref_names.h"
@@ -1491,6 +1495,21 @@ GURL WorkspaceDocumentURL(content::WebContents& page) {
 // Settings picker rows for text sizes, in pixels (as in workspace_window.cc).
 constexpr std::array kFontSizes = {12, 14, 16, 18, 20, 24};
 constexpr std::array kMinimumFontSizes = {0, 10, 12, 14, 16, 18};
+
+constexpr net::NetworkTrafficAnnotationTag kAddressPreconnectAnnotation =
+    net::DefineNetworkTrafficAnnotation("zitter_address_preconnect", R"(
+      semantics {
+        sender: "Zitter address bar"
+        description: "Opens a connection to the site being typed in the address bar."
+        trigger: "Typing an address while Settings > Preconnect to sites is on."
+        data: "None; only the connection is set up."
+        destination: WEBSITE
+      }
+      policy {
+        cookies_allowed: NO
+        setting: "Settings > Privacy > Preconnect to sites."
+        policy_exception_justification: "Not implemented."
+      })");
 
 bool IsPageOpeningURL(const GURL& url) {
   return url.is_empty() || url == GURL("about:blank") ||
@@ -6288,7 +6307,41 @@ bool WorkspaceLab::OpenHistory() {
   return true;
 }
 
+void WorkspaceLab::SchedulePreconnect(const std::u16string& query) {
+  preconnect_timer_.Stop();
+  if (private_owner_ || !model_.active())
+    return;
+  auto& profile = *WorkspaceProfile(active_index_);
+  if (profile.IsOffTheRecord() || !profile.site_permissions().BrowsingFlag("preconnect"))
+    return;
+  // The same classifier as Enter; a search provider's query never connects.
+  std::u16string provider;
+  const GURL url = shell_->ResolveInput(base::UTF16ToUTF8(query), &provider);
+  if (!provider.empty() || !url.is_valid() || !url.SchemeIsHTTPOrHTTPS() ||
+      url.has_username() || url.has_password()) {
+    return;
+  }
+  const auto origin = url::Origin::Create(url);
+  preconnect_timer_.Start(
+      FROM_HERE, base::Milliseconds(200),
+      base::BindOnce(
+          [](base::WeakPtr<WorkspaceLab> lab, url::Origin origin) {
+            if (!lab || !lab->model_.active())
+              return;
+            auto& profile = *lab->WorkspaceProfile(lab->active_index_);
+            const auto site = net::SchemefulSite(origin);
+            profile.GetDefaultStoragePartition()->GetNetworkContext()->PreconnectSockets(
+                /*num_streams=*/1, origin.GetURL(), network::mojom::CredentialsMode::kInclude,
+                net::NetworkAnonymizationKey::CreateSameSite(site),
+                network::GetNoOpNetworkRestrictionsId(),
+                net::MutableNetworkTrafficAnnotationTag(kAddressPreconnectAnnotation),
+                /*keepalive_config=*/std::nullopt, mojo::NullRemote());
+          },
+          weak_factory_.GetWeakPtr(), origin));
+}
+
 void WorkspaceLab::SearchAddress(std::u16string query) {
+  SchedulePreconnect(query);
   address_history_tasks_.TryCancelAll();
   const auto profile_id = model_.active()->profile_id;
   auto* service = query.starts_with(u">") ||
@@ -8340,7 +8393,8 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     const bool editable = CanEditWorkspace() && browsing.CanClearSitePermissions();
     for (const auto* key : {"referrers", "do_not_track", "images", "javascript",
                             "link_auditing", "caret_browsing", "sound",
-                            "third_party_cookies", "https_only", "download_prompt"}) {
+                            "third_party_cookies", "https_only", "download_prompt",
+                            "preconnect"}) {
       settings[key] = {.value = browsing.BrowsingFlag(key), .editable = editable};
     }
     auto index = [](const auto& values, int value) {

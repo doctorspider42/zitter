@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/functional/callback_helpers.h"
 #include "build/build_config.h"
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_types.h"
@@ -1161,6 +1162,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   // App-wide: GPU use (applied at the next start) and secure DNS.
   bool hardware_acceleration_ = true;
   bool image_link_previews_ = false;
+  base::OneShotTimer preconnect_timer_;
+  void SchedulePreconnect(const std::u16string& query);
   int dns_mode_ = 0;
   std::string dns_templates_;
   void ApplySecureDns();
