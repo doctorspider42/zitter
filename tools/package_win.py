@@ -3,6 +3,7 @@
 """Package zitter.exe and what it loads at run time for Windows.
 
   python tools/package_win.py [--out .chromium/src/out/ZitterWin] [--setup PATH]
+  python tools/package_win.py --out .chromium/src/out/ZitterWinContent       --runtime-deps .chromium/src/out/ZitterWinContent/zitter_content.runtime_deps       --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe
 
 Writes build/Zitter-<version>-win-x64-portable.zip and, given the installer's
 zitter_setup.exe, build/Zitter-<version>-win-x64-setup.exe: the installer with
@@ -114,6 +115,9 @@ def main():
     parser.add_argument("--out", type=Path, default=SRC / "out/ZitterWin")
     parser.add_argument("--setup", type=Path, help="zitter_setup.exe; adds the installer to the output")
     parser.add_argument("--destination", type=Path, default=ROOT / "build")
+    parser.add_argument("--runtime-deps", type=Path,
+                        help="a runtime_deps file to package instead of //zitter:zitter's, "
+                             "e.g. the Content build's zitter_content.runtime_deps")
     parser.add_argument("--third-party-licenses", type=Path,
                         help="THIRD_PARTY_LICENSES.txt from tools/audit_licenses.py, shipped beside zitter.exe")
     args = parser.parse_args()
@@ -126,7 +130,11 @@ def main():
         parser.error("Zitter Dev requires a standalone zitter_setup.exe")
     if args.setup and product_name(args.setup) != product:
         parser.error("zitter.exe and zitter_setup.exe have different product names")
-    files = select_files(runtime_deps(out))
+    if args.runtime_deps:
+        deps = args.runtime_deps.read_text(encoding="utf-8-sig").splitlines()
+    else:
+        deps = runtime_deps(out)
+    files = select_files(deps)
     extras = package_notices(args.third_party_licenses)
     args.destination.mkdir(parents=True, exist_ok=True)
     stem = f"{product.replace(' ', '-')}-{version()}-win-x64"

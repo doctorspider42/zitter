@@ -2615,7 +2615,7 @@ def verify_extension_choice(executable, root, origin, server, extension_id, prof
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter_content.exe")
+    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     probe = parser.add_mutually_exclusive_group()
     probe.add_argument("--assistant-settings", action="store_true")
     probe.add_argument("--history-panel", action="store_true")

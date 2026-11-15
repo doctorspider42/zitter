@@ -172,7 +172,7 @@ def verify_dpapi_migration(legacy, content, node):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("legacy", type=Path, help="Portable stable Chrome-backed zitter.exe")
-    parser.add_argument("content", type=Path, help="Relocated zitter_content.exe")
+    parser.add_argument("content", type=Path, help="Relocated Content zitter.exe")
     parser.add_argument("--node", type=Path, help="Node.js executable with WebSocket support")
     args = parser.parse_args()
     if os.name != "nt":

@@ -147,7 +147,7 @@ def main():
             with zipfile.ZipFile(app) as archive:
                 archive.extractall(unpacked)
             app = next(Path(unpacked).iterdir())
-        windows = any((app / name).is_file() for name in ('zitter.exe', 'zitter_content.exe'))
+        windows = (app / 'zitter.exe').is_file()
         files, binaries = inventory(app)
     target = args.target or (WINDOWS_TARGET if windows else '//zitter_optimized:zitter_optimized')
     # Main, framework, helpers and all bundled dylibs (including dlopen-only

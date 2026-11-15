@@ -419,8 +419,8 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
 
     files = {
         path.relative_to(ROOT): path
-        for directory in ("chromium/assistant", "chromium/night_shift", "chromium/prototype",
-                          "chromium/renderer", "zitter")
+        for directory in ("chromium/assistant", "chromium/installer", "chromium/night_shift",
+                          "chromium/prototype", "chromium/renderer", "zitter")
         for path in (ROOT / directory).rglob("*")
         if path.is_file()
     }
@@ -436,6 +436,15 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
         "chromium/app/network_policy_features.inc",
         "chromium/app/updater_mac.cc",
         "chromium/app/updater_mac.h",
+        "chromium/app/zitter.ico",
+        "chromium/app/zitter-dev.ico",
+        "assets/fonts/InstrumentSerif-Italic.ttf",
+        "assets/fonts/InstrumentSerif-Regular.ttf",
+        "assets/fonts/JetBrainsMono-Variable.ttf",
+        "assets/fonts/SchibstedGrotesk-Italic-Variable.ttf",
+        "assets/fonts/SchibstedGrotesk-Variable.ttf",
+        "chromium/app/updater_win.cc",
+        "chromium/app/updater_win.h",
         "chromium/app/windows_channel.h",
         "tests/fixtures/assistant_cli.cc",
         "third_party/brave_clean_urls/clean-urls.json",
@@ -450,6 +459,8 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
             copy(source, lab_root / source.name)
     copy(ROOT / "assets/icon/Zitter.icns", lab_root / "Zitter.icns")
     copy(ROOT / "chromium/app/zitter.ico", lab_root / "zitter.ico")
+    for font in (ROOT / "assets/fonts").glob("*.ttf"):
+        copy(font, lab_root / "fonts" / font.name)
     # Reuse Chromium's renderer hooks and function signatures without linking
     # the Chrome renderer target or exposing the rest of the tabs namespace.
     def pinned_source(relative_path):

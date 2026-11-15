@@ -81,7 +81,7 @@ setInterval(() => {{
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter_content.exe")
+    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     args = parser.parse_args()
     executable = args.app if os.name == "nt" else args.app / "Contents/MacOS/Zitter Content Lab"
     executable = executable.resolve()

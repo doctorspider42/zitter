@@ -130,7 +130,7 @@ def write_fixture(root, public_key=None, *, expect_legacy_storage=False, initial
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter_content.exe")
+    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     app = parser.parse_args().app
     executable = app if os.name == "nt" else app / "Contents/MacOS/Zitter Content Lab"
     executable = executable.resolve()

@@ -17,6 +17,7 @@
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
@@ -33,6 +34,7 @@
 #include "base/values.h"
 #include "base/win/dark_mode_support.h"
 #include "base/win/win_util.h"
+#include "chromium/app/updater_win.h"
 #include "chromium/app/windows_channel.h"
 #include "chromium/prototype/jump_list_win.h"
 #include "chromium/prototype/workspace_urls.h"
@@ -40,6 +42,7 @@
 #include "components/services/quarantine/quarantine_impl.h"
 #include "content/public/app/content_main.h"
 #include "content/public/common/content_switches.h"
+#include "ui/gfx/win/direct_write.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/app/sandbox_helper_win.h"
 #include "content/public/browser/browser_main_parts.h"
@@ -77,6 +80,7 @@
 #include "profile_context.h"
 #include "profile_permission_controller.h"
 #include "workspace_lab.h"
+#include "updates_win.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
 
@@ -253,12 +257,28 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
           !command.empty() && command != "focus") {
         workspace_->RunExternalCommand(command);
       }
+      if (g_ordinary_launch) {
+        updates_ = std::make_unique<WindowsContentUpdates>(
+            *workspace_->shell(),
+            base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(kWorkspaceRoot),
+            base::BindRepeating(
+                [](base::WeakPtr<WindowsLabMainParts> self) {
+                  if (self && self->workspace_)
+                    self->workspace_->RequestClose();
+                },
+                weak_factory_.GetWeakPtr()));
+        if (!updates_->Attach())
+          updates_.reset();
+      }
     } else if (download_probe_) {
       download_probe_->Start(*web_contents(), quit_);
     }
   }
 
   void PostMainMessageLoopRun() override {
+    if (updates_)
+      updates_->InstallOnExit();
+    updates_.reset();
     download_probe_.reset();
     Observe(nullptr);
     workspace_.reset();
@@ -536,6 +556,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
   std::vector<base::FilePath> workspace_extension_profiles_;
   std::vector<std::unique_ptr<ProfileContext>> additional_profiles_;
   std::unique_ptr<DownloadProbe> download_probe_;
+  std::unique_ptr<WindowsContentUpdates> updates_;
   std::unique_ptr<WorkspaceLab> workspace_;
   std::unique_ptr<views::WidgetDelegate> delegate_;
   std::unique_ptr<views::Widget> widget_;
@@ -611,6 +632,9 @@ void WindowsLabUtilityClient::RegisterMainThreadServices(
       });
 }
 
+// Set for the user's ordinary Workspace, which gets automatic updates.
+bool g_ordinary_launch = false;
+
 // Explorer, a shortcut, the jump list or another app's link: at most the
 // jump list's --zitter-command and HTTP(S) or local page arguments.
 bool IsOrdinaryLaunch(const base::CommandLine& command) {
@@ -673,6 +697,7 @@ bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
   // Register extension schemes before Content initializes them; the switch
   // also reaches child processes for the renderer bindings.
   command.AppendSwitch(kRestoreWorkspaceExtensions);
+  g_ordinary_launch = true;
   return true;
 }
 
@@ -680,6 +705,18 @@ class WindowsLabMainDelegate final : public content::ContentMainDelegate {
  public:
   std::optional<int> BasicStartupComplete() override {
     auto& command = *base::CommandLine::ForCurrentProcess();
+    if (!command.HasSwitch(switches::kProcessType)) {
+      // The design fonts beside zitter.exe (BUILD.gn: design_fonts_win) join
+      // the browser's DirectWrite collection before gfx creates it, as
+      // chromium/app/main.cc does. Web pages never see them.
+      base::FilePath exe_dir;
+      if (base::PathService::Get(base::DIR_EXE, &exe_dir)) {
+        base::FileEnumerator fonts(exe_dir.AppendASCII("Fonts"), false,
+                                   base::FileEnumerator::FILES, FILE_PATH_LITERAL("*.ttf"));
+        for (auto path = fonts.Next(); !path.empty(); path = fonts.Next())
+          gfx::win::SideLoadFontForTesting(path);
+      }
+    }
     if (IsOrdinaryLaunch(command)) {
       const auto root = OrdinaryWorkspaceRoot();
       if (!root.empty() && ForwardToRunningWorkspace(command, root))
@@ -727,6 +764,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
   base::win::PinUser32();
   base::win::AllowDarkModeForApp(true);
   base::CommandLine::Init(0, nullptr);
+  // The short-lived process that installs a downloaded update after exit.
+  if (const auto update = zitter::RunWindowsUpdateHelper())
+    return *update;
   // The taskbar groups Zitter's windows, pins and jump list under this ID;
   // the installer's shortcuts carry the same one.
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kProcessType))

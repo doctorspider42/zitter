@@ -254,7 +254,7 @@ def verify_workspace(executable, root, url, theme, renderer, server):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter_content.exe")
+    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     parser.add_argument("--workspace", action="store_true")
     parser.add_argument("--cross-process-frame", action="store_true")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")

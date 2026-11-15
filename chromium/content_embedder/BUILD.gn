@@ -7,6 +7,9 @@ import("//third_party/icu/config.gni")
 import("//tools/grit/repack.gni")
 import("//tools/v8_context_snapshot/v8_context_snapshot.gni")
 import("//v8/gni/v8.gni")
+if (is_win) {
+  import("//build/config/win/manifest.gni")
+}
 if (is_mac) {
   import("//build/apple/tweak_info_plist.gni")
   import("//build/config/mac/rules.gni")
@@ -621,8 +624,50 @@ if (is_mac) {
         [ "$root_out_dir/resources/night_shift/vendor/{{source_file_part}}" ]
   }
 
+  windows_manifest("setup_manifest") {
+    sources = [ "//zitter/chromium/installer/setup.manifest" ]
+  }
+
+  # Zitter's installer and uninstaller (chromium/installer), built beside the
+  # Content zitter.exe; tools/package_win.py appends the app to it.
+  executable("zitter_setup") {
+    sources = [
+      "//zitter/chromium/installer/setup.rc",
+      "//zitter/chromium/installer/setup_accessibility.cc",
+      "//zitter/chromium/installer/setup_accessibility.h",
+      "//zitter/chromium/installer/setup_install.cc",
+      "//zitter/chromium/installer/setup_install.h",
+      "//zitter/chromium/installer/setup_main.cc",
+      "//zitter/chromium/installer/setup_runtime.cc",
+      "//zitter/chromium/installer/setup_runtime.h",
+      "//zitter/chromium/installer/setup_resource.h",
+      "//zitter/chromium/installer/setup_text.h",
+    ]
+    include_dirs = [ "//zitter" ]
+    configs -= [ "//build/config/win:console" ]
+    configs += [ "//build/config/win:windowed" ]
+    deps = [ ":setup_manifest", "//third_party/zlib:minizip" ]
+    libs = [ "d2d1.lib", "dwmapi.lib", "dwrite.lib", "ole32.lib", "oleaut32.lib",
+             "propsys.lib", "shell32.lib", "advapi32.lib", "uiautomationcore.lib" ]
+  }
+
+  # The design fonts beside zitter.exe; embedder_win.cc adds them to the
+  # browser's DirectWrite collection, as chromium/app/main.cc does.
+  copy("design_fonts_win") {
+    sources = [
+      "fonts/InstrumentSerif-Italic.ttf",
+      "fonts/InstrumentSerif-Regular.ttf",
+      "fonts/JetBrainsMono-Variable.ttf",
+      "fonts/SchibstedGrotesk-Italic-Variable.ttf",
+      "fonts/SchibstedGrotesk-Variable.ttf",
+    ]
+    outputs = [ "$root_out_dir/Fonts/{{source_file_part}}" ]
+  }
+
   executable("lab_app_win") {
-    output_name = "zitter_content"
+    # zitter.exe, as the Chrome-based Windows build: the installer, browser
+    # registration, shortcuts and the updater's installation check use it.
+    output_name = "zitter"
     write_runtime_deps = "$root_out_dir/zitter_content.runtime_deps"
     sources = lab_sources + [
                 "cookie_encryption_win.cc",
@@ -632,7 +677,11 @@ if (is_mac) {
                 "password_authenticator_win.cc",
                 "password_authenticator_win.h",
                 "spelling_win.cc",
+                "updates_win.cc",
+                "updates_win.h",
                 "zitter_content_win.rc",
+                "//zitter/chromium/app/updater_win.cc",
+                "//zitter/chromium/app/updater_win.h",
               ]
     include_dirs = lab_includes
     deps = lab_deps + [
@@ -650,6 +699,7 @@ if (is_mac) {
              "//zitter:devtools_console",
            ]
     data_deps = [
+      ":design_fonts_win",
       ":night_shift_resources",
       ":night_shift_vendor_resources",
       ":resources",
@@ -674,6 +724,7 @@ if (is_mac) {
     libs = [
       "advapi32.lib",
       "credui.lib",
+      "winhttp.lib",
       "ole32.lib",
       "secur32.lib",
       "shell32.lib",
@@ -687,7 +738,7 @@ group("zitter_content") {
   if (is_mac) {
     deps = [ ":lab_app" ]
   } else {
-    deps = [ ":lab_app_win" ]
+    deps = [ ":lab_app_win", ":zitter_setup" ]
   }
   assert_no_deps = [
     "//chrome:*",

@@ -11,7 +11,7 @@ with mock.patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "
     import verify_content_windows_bundle as bundle
 
 
-REQUIRED = "./zitter_content.exe\n./zitter_content.pak\n./zitter_assistant.exe\nicudtl.dat\n"
+REQUIRED = "./zitter.exe\n./zitter_content.pak\n./zitter_assistant.exe\nicudtl.dat\n"
 PE_HEADER = "  Machine: IMAGE_FILE_MACHINE_AMD64 (0x8664)\nImageOptionalHeader {\n}\n"
 
 
@@ -26,7 +26,7 @@ class WindowsContentBundleTest(unittest.TestCase):
         )
         self.assertEqual(bundle.select_runtime_files(manifest), [
             "icudtl.dat", "libEGL.dll", "locales/en-US.pak",
-            "zitter_assistant.exe", "zitter_content.exe", "zitter_content.pak",
+            "zitter_assistant.exe", "zitter.exe", "zitter_content.pak",
         ])
 
     def test_manifest_requires_packaged_assistant(self):
@@ -94,9 +94,9 @@ class WindowsContentBundleTest(unittest.TestCase):
             (system32 / "vcruntime140.dll").touch()
             with mock.patch.object(bundle.subprocess, "run", return_value=mock.Mock(stdout=output)):
                 with self.assertRaisesRegex(ValueError, "DLL outside the package"):
-                    bundle.validate_imports(root, ["zitter_content.exe"], "llvm-readobj", system32)
+                    bundle.validate_imports(root, ["zitter.exe"], "llvm-readobj", system32)
                 bundle.validate_imports(
-                    root, ["zitter_content.exe", "vcruntime140.dll"], "llvm-readobj", system32,
+                    root, ["zitter.exe", "vcruntime140.dll"], "llvm-readobj", system32,
                 )
 
     def test_swiftshader_must_resolve_to_packaged_sibling(self):

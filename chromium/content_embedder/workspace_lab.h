@@ -205,6 +205,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
              base::OnceClosure quit_from_app_for_testing = {});
   void RequestClose();
   void OpenExternalUrl(GURL url);
+  // A command from another zitter.exe or the taskbar jump list:
+  // "url:<http(s) URL>", "space:<id>", "new_tab", "palette" or "focus".
+  bool RunExternalCommand(std::string command);
   void SetApplicationVersion(std::string version);
   prototype::WorkspaceShell* shell() const override;
   base::span<const raw_ptr<ProfileContext>> profiles_for_shutdown() const {
@@ -278,9 +281,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
                          base::OnceClosure action,
                          base::OnceClosure cancelled = {});
   void SelectWorkspace(std::string id);
-  // A command from another zitter_content.exe or the taskbar jump list:
-  // "url:<http(s) URL>", "space:<id>", "new_tab" or "palette".
-  bool RunExternalCommand(std::string command);
   std::vector<prototype::PaletteResult> WorkspaceCommandResults(
       std::u16string query) const;
   void ActivateWorkspaceCommand(prototype::PaletteResult result);

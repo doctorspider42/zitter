@@ -945,7 +945,7 @@ def digest(path):
 
 def check_existing(destination):
     if not destination.exists():
-        return
+        return {}
     marker = destination / MARKER
     if not marker.is_file():
         raise ValueError(f"Refusing to replace an unowned directory: {destination}")
@@ -960,6 +960,7 @@ def check_existing(destination):
     for name, expected in hashes.items():
         if digest(destination / name) != expected:
             raise ValueError(f"Overlay has local modifications: {name}")
+    return hashes
 
 
 def install(checkout, dry_run=False):
@@ -1020,7 +1021,7 @@ def install(checkout, dry_run=False):
     extension_tabs_patched = {path: patch_extension_tabs(text, part) for (part, _), (path, text)
                               in zip(EXTENSION_TABS_FILES.items(), extension_tabs.items())}
     destination = checkout / "zitter"
-    check_existing(destination)
+    previous_hashes = check_existing(destination)
     files = overlay_files()
     print(f"Chromium revision: {revision}")
     print(f"Overlay: {destination} ({len(files)} files)")
@@ -1036,8 +1037,13 @@ def install(checkout, dry_run=False):
         for name, source in files.items():
             target = staged / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-            hashes[name] = digest(target)
+            hashes[name] = digest(source)
+            if hashes[name] == previous_hashes.get(name):
+                shutil.copy2(destination / name, target)
+            else:
+                # Ninja must see a fresh timestamp even when the source comes
+                # from an older checkout than the existing build artifacts.
+                shutil.copy(source, target)
         write(staged / MARKER, json.dumps(
             {"owner": "zitter-prototype", "revision": revision, "files": hashes}, indent=2) + "\n")
         backup = Path(staging) / "previous"

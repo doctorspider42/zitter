@@ -1,5 +1,5 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-// zitter_content.exe's icon and version: Explorer, the taskbar, Apps &
+// zitter.exe's (Content) icon and version: Explorer, the taskbar, Apps &
 // features, the installer and the updater read them.
 #include <winres.h>
 
@@ -27,7 +27,7 @@ BEGIN
       VALUE "FileVersion", ZITTER_VERSION_STRING
       VALUE "InternalName", "zitter"
       VALUE "LegalCopyright", "Copyright 2026 Zitter contributors"
-      VALUE "OriginalFilename", "zitter_content.exe"
+      VALUE "OriginalFilename", "zitter.exe"
       VALUE "ProductName", "Zitter"
       VALUE "ProductVersion", ZITTER_VERSION_STRING
     END

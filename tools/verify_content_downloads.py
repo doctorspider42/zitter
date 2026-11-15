@@ -1838,7 +1838,7 @@ def verify_close(executable, server, root, options, windows, wait):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter_content.exe")
+    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--workspace", action="store_true")
     mode.add_argument("--delete", action="store_true")

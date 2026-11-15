@@ -107,7 +107,7 @@ def verify_virtual_webauthn(executable, appearance):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter_content.exe")
+    parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     parser.add_argument("--openssl", default="openssl")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
     parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")

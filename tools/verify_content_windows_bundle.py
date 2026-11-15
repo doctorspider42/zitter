@@ -19,12 +19,12 @@ from verify_content_assistant_helper import verify_assistant_helper
 from verify_content_bundle import verify_sandbox_guards
 
 
-EXECUTABLE = "zitter_content.exe"
-ARCHIVE_PREFIX = "Zitter Content Lab/"
+EXECUTABLE = "zitter.exe"
+ARCHIVE_PREFIX = "Zitter/"
 ASSISTANT_EXECUTABLE = "zitter_assistant.exe"
 RUNTIME_MANIFEST = "zitter_content.runtime_deps"
 ROOT_ENTRY = re.compile(r"[a-zA-Z0-9_+.-]+\.(?:exe|dll|pak|dat|bin|json)", re.IGNORECASE)
-LOCALE_ENTRY = re.compile(r"locales/[a-zA-Z0-9_-]+\.pak")
+LOCALE_ENTRY = re.compile(r"(?:locales/[a-zA-Z0-9_-]+\.pak|Fonts/[a-zA-Z0-9_-]+\.ttf)")
 RUNTIME_CRT = re.compile(r"(?:msvcp|vcruntime|concrt|vccorlib)\d.*\.dll", re.IGNORECASE)
 PE_IMPORT = re.compile(r"^(?:Import|DelayImport) \{\s*Name: ([^\r\n]+)", re.MULTILINE)
 SYSTEM_CPL_IMPORTS = {"bthprops.cpl"}
