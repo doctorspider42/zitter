@@ -15,7 +15,6 @@
 #include "base/compiler_specific.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/win/scoped_co_mem.h"
 #include "chromium/prototype/i18n.h"
 #include "ui/gfx/range/range.h"
 #include "zitter_content/fingerprint_state.mojom.h"
@@ -40,8 +39,8 @@ std::vector<std::u16string> ReadStrings(IEnumString* strings) {
     return values;
   LPOLESTR value = nullptr;
   while (strings->Next(1, &value, nullptr) == S_OK && values.size() < 512) {
-    base::win::ScopedCoMem<wchar_t> owned(value);
-    values.push_back(base::WideToUTF16(owned.get()));
+    values.push_back(base::WideToUTF16(value));
+    ::CoTaskMemFree(value);
   }
   return values;
 }
