@@ -580,10 +580,16 @@ the updater's installation check stay the same as for the Chrome-based build.
   `ProfilePermissionController`. `ProtocolHandlerThrottle` sends mailto: and
   web+… navigations to the handler page, and typed addresses are rewritten
   too. The site panel lists a site's handlers so the user can revoke them.
-- **Not in Content.** Settings hide what Content does not have: installable web
-  apps, FedCM, automatic picture-in-picture, automatic sign-in and enhanced
-  (Google) spell check, plus the ChromeOS and Android categories that desktop
-  Chrome hides too.
+- **Also in Content:** picture-in-picture (video, document and automatic,
+  `picture_in_picture.cc`), FedCM and the Credential Management API with
+  automatic sign-in (`federated_identity.cc`, `account_chooser.cc`,
+  `page_password_manager.cc`), installable web apps with Start menu shortcuts
+  (`web_apps.cc`, `web_app_window.cc`, `web_apps_win.cc`), and Web Bluetooth
+  grants that survive a restart.
+- **Not in Content.** Settings hide enhanced spell check, because Google's
+  spelling service needs Google API keys that Zitter does not ship (the switch
+  had no effect in the Chrome-based build either). They also hide the ChromeOS
+  and Android categories that desktop Chrome hides.
 
 Package and check:
 
