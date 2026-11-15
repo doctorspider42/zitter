@@ -1438,6 +1438,34 @@ std::unique_ptr<PrefService> ProfileContext::OpenFingerprintPreferences(
   return prefs;
 }
 
+namespace {
+// The site permission store of a profile; opened and new profiles share it.
+void RegisterSitePermissionPreferences(user_prefs::PrefRegistrySyncable& registry) {
+  using Permissions = ProfilePermissionController;
+  registry.RegisterDictionaryPref(Permissions::kClipboardPrefs);
+  registry.RegisterDictionaryPref(Permissions::kNotificationPrefs);
+  registry.RegisterDictionaryPref(Permissions::kNotificationRuleTimes);
+  registry.RegisterInt64Pref(Permissions::kNotificationNextId, 0);
+  registry.RegisterDictionaryPref(Permissions::kSpellingPrefs);
+  registry.RegisterDictionaryPref(Permissions::kBrowsingPrefs);
+  registry.RegisterDictionaryPref(Permissions::kSiteDefaults);
+  registry.RegisterDictionaryPref(Permissions::kSiteRules);
+  registry.RegisterDictionaryPref(Permissions::kSiteRuleTimes);
+  registry.RegisterDictionaryPref(Permissions::kDeviceGrants);
+  registry.RegisterDictionaryPref(Permissions::kDeviceGrantDetails);
+  registry.RegisterDictionaryPref(Permissions::kPromptDefaults);
+  registry.RegisterDictionaryPref(Permissions::kMediaRules);
+  registry.RegisterDictionaryPref(Permissions::kMediaRuleTimes);
+  registry.RegisterDictionaryPref(Permissions::kPopupPrefs);
+  registry.RegisterDictionaryPref(Permissions::kClipboardRuleTimes);
+  registry.RegisterDictionaryPref(Permissions::kPopupRuleTimes);
+  registry.RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
+  registry.RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
+  registry.RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
+  custom_handlers::ProtocolHandlerRegistry::RegisterProfilePrefs(&registry);
+}
+}  // namespace
+
 std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
     const base::FilePath& profile_path) {
   using Permissions = ProfilePermissionController;
@@ -1481,27 +1509,7 @@ std::unique_ptr<PrefService> ProfileContext::OpenSitePermissionPreferences(
     }
   }
   auto registry = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
-  registry->RegisterDictionaryPref(Permissions::kClipboardPrefs);
-  registry->RegisterDictionaryPref(Permissions::kNotificationPrefs);
-  registry->RegisterDictionaryPref(Permissions::kNotificationRuleTimes);
-  registry->RegisterInt64Pref(Permissions::kNotificationNextId, 0);
-  registry->RegisterDictionaryPref(Permissions::kSpellingPrefs);
-  registry->RegisterDictionaryPref(Permissions::kBrowsingPrefs);
-  registry->RegisterDictionaryPref(Permissions::kSiteDefaults);
-  registry->RegisterDictionaryPref(Permissions::kSiteRules);
-  registry->RegisterDictionaryPref(Permissions::kSiteRuleTimes);
-  registry->RegisterDictionaryPref(Permissions::kDeviceGrants);
-  registry->RegisterDictionaryPref(Permissions::kDeviceGrantDetails);
-  registry->RegisterDictionaryPref(Permissions::kPromptDefaults);
-  registry->RegisterDictionaryPref(Permissions::kMediaRules);
-  registry->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
-  registry->RegisterDictionaryPref(Permissions::kPopupPrefs);
-  registry->RegisterDictionaryPref(Permissions::kClipboardRuleTimes);
-  registry->RegisterDictionaryPref(Permissions::kPopupRuleTimes);
-  registry->RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
-  registry->RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
-  registry->RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
-  custom_handlers::ProtocolHandlerRegistry::RegisterProfilePrefs(registry.get());
+  RegisterSitePermissionPreferences(*registry);
   PrefServiceFactory factory;
   factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(path));
   auto prefs = factory.Create(registry);
@@ -1839,23 +1847,8 @@ void ProfileContext::InitializeNewWorkspacePreferences() {
     factory.set_async(true);
     return factory.Create(std::move(registry));
   };
-  using Permissions = ProfilePermissionController;
   auto site = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
-  site->RegisterDictionaryPref(Permissions::kClipboardPrefs);
-  site->RegisterDictionaryPref(Permissions::kNotificationPrefs);
-  site->RegisterDictionaryPref(Permissions::kNotificationRuleTimes);
-  site->RegisterInt64Pref(Permissions::kNotificationNextId, 0);
-  site->RegisterDictionaryPref(Permissions::kSpellingPrefs);
-  site->RegisterDictionaryPref(Permissions::kPromptDefaults);
-  site->RegisterDictionaryPref(Permissions::kMediaRules);
-  site->RegisterDictionaryPref(Permissions::kMediaRuleTimes);
-  site->RegisterDictionaryPref(Permissions::kPopupPrefs);
-  site->RegisterDictionaryPref(Permissions::kClipboardRuleTimes);
-  site->RegisterDictionaryPref(Permissions::kPopupRuleTimes);
-  site->RegisterDictionaryPref(Permissions::kExternalProtocolPrefs);
-  site->RegisterDictionaryPref(Permissions::kExternalProtocolRuleTimes);
-  site->RegisterBooleanPref(Permissions::kPopupDefaultPref, false);
-  custom_handlers::ProtocolHandlerRegistry::RegisterProfilePrefs(site.get());
+  RegisterSitePermissionPreferences(*site);
   site_permissions().SetSitePermissionPreferences(
       preferences(kContentSitePermissionPrefs, std::move(site)));
   auto chooser = base::MakeRefCounted<user_prefs::PrefRegistrySyncable>();
