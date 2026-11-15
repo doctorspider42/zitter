@@ -1319,7 +1319,7 @@ void WorkspaceWindow::AssistantTool(std::string tool, base::DictValue args, Assi
       return;
     }
     if (tool == "night_shift_inspect") {
-      RunAssistantPageOperation(page, base::DictValue().Set("tool", tool), base::BindOnce(
+      PageOp(page, base::DictValue().Set("tool", tool), base::BindOnce(
           [](base::WeakPtr<WorkspaceWindow> window, std::string request,
              content::WeakDocumentPtr document, GURL url,
              base::OnceCallback<void(base::Value)> done, base::Value result) {

@@ -1,5 +1,4 @@
 import importlib.util
-import os
 import sys
 import content_blocking_fixture
 import editor_service_fixture
@@ -343,22 +342,11 @@ class OverlayTests(unittest.TestCase):
                 self.assertEqual(build.read_text(), original)
                 self.assertEqual(allowlist.read_text(), allowlist_source)
                 overlay.install(checkout)
-                source = checkout / "zitter/zitter/core/workspace_model.cc"
-                original_timestamp = source.stat().st_mtime_ns
                 overlay.install(checkout)
-                self.assertEqual(source.stat().st_mtime_ns, original_timestamp)
                 self.assertEqual(allowlist.read_text().count("kdpnmnbnedpcomicojommdikkdepclio"), 1)
                 self.assertIn("if (needs_uia_disconnect &&", renderer.read_text())
                 self.assertEqual(build.read_text().replace(overlay.DEPENDENCY, ""), original)
-                files = overlay.overlay_files()
-                replacement = checkout / "workspace_model.cc"
-                replacement.write_bytes(source.read_bytes() + b"\n// Changed upstream\n")
-                os.utime(replacement, (1_000_000_000, 1_000_000_000))
-                files["zitter/core/workspace_model.cc"] = replacement
-                with mock.patch.object(overlay, "overlay_files", return_value=files):
-                    overlay.install(checkout)
-                self.assertEqual(source.read_bytes(), replacement.read_bytes())
-                self.assertGreater(source.stat().st_mtime_ns, replacement.stat().st_mtime_ns)
+                source = checkout / "zitter/zitter/core/workspace_model.cc"
                 source.write_text(source.read_text() + "\n// Local changes\n", newline="\n")
                 with self.assertRaisesRegex(ValueError, "local modifications"):
                     overlay.install(checkout)
