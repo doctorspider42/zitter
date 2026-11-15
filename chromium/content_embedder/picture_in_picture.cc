@@ -2,6 +2,9 @@
 
 #include "picture_in_picture.h"
 
+#include "ui/base/metadata/metadata_header_macros.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -323,6 +326,8 @@ class OverlayContentsView final : public views::View {
 // Offered by a window that opened automatically while the site's setting is
 // "ask": allowing or blocking stores a site rule, like Chrome's AutoPipSetting.
 class AutomaticSettingPrompt final : public views::View {
+  METADATA_HEADER(AutomaticSettingPrompt, views::View)
+
  public:
   explicit AutomaticSettingPrompt(base::RepeatingCallback<void(bool)> answered)
       : answered_(std::move(answered)) {
@@ -365,6 +370,9 @@ class AutomaticSettingPrompt final : public views::View {
   raw_ptr<views::LabelButton> allow_ = nullptr;
   raw_ptr<views::LabelButton> block_ = nullptr;
 };
+
+BEGIN_METADATA(AutomaticSettingPrompt)
+END_METADATA
 
 // A floating, frameless window that shows a video's surface with Chrome-like
 // controls: play/pause, previous and next track, skip ad, mute, back to tab
@@ -725,6 +733,8 @@ class VideoPictureInPictureWindow final : public content::VideoOverlayWindow,
 // Hosts a document picture-in-picture page. Its delegate closes the window
 // when the page closes itself (window.close() or the opener's controller).
 class DocumentWebView final : public LabWebView {
+  METADATA_HEADER(DocumentWebView, LabWebView)
+
  public:
   DocumentWebView(content::BrowserContext* context, base::RepeatingClosure closed)
       : LabWebView(context), closed_(std::move(closed)) {}
@@ -751,6 +761,9 @@ class DocumentWebView final : public LabWebView {
 
   base::RepeatingClosure closed_;
 };
+
+BEGIN_METADATA(DocumentWebView)
+END_METADATA
 
 }  // namespace
 
