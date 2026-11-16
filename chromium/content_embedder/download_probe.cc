@@ -50,7 +50,7 @@ constexpr char kProbeTarget[] = "zitter-content-download-probe-target";
 
 bool IsSaveProbeFileType(std::string_view suffix) {
   constexpr std::string_view types[] = {
-      "csv", "m4a", "mov", "mp3", "mp4", "ogg", "pdf", "png", "wav", "webm"};
+      "csv", "m4a", "mov", "mp3", "mp4", "ogg", "pdf", "pkg", "png", "wav", "webm", "zip"};
   return std::ranges::find(types, suffix) != std::end(types);
 }
 
@@ -204,7 +204,8 @@ std::unique_ptr<DownloadProbe> DownloadProbe::Create(const base::FilePath& root)
                          (save_action.starts_with("user-") &&
                           IsSaveProbeFileType(std::string_view(save_action).substr(5))) ||
                          save_action == "user-anchor" || save_action == "user-anchor-passive" ||
-                         save_action == "user-size-limit" || save_action == "user-save-link";
+                         save_action == "user-large" || save_action == "user-save-link" ||
+                         save_action == "user-auto";
   const bool expect_blocked =
       command_line.HasSwitch("zitter-content-expect-download-blocked");
   const bool expect_publish_collision = command_line.HasSwitch(kExpectPublishCollision);
@@ -324,6 +325,9 @@ void DownloadProbe::Prepare(ProfileContext& profile) {
   manager_.Observe(profile.GetDownloadManager());
   auto* delegate = static_cast<ProfileDownloadDelegate*>(
       profile.GetDownloadManagerDelegate());
+  // "Ask where to save each file": every user case but user-auto uses the panel.
+  if (save_action_.starts_with("user-"))
+    delegate->SetUserDownloadPromptForTesting(save_action_ != "user-auto");
   if (!file_catalog_.empty()) {
     base::OnceCallback<void(const base::FilePath&)> after_allow;
     if (!publication_change_.empty()) {
@@ -367,10 +371,10 @@ void DownloadProbe::Start(content::WebContents& contents,
   if (save_action_.starts_with("user-anchor") || save_action_ == "user-save-link")
     Observe(&contents);
   if (!save_action_.empty() && !native_user_save() &&
-      save_action_ != "native" && save_action_ != "user-blocked" &&
+      save_action_ != "native" && save_action_ != "user-blocked" && save_action_ != "user-auto" &&
       save_action_ != "user-anchor-passive") {
     const auto action = (save_action_.starts_with("user-delete") || save_action_ == "user-resume" ||
-                         save_action_ == "user-anchor" || save_action_ == "user-size-limit" ||
+                         save_action_ == "user-anchor" || save_action_ == "user-large" ||
                          save_action_ == "user-save-link") ? "accept"
         : save_action_.starts_with("user-") ? save_action_.substr(5) : save_action_;
     dialog_factory_ = std::make_unique<ui::ScopedSetSelectFileDialogFactory>(
@@ -467,9 +471,11 @@ void DownloadProbe::OnDownloadUpdated(download::DownloadItem* item) {
   }
   if (!item->IsDone())
     return;
-  if (save_action_ == "user-size-limit") {
-    Finish(item->GetState() == download::DownloadItem::CANCELLED &&
-           item->GetTargetFilePath() == directory_.AppendASCII("chosen-save.txt"));
+  // A user download larger than the old 16 MiB lab limit completes.
+  if (save_action_ == "user-large") {
+    Finish(item->GetState() == download::DownloadItem::COMPLETE &&
+           item->GetTargetFilePath() == directory_.AppendASCII("chosen-save.txt") &&
+           item->GetReceivedBytes() > 16 * 1024 * 1024);
     return;
   }
   if (save_action_.starts_with("user-delete")) {

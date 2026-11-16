@@ -74,7 +74,11 @@ USER_FILE_TYPES = {
     "png": ("image/png", base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X8ZkAAAAASUVORK5CYII=")),
     "wav": ("audio/wav", wav_fixture()),
+    # Installers and archives arrive as generic binaries, like a Teams .pkg.
+    "pkg": ("application/octet-stream", b"xar!" + bytes(60)),
+    "zip": ("application/zip", b"PK\x05\x06" + bytes(18)),
 }
+LARGE_USER_PAYLOAD = b"x" * (17 * 1024 * 1024)
 
 
 def make_media_fixtures(ffmpeg, directory):
@@ -160,7 +164,7 @@ class DownloadFixture(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if self.path in ("/user-stream", "/user-stream-oversized"):
+        if self.path in ("/user-stream", "/user-stream-large"):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Disposition", 'attachment; filename="download-probe.txt"')
@@ -169,14 +173,8 @@ class DownloadFixture(BaseHTTPRequestHandler):
             if self.path == "/user-stream":
                 self.wfile.write(PAYLOAD)
             else:
-                try:
-                    block = b"x" * (1024 * 1024)
-                    for _ in range(17):
-                        self.wfile.write(block)
-                    # Keep the stream open until the browser stops it.
-                    self.server.stream_release.wait(45)
-                except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
-                    pass
+                # No Content-Length: the size is known only at the end.
+                self.wfile.write(LARGE_USER_PAYLOAD)
             return
         response = CASES.get(self.path) or WORKSPACE_CASES.get(self.path)
         response = getattr(self.server, "download_overrides", {}).get(self.path, response)
@@ -988,17 +986,14 @@ def verify_transport(executable, http_server, root, options, windows):
                      [], ["/user-anchor"]),
                     ("user-accept", https + "/user-stream", https + "/user-stream", None,
                      [], ["/user-stream"]),
-                    ("user-size-limit", https + "/user-stream-oversized", https + "/user-stream-oversized",
-                     None, [], ["/user-stream-oversized"]),
+                    ("user-auto", https + "/text", https + "/text", None, [], ["/text"]),
+                    ("user-large", https + "/user-stream-large", https + "/user-stream-large",
+                     None, [], ["/user-stream-large"]),
                     ("user-outside", https + "/text", https + "/text", None, [], ["/text"]),
                     ("user-delete", https + "/text", https + "/text", None, [], ["/text"]),
                     ("user-delete-changed", https + "/text", https + "/text", None, [], ["/text"]),
                     ("user-cancel", https + "/text", https + "/text", "target", [], ["/text"]),
                     ("user-wrong-type", https + "/text", https + "/text", "target", [], ["/text"]),
-                    ("user-blocked", https + "/executable", https + "/executable",
-                     "target", [], ["/executable"]),
-                    ("user-blocked", https + "/binary", https + "/binary",
-                     "target", [], ["/binary"]),
                     ("user-resume", https + "/resume", https + "/resume", None, [], ["/resume"] * 2),
                     ("user-resume", https + "/resume", https + "/resume", "resume", [], ["/resume"] * 2),
                     ("user-blocked", https + "/user-file/mismatched-pdf",
@@ -1042,8 +1037,6 @@ def verify_transport(executable, http_server, root, options, windows):
                         args.append("--zitter-content-expect-download-blocked")
                     if options.user_save:
                         args.append(f"--zitter-content-download-save-probe={name}")
-                    if name == "user-size-limit":
-                        https_server.stream_release = threading.Event()
                     try:
                         interactive_save = name == "user-native-accept"
                         if interactive_save:
@@ -1053,9 +1046,6 @@ def verify_transport(executable, http_server, root, options, windows):
                                                 timeout=120 if interactive_save else 45)
                     except subprocess.TimeoutExpired as error:
                         raise SystemExit(f"{name} timed out: {error.stderr!r}") from error
-                    finally:
-                        if name == "user-size-limit":
-                            https_server.stream_release.set()
                     marker = f"Zitter Content rejected the download {denial}"
                     if (result.returncode or
                             "Zitter Content download probe passed" not in result.stdout or
@@ -1083,7 +1073,13 @@ def verify_transport(executable, http_server, root, options, windows):
                             https_server.resume_error or https_server.resume_requests != [
                                 (None, None), (f"bytes={RESUME_OFFSET}-", RESUME_ETAG)]):
                         raise SystemExit(f"Unexpected HTTPS resume requests: {https_server.resume_requests}")
-                    if name in ("user-delete", "user-size-limit"):
+                    if name == "user-large":
+                        expected = {saved: LARGE_USER_PAYLOAD}
+                    if name == "user-auto":
+                        # Without the prompt the file keeps its own name.
+                        saved = "download-probe.txt"
+                        expected = {saved: PAYLOAD}
+                    if name == "user-delete":
                         expected = {}
                     elif name == "user-delete-changed":
                         expected = {saved: b"Changed after download\n"}
@@ -1099,7 +1095,7 @@ def verify_transport(executable, http_server, root, options, windows):
                             http_server.requests != http_paths or
                             https_server.requests != https_paths):
                         raise SystemExit(f"{name} produced unexpected requests or files")
-                    if options.require_quarantine and not denial and name not in ("user-delete", "user-size-limit"):
+                    if options.require_quarantine and not denial and name != "user-delete":
                         require_quarantine(saved_path, windows)
                     print(f"Content download transport passed: {name}")
         finally:

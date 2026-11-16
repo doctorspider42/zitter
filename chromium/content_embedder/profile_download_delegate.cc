@@ -15,7 +15,6 @@
 #include <utility>
 
 #include "base/functional/bind.h"
-#include "base/scoped_observation.h"
 #include "base/supports_user_data.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
@@ -58,20 +57,15 @@ namespace zitter::content_embedder {
 namespace {
 
 constexpr int64_t kMaxProbeDownloadBytes = 64 * 1024;
-constexpr int64_t kMaxUserDownloadBytes = 16 * 1024 * 1024;
 
 const void* const kFileReputationKey = &kFileReputationKey;
 const void* const kApprovedDownloadKey = &kApprovedDownloadKey;
 
-struct ApprovedDownload final : base::SupportsUserData::Data,
-                                private download::DownloadItem::Observer {
-  ApprovedDownload(download::DownloadItem& item,
-                   const download::DownloadTargetInfo& selection, GURL url,
+struct ApprovedDownload final : base::SupportsUserData::Data {
+  ApprovedDownload(const download::DownloadTargetInfo& selection, GURL url,
                    int64_t size, std::string etag)
       : target(selection.target_path), partial(selection.intermediate_path),
-        url(std::move(url)), size(size), etag(std::move(etag)) {
-    observation_.Observe(&item);
-  }
+        url(std::move(url)), size(size), etag(std::move(etag)) {}
 
   bool MatchesResumableDownload(const download::DownloadItem& item) const {
     return size > 0 && !etag.empty() && target == item.GetTargetFilePath() &&
@@ -85,30 +79,6 @@ struct ApprovedDownload final : base::SupportsUserData::Data,
   const GURL url;
   const int64_t size;
   const std::string etag;
-
- private:
-  void OnDownloadUpdated(download::DownloadItem* item) override {
-    if (cancel_pending_ || item->GetState() != download::DownloadItem::IN_PROGRESS ||
-        item->GetReceivedBytes() <= kMaxUserDownloadBytes) {
-      return;
-    }
-    cancel_pending_ = true;
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce([](base::WeakPtr<ApprovedDownload> approval) {
-          auto* download = approval ? approval->observation_.GetSource() : nullptr;
-          if (download && download->GetState() == download::DownloadItem::IN_PROGRESS)
-            download->Cancel(true);
-        }, weak_factory_.GetWeakPtr()));
-  }
-
-  void OnDownloadDestroyed(download::DownloadItem*) override {
-    observation_.Reset();
-  }
-
-  bool cancel_pending_ = false;
-  base::ScopedObservation<download::DownloadItem, download::DownloadItem::Observer>
-      observation_{this};
-  base::WeakPtrFactory<ApprovedDownload> weak_factory_{this};
 };
 
 struct FileReputationState final : base::SupportsUserData::Data {
@@ -162,6 +132,28 @@ bool IsStrongEtag(std::string_view etag) {
          etag.back() == '"' && net::HttpUtil::IsValidHeaderValue(etag);
 }
 
+// A file the user chose to download: any size and any type that Safe Browsing
+// does not rate dangerous. Installers and archives (.pkg, .dmg, .zip, .exe)
+// need the user gesture every user download already has; the OS quarantine
+// (Gatekeeper, Mark of the Web) checks them when they are opened.
+bool IsUserDownloadName(const base::FilePath& name) {
+  if (!net::IsSafePortablePathComponent(name))
+    return false;
+  const auto level = safe_browsing::FileTypePolicies::GetInstance()->GetFileDangerLevel(
+      name, GURL(), nullptr);
+  return level == safe_browsing::DownloadFileType::NOT_DANGEROUS ||
+         level == safe_browsing::DownloadFileType::ALLOW_ON_USER_GESTURE;
+}
+
+bool IsGenericDownloadMimeType(std::string_view mime) {
+  constexpr std::string_view types[] = {
+      "", "application/octet-stream", "binary/octet-stream", "application/download",
+      "application/x-download", "application/force-download"};
+  return std::ranges::find(types, mime) != std::end(types);
+}
+
+// Documents and media must not arrive under another declared type: a text
+// response does not become a .pdf. Other names accept any type.
 bool IsUserDownloadType(const base::FilePath& name, std::string_view mime) {
   constexpr struct {
     base::FilePath::StringViewType extension;
@@ -186,9 +178,14 @@ bool IsUserDownloadType(const base::FilePath& name, std::string_view mime) {
       {FILE_PATH_LITERAL(".webm"), "video/webm"},
       {FILE_PATH_LITERAL(".webm"), "audio/webm"},
   };
-  return std::ranges::any_of(types, [&](const auto& type) {
-           return mime == type.mime && name.MatchesFinalExtension(type.extension);
-         }) && IsLowRiskDownloadName(name);
+  const bool known = std::ranges::any_of(types, [&](const auto& type) {
+    return name.MatchesFinalExtension(type.extension);
+  });
+  return IsUserDownloadName(name) &&
+         (!known || IsGenericDownloadMimeType(mime) ||
+          std::ranges::any_of(types, [&](const auto& type) {
+            return mime == type.mime && name.MatchesFinalExtension(type.extension);
+          }));
 }
 
 download::DownloadTargetInfo BlockedTarget() {
@@ -330,7 +327,6 @@ bool ProfileDownloadDelegate::CanRecoverInterruptedDownload(
            row.danger_type == history::DownloadDangerType::NOT_DANGEROUS &&
            !row.opened && row.received_bytes > 0 &&
            row.received_bytes < row.total_bytes &&
-           row.total_bytes <= kMaxUserDownloadBytes &&
            row.hash.size() == crypto::hash::kSha256Size &&
            row.download_slice_info.empty() && IsStrongEtag(row.etag) &&
            IsUserDownloadType(row.target_path.BaseName(), row.mime_type) &&
@@ -404,7 +400,7 @@ void ProfileDownloadDelegate::RestoreUserDownloadCheckpoint(
   selection.target_path = row.target_path;
   selection.intermediate_path = row.current_path;
   item.SetUserData(kApprovedDownloadKey, std::make_unique<ApprovedDownload>(
-      item, selection, row.url_chain.front(), row.total_bytes, row.etag));
+      selection, row.url_chain.front(), row.total_bytes, row.etag));
 }
 
 void ProfileDownloadDelegate::GetNextId(content::DownloadIdCallback callback) {
@@ -545,10 +541,41 @@ void ProfileDownloadDelegate::DetermineUserDownloadTarget(
   const auto headers = item->GetResponseHeaders();
   const auto length = headers ? headers->GetInt64HeaderValue("Content-Length") : std::nullopt;
   const int64_t size = length.value_or(std::max<int64_t>(0, item->GetTotalBytes()));
-  if (size > kMaxUserDownloadBytes ||
-      (headers && headers->HasHeader("Content-Length") && (!length || *length <= 0)) ||
+  if ((headers && headers->HasHeader("Content-Length") && (!length || *length <= 0)) ||
       !IsUserDownloadType(name, item->GetMimeType())) {
     std::move(callback).Run(BlockedTarget());
+    return;
+  }
+  // Settings: "Ask where to save each file" off saves straight into the
+  // download folder under a free name, as Chrome does.
+  const bool ask = user_download_prompt_for_testing_.value_or(
+      manager_ && static_cast<ProfileContext*>(manager_->GetBrowserContext())
+                      ->site_permissions().BrowsingFlag("download_prompt"));
+  if (!ask) {
+    download::DownloadPathReservationTracker::GetReservedPath(
+        item, user_download_directory_.Append(name), user_download_directory_,
+        base::FilePath(), /*create_directory=*/false,
+        download::DownloadPathReservationTracker::UNIQUIFY,
+        base::BindOnce(
+            [](base::WeakPtr<ProfileDownloadDelegate> delegate, std::string guid,
+               int64_t size, base::FilePath directory,
+               download::DownloadTargetCallback callback,
+               download::PathValidationResult result, const base::FilePath& path) {
+              download::DownloadTargetInfo target;
+              if (!delegate || !download::IsPathValidationSuccessful(result) ||
+                  path.DirName() != directory || !IsUserDownloadName(path.BaseName())) {
+                std::move(callback).Run(BlockedTarget());
+                return;
+              }
+              target.target_path = path;
+              target.intermediate_path = directory.AppendASCII(
+                  base::Uuid::GenerateRandomV4().AsLowercaseString() + ".crdownload");
+              delegate->OnUserDownloadSelected(std::move(guid), size, std::move(callback),
+                                               std::move(target));
+            },
+            weak_factory_.GetWeakPtr(), item->GetGuid(), size, user_download_directory_,
+            std::move(callback)),
+        user_download_directory_);
     return;
   }
   auto* contents = content::DownloadItemUtils::GetWebContents(item);
@@ -563,7 +590,7 @@ void ProfileDownloadDelegate::DetermineUserDownloadTarget(
       base::BindRepeating([](const base::FilePath::StringType& extension,
                              const base::FilePath& path) {
         return path.MatchesFinalExtension(extension) &&
-               IsLowRiskDownloadName(path.BaseName());
+               IsUserDownloadName(path.BaseName());
       }, name.FinalExtension()),
       base::BindOnce(&ProfileDownloadDelegate::OnUserDownloadSelected,
                      weak_factory_.GetWeakPtr(), item->GetGuid(), size,
@@ -578,7 +605,7 @@ void ProfileDownloadDelegate::OnUserDownloadSelected(
   if (item && !selection.target_path.empty()) {
     const std::string& etag = item->GetETag();
     item->SetUserData(kApprovedDownloadKey, std::make_unique<ApprovedDownload>(
-        *item, selection, item->GetURL(), size,
+        selection, item->GetURL(), size,
         size > 0 && item->GetUrlChain().size() == 1 && IsStrongEtag(etag) ? etag : std::string()));
   }
   std::move(callback).Run(std::move(selection));
@@ -607,7 +634,7 @@ void ProfileDownloadDelegate::ResumeUserDownload(
       : net::GenerateFileName(item.GetURL(), item.GetContentDisposition(), "",
                               item.GetSuggestedFilename(), "", "download");
   if (!name.MatchesFinalExtension(approved->target.FinalExtension()) ||
-      !IsLowRiskDownloadName(name) ||
+      !IsUserDownloadName(name) ||
       (headers->HasHeader("Content-Type") && !IsUserDownloadType(name, item.GetMimeType()))) {
     std::move(callback).Run(BlockedTarget());
     return;
@@ -721,8 +748,7 @@ bool ProfileDownloadDelegate::ShouldCompleteDownload(
   const auto received = item->GetReceivedBytes();
   const bool user_download = IsUserDownload(*item) && approved &&
       approved->target == item->GetTargetFilePath() && approved->partial == item->GetFullPath() &&
-      item->GetTargetDisposition() == download::DownloadItem::TARGET_DISPOSITION_PROMPT &&
-      received > 0 && received <= kMaxUserDownloadBytes &&
+      received > 0 &&
       (approved->size == 0 || received == approved->size) &&
       item->GetHash().size() == crypto::hash::kSha256Size;
   const bool fixture_download = !probe_directory_.empty() && item->GetURL() == probe_url_ &&
@@ -890,7 +916,8 @@ bool ProfileDownloadDelegate::CanDeleteDownloadFile(
          !item.IsTransient() && !item.GetFileExternallyRemoved() &&
          !item.IsDangerous() && !item.IsInsecure() &&
          path == item.GetFullPath() && path.IsAbsolute() && !path.IsNetwork() &&
-         IsLowRiskDownloadName(path.BaseName()) &&
+         (user_download ? IsUserDownloadName(path.BaseName())
+                        : IsLowRiskDownloadName(path.BaseName())) &&
          item.GetHash().size() == crypto::hash::kSha256Size;
 }
 
@@ -936,7 +963,8 @@ bool ProfileDownloadDelegate::CanDispatchFileAction(
          !path.EndsWithSeparator() &&
          net::IsSafePortablePathComponent(path.BaseName()) &&
          (action != DownloadFileAction::kOpen ||
-          IsLowRiskDownloadName(path.BaseName()));
+          (user_download_directory_.empty() ? IsLowRiskDownloadName(path.BaseName())
+                                            : IsUserDownloadName(path.BaseName())));
 }
 
 void ProfileDownloadDelegate::ValidateFileAction(download::DownloadItem& item,

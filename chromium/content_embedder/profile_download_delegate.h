@@ -4,6 +4,7 @@
 #define ZITTER_CONTENT_PROFILE_DOWNLOAD_DELEGATE_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
@@ -83,6 +84,10 @@ class ProfileDownloadDelegate final : public content::DownloadManagerDelegate {
   using FileActionForTesting =
       base::RepeatingCallback<void(DownloadFileAction, const base::FilePath&)>;
   void SetFileActionForTesting(FileActionForTesting callback);
+  // Overrides Settings > "Ask where to save each file" for user downloads.
+  void SetUserDownloadPromptForTesting(bool prompt) {
+    user_download_prompt_for_testing_ = prompt;
+  }
 
  private:
   void OnUrlReputationChecked(std::string guid,
@@ -136,6 +141,7 @@ class ProfileDownloadDelegate final : public content::DownloadManagerDelegate {
   base::OnceCallback<void(const base::FilePath&)> after_file_allow_for_testing_;
   std::unique_ptr<DownloadUrlReputation> url_reputation_;
   FileActionForTesting file_action_for_testing_;
+  std::optional<bool> user_download_prompt_for_testing_;
   base::WeakPtrFactory<ProfileDownloadDelegate> weak_factory_{this};
 };
 
