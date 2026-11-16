@@ -578,6 +578,8 @@ if (is_mac) {
                 "native_process_launcher.h",
                 "password_authenticator_mac.h",
                 "password_authenticator_mac.mm",
+                "ui_automation.h",
+                "ui_automation_mac.mm",
                 "workspace_media_access_mac.mm",
                 "workspace_native_message_port_dispatcher.cc",
                 "workspace_native_message_port_dispatcher.h",
@@ -610,6 +612,8 @@ if (is_mac) {
              "//device/fido",
              "//services/network/public/mojom",
              "//sql",
+             "//ui/accessibility",
+             "//ui/gfx/codec",
              "//zitter:devtools_console",
            ]
     bundle_deps = [

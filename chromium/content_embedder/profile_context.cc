@@ -2009,6 +2009,7 @@ void ProfileContext::EnableUserDownloads(
     std::string safe_browsing_key) {
   CHECK(!download_manager_);
   downloads_->EnableUserDownloads(suggested_directory);
+  downloads_enabled_ = true;
   if (!IsOffTheRecord())
     download_safe_browsing_key_ = std::move(safe_browsing_key);
 }
@@ -2053,8 +2054,14 @@ content::DownloadManagerDelegate* ProfileContext::GetDownloadManagerDelegate() {
           std::exchange(download_safe_browsing_key_, {})));
     }
     downloads_->AttachManager(*download_manager_, GetHistory());
+    download_manager_callbacks_.Notify(*download_manager_);
   }
   return downloads_.get();
+}
+
+base::CallbackListSubscription ProfileContext::AddDownloadManagerCallback(
+    base::RepeatingCallback<void(content::DownloadManager&)> callback) {
+  return download_manager_callbacks_.Add(std::move(callback));
 }
 
 content::BrowserPluginGuestManager* ProfileContext::GetGuestManager() {

@@ -113,6 +113,7 @@
 #include "profile_permission_controller.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "workspace_lab.h"
+#include "ui_automation.h"
 #include "workspace_media_access.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
@@ -1176,6 +1177,14 @@ class LabMainParts final : public content::BrowserMainParts,
         },
         weak_factory_.GetWeakPtr(), workspace_smoke_),
         base::BindOnce([] { [NSApp terminate:nil]; }));
+    // Development: agents drive the UI and take screenshots through a socket
+    // in a private probe root, without the system cursor (ui_automation.h).
+    if (base::CommandLine::ForCurrentProcess()->HasSwitch(kUiAutomation)) {
+      if (IsProbeRoot(workspace_root_))
+        ui_automation_ = UiAutomation::Start(workspace_root_.AppendASCII("automation.sock"));
+      else
+        LOG(ERROR) << "--zitter-automation needs a private zitter-content-probe-* workspace root";
+    }
   }
 
   void PostMainMessageLoopRun() override {
@@ -1185,6 +1194,7 @@ class LabMainParts final : public content::BrowserMainParts,
         setWorkspaceQuitClosure:base::RepeatingClosure()];
     [static_cast<ZitterContentApplication*>(NSApp)
         setWorkspaceMenuAction:WorkspaceMenuAction()];
+    ui_automation_.reset();
     download_probe_.reset();
     updater_.reset();
     workspace_.reset();
@@ -2165,6 +2175,7 @@ class LabMainParts final : public content::BrowserMainParts,
   GURL fingerprint_url_;
   int fingerprint_step_ = 0;
   std::unique_ptr<DownloadProbe> download_probe_;
+  std::unique_ptr<UiAutomation> ui_automation_;
   bool grant_storage_probe_ = false;
   bool profile_probe_complete_ = false;
   bool workspace_smoke_ = false;

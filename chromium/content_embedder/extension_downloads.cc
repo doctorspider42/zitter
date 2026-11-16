@@ -9,7 +9,10 @@
 
 #include "base/files/file_path.h"
 #include "base/i18n/time_formatting.h"
+#include "base/callback_list.h"
 #include "base/memory/raw_ref.h"
+#include "base/memory/weak_ptr.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/scoped_multi_source_observation.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_number_conversions.h"
@@ -27,6 +30,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "profile_context.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "url/gurl.h"
 
@@ -98,8 +102,14 @@ base::DictValue DownloadDetails(const DownloadItem& item) {
   return result;
 }
 
+// Never create the manager before the profile has configured its downloads:
+// that would freeze the download delegate's setup halfway.
 content::DownloadManager* Manager(content::BrowserContext* context) {
-  return context && !context->IsOffTheRecord() ? context->GetDownloadManager() : nullptr;
+  if (!context || context->IsOffTheRecord() ||
+      !static_cast<ProfileContext*>(context)->downloads_enabled()) {
+    return nullptr;
+  }
+  return context->GetDownloadManager();
 }
 
 std::vector<DownloadItem*> UserDownloads(content::DownloadManager& manager) {
@@ -412,16 +422,37 @@ class DownloadEvents final : public ExtensionDownloadEvents,
                              public content::DownloadManager::Observer,
                              public DownloadItem::Observer {
  public:
+  // Follows the manager only once the profile creates it, so extensions
+  // never change when or how the profile sets up its downloads.
   explicit DownloadEvents(content::BrowserContext& context) : context_(context) {
-    if (auto* manager = Manager(&context)) {
-      manager_observation_.Observe(manager);
-      for (auto* item : UserDownloads(*manager))
-        Track(*item);
+    auto& profile = static_cast<ProfileContext&>(context);
+    if (auto* manager = profile.attached_download_manager()) {
+      Attach(*manager);
+      return;
     }
+    subscription_ = profile.AddDownloadManagerCallback(base::BindRepeating(
+        [](base::WeakPtr<DownloadEvents> events, content::DownloadManager& manager) {
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE, base::BindOnce(&DownloadEvents::AttachTo, events, &manager));
+        },
+        weak_factory_.GetWeakPtr()));
   }
   ~DownloadEvents() override = default;
 
  private:
+  void AttachTo(content::DownloadManager* manager) {
+    if (static_cast<ProfileContext&>(*context_).attached_download_manager() == manager)
+      Attach(*manager);
+  }
+
+  void Attach(content::DownloadManager& manager) {
+    if (manager_observation_.IsObserving())
+      return;
+    manager_observation_.Observe(&manager);
+    for (auto* item : UserDownloads(manager))
+      Track(*item);
+  }
+
   void Track(DownloadItem& item) {
     if (item.IsTransient() || item.IsTemporary() || item_observations_.IsObservingSource(&item))
       return;
@@ -492,6 +523,8 @@ class DownloadEvents final : public ExtensionDownloadEvents,
       manager_observation_{this};
   base::ScopedMultiSourceObservation<DownloadItem, DownloadItem::Observer>
       item_observations_{this};
+  base::CallbackListSubscription subscription_;
+  base::WeakPtrFactory<DownloadEvents> weak_factory_{this};
 };
 
 }  // namespace

@@ -150,6 +150,15 @@ class ProfileContext final : public content::BrowserContext {
     return download_probe_certificate_;
   }
   int BlockingDownloadCount() const;
+  // True once user downloads are configured; the download manager may then
+  // be created without freezing an unfinished download setup.
+  bool downloads_enabled() const { return downloads_enabled_; }
+  // Runs when the profile creates and attaches its download manager.
+  base::CallbackListSubscription AddDownloadManagerCallback(
+      base::RepeatingCallback<void(content::DownloadManager&)> callback);
+  content::DownloadManager* attached_download_manager() const {
+    return download_manager_;
+  }
   history::HistoryService* GetHistory();
   favicon::FaviconServiceImpl* GetFaviconService();
   void CloseImportedHistory(base::OnceClosure done);
@@ -217,6 +226,8 @@ class ProfileContext final : public content::BrowserContext {
   std::unique_ptr<PrefService> fingerprint_prefs_;
   base::RepeatingClosureList fingerprint_changed_;
   raw_ptr<content::DownloadManager> download_manager_ = nullptr;
+  bool downloads_enabled_ = false;
+  base::RepeatingCallbackList<void(content::DownloadManager&)> download_manager_callbacks_;
   std::unique_ptr<AdblockState> adblock_;
   std::unique_ptr<ProfileDownloadDelegate> downloads_;
   std::string download_safe_browsing_key_;
