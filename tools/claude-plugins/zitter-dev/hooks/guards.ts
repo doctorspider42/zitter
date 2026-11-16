@@ -25,8 +25,28 @@ const END = String.raw`(?=[\s;&|)]|$)`
 
 const at = (word: string) => new RegExp(START + word + END, 'mi')
 
+/**
+ * Heredoc bodies are data (a commit message, a file being written), not
+ * commands: they are dropped before any rule reads the command.
+ */
+export function stripHeredocs(command: string): string {
+  const lines = command.split('\n')
+  const kept: string[] = []
+  let end: string | undefined
+  for (const line of lines) {
+    if (end !== undefined) {
+      if (line.replace(/^\t+/, '') === end) end = undefined
+      continue
+    }
+    kept.push(line)
+    const marker = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/.exec(line)
+    if (marker) end = marker[2]
+  }
+  return kept.join('\n')
+}
+
 /** Windows paths read as POSIX ones, so one set of patterns serves both. */
-const normalize = (command: string) => command.replace(/\\/g, '/')
+const normalize = (command: string) => stripHeredocs(command).replace(/\\/g, '/')
 
 /** The segments of a command line: split on separators, newlines and pipes. */
 const segments = (command: string) => command.split(/\n|;|&&|\|\||\|/).map(s => s.trim()).filter(Boolean)
