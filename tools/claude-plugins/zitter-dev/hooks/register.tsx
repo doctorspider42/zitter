@@ -455,25 +455,11 @@ export const register: Register = on => {
     $.clock.every(2000, () => void tick($))
     void tick($)
 
-    // Show the panel at once where the surface can place it, and say what loaded.
-    const opened = await $.ui.open({ id: PANE, title: 'Zitter' }).catch((err: unknown) => ({ error: String(err) }))
-    const commands = await $.command.list().catch(() => [])
-    await $.fs.write(
-      `${jobsDir}/../diagnostics.json`,
-      JSON.stringify(
-        {
-          at: new Date().toISOString(),
-          surface: e.surface,
-          isInteractive: e.isInteractive,
-          paneOpen: opened,
-          ourCommands: commands.filter(c => c.name.startsWith('dev') || c.name === 'zitter').map(c => c.name),
-          commandCount: commands.length,
-        },
-        null,
-        2,
-      ) + '\n',
-    )
-    $.ui.toast('zitter-dev ready: /dev-run, /zitter')
+    // A surface may already be attached (a reload): open the panel now; otherwise session.attach does.
+    if (!(await read($, autoOpenedAtom)) && (await $.session.surfaces()).length > 0) {
+      const opened = await $.ui.open({ id: PANE, title: 'Zitter' }).catch(() => undefined)
+      if (opened?.isPlaced) await update($, autoOpenedAtom, () => true)
+    }
     return started
   })
 
@@ -920,12 +906,9 @@ function drawing(on: On) {
           <Box flexDirection="column">
             <Box flexDirection="row" gap={1} alignItems="center">
               {pic(icon(job.state === 'ok' ? 'check' : 'cross', job.state === 'ok' ? COLORS.success : job.state === 'failed' ? COLORS.error : COLORS.muted), job.state, job.state === 'ok' ? '✓' : job.state === 'failed' ? '✗' : '■')}
-              <Button key={`job-${job.id}`} plain onPress={() => void toggleShown($, job.id)}>
-                {job.title}
-                <Text dimColor>
-                  {job.state === 'failed' ? ` exit ${job.exitCode}` : ''}{job.by === 'model' ? ' · by Claude' : ''}
-                </Text>
-              </Button>
+              <Button key={`job-${job.id}`} label={job.title} plain onPress={() => void toggleShown($, job.id)} />
+              {job.state === 'failed' && <Text color="error">exit {job.exitCode}</Text>}
+              {job.by === 'model' && <Text color="inactive">by Claude</Text>}
               <Box flexGrow={1} />
               <Text color="inactive">{formatDuration(duration(job))} · {clock(job.endedAt ?? job.queuedAt)}</Text>
             </Box>
