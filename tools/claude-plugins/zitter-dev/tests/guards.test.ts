@@ -100,6 +100,8 @@ describe('guards on Windows', () => {
 describe('prose about ninja', () => {
   test('backticks in a heredoc are not commands', async () => {
     expect(refused("cat > f <<'EOF'\n/** The last `[done/total]` ninja wrote */\nEOF")).toBe(false)
+    expect(refused("gh pr create --body-file - <<'EOF'\nrefuse staging into zitter_ui_lab > nothing\nEOF")).toBe(false)
+    expect(refused("cat <<EOF > x\nhi\nEOF\nrsync -a zitter/ .chromium/src/zitter_ui_lab/")).toBe(true)
   })
 })
 
