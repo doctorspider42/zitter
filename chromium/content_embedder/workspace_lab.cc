@@ -8512,8 +8512,9 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
       }
       if (manager->options_page().is_valid())
         settings["extension_options." + manager->id()] = {.editable = CanEditWorkspace()};
-      if (manager->action_popup().is_valid()) {
+      if (manager->action_popup().is_valid())
         settings["extension_popup." + manager->id()] = {.editable = CanEditWorkspace()};
+      if (manager->has_action()) {
         settings["extension_pinned." + manager->id()] = {
             .value = std::ranges::contains(pinned_extensions, manager->id()),
             .editable = CanEditWorkspace() && extension_prefs};
@@ -10046,6 +10047,29 @@ void WorkspaceLab::SetPageFullscreen(content::WebContents* page, bool enter) {
 bool WorkspaceLab::IsExtensionWindowFocused(content::BrowserContext& context) const {
   return widget_ && widget_->IsActive() && model_.active() &&
          WorkspaceProfile(active_index_) == &context;
+}
+
+bool WorkspaceLab::OpenExtensionActionPopup(content::BrowserContext& context,
+                                            const std::string& id) {
+  if (!widget_ || !model_.active() || WorkspaceProfile(active_index_) != &context ||
+      (extension_popup_widget_ && !extension_popup_widget_->IsClosed())) {
+    return false;
+  }
+  const auto& tab = tabs_[active_index_][selected_[active_index_]];
+  if (!WorkspaceExtensionPopupUrl(context, id,
+                                  WorkspaceExtensionTabId(tab.extension_tab.get())).is_valid()) {
+    return false;
+  }
+  widget_->Activate();
+  OpenExtensionPopup(id);
+  return extension_popup_widget_ && !extension_popup_widget_->IsClosed();
+}
+
+bool WorkspaceLab::FocusExtensionWindow(content::BrowserContext& context) {
+  if (!widget_ || !model_.active() || WorkspaceProfile(active_index_) != &context)
+    return false;
+  widget_->Activate();
+  return true;
 }
 
 void WorkspaceLab::OnWidgetActivationChanged(views::Widget* widget, bool active) {
@@ -17723,7 +17747,7 @@ base::DictValue WorkspaceLab::DispatchExtensionsManager(
         .Set("enabled", manager->enabled())
         .Set("requestedEnabled", manager->selection())
         .Set("editable", manager->editable() && CanEditWorkspace())
-        .Set("canPin", manager->action_popup().is_valid())
+        .Set("canPin", manager->has_action())
         .Set("pinned", std::ranges::contains(pinned, extension->id()))
         .Set("options", manager->enabled() && manager->options_page().is_valid())
         .Set("commands", GetExtensionCommands(profile, *extension, true))
@@ -17862,7 +17886,7 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
     std::ranges::replace_if(name, [](char16_t c) { return c < 0x20; }, u' ');
     base::i18n::SanitizeUserSuppliedString(&name);
     const auto id = manager->id();
-    const bool has_popup = manager->action_popup().is_valid();
+    const bool has_popup = manager->has_action();
     const bool has_options = manager->options_page().is_valid();
     auto* row = add_row(nullptr, name, 44,
         base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, std::string id,
@@ -18016,7 +18040,7 @@ bool WorkspaceLab::SetExtensionToolbarPinned(std::string id, bool pinned) {
     return false;
   auto& profile = *WorkspaceProfile(active_index_);
   const auto* manager = ManagedExtensionForProfile(profile, id);
-  if (!manager || !manager->action_popup().is_valid())
+  if (!manager || !manager->has_action())
     return false;
   auto* prefs = extensions::ExtensionPrefs::Get(&profile);
   if (!prefs)
@@ -18044,9 +18068,16 @@ void WorkspaceLab::OpenExtensionPopupAt(std::string id, gfx::Rect anchor) {
     return;
   auto& profile = *WorkspaceProfile(active_index_);
   const auto* manager = ManagedExtensionForProfile(profile, id);
-  const GURL url = manager ? manager->action_popup() : GURL();
-  if (!url.is_valid())
+  if (!manager || !manager->has_action())
     return;
+  const auto& tab = tabs_[active_index_][selected_[active_index_]];
+  const GURL url = WorkspaceExtensionPopupUrl(
+      profile, id, WorkspaceExtensionTabId(tab.extension_tab.get()));
+  // Without a popup, a click goes to the extension as action.onClicked.
+  if (!url.is_valid()) {
+    DispatchWorkspaceExtensionActionClicked(profile, id, web_contents());
+    return;
+  }
   if (auto* page = web_contents())
     GrantWorkspaceExtensionActiveTab(*page, id);
 
@@ -18489,9 +18520,10 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
       for (const auto& name : *unsupported)
         names += (names.empty() ? u"" : u", ") + base::UTF8ToUTF16(name.GetString());
     }
-    const auto reason = unsupported
-        ? prototype::TF(u"To rozszerzenie potrzebuje funkcji, których Zitter jeszcze nie obsługuje: {}.", {names})
-        : prototype::T(u"Nie udało się pobrać lub zweryfikować paczki ze sklepu. Spróbuj ponownie.");
+    const auto reason =
+        !unsupported ? prototype::T(u"Nie udało się pobrać lub zweryfikować paczki ze sklepu. Spróbuj ponownie.")
+        : names.empty() ? prototype::T(u"To rozszerzenie używa funkcji, których Zitter jeszcze nie obsługuje.")
+        : prototype::TF(u"To rozszerzenie potrzebuje funkcji, których Zitter jeszcze nie obsługuje: {}.", {names});
     SetExtensionManagerStatus(reason, true);
     // The store page only stops its spinner; say why over it.
     if (!store_id.empty())
@@ -18712,7 +18744,7 @@ void WorkspaceLab::OnInstalledExtension(size_t profile, std::string id,
                                          bool active) {
   auto& context = *contexts_[profile];
   auto* manager = ManagedExtensionForProfile(context, id);
-  if (active && manager && manager->action_popup().is_valid() &&
+  if (active && manager && manager->has_action() &&
       user_prefs::UserPrefs::Get(&context)->GetBoolean(kManagerAutoPinPref)) {
     SetManagerToolbarPin(*extensions::ExtensionPrefs::Get(&context), id, true);
     RefreshExtensionActionAppearance();

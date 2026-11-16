@@ -133,6 +133,13 @@ void UpdateWorkspaceExtensionTab(WorkspaceExtensionTab* tab, int index,
                                  const GURL& deferred_url,
                                  std::u16string_view deferred_title);
 int WorkspaceExtensionTabIdForTesting(content::WebContents& contents);
+// The popup the action shows for `tab_id`, after action.setPopup.
+GURL WorkspaceExtensionPopupUrl(content::BrowserContext& context,
+                                const std::string& id, int tab_id);
+// action.onClicked for an action without a popup.
+void DispatchWorkspaceExtensionActionClicked(content::BrowserContext& context,
+                                             const std::string& id,
+                                             content::WebContents* page);
 void GrantWorkspaceExtensionActiveTab(content::WebContents& page,
                                       const std::string& id);
 bool VerifyExtensionRulePreferencesForTesting(content::BrowserContext& context,
@@ -188,6 +195,8 @@ class ManagedExtension {
   GURL options_page() const;
   GURL uninstall_url() const;
   GURL action_popup() const;
+  // The extension declares an action, with or without a popup.
+  bool has_action() const;
   bool enabled() const;
   bool selection() const;
   bool editable() const;

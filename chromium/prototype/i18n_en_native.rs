@@ -933,6 +933,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Profil {} · wersja {}", "Profile {} · version {}"),
     ("Instaluj tylko rozszerzenia, którym ufasz.", "Only install extensions you trust."),
     ("Nie można zainstalować rozszerzenia", "Can’t install this extension"),
+    ("To rozszerzenie używa funkcji, których Zitter jeszcze nie obsługuje.", "This extension uses features Zitter doesn’t support yet."),
     ("To rozszerzenie potrzebuje funkcji, których Zitter jeszcze nie obsługuje: {}.", "This extension needs features Zitter doesn’t support yet: {}."),
     ("Nie udało się pobrać lub zweryfikować paczki ze sklepu. Spróbuj ponownie.", "Couldn’t download or verify the package from the store. Try again."),
     ("Polecenie rozszerzenia: {}", "Extension command: {}"),

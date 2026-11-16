@@ -17,8 +17,10 @@
 namespace zitter::content_embedder {
 
 inline constexpr char kExtensionArchiveFileName[] = "fixture.crx";
-inline constexpr size_t kMaxFixtureFileSize = 16 * 1024 * 1024;
-inline constexpr size_t kMaxFixtureArchiveSize = 32 * 1024 * 1024;
+// Store packages such as password managers ship single scripts over 16 MB.
+// Extracted files return over Mojo, which caps a message near 256 MB.
+inline constexpr size_t kMaxFixtureFileSize = 32 * 1024 * 1024;
+inline constexpr size_t kMaxFixtureArchiveSize = 96 * 1024 * 1024;
 
 std::optional<base::FilePath> ExtensionArchiveResourcePath(std::string_view name);
 using ExtractedExtensionFiles = std::map<std::string, std::string>;

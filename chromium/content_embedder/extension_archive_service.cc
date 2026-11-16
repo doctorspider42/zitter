@@ -78,10 +78,10 @@ namespace {
 
 using ArchiveFiles = base::flat_map<std::string, std::vector<uint8_t>>;
 
-constexpr size_t kMaxArchiveEntries = 2048;
+constexpr size_t kMaxArchiveEntries = 16384;
 // Keep the reply below Content's 128 MiB Mojo message limit, including paths
 // and serialization overhead.
-constexpr size_t kMaxExtractedBytes = 96 * 1024 * 1024;
+constexpr size_t kMaxExtractedBytes = 200 * 1024 * 1024;
 
 class ArchivePaths {
  public:

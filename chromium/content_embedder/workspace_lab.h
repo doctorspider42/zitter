@@ -234,6 +234,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool NavigateExtensionTabHistory(WorkspaceExtensionTab& target, bool forward);
   void RefreshExtensionActionAppearance();
   bool IsExtensionWindowFocused(content::BrowserContext& context) const;
+  // Brings the Workspace window forward when it shows `context`.
+  bool FocusExtensionWindow(content::BrowserContext& context);
+  // action.openPopup: shows the popup over the Workspace window for `context`.
+  bool OpenExtensionActionPopup(content::BrowserContext& context, const std::string& id);
   base::ListValue GetExtensionCommands(content::BrowserContext& profile,
                                       const extensions::Extension& extension,
                                       bool manager_details = false) const;

@@ -485,6 +485,7 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
     function_names = {
         "sendMessage", "connect", "query", "create", "update", "remove", "move",
         "reload", "duplicate", "goBack", "goForward", "get", "getCurrent", "discard",
+        "captureVisibleTab",
     }
     tab_functions = [item for item in parsed[0]["functions"]
                      if item["name"] in function_names]
@@ -529,7 +530,8 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
 
     for tab_type in tab_types:
         tab_type["id"] = f'tabs.{tab_type["id"]}'
-    event_names = {"onCreated", "onActivated", "onRemoved", "onUpdated", "onMoved"}
+    # onReplaced never fires: Workspace tabs are not swapped for prerendered pages.
+    event_names = {"onCreated", "onActivated", "onRemoved", "onUpdated", "onMoved", "onReplaced"}
     tab_events = [item for item in parsed[0]["events"] if item["name"] in event_names]
     if {item["name"] for item in tab_events} != event_names:
         parser.error("Unexpected Chromium tabs event schema")

@@ -268,11 +268,19 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
                    .contexts = extensions::StaticSpan(kContexts)}};
     static const base::NoDestructor<extensions::SimpleFeature> browsing_data{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kBrowsingDataData)};
+    static constexpr std::string_view kDownloadsDependencies[] = {"permission:downloads"};
+    static constexpr extensions::SimpleFeatureData kDownloadsData{
+        .feature = {.name = "downloads"},
+        .config = {.dependencies = extensions::StaticSpan(kDownloadsDependencies),
+                   .extension_types = extensions::StaticSpan(kTypes),
+                   .contexts = extensions::StaticSpan(kContexts)}};
+    static const base::NoDestructor<extensions::SimpleFeature> downloads{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kDownloadsData)};
     const extensions::Feature* features[] = {
 #if BUILDFLAG(IS_MAC)
         notifications.get(),
 #endif
-        identity.get(), browsing_data.get(),
+        identity.get(), browsing_data.get(), downloads.get(),
         privacy.get(), tabs.get(), font_settings.get(), commands.get(), context_menus.get(), action.get(),
         navigation.get(), side_panel.get(), extension.get(), background_page.get(),
         windows.get()};
@@ -373,11 +381,27 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         .config = {.extension_types = extensions::StaticSpan(kTypes)}};
     static const base::NoDestructor<extensions::PermissionFeature> browsing_data{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kBrowsingDataData)};
+    static constexpr extensions::SimpleFeatureData kDownloadsData{
+        .feature = {.name = "downloads"},
+        .config = {.extension_types = extensions::StaticSpan(kTypes)}};
+    static const base::NoDestructor<extensions::PermissionFeature> downloads{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kDownloadsData)};
+    static constexpr extensions::SimpleFeatureData kDownloadsOpenData{
+        .feature = {.name = "downloads.open"},
+        .config = {.extension_types = extensions::StaticSpan(kTypes)}};
+    static const base::NoDestructor<extensions::PermissionFeature> downloads_open{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kDownloadsOpenData)};
+    static constexpr extensions::SimpleFeatureData kDownloadsUiData{
+        .feature = {.name = "downloads.ui"},
+        .config = {.extension_types = extensions::StaticSpan(kTypes)}};
+    static const base::NoDestructor<extensions::PermissionFeature> downloads_ui{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kDownloadsUiData)};
     const extensions::Feature* features[] = {
 #if BUILDFLAG(IS_MAC)
         notifications.get(),
 #endif
-        identity.get(), browsing_data.get(), privacy.get(), tabs.get(), scripting.get(), font_settings.get(), context_menus.get(),
+        identity.get(), browsing_data.get(), downloads.get(), downloads_open.get(),
+        downloads_ui.get(), privacy.get(), tabs.get(), scripting.get(), font_settings.get(), context_menus.get(),
         clipboard_read.get(), clipboard_write.get(), navigation.get(), side_panel.get()};
     provider->AddStaticFeatures(features);
   }
@@ -392,6 +416,11 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         {extensions::mojom::APIPermissionID::kIdentity, "identity"},
         {extensions::mojom::APIPermissionID::kBrowsingData, "browsingData",
          extensions::APIPermissionInfo::kFlagRequiresManagementUIWarning},
+        {extensions::mojom::APIPermissionID::kDownloads, "downloads",
+         extensions::APIPermissionInfo::kFlagRequiresManagementUIWarning},
+        {extensions::mojom::APIPermissionID::kDownloadsOpen, "downloads.open",
+         extensions::APIPermissionInfo::kFlagRequiresManagementUIWarning},
+        {extensions::mojom::APIPermissionID::kDownloadsUi, "downloads.ui"},
         {extensions::mojom::APIPermissionID::kTab, "tabs",
          extensions::APIPermissionInfo::kFlagRequiresManagementUIWarning},
         {extensions::mojom::APIPermissionID::kScripting, "scripting",
@@ -410,7 +439,7 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
            name == "fontSettings" || name == "commands" ||
            name == "contextMenus" || name == "action" || name == "webNavigation" || name == "sidePanel" ||
            name == "notifications" || name == "privacy" || name == "cookies" ||
-           name == "identity" || name == "browsingData" ||
+           name == "identity" || name == "browsingData" || name == "downloads" ||
            CoreExtensionsAPIProvider::IsAPISchemaGenerated(name);
   }
 
@@ -427,6 +456,28 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
           "windowTypes":{"type":"array","items":{"type":"string"},"optional":true}
         }}],
         "functions":[
+          {"name":"get","type":"function","parameters":[
+            {"name":"windowId","type":"integer"},
+            {"name":"options","$ref":"windows.QueryOptions","optional":true}
+          ],"returns_async":{"name":"callback","parameters":[
+            {"name":"window","type":"object","additionalProperties":{"type":"any"}}
+          ]}},
+          {"name":"create","type":"function","parameters":[
+            {"name":"createData","type":"object","optional":true,
+             "additionalProperties":{"type":"any"}}
+          ],"returns_async":{"name":"callback","optional":true,"parameters":[
+            {"name":"window","type":"object","optional":true,
+             "additionalProperties":{"type":"any"}}
+          ]}},
+          {"name":"update","type":"function","parameters":[
+            {"name":"windowId","type":"integer"},
+            {"name":"updateInfo","type":"object","additionalProperties":{"type":"any"}}
+          ],"returns_async":{"name":"callback","optional":true,"parameters":[
+            {"name":"window","type":"object","additionalProperties":{"type":"any"}}
+          ]}},
+          {"name":"remove","type":"function","parameters":[
+            {"name":"windowId","type":"integer"}
+          ],"returns_async":{"name":"callback","optional":true,"parameters":[]}},
           {"name":"getCurrent","type":"function","parameters":[
             {"name":"options","$ref":"windows.QueryOptions","optional":true}
           ],"returns_async":{"name":"callback","parameters":[
@@ -440,6 +491,8 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         ],
         "events":[
           {"name":"onFocusChanged","type":"function","parameters":[{"name":"windowId","type":"integer"}]},
+          {"name":"onCreated","type":"function","parameters":[
+            {"name":"window","type":"object","additionalProperties":{"type":"any"}}]},
           {"name":"onRemoved","type":"function","parameters":[{"name":"windowId","type":"integer"}]}
         ]
       })json";
@@ -461,7 +514,29 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
           "returns_async":{"name":"callback","parameters":[
             {"name":"cookie","type":"object","additionalProperties":{"type":"any"},"optional":true}
           ]}
-        }]
+        },{"name":"getAll","type":"function","parameters":[
+          {"name":"details","type":"object","additionalProperties":{"type":"any"}}],
+          "returns_async":{"name":"callback","parameters":[
+            {"name":"cookies","type":"array","items":{"type":"object","additionalProperties":{"type":"any"}}}
+          ]}
+        },{"name":"set","type":"function","parameters":[
+          {"name":"details","type":"object","additionalProperties":{"type":"any"}}],
+          "returns_async":{"name":"callback","optional":true,"parameters":[
+            {"name":"cookie","type":"object","additionalProperties":{"type":"any"},"optional":true}
+          ]}
+        },{"name":"remove","type":"function","parameters":[
+          {"name":"details","type":"object","additionalProperties":{"type":"any"}}],
+          "returns_async":{"name":"callback","optional":true,"parameters":[
+            {"name":"details","type":"object","additionalProperties":{"type":"any"},"optional":true}
+          ]}
+        },{"name":"getAllCookieStores","type":"function","parameters":[],
+          "returns_async":{"name":"callback","parameters":[
+            {"name":"cookieStores","type":"array","items":{"type":"object","additionalProperties":{"type":"any"}}}
+          ]}
+        }],
+        "events":[{"name":"onChanged","type":"function","parameters":[
+          {"name":"changeInfo","type":"object","additionalProperties":{"type":"any"}}
+        ]}]
       })json";
     }
     if (name == "privacy") {
@@ -503,6 +578,58 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
             {"name":"account","$ref":"identity.AccountInfo"},
             {"name":"signedIn","type":"boolean"}
           ]}
+        ]
+      })json";
+    }
+    if (name == "downloads") {
+      return R"json({
+        "namespace":"downloads",
+        "functions":[
+          {"name":"download","type":"function","parameters":[
+            {"name":"options","type":"object","additionalProperties":{"type":"any"}}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[
+            {"name":"downloadId","type":"integer"}]}},
+          {"name":"search","type":"function","parameters":[
+            {"name":"query","type":"object","additionalProperties":{"type":"any"}}],
+           "returns_async":{"name":"callback","parameters":[
+            {"name":"results","type":"array","items":{"type":"object","additionalProperties":{"type":"any"}}}]}},
+          {"name":"pause","type":"function","parameters":[{"name":"downloadId","type":"integer"}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"resume","type":"function","parameters":[{"name":"downloadId","type":"integer"}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"cancel","type":"function","parameters":[{"name":"downloadId","type":"integer"}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"open","type":"function","parameters":[{"name":"downloadId","type":"integer"}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"show","type":"function","parameters":[{"name":"downloadId","type":"integer"}]},
+          {"name":"showDefaultFolder","type":"function","parameters":[]},
+          {"name":"erase","type":"function","parameters":[
+            {"name":"query","type":"object","additionalProperties":{"type":"any"}}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[
+            {"name":"erasedIds","type":"array","items":{"type":"integer"}}]}},
+          {"name":"removeFile","type":"function","parameters":[{"name":"downloadId","type":"integer"}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"acceptDanger","type":"function","parameters":[{"name":"downloadId","type":"integer"}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"getFileIcon","type":"function","parameters":[
+            {"name":"downloadId","type":"integer"},
+            {"name":"options","type":"object","optional":true,"additionalProperties":{"type":"any"}}],
+           "returns_async":{"name":"callback","parameters":[
+            {"name":"iconURL","type":"string","optional":true}]}},
+          {"name":"setShelfEnabled","type":"function","parameters":[{"name":"enabled","type":"boolean"}]},
+          {"name":"setUiOptions","type":"function","parameters":[
+            {"name":"options","type":"object","additionalProperties":{"type":"any"}}],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}}
+        ],
+        "events":[
+          {"name":"onCreated","type":"function","parameters":[
+            {"name":"downloadItem","type":"object","additionalProperties":{"type":"any"}}]},
+          {"name":"onErased","type":"function","parameters":[{"name":"downloadId","type":"integer"}]},
+          {"name":"onChanged","type":"function","parameters":[
+            {"name":"downloadDelta","type":"object","additionalProperties":{"type":"any"}}]},
+          {"name":"onDeterminingFilename","type":"function","parameters":[
+            {"name":"downloadItem","type":"object","additionalProperties":{"type":"any"}},
+            {"name":"suggest","type":"function"}]}
         ]
       })json";
     }
@@ -670,6 +797,55 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
                         "items": {"type": "integer"}, "minItems": 4, "maxItems": 4}]}
           }}],
           "returns_async": {"name": "callback", "optional": true, "parameters": []}
+        }, {
+          "name": "setPopup", "type": "function",
+          "parameters": [{"name": "details", "type": "object", "properties": {
+            "tabId": {"type": "integer", "optional": true}, "popup": {"type": "string"}}}],
+          "returns_async": {"name": "callback", "optional": true, "parameters": []}
+        }, {
+          "name": "getPopup", "type": "function", "parameters": [{"name": "details", "type": "object", "optional": true, "properties": {"tabId": {"type": "integer", "optional": true}}}],
+          "returns_async": {"name": "callback", "parameters": [{"name": "result", "type": "string"}]}
+        }, {
+          "name": "setTitle", "type": "function",
+          "parameters": [{"name": "details", "type": "object", "properties": {
+            "tabId": {"type": "integer", "optional": true}, "title": {"type": "string"}}}],
+          "returns_async": {"name": "callback", "optional": true, "parameters": []}
+        }, {
+          "name": "getTitle", "type": "function", "parameters": [{"name": "details", "type": "object", "optional": true, "properties": {"tabId": {"type": "integer", "optional": true}}}],
+          "returns_async": {"name": "callback", "parameters": [{"name": "result", "type": "string"}]}
+        }, {
+          "name": "getBadgeText", "type": "function", "parameters": [{"name": "details", "type": "object", "optional": true, "properties": {"tabId": {"type": "integer", "optional": true}}}],
+          "returns_async": {"name": "callback", "parameters": [{"name": "result", "type": "string"}]}
+        }, {
+          "name": "enable", "type": "function",
+          "parameters": [{"name": "tabId", "type": "integer", "optional": true}],
+          "returns_async": {"name": "callback", "optional": true, "parameters": []}
+        }, {
+          "name": "disable", "type": "function",
+          "parameters": [{"name": "tabId", "type": "integer", "optional": true}],
+          "returns_async": {"name": "callback", "optional": true, "parameters": []}
+        }, {
+          "name": "isEnabled", "type": "function",
+          "parameters": [{"name": "tabId", "type": "integer", "optional": true}],
+          "returns_async": {"name": "callback", "parameters": [{"name": "isEnabled", "type": "boolean"}]}
+        }, {
+          "name": "openPopup", "type": "function",
+          "parameters": [{"name": "options", "type": "object", "optional": true,
+                          "additionalProperties": {"type": "any"}}],
+          "returns_async": {"name": "callback", "optional": true, "parameters": []}
+        }, {
+          "name": "getUserSettings", "type": "function", "parameters": [],
+          "returns_async": {"name": "callback", "parameters": [
+            {"name": "userSettings", "type": "object", "properties": {
+              "isOnToolbar": {"type": "boolean"}}}]}
+        }],
+        "events": [{
+          "name": "onClicked", "type": "function",
+          "parameters": [{"name": "tab", "$ref": "tabs.Tab"}]
+        }, {
+          "name": "onUserSettingsChanged", "type": "function",
+          "parameters": [{"name": "change", "type": "object",
+                          "additionalProperties": {"type": "any"}}]
         }]
       })json";
     }
@@ -826,9 +1002,11 @@ bool IsAllWebHosts(const URLPattern& pattern) {
 }
 
 // Sites that may message an extension (externally_connectable.matches) must
-// be named HTTPS hosts, optionally with their subdomains, and never the store.
+// be named hosts over HTTPS (or any scheme, as Chrome allows), optionally with
+// their subdomains, and never the store.
 bool IsSupportedExternalPage(const URLPattern& pattern) {
-  return pattern.scheme() == "https" && !pattern.match_all_urls() &&
+  return (pattern.scheme() == "https" || pattern.scheme() == "*") &&
+         !pattern.match_all_urls() &&
          !pattern.host().empty() && pattern.host() != "*" &&
          pattern.host().find('.') != std::string::npos &&
          !extension_urls::IsWebstoreDomain(GURL("https://" + pattern.host()));
@@ -840,7 +1018,9 @@ bool IsSupportedExtensionApi(std::string_view api) {
       "nativeMessaging", "notifications",
 #endif
       "activeTab", "alarms", "browsingData", "clipboardRead", "clipboardWrite", "contextMenus",
-      "cookies", "declarativeNetRequest", "identity",
+      "cookies", "declarativeNetRequest", "declarativeNetRequestFeedback", "downloads",
+      "downloads.open", "downloads.ui",
+      "declarativeNetRequestWithHostAccess", "identity",
       "fontSettings", "idle", "offscreen", "privacy", "scripting", "sidePanel",
       "storage", "tabs",
       "unlimitedStorage", "userScripts", "webNavigation", "webRequest",
@@ -921,8 +1101,11 @@ std::vector<std::string> UnsupportedManifestFeatures(const ExtractedExtensionFil
     }
   }
   for (const auto [key, value] : *parsed) {
-    // The store's update_url and omnibox are dropped before review.
-    if (key != "update_url" && key != "omnibox" && !kSupportedManifestKeys.contains(key))
+    // These keys are dropped from store packages before review.
+    static constexpr std::string_view kDropped[] = {
+        "update_url", "omnibox", "browser_specific_settings", "offline_enabled",
+        "minimum_opera_version", "content_capabilities"};
+    if (!std::ranges::contains(kDropped, key) && !kSupportedManifestKeys.contains(key))
       add(key);
   }
   if (parsed->FindInt("manifest_version").value_or(0) != 3)
@@ -931,8 +1114,6 @@ std::vector<std::string> UnsupportedManifestFeatures(const ExtractedExtensionFil
            !background || !background->FindString("service_worker")) {
     add("background page");
   }
-  if (const auto* action = parsed->FindDict("action"); action && !action->FindString("default_popup"))
-    add("action without popup");
   return missing;
 }
 
@@ -963,9 +1144,10 @@ bool SupportsExtensionManifest(const extensions::Extension& extension) {
   }
   if (manifest.contains("action")) {
     const auto* action = extensions::ActionInfo::GetExtensionActionInfo(&extension);
+    // An action without a popup receives action.onClicked.
     if (!action || action->default_state != extensions::ActionInfo::DefaultState::kEnabled ||
-        !action->default_popup_url.is_valid() ||
-        url::Origin::Create(action->default_popup_url) != extension.origin()) {
+        (action->default_popup_url.is_valid() &&
+         url::Origin::Create(action->default_popup_url) != extension.origin())) {
       return false;
     }
   }
@@ -980,8 +1162,9 @@ bool SupportsExtensionManifest(const extensions::Extension& extension) {
         return !entry.allow_all_extensions &&
                entry.extension_ids.empty() && !entry.matches.is_empty() &&
                std::ranges::all_of(entry.matches, [&](const auto& pattern) {
+                 // Chrome exposes store packages' resources to every site.
                  if (pattern.match_all_urls())
-                   return entry.use_dynamic_url;
+                   return entry.use_dynamic_url || extension.from_webstore();
                  if (extension.from_webstore() && IsAllWebHosts(pattern))
                    return true;
                  return !pattern.host().empty() &&
@@ -1224,6 +1407,12 @@ scoped_refptr<extensions::Extension> LoadFixture(const base::FilePath& path,
     }
     // This embedder has no extension keyword provider.
     manifest->Remove("omnibox");
+    // Keys for other browsers and retired Chrome features that Chrome
+    // ignores. Content would report them as unknown keys.
+    for (const char* key : {"browser_specific_settings", "offline_enabled",
+                            "minimum_opera_version", "content_capabilities"}) {
+      manifest->Remove(key);
+    }
     flags |= extensions::Extension::FROM_WEBSTORE;
   }
 
@@ -2098,6 +2287,7 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
       return;
     }
     unsupported_ = UnsupportedManifestFeatures(*files);
+    extracted_ = true;
     fixture->files = std::move(*files);
     const auto current = std::ranges::find(installed_, fixture->id,
                                             &extensions::Extension::id);
@@ -2111,7 +2301,9 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
 
   void OnReviewed(std::optional<ReviewedFixture> reviewed) {
     reviewed_ = std::move(reviewed);
-    if (!reviewed_ && !unsupported_.empty()) {
+    // A package that downloaded and unpacked but failed review uses
+    // something this host lacks, named or not.
+    if (!reviewed_ && extracted_) {
       base::ListValue names;
       for (auto& name : unsupported_)
         names.Append(std::move(name));
@@ -2130,6 +2322,7 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
   std::optional<SignedFixture> verified_;
   std::optional<ReviewedFixture> reviewed_;
   std::vector<std::string> unsupported_;
+  bool extracted_ = false;
   base::WeakPtrFactory<SelectedExtensionInstall> weak_factory_{this};
 };
 

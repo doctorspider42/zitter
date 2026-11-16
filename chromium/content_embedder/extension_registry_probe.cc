@@ -1,8 +1,12 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
 #include "extension_registry_probe.h"
+
+#include "extension_downloads.h"
 #include "extensions_manager.h"
 
+#include "base/base64.h"
+#include "base/strings/string_util.h"
 #include "base/supports_user_data.h"
 #include "chromium/prototype/night_shift_config.h"
 #include "extension_archive_service.h"
@@ -77,10 +81,13 @@
 #include "content/public/browser/navigation_throttle_registry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
+#include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/security_principal.h"
 #include "content/public/browser/service_worker_context.h"
 #include "net/cookies/canonical_cookie.h"
+#include "net/cookies/cookie_inclusion_status.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_partition_key_collection.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
@@ -205,6 +212,8 @@
 #include "third_party/blink/public/common/service_worker/service_worker_status_code.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
+#include "ui/gfx/codec/jpeg_codec.h"
+#include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/image/image.h"
 #include "workspace_lab.h"
 #include "chromium/prototype/workspace_shell.h"
@@ -1358,6 +1367,23 @@ bool ParseExtensionTabUrl(const base::DictValue& options, GURL& url) {
          !url.has_password() && url.spec().size() <= 32768;
 }
 
+// Accepts HTTP(S) URLs without credentials and the extension's own pages.
+bool ResolveExtensionTabUrl(const extensions::Extension& extension, const std::string& input,
+                            GURL& url) {
+  if (ParseExtensionTabUrl(base::DictValue().Set("url", input), url))
+    return true;
+  url = url.has_scheme() ? url : extension.ResolveExtensionURL(input);
+  if (url.SchemeIs(extensions::kExtensionScheme) && url.host() == extension.guid()) {
+    GURL::Replacements canonical_host;
+    canonical_host.SetHostStr(extension.id());
+    url = url.ReplaceComponents(canonical_host);
+  }
+  return url.is_valid() && url.SchemeIs(extensions::kExtensionScheme) &&
+         url::Origin::Create(url) == extension.origin() && !url.has_username() &&
+         !url.has_password() && url.spec().size() <= 32768 &&
+         !extensions::file_util::ExtensionURLToRelativeFilePath(url).empty();
+}
+
 class LabTabsCreateFunction final : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("tabs.create", TABS_CREATE)
@@ -2133,6 +2159,30 @@ class LabWindowsGetAllFunction final : public ExtensionFunction {
   }
 };
 
+base::DictValue ExtensionCookieDetails(const net::CanonicalCookie& cookie) {
+  const char* same_site = "unspecified";
+  switch (cookie.SameSite()) {
+    case net::CookieSameSite::NO_RESTRICTION: same_site = "no_restriction"; break;
+    case net::CookieSameSite::LAX_MODE: same_site = "lax"; break;
+    case net::CookieSameSite::STRICT_MODE: same_site = "strict"; break;
+    case net::CookieSameSite::UNSPECIFIED: break;
+  }
+  auto result = base::DictValue()
+                    .Set("name", cookie.Name())
+                    .Set("value", cookie.Value())
+                    .Set("domain", cookie.Domain())
+                    .Set("hostOnly", cookie.IsHostCookie())
+                    .Set("path", cookie.Path())
+                    .Set("secure", cookie.SecureAttribute())
+                    .Set("httpOnly", cookie.IsHttpOnly())
+                    .Set("sameSite", same_site)
+                    .Set("session", !cookie.IsPersistent())
+                    .Set("storeId", "0");
+  if (cookie.IsPersistent())
+    result.Set("expirationDate", cookie.ExpiryDate().InSecondsFSinceUnixEpoch());
+  return result;
+}
+
 class LabCookiesGetFunction final : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("cookies.get", COOKIES_GET)
@@ -2180,27 +2230,7 @@ class LabCookiesGetFunction final : public ExtensionFunction {
       const auto& cookie = entry.cookie;
       if (cookie.Name() != name || cookie.IsPartitioned())
         continue;
-      const char* same_site = "unspecified";
-      switch (cookie.SameSite()) {
-        case net::CookieSameSite::NO_RESTRICTION: same_site = "no_restriction"; break;
-        case net::CookieSameSite::LAX_MODE: same_site = "lax"; break;
-        case net::CookieSameSite::STRICT_MODE: same_site = "strict"; break;
-        case net::CookieSameSite::UNSPECIFIED: break;
-      }
-      auto result = base::DictValue()
-                        .Set("name", cookie.Name())
-                        .Set("value", cookie.Value())
-                        .Set("domain", cookie.Domain())
-                        .Set("hostOnly", cookie.IsHostCookie())
-                        .Set("path", cookie.Path())
-                        .Set("secure", cookie.SecureAttribute())
-                        .Set("httpOnly", cookie.IsHttpOnly())
-                        .Set("sameSite", same_site)
-                        .Set("session", !cookie.IsPersistent())
-                        .Set("storeId", "0");
-      if (cookie.IsPersistent())
-        result.Set("expirationDate", cookie.ExpiryDate().InSecondsFSinceUnixEpoch());
-      Respond(WithArguments(std::move(result)));
+      Respond(WithArguments(ExtensionCookieDetails(cookie)));
       return;
     }
     Respond(WithArguments(base::Value()));
@@ -2827,6 +2857,176 @@ class LabWebStoreGetPromotion final : public LabWebStoreFunction {
   }
 };
 
+class LabActionSetPopupFunction final : public LabActionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.setPopup", ACTION_SETPOPUP)
+
+ private:
+  ~LabActionSetPopupFunction() override = default;
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(args().size() == 1 && args()[0].is_dict());
+    const auto& details = args()[0].GetDict();
+    const int tab_id = details.FindInt("tabId").value_or(extensions::ExtensionAction::kDefaultTabId);
+    const auto* popup = details.FindString("popup");
+    auto* action = GetAction(tab_id);
+    if (!action || !popup)
+      return RespondNow(Error("Invalid action popup or tab."));
+    GURL url;
+    if (!popup->empty()) {
+      url = extension()->ResolveExtensionURL(*popup);
+      if (!url.is_valid() || url::Origin::Create(url) != extension()->origin())
+        return RespondNow(Error("The popup must be a page of the extension."));
+    }
+    action->SetPopupUrl(tab_id, url);
+    return RespondNow(NoArguments());
+  }
+};
+
+class LabActionGetPopupFunction final : public LabActionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getPopup", ACTION_GETPOPUP)
+
+ private:
+  ~LabActionGetPopupFunction() override = default;
+  ResponseAction Run() override {
+    const auto* details = args().empty() ? nullptr : args()[0].GetIfDict();
+    const int tab_id = details ? details->FindInt("tabId").value_or(
+        extensions::ExtensionAction::kDefaultTabId) : extensions::ExtensionAction::kDefaultTabId;
+    auto* action = GetAction(tab_id);
+    if (!action)
+      return RespondNow(Error("Invalid tab."));
+    const GURL url = action->GetPopupUrl(tab_id);
+    return RespondNow(WithArguments(url.is_valid() ? url.spec() : std::string()));
+  }
+};
+
+class LabActionSetTitleFunction final : public LabActionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.setTitle", ACTION_SETTITLE)
+
+ private:
+  ~LabActionSetTitleFunction() override = default;
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(args().size() == 1 && args()[0].is_dict());
+    const auto& details = args()[0].GetDict();
+    const int tab_id = details.FindInt("tabId").value_or(extensions::ExtensionAction::kDefaultTabId);
+    const auto* title = details.FindString("title");
+    auto* action = GetAction(tab_id);
+    if (!action || !title || title->size() > 1024)
+      return RespondNow(Error("Invalid action title or tab."));
+    action->SetTitle(tab_id, *title);
+    NotifyAppearance();
+    return RespondNow(NoArguments());
+  }
+};
+
+class LabActionGetTitleFunction final : public LabActionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getTitle", ACTION_GETTITLE)
+
+ private:
+  ~LabActionGetTitleFunction() override = default;
+  ResponseAction Run() override {
+    const auto* details = args().empty() ? nullptr : args()[0].GetIfDict();
+    const int tab_id = details ? details->FindInt("tabId").value_or(
+        extensions::ExtensionAction::kDefaultTabId) : extensions::ExtensionAction::kDefaultTabId;
+    auto* action = GetAction(tab_id);
+    return action ? RespondNow(WithArguments(action->GetTitle(tab_id)))
+                  : RespondNow(Error("Invalid tab."));
+  }
+};
+
+class LabActionGetBadgeTextFunction final : public LabActionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getBadgeText", ACTION_GETBADGETEXT)
+
+ private:
+  ~LabActionGetBadgeTextFunction() override = default;
+  ResponseAction Run() override {
+    const auto* details = args().empty() ? nullptr : args()[0].GetIfDict();
+    const int tab_id = details ? details->FindInt("tabId").value_or(
+        extensions::ExtensionAction::kDefaultTabId) : extensions::ExtensionAction::kDefaultTabId;
+    auto* action = GetAction(tab_id);
+    return action ? RespondNow(WithArguments(action->GetExplicitlySetBadgeText(tab_id)))
+                  : RespondNow(Error("Invalid tab."));
+  }
+};
+
+template <bool kEnable, extensions::functions::HistogramValue kHistogram>
+class LabActionSetEnabledFunction : public LabActionFunction {
+ protected:
+  ~LabActionSetEnabledFunction() override = default;
+  ResponseAction Run() override {
+    const int tab_id = !args().empty() && args()[0].is_int()
+        ? args()[0].GetInt() : extensions::ExtensionAction::kDefaultTabId;
+    auto* action = GetAction(tab_id);
+    if (!action)
+      return RespondNow(Error("Invalid tab."));
+    action->SetIsVisible(tab_id, kEnable);
+    NotifyAppearance();
+    return RespondNow(NoArguments());
+  }
+};
+
+class LabActionEnableFunction final
+    : public LabActionSetEnabledFunction<true, extensions::functions::ACTION_ENABLE> {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.enable", ACTION_ENABLE)
+ private:
+  ~LabActionEnableFunction() override = default;
+};
+
+class LabActionDisableFunction final
+    : public LabActionSetEnabledFunction<false, extensions::functions::ACTION_DISABLE> {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.disable", ACTION_DISABLE)
+ private:
+  ~LabActionDisableFunction() override = default;
+};
+
+class LabActionIsEnabledFunction final : public LabActionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.isEnabled", ACTION_ISENABLED)
+
+ private:
+  ~LabActionIsEnabledFunction() override = default;
+  ResponseAction Run() override {
+    const int tab_id = !args().empty() && args()[0].is_int()
+        ? args()[0].GetInt() : extensions::ExtensionAction::kDefaultTabId;
+    auto* action = GetAction(tab_id);
+    return action ? RespondNow(WithArguments(action->GetIsVisibleIgnoringDeclarative(tab_id)))
+                  : RespondNow(Error("Invalid tab."));
+  }
+};
+
+class LabActionOpenPopupFunction final : public LabActionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.openPopup", ACTION_OPENPOPUP)
+
+ private:
+  ~LabActionOpenPopupFunction() override = default;
+  ResponseAction Run() override {
+    const auto tabs = WorkspaceExtensionTab::InProfile(browser_context());
+    if (!GetAction(extensions::ExtensionAction::kDefaultTabId) || tabs.empty() ||
+        !tabs.front()->workspace().OpenExtensionActionPopup(*browser_context(), extension()->id())) {
+      return RespondNow(Error("Failed to open the popup."));
+    }
+    return RespondNow(NoArguments());
+  }
+};
+
+// Zitter shows every extension's action in the toolbar.
+class LabActionGetUserSettingsFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getUserSettings", ACTION_GETUSERSETTINGS)
+
+ private:
+  ~LabActionGetUserSettingsFunction() override = default;
+  ResponseAction Run() override {
+    return RespondNow(WithArguments(base::DictValue().Set("isOnToolbar", true)));
+  }
+};
+
 // identity: Zitter has no browser-wide Google account, so it answers as
 // Chrome does when nobody is signed in. Extensions then use their own sign-in.
 class LabIdentityGetAuthTokenFunction final : public ExtensionFunction {
@@ -2957,6 +3157,421 @@ class LabBrowsingDataRemoveFunction final
   }
 };
 
+// runtime functions that need no RuntimeAPIDelegate.
+class LabRuntimeGetPlatformInfoFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("runtime.getPlatformInfo", RUNTIME_GETPLATFORMINFO)
+
+ private:
+  ~LabRuntimeGetPlatformInfoFunction() override = default;
+  ResponseAction Run() override {
+#if BUILDFLAG(IS_MAC)
+    constexpr char kOs[] = "mac";
+#elif BUILDFLAG(IS_WIN)
+    constexpr char kOs[] = "win";
+#else
+    constexpr char kOs[] = "linux";
+#endif
+#if defined(ARCH_CPU_ARM64)
+    constexpr char kArch[] = "arm64";
+    constexpr char kNaclArch[] = "arm";
+#else
+    constexpr char kArch[] = "x86-64";
+    constexpr char kNaclArch[] = "x86-64";
+#endif
+    return RespondNow(WithArguments(
+        base::DictValue().Set("os", kOs).Set("arch", kArch).Set("nacl_arch", kNaclArch)));
+  }
+};
+
+// Zitter checks the store for updates itself every few hours.
+class LabRuntimeRequestUpdateCheckFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("runtime.requestUpdateCheck", RUNTIME_REQUESTUPDATECHECK)
+
+ private:
+  ~LabRuntimeRequestUpdateCheckFunction() override = default;
+  ResponseAction Run() override {
+    return RespondNow(WithArguments(base::DictValue().Set("status", "no_update")));
+  }
+};
+
+// cookies: the profile's single store ("0"), limited to granted hosts.
+bool ExtensionMayUseCookieUrl(const extensions::Extension& extension, const GURL& url) {
+  return url.SchemeIsHTTPOrHTTPS() && !url.has_username() && !url.has_password() &&
+         !extension_urls::IsWebstoreDomain(url) &&
+         extension.permissions_data()->HasHostPermission(url);
+}
+
+bool ExtensionMayUseCookie(const extensions::Extension& extension,
+                           const net::CanonicalCookie& cookie) {
+  const auto host = std::string(base::TrimString(cookie.Domain(), ".", base::TRIM_LEADING));
+  return ExtensionMayUseCookieUrl(
+      extension, GURL((cookie.SecureAttribute() ? "https://" : "http://") + host + "/"));
+}
+
+class LabCookiesGetAllFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("cookies.getAll", COOKIES_GETALL)
+
+ private:
+  ~LabCookiesGetAllFunction() override = default;
+
+  ResponseAction Run() override {
+    if (args().size() != 1 || !args()[0].is_dict())
+      return RespondNow(Error("Invalid cookie filter."));
+    filter_ = args()[0].GetDict().Clone();
+    auto* context = browser_context();
+    const auto* store = filter_.FindString("storeId");
+    if (!context || !extension() || context->IsOffTheRecord() || (store && *store != "0") ||
+        !extension()->permissions_data()->HasAPIPermission(
+            extensions::mojom::APIPermissionID::kCookie)) {
+      return RespondNow(Error("The extension does not have access to this cookie store."));
+    }
+    auto* manager = context->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess();
+    if (const auto* address = filter_.FindString("url")) {
+      const GURL url(*address);
+      if (!ExtensionMayUseCookieUrl(*extension(), url))
+        return RespondNow(Error("The extension does not have access to this URL."));
+      manager->GetCookieList(url, net::CookieOptions::MakeAllInclusive(),
+                             net::CookiePartitionKeyCollection(),
+                             base::BindOnce(&LabCookiesGetAllFunction::OnList, this));
+    } else {
+      manager->GetAllCookies(base::BindOnce(&LabCookiesGetAllFunction::OnAll, this));
+    }
+    return RespondLater();
+  }
+
+  void OnList(const net::CookieAccessResultList& cookies, const net::CookieAccessResultList&) {
+    std::vector<net::CanonicalCookie> list;
+    for (const auto& entry : cookies)
+      list.push_back(entry.cookie);
+    OnAll(list);
+  }
+
+  void OnAll(const std::vector<net::CanonicalCookie>& cookies) {
+    if (!extension()) {
+      Respond(Error("The extension is gone."));
+      return;
+    }
+    const auto* name = filter_.FindString("name");
+    const auto* domain = filter_.FindString("domain");
+    const auto* path = filter_.FindString("path");
+    const auto secure = filter_.FindBool("secure");
+    const auto session = filter_.FindBool("session");
+    base::ListValue result;
+    for (const auto& cookie : cookies) {
+      if (cookie.IsPartitioned() || !ExtensionMayUseCookie(*extension(), cookie) ||
+          (name && cookie.Name() != *name) || (path && cookie.Path() != *path) ||
+          (secure && cookie.SecureAttribute() != *secure) ||
+          (session && cookie.IsPersistent() == *session)) {
+        continue;
+      }
+      if (domain) {
+        const auto wanted = std::string(base::TrimString(*domain, ".", base::TRIM_LEADING));
+        const auto own = std::string(base::TrimString(cookie.Domain(), ".", base::TRIM_LEADING));
+        if (own != wanted && !own.ends_with("." + wanted))
+          continue;
+      }
+      result.Append(ExtensionCookieDetails(cookie));
+    }
+    Respond(WithArguments(std::move(result)));
+  }
+
+  base::DictValue filter_;
+};
+
+class LabCookiesSetFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("cookies.set", COOKIES_SET)
+
+ private:
+  ~LabCookiesSetFunction() override = default;
+
+  ResponseAction Run() override {
+    if (args().size() != 1 || !args()[0].is_dict())
+      return RespondNow(Error("Invalid cookie details."));
+    const auto& details = args()[0].GetDict();
+    const auto* address = details.FindString("url");
+    const auto* store = details.FindString("storeId");
+    auto* context = browser_context();
+    const GURL url(address ? *address : std::string());
+    if (!context || !extension() || context->IsOffTheRecord() || (store && *store != "0") ||
+        !extension()->permissions_data()->HasAPIPermission(
+            extensions::mojom::APIPermissionID::kCookie) ||
+        !ExtensionMayUseCookieUrl(*extension(), url)) {
+      return RespondNow(Error("The extension does not have access to this cookie store or URL."));
+    }
+    auto text = [&](const char* key) {
+      const auto* value = details.FindString(key);
+      return value ? *value : std::string();
+    };
+    net::CookieSameSite same_site = net::CookieSameSite::UNSPECIFIED;
+    const auto mode = text("sameSite");
+    if (mode == "no_restriction") same_site = net::CookieSameSite::NO_RESTRICTION;
+    else if (mode == "lax") same_site = net::CookieSameSite::LAX_MODE;
+    else if (mode == "strict") same_site = net::CookieSameSite::STRICT_MODE;
+    const auto expiration = details.FindDouble("expirationDate");
+    const auto now = base::Time::Now();
+    net::CookieInclusionStatus status;
+    auto cookie = net::CanonicalCookie::CreateSanitizedCookie(
+        url, text("name"), text("value"), text("domain"),
+        details.FindString("path") ? text("path") : std::string(), now,
+        expiration ? base::Time::FromSecondsSinceUnixEpoch(*expiration) : base::Time(), now,
+        details.FindBool("secure").value_or(false), details.FindBool("httpOnly").value_or(false),
+        same_site, net::COOKIE_PRIORITY_DEFAULT, std::nullopt, &status);
+    if (!cookie || !ExtensionMayUseCookie(*extension(), *cookie))
+      return RespondNow(Error("Failed to parse or set cookie named \"" + text("name") + "\"."));
+    auto copy = *cookie;
+    context->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess()
+        ->SetCanonicalCookie(*cookie, url, net::CookieOptions::MakeAllInclusive(),
+                             base::BindOnce(&LabCookiesSetFunction::OnSet, this, std::move(copy)));
+    return RespondLater();
+  }
+
+  void OnSet(net::CanonicalCookie cookie, net::CookieAccessResult result) {
+    if (!result.status.IsInclude()) {
+      Respond(Error("Failed to set cookie named \"" + cookie.Name() + "\"."));
+      return;
+    }
+    Respond(WithArguments(ExtensionCookieDetails(cookie)));
+  }
+};
+
+class LabCookiesRemoveFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("cookies.remove", COOKIES_REMOVE)
+
+ private:
+  ~LabCookiesRemoveFunction() override = default;
+
+  ResponseAction Run() override {
+    if (args().size() != 1 || !args()[0].is_dict())
+      return RespondNow(Error("Invalid cookie details."));
+    const auto& details = args()[0].GetDict();
+    const auto* address = details.FindString("url");
+    const auto* name = details.FindString("name");
+    const auto* store = details.FindString("storeId");
+    auto* context = browser_context();
+    url_ = GURL(address ? *address : std::string());
+    if (!name || !context || !extension() || context->IsOffTheRecord() ||
+        (store && *store != "0") ||
+        !extension()->permissions_data()->HasAPIPermission(
+            extensions::mojom::APIPermissionID::kCookie) ||
+        !ExtensionMayUseCookieUrl(*extension(), url_)) {
+      return RespondNow(Error("The extension does not have access to this cookie store or URL."));
+    }
+    name_ = *name;
+    context->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess()->GetCookieList(
+        url_, net::CookieOptions::MakeAllInclusive(), net::CookiePartitionKeyCollection(),
+        base::BindOnce(&LabCookiesRemoveFunction::OnList, this));
+    return RespondLater();
+  }
+
+  void OnList(const net::CookieAccessResultList& cookies, const net::CookieAccessResultList&) {
+    auto* context = browser_context();
+    const auto match = std::ranges::find_if(cookies, [&](const auto& entry) {
+      return entry.cookie.Name() == name_ && !entry.cookie.IsPartitioned();
+    });
+    if (!context || match == cookies.end()) {
+      Respond(WithArguments(base::Value()));
+      return;
+    }
+    context->GetDefaultStoragePartition()->GetCookieManagerForBrowserProcess()
+        ->DeleteCanonicalCookie(match->cookie,
+                                base::BindOnce(&LabCookiesRemoveFunction::OnDeleted, this));
+  }
+
+  void OnDeleted(bool) {
+    Respond(WithArguments(
+        base::DictValue().Set("url", url_.spec()).Set("name", name_).Set("storeId", "0")));
+  }
+
+  GURL url_;
+  std::string name_;
+};
+
+class LabCookiesGetAllCookieStoresFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("cookies.getAllCookieStores", COOKIES_GETALLCOOKIESTORES)
+
+ private:
+  ~LabCookiesGetAllCookieStoresFunction() override = default;
+  ResponseAction Run() override {
+    base::ListValue tabs;
+    for (auto* tab : WorkspaceExtensionTab::InProfile(browser_context()))
+      tabs.Append(tab->id());
+    return RespondNow(WithArguments(base::ListValue().Append(
+        base::DictValue().Set("id", "0").Set("tabIds", std::move(tabs)))));
+  }
+};
+
+// windows: Zitter shows each profile's tabs in one Workspace window.
+bool IsWorkspaceWindowId(int id) {
+  return id == kWorkspaceExtensionWindowId || id == extension_misc::kCurrentWindowId;
+}
+
+class LabWindowsGetFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("windows.get", WINDOWS_GET)
+
+ private:
+  ~LabWindowsGetFunction() override = default;
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(extension() && !args().empty() && args()[0].is_int());
+    const auto tabs = WorkspaceExtensionTab::InProfile(browser_context());
+    if (tabs.empty() || !IsWorkspaceWindowId(args()[0].GetInt()))
+      return RespondNow(Error("No window with id: " + base::NumberToString(args()[0].GetInt()) + "."));
+    const auto* options = args().size() > 1 ? args()[1].GetIfDict() : nullptr;
+    return RespondNow(WithArguments(WorkspaceExtensionWindow(
+        *browser_context(), tabs, *extension(),
+        options && options->FindBool("populate").value_or(false))));
+  }
+};
+
+class LabWindowsCreateFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("windows.create", WINDOWS_CREATE)
+
+ private:
+  ~LabWindowsCreateFunction() override = default;
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(extension());
+    const auto* options = args().empty() ? nullptr : args()[0].GetIfDict();
+    if (options && (options->FindBool("incognito").value_or(false) || options->contains("tabId")))
+      return RespondNow(Error("Zitter can't open private windows or move tabs into new windows."));
+    std::vector<std::string> inputs;
+    if (const auto* url = options ? options->Find("url") : nullptr) {
+      if (url->is_string())
+        inputs.push_back(url->GetString());
+      if (url->is_list()) {
+        for (const auto& item : url->GetList())
+          if (item.is_string())
+            inputs.push_back(item.GetString());
+      }
+    }
+    if (inputs.empty())
+      inputs.emplace_back();
+    std::vector<GURL> urls;
+    for (const auto& input : inputs) {
+      GURL url;
+      if (!input.empty() && !ResolveExtensionTabUrl(*extension(), input, url)) {
+        return RespondNow(Error(
+            "Only HTTP and HTTPS URLs without credentials and the calling "
+            "extension's own resource URLs are supported."));
+      }
+      urls.push_back(std::move(url));
+    }
+    const auto tabs = WorkspaceExtensionTab::InProfile(browser_context());
+    if (tabs.empty())
+      return RespondNow(Error("No Workspace window."));
+    // Popup and normal windows open as tabs in the profile's window.
+    const bool focused = !options || options->FindBool("focused").value_or(true);
+    for (size_t i = 0; i < urls.size(); ++i) {
+      if (!tabs.front()->workspace().CreateExtensionTab(*browser_context(), urls[i],
+                                                         focused && i == 0)) {
+        return RespondNow(Error("Could not create a Workspace tab."));
+      }
+    }
+    if (focused)
+      tabs.front()->workspace().FocusExtensionWindow(*browser_context());
+    return RespondNow(WithArguments(WorkspaceExtensionWindow(
+        *browser_context(), WorkspaceExtensionTab::InProfile(browser_context()), *extension(),
+        true)));
+  }
+};
+
+class LabWindowsUpdateFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("windows.update", WINDOWS_UPDATE)
+
+ private:
+  ~LabWindowsUpdateFunction() override = default;
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(extension() && args().size() == 2 && args()[0].is_int() &&
+                                args()[1].is_dict());
+    const auto tabs = WorkspaceExtensionTab::InProfile(browser_context());
+    if (tabs.empty() || !IsWorkspaceWindowId(args()[0].GetInt()))
+      return RespondNow(Error("No window with id: " + base::NumberToString(args()[0].GetInt()) + "."));
+    // Size, position and state belong to the user; focus is honored.
+    if (args()[1].GetDict().FindBool("focused").value_or(false) ||
+        args()[1].GetDict().FindBool("drawAttention").value_or(false)) {
+      tabs.front()->workspace().FocusExtensionWindow(*browser_context());
+    }
+    return RespondNow(WithArguments(
+        WorkspaceExtensionWindow(*browser_context(), tabs, *extension(), false)));
+  }
+};
+
+class LabWindowsRemoveFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("windows.remove", WINDOWS_REMOVE)
+
+ private:
+  ~LabWindowsRemoveFunction() override = default;
+  ResponseAction Run() override {
+    return RespondNow(Error(
+        "Zitter keeps one window per space. Close its tabs with tabs.remove instead."));
+  }
+};
+
+// tabs.captureVisibleTab of the profile's active tab.
+class LabTabsCaptureVisibleTabFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("tabs.captureVisibleTab", TABS_CAPTUREVISIBLETAB)
+
+ private:
+  ~LabTabsCaptureVisibleTabFunction() override = default;
+
+  ResponseAction Run() override {
+    EXTENSION_FUNCTION_VALIDATE(extension());
+    if (!args().empty() && args()[0].is_int() && !IsWorkspaceWindowId(args()[0].GetInt()))
+      return RespondNow(Error("No window with id: " + base::NumberToString(args()[0].GetInt()) + "."));
+    const base::DictValue* options = nullptr;
+    for (const auto& arg : args())
+      if (arg.is_dict())
+        options = &arg.GetDict();
+    if (options) {
+      const auto* format = options->FindString("format");
+      png_ = format && *format == "png";
+      quality_ = std::clamp(options->FindInt("quality").value_or(92), 0, 100);
+    }
+    WorkspaceExtensionTab* active = nullptr;
+    for (auto* tab : WorkspaceExtensionTab::InProfile(browser_context()))
+      if (tab->active())
+        active = tab;
+    auto* page = active ? active->web_contents() : nullptr;
+    auto* view = page ? page->GetRenderWidgetHostView() : nullptr;
+    std::string error;
+    if (!view || !extension()->permissions_data()->CanCaptureVisiblePage(
+                     page->GetLastCommittedURL(), active->id(), &error,
+                     extensions::CaptureRequirement::kActiveTabOrAllUrls)) {
+      return RespondNow(Error(error.empty() ? "Cannot access the visible tab." : error));
+    }
+    view->CopyFromSurface(gfx::Rect(), gfx::Size(), base::Seconds(5),
+                          base::BindOnce(&LabTabsCaptureVisibleTabFunction::OnCopied, this));
+    return RespondLater();
+  }
+
+  void OnCopied(const content::CopyFromSurfaceResult& result) {
+    if (!result.has_value() || result->bitmap.drawsNothing()) {
+      Respond(Error("Failed to capture tab."));
+      return;
+    }
+    const auto bytes = png_ ? gfx::PNGCodec::EncodeBGRASkBitmap(result->bitmap, true)
+                            : gfx::JPEGCodec::Encode(result->bitmap, quality_);
+    if (!bytes) {
+      Respond(Error("Failed to encode the capture."));
+      return;
+    }
+    Respond(WithArguments(std::string(png_ ? "data:image/png;base64," : "data:image/jpeg;base64,") +
+                          base::Base64Encode(*bytes)));
+  }
+
+  bool png_ = false;
+  int quality_ = 92;
+};
+
 class LabBrowserExtensionAPIProvider final
     : public extensions::ExtensionsBrowserAPIProvider {
  public:
@@ -2979,6 +3594,28 @@ class LabBrowserExtensionAPIProvider final
     registry->RegisterFunction<LabIdentityClearAllCachedAuthTokensFunction>();
     registry->RegisterFunction<LabIdentityGetProfileUserInfoFunction>();
     registry->RegisterFunction<LabBrowsingDataRemoveFunction>();
+    registry->RegisterFunction<LabRuntimeGetPlatformInfoFunction>();
+    registry->RegisterFunction<LabRuntimeRequestUpdateCheckFunction>();
+    registry->RegisterFunction<LabCookiesGetAllFunction>();
+    registry->RegisterFunction<LabCookiesSetFunction>();
+    registry->RegisterFunction<LabCookiesRemoveFunction>();
+    registry->RegisterFunction<LabCookiesGetAllCookieStoresFunction>();
+    registry->RegisterFunction<LabWindowsGetFunction>();
+    registry->RegisterFunction<LabWindowsCreateFunction>();
+    registry->RegisterFunction<LabWindowsUpdateFunction>();
+    registry->RegisterFunction<LabWindowsRemoveFunction>();
+    registry->RegisterFunction<LabTabsCaptureVisibleTabFunction>();
+    registry->RegisterFunction<LabActionGetUserSettingsFunction>();
+    RegisterExtensionDownloadFunctions(*registry);
+    registry->RegisterFunction<LabActionSetPopupFunction>();
+    registry->RegisterFunction<LabActionGetPopupFunction>();
+    registry->RegisterFunction<LabActionSetTitleFunction>();
+    registry->RegisterFunction<LabActionGetTitleFunction>();
+    registry->RegisterFunction<LabActionGetBadgeTextFunction>();
+    registry->RegisterFunction<LabActionEnableFunction>();
+    registry->RegisterFunction<LabActionDisableFunction>();
+    registry->RegisterFunction<LabActionIsEnabledFunction>();
+    registry->RegisterFunction<LabActionOpenPopupFunction>();
 #if BUILDFLAG(IS_MAC)
     RegisterExtensionNotificationFunctions(*registry);
 #endif
@@ -3087,6 +3724,7 @@ class LabExtensionSystem final : public extensions::ExtensionSystem {
         &*context_, store_factory_, extensions::StateStore::BackendType::SCRIPTS,
         /*deferred_load=*/false);
     quota_service_ = std::make_unique<extensions::QuotaService>();
+    download_events_ = CreateExtensionDownloadEvents(*context_);
     ready_.Signal();
   }
   extensions::ExtensionService* extension_service() override { return nullptr; }
@@ -3102,6 +3740,7 @@ class LabExtensionSystem final : public extensions::ExtensionSystem {
     return user_scripts_.get();
   }
   void Shutdown() override {
+    download_events_.reset();
     user_scripts_.reset();
     dynamic_user_scripts_store_.reset();
     state_store_.reset();
@@ -3135,6 +3774,7 @@ class LabExtensionSystem final : public extensions::ExtensionSystem {
   std::unique_ptr<extensions::StateStore> state_store_;
   std::unique_ptr<extensions::StateStore> dynamic_user_scripts_store_;
   std::unique_ptr<extensions::QuotaService> quota_service_;
+  std::unique_ptr<ExtensionDownloadEvents> download_events_;
   std::unique_ptr<extensions::UserScriptManager> user_scripts_;
 };
 
@@ -4017,6 +4657,41 @@ void DispatchWorkspaceExtensionWindowEvent(BrowserContext& context,
   }
 }
 
+GURL WorkspaceExtensionPopupUrl(BrowserContext& context, const std::string& id,
+                                int tab_id) {
+  auto* client = GetClient();
+  const auto* extension = client ? client->EnabledFixture(context, id) : nullptr;
+  auto* action = extension
+      ? extensions::ExtensionActionManager::Get(&context)->GetExtensionAction(*extension)
+      : nullptr;
+  if (!action)
+    return {};
+  const GURL url = action->GetPopupUrl(tab_id);
+  return url.is_valid() && url::Origin::Create(url) == extension->origin() ? url : GURL();
+}
+
+void DispatchWorkspaceExtensionActionClicked(BrowserContext& context, const std::string& id,
+                                             content::WebContents* page) {
+  auto* client = GetClient();
+  const auto* extension = client ? client->EnabledFixture(context, id) : nullptr;
+  if (!extension || !extensions::ActionInfo::GetExtensionActionInfo(extension))
+    return;
+  const WorkspaceExtensionTab* tab = WorkspaceExtensionTab::ActiveInProfile(&context);
+  if (page && page->GetBrowserContext() == &context) {
+    if (const auto* selected = WorkspaceExtensionTab::FromWebContents(page)) {
+      tab = selected;
+      GrantWorkspaceExtensionActiveTab(*page, id);
+    }
+  }
+  if (!tab)
+    return;
+  auto event = std::make_unique<extensions::Event>(
+      extensions::events::ACTION_ON_CLICKED, "action.onClicked",
+      base::ListValue().Append(tab->MetadataFor(*extension)), &context);
+  event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
+  extensions::EventRouter::Get(&context)->DispatchEventToExtension(id, std::move(event));
+}
+
 void DispatchWorkspaceExtensionCommand(BrowserContext& profile,
                                        const extensions::Extension& extension,
                                        const std::string& command,
@@ -4385,10 +5060,12 @@ class ExtensionProbeThrottle final : public content::NavigationThrottle {
                  ? PROCEED : BLOCK_REQUEST;
     }
     if (extensions::GetViewType(contents) == extensions::mojom::ViewType::kExtensionPopup) {
+      // action.setPopup can point the popup at any page of the extension.
       const auto* fixture = GetClient()->EnabledFixture(*contents->GetBrowserContext(), url.GetHost());
       const auto* action = fixture ? extensions::ActionInfo::GetExtensionActionInfo(fixture) : nullptr;
       return navigation->IsInPrimaryMainFrame() && !navigation->IsRendererInitiated() &&
-                     !navigation->GetInitiatorOrigin() && action && action->default_popup_url == url
+                     !navigation->GetInitiatorOrigin() && action &&
+                     url::Origin::Create(url) == fixture->origin()
                  ? PROCEED
                  : BLOCK_REQUEST;
     }
@@ -4901,6 +5578,11 @@ GURL ManagedExtension::uninstall_url() const {
   if (!editable() || uninstalling())
     return {};
   return ReadWorkspaceExtensionUninstallUrl(owner_->GetPath(), *extension_);
+}
+
+bool ManagedExtension::has_action() const {
+  return editable() && enabled() && !uninstalling() &&
+         extensions::ActionInfo::GetExtensionActionInfo(extension_.get());
 }
 
 GURL ManagedExtension::action_popup() const {
