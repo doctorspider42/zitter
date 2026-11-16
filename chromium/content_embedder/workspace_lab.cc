@@ -11490,10 +11490,13 @@ void WorkspaceLab::RefreshShell() {
   }
   std::set<GURL> cached_icon_urls;
   std::map<std::string_view, const GURL*> pinned_urls;
+  std::set<std::string_view> profile_favorites;
   for (const auto& pin : state.pins) {
     if (pin.folder)
       continue;
     pinned_urls.emplace(pin.id, &pin.url);
+    if (pin.profile_pin)
+      profile_favorites.insert(pin.id);
     if (pin.url.SchemeIsHTTPOrHTTPS())
       cached_icon_urls.insert(pin.url);
   }
@@ -11522,10 +11525,22 @@ void WorkspaceLab::RefreshShell() {
       cached_icon_urls.insert(url);
     if (!tabs[index].custom_title.empty())
       title = tabs[index].custom_title;
-    state.tabs.push_back({title.empty() ? u"New tab" : std::move(title),
-                          url, index, tabs[index].pin, {tabs[index].id, 1},
-                          page && page->IsCurrentlyAudible(), 0,
-                          !tabs[index].custom_title.empty(), TabMuted(index)});
+    const bool untitled = title.empty();
+    prototype::ShellTab row{untitled ? u"New tab" : std::move(title),
+                            url, index, tabs[index].pin, {tabs[index].id, 1},
+                            page && page->IsCurrentlyAudible(), 0,
+                            !tabs[index].custom_title.empty(), TabMuted(index)};
+    // An open profile favorite is shown by its tile, as in the Chrome-backed
+    // shell; only a split lists it as a tab row.
+    if (profile_favorites.contains(row.pin_id) &&
+        !std::ranges::contains(split.tabs, index)) {
+      if (!untitled && !row.custom_title)
+        state.pin_page_titles.emplace(row.pin_id, row.title);
+      if (row.audible || row.muted)
+        state.open_pin_audio.emplace(row.pin_id, std::move(row));
+      continue;
+    }
+    state.tabs.push_back(std::move(row));
   }
   ReadCachedFavicons(state, cached_icon_urls);
   const GURL developer_url = state.url;
