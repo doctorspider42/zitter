@@ -10,7 +10,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 
 from content_file_keychain_fixture import compile_file_keychain_fixture, file_keychain_environment
-from package_app import BUNDLE_ID
+from macos_signing import BUNDLE_ID
 from verify_content_workspace_session import seed_browser_import
 
 MARKER = "Zitter Content startup import probe passed"

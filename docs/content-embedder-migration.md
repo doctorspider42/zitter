@@ -1,9 +1,10 @@
 # Content embedder migration
 
-Zitter will move its browser backend to Chromium's public Content API. The
-current Chrome-backed application remains the baseline until the replacement
-passes the same product and security checks on macOS and Windows. Builds run
-locally. Use a dedicated Chromium checkout at the revision in
+Zitter has moved its browser backend to Chromium's public Content API.
+The Content embedder (`//zitter_content:zitter_content`) is the only build;
+the Chrome-backed application and its `//chrome` overlay were removed from
+the repository after the cutover. The milestones below record the migration
+plan. Builds run locally. Use a dedicated Chromium checkout at the revision in
 `chromium/revision.json`, a dedicated output directory, and disposable profiles
 throughout development.
 
@@ -17,8 +18,13 @@ throughout development.
 
 ## Current cutover status
 
-The production entry point still uses `//chrome`. The parallel macOS
-candidate runs the shared Workspace UI in a relocated arm64 bundle, with
+Content is the production build. Release 0.9.5 shipped only the macOS
+Content assets (`Zitter-v0.9.5-macos-content-arm64.dmg`). The Chrome-based
+(`//chrome`) build, its overlay installer, browser tests and benchmark tools
+were removed from the repository afterwards; `./build.sh` builds and
+packages Content. The paragraphs and table below record the evidence
+gathered before the cutover.
+The macOS app runs the shared Workspace UI in a relocated arm64 bundle, with
 compositor and Metal. The standalone macOS GN graph has zero labels under
 `//chrome`. Development uses a separate checkout, output and disposable
 profile roots.
@@ -1496,11 +1502,11 @@ verify that protection starts on the release's normal launch path.
 
 ## Build the macOS lab
 
-The project build script supports the standalone macOS target:
+The project build script builds the standalone macOS target:
 
 ```sh
-./build.sh --content
-./build.sh --content --run --zitter-rust-raster=metal
+./build.sh
+./build.sh --run --zitter-rust-raster=metal
 ```
 
 It initializes a local non-component Release output with ThinLTO and PGO
@@ -1514,7 +1520,7 @@ another directory while reusing the existing Chromium build output.
 Set `ZITTER_CONTENT_PACKAGE_SCRATCH` to an existing directory on a local
 volume to stage and seal the bundle there. The build verifies the copy
 on the destination volume before replacing the previous app.
-Use `./build.sh --content --archive` to keep a compact local artifact
+Use `./build.sh --archive` to keep a compact local artifact
 at `build/ZitterContentLab-local.zip`. This mode verifies the app's ad
 hoc signature after extracting the ZIP in its scratch directory.
 The current arm64 archive was built through Ninja and verified after
@@ -1535,9 +1541,8 @@ The arm64 build script passed packaging, launch, and normal AppKit Quit
 through `--content --run`. The resulting local bundle also passed
 the dark Metal live navigation verifier.
 
-From the Zitter migration worktree, place the dedicated Chromium checkout at
-`.chromium/src`. Stage the standalone target directly, without running the
-Chrome overlay installer.
+To build by hand, place the dedicated Chromium checkout at `.chromium/src`
+and stage the standalone target directly.
 
 ```sh
 python3 tools/stage_content_embedder.py .chromium/src
@@ -1559,7 +1564,7 @@ open 'out/ZitterContent/Zitter Content Lab.app'
 ```
 
 The target asserts that its dependency tree contains no `//chrome` targets.
-`./build.sh --content` also checks the full GN dependency listing before
+`./build.sh` also checks the full GN dependency listing before
 running Ninja, including dependencies of executables used as build tools.
 It records the label count and a SHA-256 digest of the sorted dependency
 labels in the sealed bundle and in the Content DMG build record. The lab reuses
@@ -2516,7 +2521,7 @@ did not exercise Developer ID, notarization tickets, or Gatekeeper.
 Preview the next local Content build with the usual build settings:
 
 ```sh
-./build.sh --content --plan
+./build.sh --plan
 ```
 
 The command stages the sources, generates the configured GN output,
@@ -2535,10 +2540,10 @@ performs no compilation or linking. Generated outputs that stay the
 same can reduce the work during a real build. The action count does
 not predict wall time.
 
-For development, `./build.sh --content --build-only` builds the GN target
+For development, `./build.sh --build-only` builds the GN target
 without signing or packaging. Its default output is `out/ZitterContentDev`,
 initialized as a component Release build with ThinLTO and PGO disabled.
-Preview it with `./build.sh --content --plan --build-only`. Set
+Preview it with `./build.sh --plan --build-only`. Set
 `ZITTER_CONTENT_OUT` to reuse an existing local component or debug
 configuration. Packaging still requires the non-component Release output.
 Both build modes enforce the dependency check and use local Ninja.

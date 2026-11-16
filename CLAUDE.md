@@ -10,15 +10,18 @@
   language is required for accuracy. This rule does not change the user's
   preferred language for chat replies or the app's localization.
 
-## UI tests
+## Tests
 
-- Run the **full** browser UI suite (`out/ZitterOptimized/zitter_prototype` without a narrow
-  `--gtest_filter`) only after the user explicitly agrees, each time. It shows and
-  focuses a browser window over and over for ~12 minutes, so the Mac is unusable
-  meanwhile. Say how long it takes when you ask.
-- Without asking: Rust tests (`out/ZitterOptimized/sidebar_scene_unittests`),
-  Python tests (`python3 -m unittest discover -s tests -p 'test_*.py'`) and single
-  browser tests named with `--gtest_filter` when a change needs them.
+- Zitter builds only on the Content embedder (`//zitter_content:zitter_content`);
+  the Chrome-based build and its browser UI suite (`zitter_prototype`) were removed.
+- Without asking: Rust tests (`sidebar_scene_unittests` in the Content output
+  directory), the unit tests `zitter_network_policy_tests` and
+  `arc_importer_unittests`, Python tests
+  (`python3 -m unittest discover -s tests -p 'test_*.py'`) and the single
+  `tools/verify_content_*.py` checks a change needs.
+- The `verify_content_*` checks launch the app and show its windows. Ask the user
+  before running many of them in a row: they take over the screen meanwhile. Say
+  how long it takes when you ask.
 
 ## Checking UI changes
 
@@ -28,16 +31,19 @@ differs, and only then hand over the final screenshot.
 
 ## Shared build directory
 
-Several sessions stage into `.chromium/src/zitter` (through `./build.sh`) and build in
-`.chromium/src/out/ZitterOptimized`. Before staging or running ninja there, make sure
-no other session is building, and agree on the window with the sessions that use it.
-Never stage into `.chromium/src/zitter_ui_lab`: it is a frozen benchmark reference.
+Several sessions stage into `.chromium/src/zitter` and `.chromium/src/zitter_content`
+(through `./build.sh`, which runs `tools/stage_content_embedder.py`) and build in the
+Content output directory. Before staging or running ninja there, make sure no other
+session is building (`pgrep -fl "ninja|build.sh"`), and agree on the window with the
+sessions that use it.
 
 ## Build directories and disk space
 
-- Build in the existing output directories: `out/ZitterOptimized` on macOS;
-  `out/ZitterWin`, `out/ZitterWinDev`, `out/ZitterDevInstaller` (zitter-dev-install
-  skill) and `out/ZitterWinOfficial` on Windows.
+- Build in the existing output directories. macOS: `./build.sh` uses
+  `out/ZitterContentBundle` (`--build-only`: `out/ZitterContentDev`);
+  `ZITTER_CONTENT_OUT=out/<dir>` picks another existing one, such as
+  `out/ZitterOptimized`, which holds an earlier Content build. Windows:
+  `out/ZitterWinContent`.
 - Create a new `.chromium/src/out/*` directory only after the user explicitly
   agrees, asked each time. A Chromium output directory takes 10–40 GB and hours
   to build and to delete. When asking, give the expected size and build time.
@@ -56,9 +62,9 @@ Never stage into `.chromium/src/zitter_ui_lab`: it is a frozen benchmark referen
 
 - The port's decisions, build steps and status live in `docs/windows-port.md`.
 - Build env: `DEPOT_TOOLS_WIN_TOOLCHAIN=0`, `vs2026_install` when VS 2026 sits under
-  Program Files (x86), depot_tools on PATH; build with `autoninja`. Build dirs:
-  `out/ZitterWin` (component, development), `out/ZitterWinRelease` (static),
-  `out/ZitterWinOfficial` (ThinLTO + PGO).
+  Program Files (x86), depot_tools on PATH; build with `autoninja`. Build dir:
+  `out/ZitterWinContent` (`chromium/windows-release.args.gn`, root target
+  `//zitter_content:zitter_content`).
 - `verify-ui` on Windows uses `scripts/ui_win.py` (`--scale`, `--theme`). Synthetic
   clicks move the user's real mouse; ask before taking over the screen.
 - Never click UAC prompts or install anything elevated yourself: the user does.

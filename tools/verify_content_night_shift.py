@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from threading import Event, Thread
 
 from content_file_keychain_fixture import compile_file_keychain_fixture, file_keychain_environment
-from package_app import BUNDLE_ID
+from macos_signing import BUNDLE_ID
 from verify_content_fresh_startup import verify_startup
 from verify_content_upgrade import run_profile
 

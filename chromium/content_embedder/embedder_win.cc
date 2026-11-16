@@ -840,8 +840,8 @@ class WindowsLabMainDelegate final : public content::ContentMainDelegate {
     auto& command = *base::CommandLine::ForCurrentProcess();
     if (!command.HasSwitch(switches::kProcessType)) {
       // The design fonts beside zitter.exe (BUILD.gn: design_fonts_win) join
-      // the browser's DirectWrite collection before gfx creates it, as
-      // chromium/app/main.cc does. Web pages never see them.
+      // the browser's DirectWrite collection before gfx creates it. Web pages
+      // never see them.
       base::FilePath exe_dir;
       if (base::PathService::Get(base::DIR_EXE, &exe_dir)) {
         base::FileEnumerator fonts(exe_dir.AppendASCII("Fonts"), false,

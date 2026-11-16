@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
 # Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-"""Package zitter.exe and what it loads at run time for Windows.
+"""Package the Windows Content build's zitter.exe and what it loads at run time.
 
-  python tools/package_win.py [--out .chromium/src/out/ZitterWin] [--setup PATH]
-  python tools/package_win.py --out .chromium/src/out/ZitterWinContent       --runtime-deps .chromium/src/out/ZitterWinContent/zitter_content.runtime_deps       --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe
+  python tools/package_win.py [--out .chromium/src/out/ZitterWinContent] [--setup PATH]
+  python tools/package_win.py --out .chromium/src/out/ZitterWinContent \
+      --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe
 
 Writes build/Zitter-<version>-win-x64-portable.zip and, given the installer's
 zitter_setup.exe, build/Zitter-<version>-win-x64-setup.exe: the installer with
 the same files appended as a ZIP it reads from its own end. The file list is
-GN's runtime_deps for //zitter:zitter without symbols, generated sources and
-test data. The version is zitter.exe's (chromium/app/zitter_version.h).
+GN's runtime_deps for //zitter_content:zitter_content (the output's
+zitter_content.runtime_deps, which gn gen writes)
+without symbols, generated sources and test data. The version is zitter.exe's (chromium/app/zitter_version.h).
 """
 import argparse
 import ctypes
-import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / ".chromium/src"
-DEPOT_TOOLS = ROOT / ".chromium/depot_tools"
 # Not needed at run time: symbols, link products, generated sources (DevTools'
 # front end ships inside resources.pak), Python protos and ANGLE's test data.
 EXCLUDED = re.compile(r"(^gen/|^\.\./|^pyproto/|^angledata/|\.(pdb|lib|exp|ilk)$)")
@@ -61,16 +60,6 @@ def select_files(runtime_deps):
     if "zitter_assistant.exe" not in files:
         raise ValueError("runtime_deps has no native zitter_assistant.exe helper")
     return sorted(set(files))
-
-
-def runtime_deps(out):
-    env = dict(os.environ, DEPOT_TOOLS_WIN_TOOLCHAIN="0", PATH=f"{DEPOT_TOOLS};{os.environ['PATH']}")
-    # GN needs the toolchain from docs/windows-port.md, vs2026_install included.
-    result = subprocess.run([sys.executable, str(DEPOT_TOOLS / "gn.py"), "desc", str(out), "//zitter:zitter",
-                             "runtime_deps"], cwd=SRC, env=env, capture_output=True, text=True)
-    if result.returncode:
-        raise SystemExit(f"gn desc failed:\n{result.stdout}{result.stderr}")
-    return result.stdout.splitlines()
 
 
 def product_name(path):
@@ -112,12 +101,12 @@ def package_notices(third_party_licenses=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", type=Path, default=SRC / "out/ZitterWin")
+    parser.add_argument("--out", type=Path, default=SRC / "out/ZitterWinContent")
     parser.add_argument("--setup", type=Path, help="zitter_setup.exe; adds the installer to the output")
     parser.add_argument("--destination", type=Path, default=ROOT / "build")
     parser.add_argument("--runtime-deps", type=Path,
-                        help="a runtime_deps file to package instead of //zitter:zitter's, "
-                             "e.g. the Content build's zitter_content.runtime_deps")
+                        help="the runtime_deps file to package; "
+                             "default: OUT/zitter_content.runtime_deps")
     parser.add_argument("--third-party-licenses", type=Path,
                         help="THIRD_PARTY_LICENSES.txt from tools/audit_licenses.py, shipped beside zitter.exe")
     args = parser.parse_args()
@@ -130,10 +119,10 @@ def main():
         parser.error("Zitter Dev requires a standalone zitter_setup.exe")
     if args.setup and product_name(args.setup) != product:
         parser.error("zitter.exe and zitter_setup.exe have different product names")
-    if args.runtime_deps:
-        deps = args.runtime_deps.read_text(encoding="utf-8-sig").splitlines()
-    else:
-        deps = runtime_deps(out)
+    manifest = args.runtime_deps or out / "zitter_content.runtime_deps"
+    if not manifest.is_file():
+        parser.error(f"No runtime_deps at {manifest}; see docs/windows-port.md")
+    deps = manifest.read_text(encoding="utf-8-sig").splitlines()
     files = select_files(deps)
     extras = package_notices(args.third_party_licenses)
     args.destination.mkdir(parents=True, exist_ok=True)

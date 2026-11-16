@@ -8,7 +8,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 import notarize_app as notarizer
-import package_app as packager
+import macos_signing as packager
 
 
 class NotarizationTests(unittest.TestCase):

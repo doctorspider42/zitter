@@ -6,43 +6,51 @@
 > see [Rust UI status](rust-metal-status-2026-10-27.md); for Windows work,
 > see the [port plan](windows-port.md). Build commands run from the repository
 > root unless stated otherwise.
+>
+> Zitter now builds only on Chromium's Content embedder
+> (`//zitter_content:zitter_content`, sources in `chromium/content_embedder/`).
+> The Chrome-based build, its overlay installer, the `zitter_prototype` browser
+> tests and the benchmark and packaging tools built around them were removed.
+> Feature notes below that mention Views windows, browser tests or Chrome
+> services describe the checkpoint where they were written.
 
 Original Zitter code is licensed under [Apache-2.0](../LICENSE). Third-party code
 retains its own licenses; see [NOTICE](../NOTICE) and the binary license audit.
 
-C++ + Chromium fork + Views. This repository contains a native browser development app and a separate
-workspace/profile test harness. The selected macOS ARM64 bundle is a local
-non-component Release build with ThinLTO/PGO, signed locally with Developer ID.
-It is not a notarized release installer.
+C++ + Chromium Content API + Rust. The local macOS ARM64 bundle,
+`build/ZitterContentLab.app`, is a non-component Release build with an ad hoc
+seal. It is not a notarized release installer; see
+[local releases](local-releases.md) for signed and notarized builds.
 
 ## Run the desktop app (macOS)
 
-For daily browsing, use the [optimized local build](#optimized-local-build-macos-arm64)
-and open `build/Zitter.app`. The measured results and test coverage are in
-[the performance report](../docs/performance.md).
-
-The separate [Rust UI / GPU prototype](../docs/rust-ui-prototype.md) compares Views,
-Rust/Skia and Rust/Metal with the current Chromium fork and isolated test profiles.
-The [CPU/GPU profile and binary license audit](../docs/ui-profile-and-licenses.md)
-explains presentation timing and distribution requirements.
-The [implemented Apache/libarchive migration and UI A/B benchmark](../docs/open-source-ui-optimization.md)
-records the current source license, UnRAR replacement and verified WindowServer frame measurement.
-
-For incremental development, keep the separate Debug/component output. After
-preparing the pinned Chromium checkout and installing the overlay below:
+Build and run the app from the repository root:
 
 ```sh
-cd .chromium/src
-gn check out/Zitter //zitter:zitter
-autoninja -C out/Zitter -j 12 zitter
-cd ../..
-python3 tools/package_app.py --destination build/ZitterDebug.app --no-register
-open build/ZitterDebug.app
+./build.sh                # stage, build and package build/ZitterContentLab.app
+./build.sh --run          # ...then launch it with temporary profiles
+./build.sh --build-only   # build out/ZitterContentDev without packaging
+./build.sh --plan         # preview pending build actions without compiling
+open build/ZitterContentLab.app
 ```
 
-`build/Zitter.app` is the normal app. It uses Chromium's regular bootstrap,
-network service, sandboxed helpers and profile services, with Zitter's Views
-window. It has no browser-test runner or one-hour test timeout. Cmd+L opens the
+`./build.sh` stages the Content embedder into `.chromium/src` with
+`tools/stage_content_embedder.py`, generates `out/ZitterContentBundle` with
+`--root-target=//zitter_content:zitter_content`, checks that nothing under
+`//chrome` is linked, builds with Chromium's own Ninja and audits the licenses.
+`--build-only` uses the component output `out/ZitterContentDev`;
+`ZITTER_CONTENT_OUT` selects another output directory. `--archive` writes
+`build/ZitterContentLab-local.zip`. See the
+[Content embedder migration](content-embedder-migration.md#build-the-macos-lab)
+for details.
+
+The [Rust UI / GPU prototype](../docs/rust-ui-prototype.md), the
+[CPU/GPU profile and binary license audit](../docs/ui-profile-and-licenses.md)
+and the [Apache/libarchive migration and UI A/B benchmark](../docs/open-source-ui-optimization.md)
+record measurements made on the removed Chrome-based build.
+
+The app uses Chromium's Content bootstrap, network service, sandboxed helpers
+and Zitter's own profile services. Cmd+L opens the
 address/search palette, Cmd+K opens Command Center for actions, tabs, pins, workspaces and profile history,
 Cmd+T adds a tab, and Cmd+Alt+1/2 selects the first/second workspace.
 The themed window keeps native traffic lights; a pinned left sidebar holds the
@@ -472,28 +480,19 @@ Pins load on demand and retain their hierarchy across restarts.
 
 ## Stable local macOS signing
 
-`tools/package_app.py` signs the application, nested helpers, framework and
-libraries with the certificate pinned in the git-ignored `.zitter-signing.json`.
-Normal packaging commands reuse that identity. The private key stays in macOS
-Keychain. To configure another checkout explicitly:
+`./build.sh` seals the local bundle ad hoc. Developer ID signing happens in
+`tools/notarize_app.py` (see [local releases](local-releases.md)), which uses
+`tools/macos_signing.py` to sign the application, nested helpers, framework and
+libraries from the inside out. The identity comes from `--sign-identity`,
+`ZITTER_CODESIGN_IDENTITY` or the git-ignored `.zitter-signing.json`; the private
+key stays in macOS Keychain. List the available identities with:
 
 ```sh
 security find-identity -v -p codesigning
-python3 tools/package_app.py --sign-identity '<Developer ID certificate SHA-1>'
 ```
 
-`ZITTER_CODESIGN_IDENTITY` can override the saved certificate. Missing or invalid
-certificates fail packaging rather than falling back to an ad hoc signature.
-`--unsigned` is an explicit opt-out for disposable test/benchmark bundles.
-The Python `package()` helper used by filesystem tests remains unsigned unless
-an identity is passed; the normal command-line entry point requires signing.
-
-Signed packages keep the `dev.zitter.browser` bundle identity across component
-and optimized builds. Code is signed from the inside out and verified with
-`codesign --verify --deep --strict` before replacing an existing owned bundle.
-Private clones prevent signing from changing the compiler's original outputs.
-The development marker lives in `Contents/Resources` so it is sealed as data;
-legacy marker locations are still recognized when replacing an older bundle.
+Missing or invalid certificates fail signing rather than falling back to an ad
+hoc signature. Signed packages use the `dev.zitter.browser` bundle identity.
 
 After the first transition from an ad hoc build, macOS may ask once more for
 **Zitter Safe Storage** access. Choose **Zawsze pozwalaj** yourself to authorize
@@ -502,7 +501,10 @@ rebuilds signed by the same Developer ID team. Packaging does not change the
 keychain item, its secret or its access controls. This local signing workflow
 does not add notarization or enable Hardened Runtime.
 
-## Current verification status
+## Verification status of the Chrome-based prototype (historical)
+
+These results were recorded on the removed Chrome-based build. Current checks
+are the `tools/verify_content_*.py` scripts; see [verification](verification.md).
 
 - Standalone C++ product model and activation contracts: built and tested.
 - Chromium integration: **built and linked on macOS ARM64** against
@@ -514,7 +516,7 @@ does not add notarization or enable Hardened Runtime.
 - The native window and Work/Personal button switching were visually verified.
 - Workspace shortcuts: **passed** on macOS ARM64, including native AppKit events
   with focus in each page's text input, repeated switching and preserved text.
-  `python3 tools/run_prototype.py --verify` runs the automated storage, keyboard and native-shell tests.
+  The removed `tools/run_prototype.py --verify` ran the automated storage, keyboard and native-shell tests.
 - Native Views shell: **built and tested** with an auto-hiding/pinnable sidebar,
   Cmd+L/Cmd+T floating address/search bar and saved workspace accent colors.
 - History and password integration is covered by real form/navigation tests.
@@ -537,159 +539,12 @@ the exact scope of the verification.
 
 ## Performance baseline (macOS ARM64)
 
-See [the performance work log](../docs/performance.md) for measured baselines and
-the order of subsequent changes.
-
-Keep the development build in `out/Zitter`. Create a separate component Release
-to isolate the effect of optimization before changing the linking strategy:
-
-```sh
-mkdir -p .chromium/src/out/ZitterRelease
-cp chromium/release.args.gn .chromium/src/out/ZitterRelease/args.gn
-python3 tools/install_chromium_overlay.py .chromium/src
-python3 tools/install_archive_backend.py .chromium/src
-cd .chromium/src
-buildtools/mac/gn gen out/ZitterRelease
-buildtools/mac/gn check out/ZitterRelease '//zitter:*'
-../depot_tools/autoninja -C out/ZitterRelease -j 1 generate_bindings_all
-../depot_tools/autoninja -C out/ZitterRelease -j 8 zitter zitter_prototype
-cd ../..
-python3 tools/benchmark_browser.py --out .chromium/src/out/Zitter --label debug
-python3 tools/benchmark_browser.py --out .chromium/src/out/ZitterRelease --label release
-python3 tools/package_app.py --out .chromium/src/out/ZitterRelease --destination build/ZitterRelease.app
-```
-
-Build `zitter_prototype` in Debug after installing the overlay too. Finish all
-compilation before collecting comparison runs; keep window visibility, other
-applications and power conditions comparable. The benchmark opens its own test
-window with temporary Chromium profiles and a local HTTP page. It does not use
-the daily browser's profiles or internet services.
-
-Each run uses 25 loaded tabs, two excluded warmups per scenario, and 30 measured
-trials (override with `--tabs` and `--iterations`). Raw logs, per-trial samples,
-median, nearest-rank p95, GN configuration and executable hash are retained in
-`build/performance/`. Failed or incomplete runs never produce a results JSON.
-
-- `new_tab_dispatch_ms`: synchronous new-tab creation, selection and navigation dispatch.
-- `new_tab_first_visual_paint_ms`: command through the browser's first visually
-  nonempty paint notification, including tab creation.
-- `split_dispatch_ms`: synchronous opening of a split with an already loaded tab,
-  including the pre-change snapshot and shell updates.
-- `split_both_renderer_frames_ms`: command through frame submissions from both panes.
-
-Paint/submission notifications are proxies for visual readiness, not physical
-display presentation. These are warm-profile shell benchmarks; they do not
-measure cold application startup, network latency or representative heavy websites.
-Functional verification skips the benchmark unless `--zitter-benchmark` is given.
-
-To measure a regular packaged application with normal renderer helpers instead
-of the browser-test executable, build its regular target and package it, then run:
-
-```sh
-python3 tools/benchmark_app.py --app build/Zitter.app --scenario navigation --iterations 30 --tabs 25
-python3 tools/benchmark_app.py --app build/Zitter.app --scenario startup --iterations 30 --tabs 25
-```
-
-The executable must include the opt-in `AppPerformanceProbe`; the driver requires
-a marker-owned bundle from `tools/package_app.py`. Variant regular targets can be
-packaged with `--binary zitter_preconnect --destination build/ZitterAppCandidate.app
---no-register` (as arguments on one command). Both scenarios use isolated profile
-directories and a local HTTP fixture, retaining logs and raw samples. Startup
-creates a fresh process and profile directory per trial, restores tabs in two
-profiles, and activates the last profile; two process warmups are excluded.
-Operating-system caches remain warm. The driver passes Chromium's
-`--disable-backgrounding-occluded-windows` test switch identically to all app
-variants, so window placement does not suppress rendering. This measures
-foreground-style compositor work; ordinary app launches keep normal occlusion
-behavior. Startup ready/paint timestamps are observed
-through stderr receipt; split visual-state callbacks acknowledge renderer work,
-not physical presentation. These samples complement the browser-test metrics
-above and must not be mixed with them in a before/after comparison.
-
-On macOS, add `--window-timing` to the startup scenario to time the first
-on-screen workspace window. Run in a logged-in graphical session with the
-Xcode command-line tools available.
-
-```sh
-python3 tools/benchmark_app.py --app build/ZitterRustMetal.app \
-  --scenario startup --window-timing --iterations 10 --tabs 25
-```
-
-The timer starts just before spawning the bundle executable. The observer polls
-WindowServer for an on-screen workspace window owned by that PID without screen
-capture or Screen Recording permission. This measures window presence and
-includes the polling delay. LaunchServices and pixel presentation are outside
-the measured interval. Compare `app_process_window_onscreen_ms` separately from
-workspace readiness and the page's first paint.
-
-The driver passes `--zitter-startup-timing` to collect monotonic phase markers
-from the browser process. The JSON reports elapsed time to each milestone and
-the interval ending there. The interval ending at `main_entry` includes process
-launch, loader work and any other activity before entering the executable.
-`shell_built`, `widget_initialized`, `shell_attached` and `widget_shown` break down
-window construction. `startup_show_to_window_onscreen_ms` measures from the
-request to show the window until the observer sees it. Pass
-`--zitter-startup-timing` directly when you only need the internal markers on
-stderr.
-
-For a controlled renderer-pool experiment, `--spare-renderers 2` passes
-`--enable-features=MultipleSpareRPHs:count/2` to this run only. Extra browser
-arguments are recorded in its JSON. Compare against the default with the same
-binary and dataset, and measure renderer memory before adopting a larger pool.
-This does not change the app's default configuration.
-`--sample-process-memory` optionally records launcher/descendant RSS and renderer
-counts every 250 ms. It adds overhead and RSS can double-count shared pages;
-compare matching sampled runs. Pool experiments also require complete native
-renderer diagnostics, so rebuild the test binary after staging current tests.
-
-
-`--scenario profiles --profiles 4` measures fresh empty profile initialization
-inside a warm test process. `--scenario profile-page` adds one restored local page
-in the selected profile and requires a first visual paint measurement as well as
-window readiness. Both await all remaining profile leases before recording
-post-configuration browser-process memory. Neither measures cold full-process startup.
-
-
-
-To test repository changes while preserving a baseline build's installed sources,
-stage an isolated candidate:
-
-```sh
-python3 tools/stage_performance_candidate.py
-```
-
-In the Debug build's `args.gn`, add
-`root_extra_deps = [ "//zitter_candidate:zitter_prototype_candidate" ]` (merge
-with any existing extra dependencies). Then run:
-
-```sh
-cd .chromium/src
-buildtools/mac/gn gen out/Zitter
-buildtools/mac/gn check out/Zitter '//zitter_candidate:*'
-../depot_tools/autoninja -C out/Zitter -j 4 zitter_prototype_candidate
-cd ../..
-python3 tools/benchmark_browser.py --out .chromium/src/out/Zitter --binary zitter_prototype_candidate --label candidate
-```
-
-The candidate has its own target, source directory and fixtures, and reuses
-existing Chromium component dependencies. Restaging refuses modified/untracked
-candidate files and preserves timestamps for identical files to avoid rebuilding
-unchanged sources. Finish compilation before measuring the candidate as well.
-
-`--scenario restoration` measures rebuilding a window from a fixed saved session
-with `--tabs` pages per workspace, an active split and two warm profiles. It
-records ready time, both first-paint notifications, realized page count and
-browser-process resident/physical-footprint bytes (the footprint field is macOS
-specific). Memory is sampled after load and persistence settle, outside timing.
-It does not measure cold process/profile startup or whole-browser memory across
-renderer/GPU/network processes.
-
-For a reference using frozen product sources and the same current benchmark,
-stage `--variant zitter_reference --reference-overlay .chromium/src/zitter
---current-tests`, add `//zitter_reference:zitter_prototype_reference` to
-`root_extra_deps`, and build `zitter_prototype_reference`. Run each binary with
-the same scenario, tab count and iterations. Reference and candidate code are
-kept separate; no sources of an in-progress baseline build are replaced.
+See [the performance work log](../docs/performance.md) for measured baselines.
+The benchmark drivers used there (`benchmark_browser.py`, `benchmark_app.py`,
+`stage_performance_candidate.py` and the `zitter_prototype` browser-test
+scenarios) were removed with the Chrome-based build; their recorded results stay
+in the performance documents. To preview the cost of a local Content build, use
+`./build.sh --plan`.
 
 ## Test the independent core
 
@@ -700,6 +555,20 @@ ctest --test-dir build --output-on-failure
 python3 tools/check_boundaries.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
+
+Rust and C++ unit tests build by name in the Content output directory, for
+example:
+
+```sh
+cd .chromium/src
+third_party/ninja/ninja -C out/ZitterContentBundle sidebar_scene_unittests \
+  content_blocking_engine_unittests assistant_engine_unittests \
+  zitter_network_policy_tests arc_importer_unittests
+out/ZitterContentBundle/sidebar_scene_unittests
+```
+
+Use Chromium's own Ninja, not Homebrew's. `editor_text_layout_unittests` builds
+on Windows and Linux only.
 
 ## Live Rust + Metal sidebar prototype
 
@@ -938,68 +807,17 @@ If `xcrun metal --version` reports a missing toolchain, install it before buildi
 xcodebuild -downloadComponent MetalToolchain
 ```
 
-From the Zitter repository, install the overlay. The installer checks the exact
-revision, refuses to replace unowned or locally modified overlay files, copies
-our sources into `src/zitter`, adds **one dependency** to desktop browser_tests, and gives macOS OSCrypt
-its own Zitter Keychain service/account names.
-It does not stage or commit changes.
+From the Zitter repository, `./build.sh` stages the Content embedder into the
+checkout, generates the output and builds it (see
+[Run the desktop app](#run-the-desktop-app-macos)). To stage without building:
 
 ```sh
-python3 tools/install_chromium_overlay.py .chromium/src --dry-run
-python3 tools/install_chromium_overlay.py .chromium/src
-python3 tools/install_archive_backend.py .chromium/src
+python3 tools/stage_content_embedder.py .chromium/src
 ```
 
-From Chromium's `src` directory:
-
-```sh
-gn gen out/Zitter --args='is_debug=true is_component_build=true symbol_level=0 blink_symbol_level=0 v8_symbol_level=0 use_siso=false use_remoteexec=false'
-gn check out/Zitter //zitter:profile_workspace_browser_tests
-autoninja -C out/Zitter -j 1 generate_bindings_all
-autoninja -C out/Zitter -j 8 zitter_prototype
-out/Zitter/zitter_prototype --gtest_filter=ZitterProfilesBrowserTest.StorageIsolationAndSwitching --test-launcher-jobs=1
-```
-
-Windows uses `out\Zitter\zitter_prototype.exe`; Linux requires a graphical session
-or the normal Chromium test Xvfb setup. macOS requires the SDK/Xcode specified by
-the pinned Chromium revision. The dedicated `zitter_prototype` executable uses Chromium's browser-test runner
-without building the entire upstream test collection. This is a desktop target,
-not Android or ChromeOS.
-
-Generate Blink bindings separately on the first local build: each per-type
-generator creates its own CPU-sized Python worker pool. Running many of these
-actions concurrently can oversubscribe the machine even with a modest Ninja
-`-j` setting. The `-j 1` step above still uses the generator's internal worker pool.
-
-## Open the manual prototype
-
-From this repository, after building the local checkout:
-
-```sh
-python3 tools/run_prototype.py --verify
-python3 tools/run_prototype.py
-```
-
-Or invoke the executable from Chromium's `src` directory:
-
-```sh
-out/Zitter/zitter_prototype --gtest_filter=ZitterProfilesBrowserTest.ManualWindow --zitter-interactive --single-process-tests --enable-pixel-output-in-tests --test-launcher-timeout=3600000
-```
-
-Close the Zitter window to finish the test. Test profiles are temporary and
-managed by the harness; the manual run is not a persistent daily browser.
-
-- Click Work / Personal or use Cmd+Alt+1 / Cmd+Alt+2 on macOS,
-  Ctrl+Alt+1 / Ctrl+Alt+2 on Windows/Linux.
-- Both workspaces open the same test-server URL. Save `work` in one and `personal`
-  in the other. Read values after switching repeatedly.
-- The output order is `cookie|localStorage|IndexedDB|sessionStorage`.
-- The address field accepts HTTP(S) URLs. It is a probe control, not a complete
-  omnibox or trustworthy security-origin display.
-
-The automated test also destroys and recreates both page hosts: cookie,
-localStorage, and IndexedDB values should remain; sessionStorage should disappear.
-This is **not** a test of persistence across browser-process restarts.
+The staging tool checks the pinned revision, copies the sources and installs
+`//zitter` from `chromium/content_embedder/presentation_root.gn`. On Windows,
+follow [the port plan](windows-port.md#content-on-windows).
 
 ## Layout
 
@@ -1007,58 +825,11 @@ This is **not** a test of persistence across browser-process restarts.
 zitter/core/          product model, no Chromium imports
 zitter/ports/         runtime contract
 zitter/application/   selection commands and failure handling
-chromium/prototype/   Chromium profiles and Views window
-chromium/BUILD.gn     GN targets installed as src/zitter/BUILD.gn
+chromium/prototype/   shared Workspace UI, Rust scene and services
+chromium/content_embedder/ Content embedder; presentation_root.gn becomes src/zitter/BUILD.gn
 chromium/revision.json exact upstream revision
-testdata/            same-origin storage diagnostic page
-tools/               boundary check and guarded overlay installer
-tests/               independent contracts and installer checks
+testdata/            local test pages and fixtures
+tools/               Content staging, packaging and verify_content_* checks
+tests/               independent contracts and tool checks
 docs/prototype.md    ownership, experiment scope and acceptance criteria
 ```
-
-For the controlled connection experiment, build the staged current test target
-and run `tools/benchmark_browser.py --scenario preconnect` with and without
-`--preconnect`, using the same binary and sampling options. It models 120 ms
-TLS/HTTP round trips with a fixed 600 ms typing pause in both variants; DNS and
-TCP accept are local. Results require one reused connection, one page request,
-and no speculative page request per trial. See the performance log for the
-current experimental/final verification state.
-
-### Optimized local build (macOS ARM64)
-
-`chromium/optimized.args.gn` enables non-component linking, ThinLTO and Chromium's
-pinned mac-arm PGO profile. Our regular executable explicitly enables LTO O2;
-the native test executable uses the same backend level. The comparisons and
-current acceptance status are in [the performance report](../docs/performance.md).
-This is a locally signed development bundle; it is not a notarized release installer.
-
-After preparing the pinned checkout, stage the current source without replacing
-the preserved original overlay:
-
-```sh
-python3 tools/stage_performance_candidate.py --variant zitter_optimized
-mkdir -p .chromium/src/out/ZitterOptimized
-cp chromium/optimized.args.gn .chromium/src/out/ZitterOptimized/args.gn
-cat >> .chromium/src/out/ZitterOptimized/args.gn <<'EOF'
-root_extra_deps = [
-  "//zitter_optimized:zitter_optimized",
-  "//zitter_optimized:zitter_prototype_optimized",
-]
-EOF
-cd .chromium/src
-export PATH="$PWD/../depot_tools:$PATH"
-python3 tools/update_pgo_profiles.py --target=mac-arm update --gs-url-base=chromium-optimization-profiles/pgo_profiles
-python3 v8/tools/builtins-pgo/download_profiles.py download --depot-tools ../depot_tools --check-v8-revision
-buildtools/mac/gn gen out/ZitterOptimized
-buildtools/mac/gn check out/ZitterOptimized '//zitter_optimized:*'
-autoninja -C out/ZitterOptimized -j 1 generate_bindings_all
-autoninja -C out/ZitterOptimized -j 8 zitter_optimized
-cd ../..
-python3 tools/package_app.py --out .chromium/src/out/ZitterOptimized --binary zitter_optimized --destination build/Zitter.app
-open build/Zitter.app
-```
-
-The first full build and LTO links take substantially longer than an incremental
-development build. Keep the output directory/cache for subsequent builds. PGO
-uses the profile pinned by this Chromium revision, not a locally trained Zitter
-profile; the measured compiler comparison changes linking, LTO and PGO together.

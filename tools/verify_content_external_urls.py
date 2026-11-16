@@ -16,7 +16,7 @@ import time
 
 from content_file_keychain_fixture import compile_file_keychain_fixture, file_keychain_environment
 from notarize_app import verify_nested_signatures
-from package_app import BUNDLE_ID
+from macos_signing import BUNDLE_ID
 from package_dmg import verify_app
 from verify_content_bundle import seal_local_copy
 from verify_content_fresh_startup import (REQUEST_QUIT, startup_holds_lock,

@@ -1,3 +1,5 @@
+> The Chrome-based build and the tooling this page uses (`stage_performance_candidate.py`, `package_app.py`, `run_metal_sidebar.py`, `benchmark_*.py`, `zitter_prototype*`, `out/ZitterOptimized`) were removed; Zitter builds only on the Content embedder (`./build.sh`, see [development](development.md)). The commands below record the removed build.
+
 # Real workspace sidebar: Rust + Metal prototype
 
 The Rust UI (the only UI since 2026-10-28; the compositor paints it by default, `--zitter-rust-raster=metal` selects the Metal overlay) renders the **live sidebar, navigation strip and split pane controls** in the normal workspace window. It does not start the synthetic `--zitter-ui-lab` scene. It uses the same `ShellState`, native interaction nodes, controller callbacks, profiles and session persistence as the existing application.

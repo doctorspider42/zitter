@@ -110,7 +110,7 @@ W [`workspace_shell.cc`](../chromium/prototype/workspace_shell.cc):
 ## Testy
 
 ```bash
-out/ZitterOptimized/sidebar_scene_unittests design::
+out/ZitterContentBundle/sidebar_scene_unittests design::
 python3 -m unittest tests.test_design_tokens
 ```
 

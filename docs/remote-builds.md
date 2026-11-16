@@ -47,7 +47,7 @@ All in [`tools/remote_build/`](../tools/remote_build/):
 | `package_toolchain.py` | Packages installed VS 2026 Build Tools + SDK as `<hash>.zip` (once per VS/SDK update). |
 | `setup_siso.py` | Prepares a checkout: hermetic toolchain, Linux clang, wrapper and Siso configs. Run after each fresh checkout. |
 | `build.py` | Runs Siso against the cluster with a sane `-remote_jobs`. |
-| `fresh_build.py` | New Chromium revision: fresh checkout, overlay, setup and a full remote build, timed per step. |
+| `fresh_build.py` | New Chromium revision: fresh checkout, Content staging, setup and a full remote build, timed per step. |
 | `windows-remote.args.gn` | The two GN args that turn remote compiles on. |
 | `start_server.ps1`, `Dockerfile`, `nativelink_server.json5` | NativeLink server + local worker in Docker Desktop. |
 | `nativelink_worker.json5`, `install_wsl_worker.sh`, `run_wsl_worker.sh`, `install_logon_task.ps1`, `run_worker_task.ps1` | Worker on another PC in WSL2. |
@@ -100,16 +100,15 @@ and `PPAJAK-LAP` (Ryzen 7 PRO 5850U, 16 slots, Wi-Fi at 270–350 Mbit/s, SSH al
 ## Building
 
 ```powershell
-python tools/remote_build/build.py -C out/ZitterWinDev zitter zitter_setup
+python tools/remote_build/build.py -C out/ZitterWinContent zitter_content
 ```
 
 For a new Chromium revision, `fresh_build.py` does everything from a clean
 checkout to a full build, timing each step in `build/fresh-build/fresh_build.log`;
 `--from <step>` resumes. It renames an existing `.chromium/src` aside instead of
-deleting it. The default product is the Content build
+deleting it. It builds Zitter's only product, the Content embedder
 (`//zitter_content:zitter_content` in `out/ZitterWinContent`, staged with
-`tools/stage_content_embedder.py`); `--product chrome` builds the Chrome-based
-`zitter` in `out/ZitterWinOfficial`. `--keep-going` compiles past failures, for
+`tools/stage_content_embedder.py`). `--keep-going` compiles past failures, for
 a first build on a new revision or platform.
 
 ```powershell

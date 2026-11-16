@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from package_app import BUNDLE_ID, sign_bundle, signing_identity
+from macos_signing import BUNDLE_ID, sign_bundle, signing_identity
 
 
 def run(command, capture=False):

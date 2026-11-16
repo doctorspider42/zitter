@@ -1,5 +1,20 @@
 # Local verification — 2026-10-15
 
+> This is a dated log of checks run on the removed Chrome-based build
+> (`zitter_prototype`, `tools/run_prototype.py`, `out/Zitter`). Those commands no
+> longer exist. To verify the current Content build:
+>
+> - `python3 -m unittest discover -s tests -p 'test_*.py'` for the Python tests;
+> - Rust and C++ unit tests built by name in the Content output directory
+>   (`sidebar_scene_unittests`, `content_blocking_engine_unittests`,
+>   `assistant_engine_unittests`, `zitter_network_policy_tests`,
+>   `arc_importer_unittests`); see [development](development.md#test-the-independent-core);
+> - the `tools/verify_content_*.py` scripts against `build/ZitterContentLab.app`
+>   or a release DMG, starting with `tools/verify_content_bundle.py`; on Windows,
+>   `tools/verify_content_windows_bundle.py`.
+>
+> There is no browser UI test suite any more.
+
 ## Environment and build
 
 - Platform: macOS ARM64, 36 GiB RAM, 12 logical CPUs.

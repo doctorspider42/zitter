@@ -63,21 +63,21 @@ Shift-click a link to open **Peek**, then move it into a regular tab without rel
 
 ## Project status
 
-**Under active development.** Zitter is built and tested on **macOS (Apple Silicon)** and **Windows 10/11 (x64)**. On Windows the full browser UI suite passes, and Zitter ships with its own installer, Snap Layouts, a jump list, link handoff from other apps, a first-run wizard and native notifications. Linux has a bootstrap target but has not been validated.
+**Under active development.** Zitter is built and tested on **macOS (Apple Silicon)** and **Windows 10/11 (x64)**. On Windows Zitter ships with its own installer, Snap Layouts, a jump list, link handoff from other apps, a first-run wizard and native notifications. Linux has a bootstrap target but has not been validated.
 
-Builds are local development apps. A notarized/signed installer and an update channel are not configured yet. Full Chrome feature and extension compatibility is not claimed.
+Zitter is built on Chromium's Content API. macOS releases ship as a signed, notarized DMG; the Windows installer is not signed yet. Full Chrome feature and extension compatibility is not claimed.
 
 ## Build & explore
 
-Zitter builds against the **pinned Chromium revision** in [`chromium/revision.json`](chromium/revision.json), using a dedicated checkout and Zitter's source overlay. Building the browser requires Chromium's platform toolchain and a substantial checkout.
+Zitter builds against the **pinned Chromium revision** in [`chromium/revision.json`](chromium/revision.json) on Chromium's Content API (`//zitter_content:zitter_content`), using a dedicated checkout in `.chromium/`. Building the browser requires Chromium's platform toolchain and a substantial checkout.
 
-For an already configured macOS Rust UI development checkout:
+On macOS, with the pinned checkout in `.chromium/src`:
 
 ```sh
 ./build.sh --run
 ```
 
-This helper requires the existing `zitter_ui_lab` overlay, `out/ZitterOptimized` build configuration and local signing setup. It packages `build/ZitterRustMetal.app` and launches it with an isolated profile.
+This stages the Content embedder into the checkout, builds `out/ZitterContentBundle`, packages `build/ZitterContentLab.app` and launches it with temporary profiles. `./build.sh` alone builds and packages without launching; see the [development reference](docs/development.md) for the other modes.
 
 <details>
 <summary><strong>Windows (x64)</strong></summary>
@@ -86,19 +86,16 @@ Needs Visual Studio 2026 Build Tools (C++ desktop + ATL/MFC), the Windows 11 SDK
 
 ```powershell
 $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
-python tools/install_chromium_overlay.py .chromium/src
+python tools/stage_content_embedder.py .chromium/src
 cd .chromium/src
-mkdir out/ZitterWinRelease; copy ../../chromium/windows-release.args.gn out/ZitterWinRelease/args.gn   # windows-official.args.gn: ThinLTO + PGO
-gn gen out/ZitterWinRelease
-autoninja -C out/ZitterWinRelease zitter zitter_setup
+mkdir out/ZitterWinContent; copy ../../chromium/windows-release.args.gn out/ZitterWinContent/args.gn
+gn gen out/ZitterWinContent --root-target=//zitter_content:zitter_content
+autoninja -C out/ZitterWinContent zitter_content
 cd ../..
-python tools/package_win.py --out .chromium/src/out/ZitterWinRelease --setup .chromium/src/out/ZitterWinRelease/zitter_setup.exe --destination build/release
+python tools/package_win.py --out .chromium/src/out/ZitterWinContent --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe --destination build/release
 ```
 
 This produces a portable package and `Zitter-<version>-win-x64-setup.exe`, which installs per user or for all users and supports `--quiet`.
-
-For a separate per-user installer and fresh-profile testing, see
-[Zitter Dev for side-by-side testing](docs/windows-port.md#zitter-dev-for-side-by-side-testing).
 
 </details>
 
@@ -118,7 +115,7 @@ python3 tools/check_boundaries.py
 
 ## Under the hood
 
-**Chromium** handles the web. **Rust** owns Zitter's UI models, layout and interaction logic. **C++ and Views adapters** connect them to browser services, native windows, input and accessibility. The default rendering path uses Chromium's compositor; an optional Metal backend is available on macOS.
+**Chromium's Content API** handles the web. **Rust** owns Zitter's UI models, layout and interaction logic. **C++ and Views adapters** connect them to browser services, native windows, input and accessibility. The default rendering path uses Chromium's compositor; an optional Metal backend is available on macOS.
 
 The [product/browser boundary](docs/product-browser-boundary.md) describes the
 standalone workspace, command-ranking and pin-tree logic, shared UI data models,
