@@ -4,6 +4,7 @@
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
     ("Odśwież wszystkie favicony", "Refresh all favicons"),
+    ("Podpowiedzi wyszukiwania", "Search suggestions"),
     ("Karty i przypięte strony w bieżącej przestrzeni", "Tabs and pinned pages in the current workspace"),
     ("Duplikuj kartę", "Duplicate tab"),
     ("Wycisz kartę", "Mute tab"),

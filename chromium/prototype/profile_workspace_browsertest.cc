@@ -4986,13 +4986,133 @@ IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, ProfilePreferencesAndSearch) {
   EXPECT_EQ(4, window_->ReadPreferences().at("zoom").value);
 }
 
+IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, DuckDuckGoOnlineSearchSuggestions) {
+  auto* shell = window_->shell();
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->appearance_ready() && shell->tools_ready();
+  }));
+  shell->OpenGeneralSettings();
+  auto* toggle = shell->preference_toggle("online_search_suggestions");
+  ASSERT_TRUE(toggle);
+  ASSERT_TRUE(toggle->GetEnabled());
+  shell->preferences_search()->input_client()->InsertText(
+      u"Podpowiedzi wyszukiwania online",
+      ui::TextInputClient::InsertTextCursorBehavior::kMoveCursorAfterText);
+  shell->general_widget()->LayoutRootViewIfNecessary();
+  ASSERT_TRUE(toggle->IsDrawn());
+  ClickControl(toggle);
+  shell->CloseOverlays();
+
+  content::URLLoaderInterceptor interceptor(base::BindRepeating(
+      [](content::URLLoaderInterceptor::RequestParams* params) {
+        const auto& request = params->url_request;
+        if (request.url.host() != "duckduckgo.com" ||
+            request.url.path() != "/ac/") {
+          return false;
+        }
+        EXPECT_EQ(network::mojom::CredentialsMode::kOmit, request.credentials_mode);
+        EXPECT_NE(std::string::npos, request.url.query().find("q=zitter+probe"));
+        std::string response = R"(["zitter probe",["zitter probe","zitter probe suggestion"]])";
+        const auto query = request.url.query();
+        if (query.find("q=zitter+probe+su") != std::string::npos)
+          response = R"(["zitter probe su",["zitter probe suggestion"]])";
+        else if (query.find("q=zitter+probe+xx") != std::string::npos)
+          response = R"(["zitter probe xx",[]])";
+        else if (query.find("q=zitter+probe+") != std::string::npos)
+          response = R"(["zitter probe ",["zitter probe suggestion"]])";
+        content::URLLoaderInterceptor::WriteResponse(
+            "HTTP/1.1 200 OK\nContent-Type: application/json\n\n",
+            response, params->client.get());
+        return true;
+      }));
+  shell->SetSearchEngine(SearchEngine::kDuckDuckGo);
+  shell->OpenAddress(true);
+  const auto has_suggestion = [&] {
+    return std::ranges::any_of(shell->suggestions(), [](const auto& item) {
+      return item.title == u"zitter probe suggestion" &&
+             item.url == GURL("https://duckduckgo.com/?q=zitter+probe+suggestion");
+    });
+  };
+  SetPaletteQuery(u"zitter probe");
+  ASSERT_TRUE(base::test::RunUntil(has_suggestion));
+
+  shell->SetSearchEngine(SearchEngine::kGoogle);
+  SetPaletteQuery(u"g zitter probe");
+  EXPECT_FALSE(has_suggestion());
+  ASSERT_FALSE(shell->suggestions().empty());
+  EXPECT_EQ("www.google.com", shell->suggestions().front().url.host());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return std::ranges::any_of(shell->suggestions(), [](const auto& item) {
+      return item.title == u"zitter probe suggestion" &&
+             item.detail == u"DuckDuckGo" &&
+             item.url == GURL("https://www.google.com/search?q=zitter+probe+suggestion");
+    });
+  }));
+  EXPECT_EQ(u"g zitter probe suggestion", shell->address_input()->GetText());
+  SetPaletteQuery(u"d zitter probe");
+  ASSERT_TRUE(base::test::RunUntil(has_suggestion));
+  auto* field = shell->address_input();
+  EXPECT_EQ(u"d zitter probe suggestion", field->GetText());
+  EXPECT_EQ(gfx::Range(14, 25), field->GetSelectedRange());
+  const auto tab_count = window_->tab_count("work");
+  ui::KeyEvent tab(ui::EventType::kKeyPressed, ui::VKEY_TAB, 0);
+  ASSERT_TRUE(shell->HandleAddressKey(tab));
+  EXPECT_EQ(u"d zitter probe suggestion", field->GetText());
+  EXPECT_EQ(gfx::Range(25), field->GetSelectedRange());
+  ASSERT_FALSE(shell->suggestions().empty());
+  EXPECT_EQ(GURL("https://duckduckgo.com/?q=zitter+probe+suggestion"),
+            shell->suggestions().front().url);
+  EXPECT_EQ(tab_count, window_->tab_count("work"));
+  SetPaletteQuery(u"d zitter probe ");
+  ASSERT_TRUE(base::test::RunUntil(has_suggestion));
+  EXPECT_EQ(u"d zitter probe suggestion", field->GetText());
+  EXPECT_EQ(gfx::Range(15, 25), field->GetSelectedRange());
+  const auto palette_height = shell->address_widget()->GetWindowBoundsInScreen().height();
+  SetPaletteQuery(u"d zitter probe su");
+  EXPECT_TRUE(has_suggestion());
+  EXPECT_EQ(palette_height, shell->address_widget()->GetWindowBoundsInScreen().height());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return field->GetText() == u"d zitter probe suggestion";
+  }));
+  SetPaletteQuery(u"d zitter probe xx");
+  EXPECT_FALSE(has_suggestion());
+  EXPECT_EQ(palette_height, shell->address_widget()->GetWindowBoundsInScreen().height());
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return shell->address_widget()->GetWindowBoundsInScreen().height() < palette_height;
+  }));
+  SetPaletteQuery(u"> no-such-command");
+  EXPECT_FALSE(has_suggestion());
+
+  ASSERT_TRUE(shell->UpsertSearchProvider(
+      {"Catalogue", "zc", "https://catalogue.example/search/{query}?from=zitter"}));
+  const auto has_custom_suggestion = [&] {
+    return std::ranges::any_of(shell->suggestions(), [](const auto& item) {
+      return item.title == u"zitter probe suggestion" && item.detail == u"DuckDuckGo" &&
+             item.url == GURL("https://catalogue.example/search/zitter%20probe%20suggestion?from=zitter");
+    });
+  };
+  SetPaletteQuery(u"zc zitter probe");
+  ASSERT_TRUE(base::test::RunUntil(has_custom_suggestion));
+  EXPECT_EQ(u"zc zitter probe suggestion", field->GetText());
+
+  ASSERT_TRUE(shell->SetDefaultSearchProvider("zc"));
+  SetPaletteQuery(u"zitter probe");
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return has_custom_suggestion() && field->GetText() == u"zitter probe suggestion";
+  }));
+  ASSERT_TRUE(shell->HandleAddressKey(tab));
+  ASSERT_FALSE(shell->suggestions().empty());
+  EXPECT_EQ(GURL("https://catalogue.example/search/zitter%20probe%20suggestion?from=zitter"),
+            shell->suggestions().front().url);
+}
+
 // Original Views row text/order is the regression oracle for both builders.
 IN_PROC_BROWSER_TEST_F(ZitterProfilesBrowserTest, PreferenceCatalogueRowsOrderCopyAndFilter) {
   auto* shell=window_->shell();ASSERT_TRUE(base::test::RunUntil([&]{return shell->appearance_ready();}));shell->OpenGeneralSettings();
   using Copy=std::pair<std::u16string,std::u16string>;
   const std::vector<std::vector<Copy>> expected={
     {{u"Motyw aplikacji",u"Kolory interfejsu i stron obsługujących motyw systemowy."},{u"Zawsze widoczny panel kart",u"Przypnij karty i przestrzenie przy lewej krawędzi."},{u"Animacje przestrzeni",u"Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."},{u"Nazwa aktywnej przestrzeni",u"Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart."},{u"Język interfejsu",u"Zmiana zadziała po ponownym uruchomieniu Zitter."},{u"Zwinięte foldery przypiętych",u"Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty."},{u"Kolor i nazwa przestrzeni",u"Własny akcent kolorystyczny i przypisanie profilu."},{u"Zapisuj historię kart",u"Time Machine pamięta, jakie karty były otwarte w każdej przestrzeni. Tylko adresy, tytuły i układ, nigdy treść stron. Okna prywatne nie są zapisywane."},{u"Przechowuj historię kart",u"Starsze zmiany znikają same."},{u"Time Machine przestrzeni",u"Cofnij przestrzeń do dowolnej chwili z historii kart."},{u"Wyczyść historię kart",u"Usuń historię Time Machine wszystkich przestrzeni na tym komputerze."}},
-    {{u"Domyślna wyszukiwarka",u"Używana, gdy wpiszesz zapytanie w pasku adresu."},{u"Wyszukiwarki i prefiksy",u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…"},{u"Skróty klawiszowe",u"Schemat Arc, własne kombinacje i wykrywanie konfliktów."},{u"Szybciej z klawiaturą",u"⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"}},
+    {{u"Domyślna wyszukiwarka",u"Używana, gdy wpiszesz zapytanie w pasku adresu."},{u"Podpowiedzi wyszukiwania online",u"Wysyłaj wpisywaną frazę do DuckDuckGo po podpowiedzi. Wyniki otwiera wybrana wyszukiwarka. Ustawienie dotyczy całej aplikacji."},{u"Wyszukiwarki i prefiksy",u"Własne wyszukiwarki: g zapytanie, w hasło, yt film…"},{u"Skróty klawiszowe",u"Schemat Arc, własne kombinacje i wykrywanie konfliktów."},{u"Szybciej z klawiaturą",u"⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"}},
     {{u"Kopiuj adres bez trackerów",u"Usuwaj znane parametry śledzące przy kopiowaniu z paska adresu."},{u"Przekazuj adres strony odsyłającej",u"Nagłówek Referer pomaga witrynie rozpoznać, skąd pochodzi wejście. Wyłączenie może zmienić działanie niektórych serwisów."},{u"Zawsze używaj HTTPS",u"Wymagaj bezpiecznego połączenia. Witryny bez HTTPS mogą wyświetlić ostrzeżenie."},{u"Blokuj cookies innych firm",u"Ogranicz śledzenie między witrynami. Niektóre logowania mogą wymagać cookies."},{u"Wysyłaj Do Not Track",u"Poproś witryny o nieśledzenie. Respektowanie prośby zależy od witryny."},{u"Ochrona przed fingerprintingiem",u"Dodawaj niewidoczny szum do odczytów canvas, WebGL i dźwięku. Każda witryna widzi wtedy inny odcisk przeglądarki, nowy po ponownym uruchomieniu lub po zmianie ikoną odcisku w pasku. Może zakłócić edytory grafiki. Dotyczy tego profilu."},{u"Wstępne połączenia ze stronami",u"Przygotowuj połączenie podczas wpisywania adresu. Może użyć sieci, nawet jeśli nie otworzysz strony. Ustawienie dotyczy tego profilu."},{u"Raporty kliknięć w linki",u"Zezwalaj na wysyłanie sygnałów ping po kliknięciu odnośnika."},{u"Historia przeglądania",u"Wyszukuj odwiedzone strony i czyść historię tego profilu."}},
     {{u"Kamera",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Mikrofon",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Lokalizacja",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Powiadomienia",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Odczyt schowka",u"Włączone: domyślna polityka „pytaj”. Wyłączone: blokuj. Wyjątki witryn mają pierwszeństwo."},{u"Wyjątek dla witryny",u"Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu."},{u"Zapisane wyjątki",u"Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu."}},
     {{u"Domyślne powiększenie",u"Skala stron bez własnego, zapisanego powiększenia."},{u"Rozmiar tekstu",u"Domyślna wielkość czcionki na stronach."},{u"Minimalny rozmiar tekstu",u"Zapobiegaj wyświetlaniu zbyt drobnych liter."},{u"Rozmiar tekstu o stałej szerokości",u"Domyślna wielkość tekstu w blokach kodu i elementach monospace."},{u"Czcionka standardowa",u"Nazwa rodziny czcionki używanej, gdy witryna nie wybierze własnej."},{u"Czcionka szeryfowa",u"Rodzina dla tekstu serif. Musi być zainstalowana w systemie."},{u"Czcionka bezszeryfowa",u"Rodzina dla tekstu sans-serif. Musi być zainstalowana w systemie."},{u"Czcionka o stałej szerokości",u"Rodzina monospace, używana m.in. w blokach kodu."},{u"JavaScript",u"Skrypty potrzebne do działania większości aplikacji internetowych."},{u"Wyświetlaj obrazy",u"Pozwól witrynom ładować zdjęcia i grafiki."},{u"Wyskakujące okna",u"Pozwól stronom otwierać dodatkowe okna. Domyślnie zablokowane."},{u"Dźwięk na stronach",u"Domyślna zgoda na odtwarzanie dźwięku."}},

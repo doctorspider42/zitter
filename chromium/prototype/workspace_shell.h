@@ -43,7 +43,10 @@
 
 class PrefService;
 
+namespace network { class SimpleURLLoader; }
+
 namespace content {
+class BrowserContext;
 class RenderFrameHost;
 struct ContextMenuParams;
 }
@@ -239,6 +242,7 @@ class WorkspaceShell final : public ui::EventHandler,
     // A typed address in a scheme a site handles (navigator.registerProtocolHandler:
     // mailto:, web+…): the handler page, or an empty URL.
     base::RepeatingCallback<GURL(const GURL&)> protocol_handler_url;
+    base::RepeatingCallback<content::BrowserContext*()> search_context;
     base::RepeatingCallback<void(PaletteResult)> activate_result;
     base::RepeatingCallback<std::vector<PaletteResult>(std::u16string)> commands;
     base::RepeatingClosure passwords;
@@ -533,7 +537,9 @@ class WorkspaceShell final : public ui::EventHandler,
   bool UpsertSearchProvider(SearchProvider provider, std::string previous = {});
   bool RemoveSearchProvider(std::string keyword);
   bool SetDefaultSearchProvider(std::string keyword);
-  GURL ResolveInput(std::string text, std::u16string* provider_name = nullptr) const;
+  GURL ResolveInput(std::string text, std::u16string* provider_name = nullptr,
+                   std::string* search_terms = nullptr,
+                   SearchProvider* search_provider = nullptr) const;
   const BrowserTools& browser_tools() const { return tools_; }
   void RankCommandResults(std::vector<PaletteResult>& results) const;
   void RecordCommandUse(std::string id, std::string target);
@@ -1125,7 +1131,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ShowAssistantBackendInput(views::Widget* owner, std::string provider, std::u16string value);
   void BuildAdBlockingPreferences();
   void SaveSitePreference();
-  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt, std::optional<std::pair<bool, bool>> updates = std::nullopt);
+  void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt, std::optional<std::pair<bool, bool>> updates = std::nullopt, std::optional<bool> online_search_suggestions = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
   void RebuildTabs(std::string_view previous, bool catalogue_changed);
   void StopWorkspaceAnimation();
@@ -1316,8 +1322,13 @@ class WorkspaceShell final : public ui::EventHandler,
   void RebuildSuggestions();
   std::u16string AddressQuery() const;
   bool HasInlineCompletion() const;
-  void UpdateInlineCompletion();
+  void ShowInlineCompletion(std::u16string suffix, GURL url);
+  void UpdateInlineCompletion(bool allow_online = false);
   void RequestSearch();
+  void ResetOnlineSuggestions();
+  std::string OnlineSuggestionQuery(SearchProvider* provider = nullptr) const;
+  void FetchOnlineSuggestions(std::string query);
+  void OnOnlineSuggestions(std::string query, std::optional<std::string> body);
   void AddressEdited();
   void ApplyAppearance(bool refresh_theme = true);
   bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
@@ -1735,6 +1746,11 @@ class WorkspaceShell final : public ui::EventHandler,
   bool inline_suppressed_ = false;
   bool address_deleting_ = false;
   base::OneShotTimer search_timer_;
+  bool online_search_suggestions_ = false;
+  base::OneShotTimer online_suggestions_timer_;
+  std::unique_ptr<network::SimpleURLLoader> online_suggestions_loader_;
+  std::vector<std::u16string> online_suggestions_;
+  int online_suggestions_min_height_ = 0;
   bool command_palette_ = false;
   std::u16string suggestions_text_;
   // Violet and mint (design.rs WorkspaceColor::PRESETS); any stored hex is kept.

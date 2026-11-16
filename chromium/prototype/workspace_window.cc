@@ -1014,6 +1014,10 @@ WorkspaceWindow::WorkspaceWindow(base::FilePath data_directory, bool offer_impor
           page->SetAudioMuted(muted);
       }, base::Unretained(this));
   callbacks.search = base::BindRepeating(&WorkspaceWindow::SearchPalette, base::Unretained(this));
+  callbacks.search_context = base::BindRepeating(
+      [](WorkspaceWindow* window) -> content::BrowserContext* {
+        return window->active_profile();
+      }, base::Unretained(this));
   callbacks.commands = base::BindRepeating(&WorkspaceWindow::CommandResults, base::Unretained(this));
   callbacks.activate_result = base::BindRepeating(&WorkspaceWindow::ActivatePaletteResult, base::Unretained(this));
   callbacks.download_directory = base::BindRepeating(&WorkspaceWindow::DownloadDirectory, base::Unretained(this));
@@ -2689,7 +2693,11 @@ void WorkspaceWindow::SearchPalette(std::u16string query) {
       if (title.empty()) title = base::UTF8ToUTF16(url.host());
       if (!matches(title + u" " + label, url)) continue;
       if (needle.empty() && host.workspace_id == active_id() && i == host.active_tab) { open_urls.insert(url.spec()); continue; }
-      results.push_back({title, ResultDetail(0, label), url, i, host.workspace_id});
+      const auto pin = std::ranges::find_if(host.pin_tabs, [&](const auto& entry) {
+        return entry.second.get() == view.get();
+      });
+      results.push_back({title, ResultDetail(0, label), url, i, host.workspace_id,
+                         pin == host.pin_tabs.end() ? std::string() : pin->first});
       open_urls.insert(url.spec());
     }
   }

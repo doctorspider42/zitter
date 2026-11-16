@@ -65,6 +65,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Domyślna wielkość czcionki na stronach.", "Default font size on pages."),
     ("Domyślna wielkość tekstu w blokach kodu i elementach monospace.", "Default text size in code blocks and monospace elements."),
     ("Domyślna wyszukiwarka", "Default search engine"),
+    ("Podpowiedzi wyszukiwania online", "Online search suggestions"),
+    ("Wysyłaj wpisywaną frazę do DuckDuckGo po podpowiedzi. Wyniki otwiera wybrana wyszukiwarka. Ustawienie dotyczy całej aplikacji.", "Send the search phrase to DuckDuckGo as you type to get suggestions. The selected search engine opens the results. This setting applies to the entire app."),
     ("Domyślna zgoda na odtwarzanie dźwięku.", "Default permission to play sound."),
     ("Domyślne miejsce zapisu plików w tym profilu.", "Where this profile saves files by default."),
     ("Domyślne powiększenie", "Default zoom"),

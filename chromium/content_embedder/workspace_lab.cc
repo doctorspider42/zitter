@@ -58,6 +58,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/escape.h"
+#include "base/i18n/case_conversion.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "base/process/process.h"
@@ -1954,6 +1955,12 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                    ? TranslateProtocolHandlerURL(*lab->WorkspaceProfile(lab->active_index_),
                                                  url)
                    : GURL();
+      }, weak);
+  callbacks.search_context = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab) -> content::BrowserContext* {
+        return lab && lab->model_.active()
+                   ? lab->WorkspaceProfile(lab->active_index_)
+                   : nullptr;
       }, weak);
   if (timeline_) {
     callbacks.timeline = base::BindRepeating(
@@ -6460,15 +6467,31 @@ void WorkspaceLab::SearchAddress(std::u16string query) {
   SchedulePreconnect(query);
   address_history_tasks_.TryCancelAll();
   const auto profile_id = model_.active()->profile_id;
+  std::set<GURL> seen;
+  std::vector<prototype::PaletteResult> results;
+  if (!query.empty() && !query.starts_with(u">")) {
+    const auto needle = base::i18n::ToLower(query);
+    const auto pins = WorkspacePins(active_index_);
+    for (const auto& pin : pins) {
+      if (pin.folder || !pin.url.SchemeIsHTTPOrHTTPS() ||
+          IsGitHubFolder(pins, pin.parent_id)) continue;
+      const auto title = base::UTF8ToUTF16(pin.display_title());
+      if (base::i18n::ToLower(title).find(needle) == std::u16string::npos &&
+          base::i18n::ToLower(base::UTF8ToUTF16(pin.url.spec())).find(needle) ==
+              std::u16string::npos) continue;
+      if (!seen.insert(pin.url).second) continue;
+      results.push_back({title, base::UTF8ToUTF16(model_.active()->name), pin.url, std::nullopt,
+                         {}, pin.id});
+      if (results.size() == 12) break;
+    }
+  }
   auto* service = query.starts_with(u">") ||
                           (clearing_profile_ && WorkspaceProfile(*clearing_profile_) ==
                                                     WorkspaceProfile(active_index_))
                       ? nullptr
                       : WorkspaceProfile(active_index_)->GetHistory();
-  if (!service) {
-    shell_->SetSearchResults(std::move(query), profile_id, {});
-    return;
-  }
+  shell_->SetSearchResults(query, profile_id, results, /*complete=*/!service);
+  if (!service) return;
 
   history::QueryOptions options;
   options.max_count = 12;
@@ -6477,11 +6500,11 @@ void WorkspaceLab::SearchAddress(std::u16string query) {
       query, options,
       base::BindOnce(
           [](base::WeakPtr<WorkspaceLab> lab, size_t profile,
-             std::u16string query, history::QueryResults rows) {
+             std::u16string query, std::set<GURL> seen,
+             std::vector<prototype::PaletteResult> results,
+             history::QueryResults rows) {
             if (!lab || lab->active_index_ != profile)
               return;
-            std::set<GURL> seen;
-            std::vector<prototype::PaletteResult> results;
             for (const auto& row : rows) {
               const auto& url = row.url();
               if (!url.SchemeIsHTTPOrHTTPS() || url.has_username() ||
@@ -6499,7 +6522,8 @@ void WorkspaceLab::SearchAddress(std::u16string query) {
                 std::move(query), lab->model_.active()->profile_id,
                 std::move(results));
           },
-          weak_factory_.GetWeakPtr(), active_index_, query),
+          weak_factory_.GetWeakPtr(), active_index_, query, std::move(seen),
+          std::move(results)),
       &address_history_tasks_);
 }
 

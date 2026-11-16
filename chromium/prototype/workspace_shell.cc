@@ -60,7 +60,14 @@
 #include "ui/compositor/paint_recorder.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/vector_icons/vector_icons.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/context_menu_params.h"
+#include "content/public/browser/storage_partition.h"
+#include "net/base/load_flags.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom-shared.h"
@@ -401,6 +408,7 @@ struct Appearance {
   bool pinned = true;
   ThemeMode theme = ThemeMode::kSystem;
   SearchEngine search = SearchEngine::kDuckDuckGo;
+  bool online_search_suggestions = false;
   bool animations = true;
   // The active space shows its name beside its dot in the sidebar rail.
   bool workspace_names = true;
@@ -447,6 +455,7 @@ Appearance ReadAppearance(const base::FilePath& path) {
   result.time_machine = dict->FindBool("time_machine").value_or(true);
   const int days = dict->FindInt("time_machine_days").value_or(30);
   result.time_machine_days = days == 7 || days == 90 ? days : 30;
+  result.online_search_suggestions = dict->FindBool("online_search_suggestions").value_or(false);
   result.auto_update_check = dict->FindBool("auto_update_check").value_or(result.auto_update_check);
   result.auto_update_download = dict->FindBool("auto_update_download").value_or(result.auto_update_download);
   return result;
@@ -459,12 +468,14 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
                std::optional<bool> workspace_names,
                std::optional<bool> folders_collapsed,
                std::optional<std::pair<bool, int>> time_machine,
-               std::optional<std::pair<bool, bool>> updates) {
+               std::optional<std::pair<bool, bool>> updates,
+    std::optional<bool> online_search_suggestions) {
   auto appearance = ReadAppearance(path);
   if (id) appearance.colors[*id] = color;
   if (pinned) appearance.pinned = *pinned;
   if (theme) appearance.theme = *theme;
   if (search) appearance.search = *search;
+  if (online_search_suggestions) appearance.online_search_suggestions = *online_search_suggestions;
   if (animations) appearance.animations = *animations;
   if (workspace_names) appearance.workspace_names = *workspace_names;
   if (folders_collapsed) appearance.folders_collapsed = *folders_collapsed;
@@ -481,6 +492,7 @@ bool SavePatch(const base::FilePath& path, std::optional<std::string> id,
   dict.Set("sidebar_pinned", appearance.pinned);
   dict.Set("theme", appearance.theme == ThemeMode::kDark ? "dark" : appearance.theme == ThemeMode::kLight ? "light" : "system");
   dict.Set("search_engine", appearance.search == SearchEngine::kGoogle ? "google" : appearance.search == SearchEngine::kBing ? "bing" : "duckduckgo");
+  dict.Set("online_search_suggestions", appearance.online_search_suggestions);
   dict.Set("workspace_animations", appearance.animations);
   dict.Set("workspace_names", appearance.workspace_names);
   dict.Set("pinned_folders_collapsed", appearance.folders_collapsed);
@@ -5439,6 +5451,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
         if (!shell->pin_dirty_) shell->pinned_ = appearance.pinned;
         if (!shell->general_dirty_.contains("theme")) shell->theme_mode_ = appearance.theme;
         if (!shell->general_dirty_.contains("search")) shell->search_engine_ = appearance.search;
+        if (!shell->general_dirty_.contains("online_search_suggestions"))
+          shell->online_search_suggestions_ = appearance.online_search_suggestions;
         if (!shell->general_dirty_.contains("animations")) shell->workspace_animations_ = appearance.animations;
         if (!shell->general_dirty_.contains("workspace_names")) shell->workspace_names_ = appearance.workspace_names;
         if (!shell->general_dirty_.contains("folders_collapsed")) {shell->folders_collapsed_ = appearance.folders_collapsed;shell->sidebar_tree_.SetDefaultCollapsed(appearance.folders_collapsed);}
@@ -5562,6 +5576,7 @@ void WorkspaceShell::Detach() {
   for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()})
     if (panel) panel->RemoveObserver(this);
   search_timer_.Stop();
+  ResetOnlineSuggestions();
   for(auto* field:{shortcut_chord_.get(),shortcut_search_.get(),provider_name_.get(),provider_keyword_.get(),provider_url_.get()})
     if(field)field->SetCallbacks({},{});
   address_->SetCallbacks({},{});
@@ -5728,6 +5743,7 @@ void WorkspaceShell::Update(ShellState state) {
     CloseSitePanel();
   if (state_.profile_id != state.profile_id || state_.workspace_id != state.workspace_id) {
     search_timer_.Stop(); search_results_.clear();
+    ResetOnlineSuggestions();
   }
   bool changed = state.workspaces.size() != state_.workspaces.size() || state.sleeping_workspaces != state_.sleeping_workspaces;
   if (!changed) {
@@ -9670,6 +9686,21 @@ void WorkspaceShell::RebuildSuggestions() {
     int previous=-1;
     for(size_t k=0;k<slots.size();++k){suggestions_[slots[k]]=grouped[k];const int r=rank(grouped[k]);if(r!=previous)headers[slots[k]]=base::i18n::ToUpper(names[r]);previous=r;}
   }
+  SearchProvider suggestion_provider;
+  if (!online_suggestions_.empty() && !commands_only && !completed &&
+      !OnlineSuggestionQuery(&suggestion_provider).empty()) {
+    std::set<GURL> seen;
+    for (const auto& item : suggestions_) seen.insert(item.url);
+    bool first = true;
+    for (const auto& title : online_suggestions_) {
+      auto url = SearchDestination(suggestion_provider, base::UTF16ToUTF8(title));
+      if (!url.is_valid() || !seen.insert(url).second) continue;
+      suggestions_.push_back({title, u"DuckDuckGo", std::move(url), std::nullopt});
+      headers.push_back(first ? base::i18n::ToUpper(T(u"Podpowiedzi wyszukiwania"))
+                             : std::u16string());
+      first = false;
+    }
+  }
   size_t preserved=0;bool found_selected=false;
   if(selected){auto found=std::find(suggestions_.begin(),suggestions_.end(),*selected);if(found!=suggestions_.end()){preserved=found-suggestions_.begin();found_selected=true;}}
   palette->Reconcile(suggestions_.size(),preserved,found_selected);
@@ -9682,7 +9713,7 @@ void WorkspaceShell::RebuildSuggestions() {
     for(const auto& item:suggestions_){
       // Frame the target projection, not its current list index or display text.
       // Native browser services remain authoritative for executing that target.
-      base::ListValue identity;identity.Append(state_.profile_id);identity.Append(state_.workspace_id);identity.Append(base::UTF16ToUTF8(suggestions_text_));identity.Append(command_palette_);identity.Append(new_tab_);
+      base::ListValue identity;identity.Append(state_.profile_id);identity.Append(state_.workspace_id);identity.Append(text);identity.Append(command_palette_);identity.Append(new_tab_);
       identity.Append(item.url.possibly_invalid_spec());identity.Append(item.tab?base::NumberToString(*item.tab):std::string());identity.Append(item.workspace_id);identity.Append(item.pin_id);identity.Append(item.workspace_only);identity.Append(item.command_id);identity.Append(item.target_workspace_id);identity.Append(item.command_page_id);
       identity.Append(base::NumberToString(item.command_tab_id));
       std::string target;CHECK(base::JSONWriter::Write(identity,&target));identity.Append(base::NumberToString(occurrences[target]++));
@@ -10621,7 +10652,9 @@ void WorkspaceShell::RefreshGeneralControls() {
   if (rust_copy) SetPanelText(preferences_profile_,base::UTF8ToUTF16(std::string(sidebar::preferences_profile_banner(base::UTF16ToUTF8(state_.profile_name)))));
   else
   SetPanelText(preferences_profile_,TF(u"Profil: {} · Ustawienia wspólne dla aplikacji są oznaczone w opisach.", {state_.profile_name}));
-  const auto values = callbacks_.read_preferences ? callbacks_.read_preferences.Run() : BrowserPreferences();
+  auto values = callbacks_.read_preferences ? callbacks_.read_preferences.Run() : BrowserPreferences();
+  if (callbacks_.search_context && !callbacks_.private_mode)
+    values["online_search_suggestions"] = {.value = online_search_suggestions_, .editable = true};
   SetPanelText(download_directory_label_,callbacks_.download_directory ? callbacks_.download_directory.Run() : u"");
   for (const auto& [key, field] : preference_textfields_) {
     auto it = values.find(key);
@@ -11228,6 +11261,18 @@ void WorkspaceShell::RefreshSitePreferences(bool reload) {
 }
 
 void WorkspaceShell::WritePreference(std::string key, int value) {
+  if (key == "online_search_suggestions" && callbacks_.search_context &&
+      !callbacks_.private_mode && (value == 0 || value == 1)) {
+    online_search_suggestions_ = value != 0;
+    general_dirty_.insert(key);
+    ResetOnlineSuggestions();
+    if (address_visible()) RebuildSuggestions();
+    RefreshGeneralControls();
+    SaveGeneralPatch(std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+                     std::nullopt, std::nullopt, std::nullopt,
+                     online_search_suggestions_);
+    return;
+  }
   const bool ok = callbacks_.write_preference && callbacks_.write_preference.Run(key, value);
   RefreshGeneralControls();
   ReportPreferenceOutcome(3, key, ok, ok ? (key == "hardware_acceleration" ? T(u"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową.") : T(u"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.")) :
@@ -11378,6 +11423,7 @@ void WorkspaceShell::SetThemeMode(ThemeMode mode) {
 void WorkspaceShell::SetSearchEngine(SearchEngine engine) {
   if (engine < SearchEngine::kDuckDuckGo || engine > SearchEngine::kBing) return;
   search_engine_ = engine;
+  ResetOnlineSuggestions();
   tools_.default_keyword.clear(); engines_dirty_ = true; SaveTools(); general_dirty_.insert("search");
   RefreshGeneralControls();
   if (address_visible()) RebuildSuggestions();
@@ -11422,11 +11468,12 @@ void WorkspaceShell::ApplyPinnedFoldersCollapsed(bool collapsed) {
 void WorkspaceShell::SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search,
     std::optional<bool> animations, std::optional<bool> workspace_names, std::optional<bool> folders_collapsed,
     std::optional<std::pair<bool, int>> time_machine,
-    std::optional<std::pair<bool, bool>> updates) {
+    std::optional<std::pair<bool, bool>> updates,
+               std::optional<bool> online_search_suggestions) {
   if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed, time_machine, updates),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, theme, search, animations, std::nullopt, std::nullopt, workspace_names, folders_collapsed, time_machine, updates, online_search_suggestions),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -12402,7 +12449,8 @@ void WorkspaceShell::PositionPanels() {
   const auto content = content_host_->GetBoundsInScreen();
   int results_height=std::max(90,std::min(300,content.height()-230));
   if(metal_palette_)results_height=sidebar::palette_results_height(content.height());
-  suggestion_scroll_->SetHeightRange(0,results_height);
+  suggestion_scroll_->SetHeightRange(
+      std::min(online_suggestions_min_height_, results_height), results_height);
   const int height = palette_root_->GetHeightForWidth(palette_width);
   auto palette_bounds=gfx::Rect(content.CenterPoint().x()-palette_width/2,content.y()+std::min(132,content.height()/6),palette_width,height);
   if(metal_palette_){const auto r=sidebar::palette_frame({content.x(),content.y(),content.width(),content.height()},palette_width,height);palette_bounds=gfx::Rect(r.x,r.y,r.width,r.height);}
@@ -12522,16 +12570,27 @@ bool WorkspaceShell::SetDefaultSearchProvider(std::string keyword) {
   if (std::none_of(tools_.providers.begin(), tools_.providers.end(), [&](const auto& item) { return item.keyword == keyword; })) return false;
   tools_.default_keyword = std::move(keyword); engines_dirty_ = true; RefreshGeneralControls(); SaveTools(); return true;
 }
-GURL WorkspaceShell::ResolveInput(std::string text, std::u16string* provider_name) const {
+GURL WorkspaceShell::ResolveInput(std::string text, std::u16string* provider_name,
+                                 std::string* search_terms,
+                                 SearchProvider* search_provider) const {
   if (provider_name) provider_name->clear();
+  if (search_terms) search_terms->clear();
+  if (search_provider) *search_provider = {};
+  const auto search = [&](const SearchProvider& provider, const std::string& terms) {
+    if (provider_name) *provider_name = base::UTF8ToUTF16(provider.name);
+    if (search_terms) *search_terms = terms;
+    if (search_provider) *search_provider = provider;
+    return SearchDestination(provider, terms);
+  };
   text = base::TrimWhitespaceASCII(text, base::TRIM_ALL);
   const auto separator = text.find_first_of(" \t");
   if (separator != std::string::npos) {
     const auto keyword = base::ToLowerASCII(text.substr(0, separator));
     const std::string query(base::TrimWhitespaceASCII(std::string_view(text).substr(separator + 1), base::TRIM_ALL));
-    if (!query.empty()) for (const auto& provider : tools_.providers) if (provider.keyword == keyword) {
-      if (provider_name) *provider_name = base::UTF8ToUTF16(provider.name);
-      return SearchDestination(provider, query);
+    if (!query.empty()) {
+      for (const auto& provider : tools_.providers) {
+        if (provider.keyword == keyword) return search(provider, query);
+      }
     }
   }
   const GURL internal(text);
@@ -12552,11 +12611,19 @@ GURL WorkspaceShell::ResolveInput(std::string text, std::u16string* provider_nam
   GURL direct(text);
   const bool query = text.find_first_of(" \t") != std::string::npos || (!direct.has_scheme() && text.find('.') == std::string::npos && !text.starts_with("localhost") && !text.starts_with("[::1]"));
   if (query) {
-    for (const auto& provider : tools_.providers) if (provider.keyword == tools_.default_keyword) {
-      if (provider_name) *provider_name = base::UTF8ToUTF16(provider.name);
-      return SearchDestination(provider, text);
+    if (search_terms) *search_terms = text;
+    for (const auto& provider : tools_.providers) {
+      if (provider.keyword == tools_.default_keyword) return search(provider, text);
     }
-    if (provider_name) *provider_name = search_engine_ == SearchEngine::kGoogle ? u"Google" : search_engine_ == SearchEngine::kBing ? u"Bing" : u"DuckDuckGo";
+    const std::string_view keyword = search_engine_ == SearchEngine::kGoogle ? "g"
+        : search_engine_ == SearchEngine::kBing ? "b" : "d";
+    static const base::NoDestructor<std::vector<SearchProvider>> defaults{
+        DefaultSearchProviders()};
+    const auto provider = std::ranges::find(*defaults, keyword, &SearchProvider::keyword);
+    CHECK(provider != defaults->end());
+    if (provider_name) *provider_name = base::UTF8ToUTF16(provider->name);
+    if (search_provider && SearchDestination(*provider, text) == resolved)
+      *search_provider = *provider;
   }
   return resolved;
 }
@@ -13640,6 +13707,7 @@ void WorkspaceShell::OpenPalette(bool commands) {
   static_cast<PaletteView*>(palette_root_.get())->Reset();
   search_results_.clear();
   search_query_.clear();
+  ResetOnlineSuggestions();
   inline_prefix_.clear(); inline_text_.clear(); inline_url_ = GURL();
   inline_suppressed_ = false; address_deleting_ = false;
   search_timer_.Stop();
@@ -14035,7 +14103,7 @@ void WorkspaceShell::SetPinned(bool pinned) {
   if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, pinned_, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -14063,7 +14131,7 @@ void WorkspaceShell::ApplySidebarWidth(int width,bool done) {
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
-                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+                     std::nullopt, std::optional<int>(sidebar_width_), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool) {
         if (shell) --shell->pending_writes_;
       }, weak_factory_.GetWeakPtr()));
@@ -14094,7 +14162,7 @@ void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
   if (callbacks_.private_mode) return;
   ++pending_writes_;
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
-      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+      base::BindOnce(SavePatch, settings_path_, std::optional<std::string>(key), colors_[key], std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -14150,7 +14218,7 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
   io_runner_->PostTaskAndReplyWithResult(FROM_HERE,
       base::BindOnce(SavePatch, settings_path_, std::nullopt, 0, std::nullopt, std::nullopt, std::nullopt,
                      std::nullopt, std::nullopt,
-                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt, std::nullopt, std::nullopt, std::nullopt),
+                     std::optional<std::pair<std::string, std::string>>({key, base::UTF16ToUTF8(emoji)}), std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt),
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
         if (!shell) return;
         --shell->pending_writes_;
@@ -17074,6 +17142,11 @@ void WorkspaceShell::RunSuggestion(size_t index) {
     callbacks_.activate_result.Run(item);
     return;
   }
+  if (!item.pin_id.empty() && callbacks_.open_pin) {
+    CloseOverlays(true);
+    callbacks_.open_pin.Run(item.pin_id);
+    return;
+  }
   if (item.tab) {
     callbacks_.select_tab.Run(*item.tab);
     return;
@@ -17092,7 +17165,27 @@ void WorkspaceShell::AddressEdited() {
   inline_suppressed_ = std::exchange(address_deleting_, false);
   address_error_->SetVisible(false);
   static_cast<PaletteView*>(palette_root_.get())->Reset();
-  search_results_.clear();RebuildSuggestions();RequestSearch();
+  search_results_.clear();
+  auto query = OnlineSuggestionQuery();
+  if (query.empty()) {
+    ResetOnlineSuggestions();
+  } else {
+    online_suggestions_loader_.reset();
+    // Keep matching rows and the last viewport height while the provider
+    // refreshes them, so typing does not repeatedly resize the palette.
+    if (!online_suggestions_.empty())
+      online_suggestions_min_height_ = suggestion_scroll_->view()->height();
+    const auto prefix = base::i18n::ToLower(base::UTF8ToUTF16(query));
+    std::erase_if(online_suggestions_, [&](const auto& term) {
+      const auto title = base::i18n::ToLower(term);
+      return title == prefix || !title.starts_with(prefix);
+    });
+    online_suggestions_timer_.Start(FROM_HERE, base::Milliseconds(250),
+        base::BindOnce(&WorkspaceShell::FetchOnlineSuggestions,
+                       weak_factory_.GetWeakPtr(), std::move(query)));
+  }
+  RebuildSuggestions();
+  RequestSearch();
 }
 
 void WorkspaceShell::RequestSearch() {
@@ -17107,6 +17200,112 @@ void WorkspaceShell::RequestSearch() {
         if (shell && shell->address_visible()&&!shell->address_->IsIMEComposing()&&base::TrimWhitespace(shell->AddressQuery(),base::TRIM_ALL)==query) shell->callbacks_.search.Run(query);
       }, weak_factory_.GetWeakPtr(), search_query_));
 }
+void WorkspaceShell::ResetOnlineSuggestions() {
+  online_suggestions_timer_.Stop();
+  online_suggestions_loader_.reset();
+  online_suggestions_.clear();
+  online_suggestions_min_height_ = 0;
+}
+
+std::string WorkspaceShell::OnlineSuggestionQuery(SearchProvider* provider) const {
+  if (!online_search_suggestions_ || callbacks_.private_mode ||
+      !callbacks_.search_context || !address_visible() ||
+      address_->IsIMEComposing() || (inline_url_.is_valid() && HasInlineCompletion())) {
+    return {};
+  }
+  const auto typed = AddressQuery();
+  const auto trimmed = base::TrimWhitespace(typed, base::TRIM_TRAILING);
+  const auto trailing = std::u16string_view(typed).substr(trimmed.size());
+  const auto input = base::UTF16ToUTF8(base::TrimWhitespace(trimmed, base::TRIM_LEADING));
+  if (input.starts_with(">") || input.size() + trailing.size() > 512 ||
+      trailing.find_first_not_of(u' ') != std::u16string_view::npos) return {};
+
+  // Use the same provider and keyword resolution as the primary search action.
+  std::string query;
+  SearchProvider resolved_provider;
+  const GURL destination = ResolveInput(input, nullptr, &query, &resolved_provider);
+  const auto first_word = std::string_view(query).substr(0, query.find_first_of(" \t"));
+  if (base::UTF8ToUTF16(query).size() < 2 ||
+      query.find_first_of(":/\\@\r\n") != std::string::npos ||
+      first_word.find('.') != std::string_view::npos ||
+      first_word.starts_with("localhost") || !destination.is_valid() ||
+      resolved_provider.url.empty() || !input.ends_with(query)) {
+    return {};
+  }
+  if (provider) *provider = std::move(resolved_provider);
+  query.append(trailing.size(), ' ');
+  return query;
+}
+
+void WorkspaceShell::FetchOnlineSuggestions(std::string query) {
+  if (OnlineSuggestionQuery() != query) {
+    OnOnlineSuggestions(std::move(query), std::nullopt);
+    return;
+  }
+  auto* context = callbacks_.search_context.Run();
+  if (!context || context->IsOffTheRecord()) {
+    OnOnlineSuggestions(std::move(query), std::nullopt);
+    return;
+  }
+
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL("https://duckduckgo.com/ac/?type=list&q=" +
+                      base::EscapeQueryParamValue(query, true) +
+                      (UiLanguageIsEnglish() ? "" : "&kl=pl-pl"));
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  request->redirect_mode = network::mojom::RedirectMode::kError;
+  request->load_flags = net::LOAD_DISABLE_CACHE;
+  constexpr auto annotation = net::DefineNetworkTrafficAnnotation(
+      "zitter_duckduckgo_search_suggestions", R"(
+    semantics {
+      sender: "Zitter address bar"
+      description: "Fetches DuckDuckGo query completions while the user types."
+      trigger: "The user pauses while typing a search query with online suggestions enabled."
+      data: "The partial query and a search region for Polish UI."
+      destination: WEBSITE
+    }
+    policy {
+      cookies_allowed: NO
+      setting: "Online search suggestions in Search settings, off by default."
+      policy_exception_justification: "This request is guarded by an opt-in setting."
+    })");
+  auto factory = context->GetDefaultStoragePartition()
+                     ->GetURLLoaderFactoryForBrowserProcess();
+  online_suggestions_loader_ =
+      network::SimpleURLLoader::Create(std::move(request), annotation);
+  online_suggestions_loader_->SetTimeoutDuration(base::Seconds(2));
+  online_suggestions_loader_->DownloadToString(
+      factory.get(),
+      base::BindOnce(&WorkspaceShell::OnOnlineSuggestions,
+                     weak_factory_.GetWeakPtr(), std::move(query)),
+      16 * 1024);
+}
+
+void WorkspaceShell::OnOnlineSuggestions(std::string query,
+                                         std::optional<std::string> body) {
+  const bool had_results = online_suggestions_min_height_ > 0 ||
+                           !online_suggestions_.empty();
+  ResetOnlineSuggestions();
+  if (body && OnlineSuggestionQuery() == query) {
+    const auto response = base::JSONReader::ReadList(*body, base::JSON_PARSE_RFC);
+    if (response && response->size() >= 2 && (*response)[0].is_string() &&
+        (*response)[0].GetString() == query && (*response)[1].is_list()) {
+      std::set<std::string> seen{query};
+      for (const auto& entry : (*response)[1].GetList()) {
+        if (!entry.is_string()) continue;
+        const auto term = base::TrimWhitespaceASCII(entry.GetString(), base::TRIM_ALL);
+        if (term.empty() || term.size() > 512 ||
+            term.find_first_of("\r\n\t") != std::string_view::npos ||
+            !seen.insert(std::string(term)).second) continue;
+        online_suggestions_.push_back(base::UTF8ToUTF16(term));
+        if (online_suggestions_.size() == 5) break;
+      }
+    }
+  }
+  if (!online_suggestions_.empty()) UpdateInlineCompletion(/*allow_online=*/true);
+  if (had_results || !online_suggestions_.empty()) RebuildSuggestions();
+}
+
 void WorkspaceShell::SetPaletteLoading(bool loading) {
   if (auto* icon = views::AsViewClass<SceneSearchIcon>(palette_chrome_views_[0].get())) icon->SetLoading(loading);
 }
@@ -17132,34 +17331,71 @@ bool WorkspaceShell::HasInlineCompletion() const {
 std::u16string WorkspaceShell::AddressQuery() const {
   return HasInlineCompletion() ? inline_prefix_ : std::u16string(address_->GetText());
 }
-void WorkspaceShell::UpdateInlineCompletion() {
-  // Complete only an uninterrupted URL prefix at the caret. Search phrases,
-  // commands, deletion and deliberate result selection keep their literal input.
+void WorkspaceShell::ShowInlineCompletion(std::u16string suffix, GURL url) {
+  inline_prefix_ = address_->GetText();
+  inline_text_ = inline_prefix_ + suffix;
+  inline_url_ = std::move(url);
+  address_->SetText(inline_text_);
+  address_->SelectRange(gfx::Range(inline_prefix_.size(), inline_text_.size()));
+}
+
+void WorkspaceShell::UpdateInlineCompletion(bool allow_online) {
   if (HasInlineCompletion() || inline_suppressed_ || address_->IsIMEComposing() ||
       static_cast<PaletteView*>(palette_root_.get())->moved()) return;
   const std::u16string typed(address_->GetText());
-  if (typed.size() < 2 || typed.find_first_of(u" \t\r\n") != std::u16string::npos ||
-      typed.starts_with(u">") || address_->GetSelectedRange() != gfx::Range(typed.size())) return;
-  const auto prefix = base::i18n::ToLower(typed);
-  for (const auto& result : search_results_) {
-    if (!result.url.SchemeIsHTTPOrHTTPS() || result.url.has_username() || result.url.has_password()) continue;
-    // A bare site prefix goes to its home page, never an arbitrary history path.
+  if (typed.size() < 2 || typed.starts_with(u">") ||
+      address_->GetSelectedRange() != gfx::Range(typed.size())) return;
+
+  if (typed.find_first_of(u" \t\r\n") == std::u16string::npos) {
+    const auto prefix = base::i18n::ToLower(typed);
     const bool scheme = prefix.starts_with(u"http://") || prefix.starts_with(u"https://");
     const auto after_scheme = scheme ? prefix.substr(prefix.find(u"://") + 3) : prefix;
     const bool path = after_scheme.find_first_of(u"/?#") != std::u16string::npos;
-    const GURL target = path ? result.url : result.url.GetWithEmptyPath();
-    auto completion = base::UTF8ToUTF16(target.spec());
-    if (!scheme) {
-      completion.erase(0, completion.find(u"://") + 3);
-      if (!prefix.starts_with(u"www.") && completion.starts_with(u"www.")) completion.erase(0, 4);
+    std::u16string suffix;
+    GURL target;
+    for (const auto& result : search_results_) {
+      if ((target.is_valid() && result.pin_id.empty()) ||
+          !result.url.SchemeIsHTTPOrHTTPS() || result.url.has_username() ||
+          result.url.has_password()) continue;
+      // A bare site prefix completes to its home page.
+      const GURL url = path ? result.url : result.url.GetWithEmptyPath();
+      auto completion = base::UTF8ToUTF16(url.spec());
+      if (!scheme) {
+        completion.erase(0, completion.find(u"://") + 3);
+        if (!prefix.starts_with(u"www.") && completion.starts_with(u"www."))
+          completion.erase(0, 4);
+      }
+      if (!path && completion.ends_with(u"/")) completion.pop_back();
+      if (completion.size() <= typed.size() ||
+          !base::i18n::ToLower(completion).starts_with(prefix)) continue;
+      suffix = completion.substr(typed.size());
+      target = url;
+      if (!result.pin_id.empty()) break;
     }
-    if (!path && completion.ends_with(u"/")) completion.pop_back();
-    if (completion.size() <= typed.size() || !base::i18n::ToLower(completion).starts_with(prefix)) continue;
-    inline_prefix_ = typed;
-    inline_text_ = typed + completion.substr(typed.size());
-    inline_url_ = target;
-    address_->SetText(inline_text_);
-    address_->SelectRange(gfx::Range(typed.size(), inline_text_.size()));
+    if (target.is_valid()) {
+      ShowInlineCompletion(std::move(suffix), std::move(target));
+      return;
+    }
+  }
+
+  if (!allow_online || online_suggestions_.empty()) return;
+  SearchProvider provider;
+  const auto query = base::UTF8ToUTF16(OnlineSuggestionQuery(&provider));
+  if (query.empty()) return;
+  // Match the query portion, while keeping the original spelling, spaces and
+  // any explicit search-engine keyword in the editor.
+  if (!typed.ends_with(query)) return;
+  const auto typed_terms = std::u16string_view(typed).substr(typed.size() - query.size());
+  const auto prefix = base::i18n::ToLower(typed_terms);
+  for (const auto& term : online_suggestions_) {
+    if (term.size() <= typed_terms.size() ||
+        base::i18n::ToLower(std::u16string_view(term).substr(0, typed_terms.size())) != prefix)
+      continue;
+    auto suffix = term.substr(typed_terms.size());
+    const auto accepted_terms = typed.substr(typed.size() - query.size()) + suffix;
+    if (ResolveInput(base::UTF16ToUTF8(typed + suffix)) !=
+        SearchDestination(provider, base::UTF16ToUTF8(accepted_terms))) continue;
+    ShowInlineCompletion(std::move(suffix), GURL());
     return;
   }
 }
@@ -17209,6 +17445,11 @@ bool WorkspaceShell::HandleAddressKey(const ui::KeyEvent& event) {
       event.key_code() == ui::VKEY_END || event.key_code() == ui::VKEY_TAB)) {
     address_->SelectRange(gfx::Range(address_->GetText().size()));
     inline_suppressed_ = true;
+    if (!inline_url_.is_valid()) {
+      inline_prefix_.clear();
+      inline_text_.clear();
+      ResetOnlineSuggestions();
+    }
     RebuildSuggestions(); RequestSearch();
     return true;
   }
@@ -17303,7 +17544,10 @@ void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visib
   if (widget == widget_ && !visible) { HideFind(); HidePrint(); }
   if(widget==address_widget_.get())ScheduleMetalPalette();
   if(widget==address_widget_.get()&&!visible&&scrim_widget_)scrim_widget_->Hide();
-  if(widget==address_widget_.get()&&!visible)SetPaletteLoading(false);
+  if (widget == address_widget_.get() && !visible) {
+    SetPaletteLoading(false);
+    ResetOnlineSuggestions();
+  }
   if(widget==address_widget_.get()&&!visible&&url_pill_){SetRowEditing(url_pill_,false);ScheduleMetalSidebar();}
   if (widget==widget_) {SyncPreferencesTab();ScheduleMetalHeader();ScheduleMetalSplit();}
   if (widget == sidebar_widget_.get() && !visible) { CancelWorkspaceSwipe(); StopWorkspaceAnimation(); }
