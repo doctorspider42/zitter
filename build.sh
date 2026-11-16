@@ -208,6 +208,7 @@ with ExitStack() as stack:
         raise
 print(f"Content lab package: {destination}")
 PYTHON
+  "$ZITTER_PYTHON_BIN" "$ROOT/tools/forget_dev_apps.py"
   if $run; then
     exec "$ZITTER_PYTHON_BIN" - "$APP" "$@" <<'PYTHON'
 from pathlib import Path

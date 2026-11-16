@@ -648,6 +648,19 @@ bool UsesPreparedWorkspaceOnLaunch(const base::CommandLine& command) {
 }
 
 struct StagedMacUpdate {
+  // Launch Services registers the staged copy while it is checked. Drop that
+  // record with the copy, or every update leaves a "Zitter.app (version)"
+  // entry in the default browser list. The body runs before the directory
+  // is deleted; lsregister also forgets paths that no longer exist.
+  ~StagedMacUpdate() {
+    if (!app.empty()) {
+      base::LaunchProcess(
+          {"/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+           "LaunchServices.framework/Support/lsregister",
+           "-u", app.value()},
+          {});
+    }
+  }
   base::ScopedTempDir directory;
   base::FilePath app;
   base::FilePath installed;

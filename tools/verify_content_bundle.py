@@ -408,5 +408,15 @@ def main():
         raise SystemExit(getattr(error, "output", None) or str(error)) from error
 
 
+def forget_dev_apps():
+    # Relocated and packaged copies register with Launch Services; keep them
+    # out of the default browser list.
+    subprocess.run([sys.executable, str(Path(__file__).with_name("forget_dev_apps.py"))],
+                   check=False)
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        forget_dev_apps()
