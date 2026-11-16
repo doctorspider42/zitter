@@ -10301,6 +10301,14 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
         update_preferences_status_ = copy(status_row, u"", kInk, 0, gfx::Font::Weight::NORMAL, true);
         SetSidebarPanelLayout(status_row, false, gfx::Insets(), Metrics().space_2,
                               update_preferences_status_, true);
+        update_preferences_progress_ = labels->AddChildView(std::make_unique<SceneProgress>(
+            base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome, weak),
+            base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+              return shell && shell->PreferenceChromeVisible();
+            }, weak)));
+        update_preferences_progress_->GetViewAccessibility().SetName(
+            T(u"Postęp pobierania aktualizacji"));
+        update_preferences_progress_->SetVisible(false);
         update_preferences_check_ = PreferenceAction(row, {}, T(u"Sprawdź aktualizacje"));
         SetActionCallback(update_preferences_check_, base::BindRepeating(&WorkspaceShell::CheckForUpdates, weak));
         update_preferences_action_ = PreferenceAction(labels, {}, T(u"Otwórz stronę wydania"));
@@ -15487,6 +15495,11 @@ class WorkspaceShell::AboutView final : public views::View {
     status_ = status_row->AddChildView(std::make_unique<SceneParagraph>(
         std::u16string(), 0, false, kInk, true));
     SetSidebarPanelLayout(status_row, false, gfx::Insets(), Metrics().space_2, status_, true);
+    // The dialog paints natively: the bar draws its own recipe.
+    progress_ = AddChildView(std::make_unique<SceneProgress>(
+        base::DoNothing(), base::BindRepeating([] { return false; })));
+    progress_->GetViewAccessibility().SetName(T(u"Postęp pobierania aktualizacji"));
+    progress_->SetVisible(false);
     auto* actions = AddChildView(std::make_unique<SceneActionGroup>(false, 8));
     actions->UseDialogBackground();
     check_ = actions->AddAction(std::move(check), T(u"Sprawdź aktualizacje"),
@@ -15496,11 +15509,15 @@ class WorkspaceShell::AboutView final : public views::View {
   }
 
   void Refresh(const std::u16string& status, const std::u16string& label,
-               bool available, bool pending, bool downloading) {
+               bool available, bool pending, bool downloading, double progress) {
     status_->SetText(status);
     status_->parent()->SetVisible(!status.empty());
-    spinner_->SetVisible(downloading);
-    if (downloading) spinner_->Start(); else spinner_->Stop();
+    // A check spins; a download shows how far it got.
+    const bool spinning = pending && !downloading;
+    spinner_->SetVisible(spinning);
+    if (spinning) spinner_->Start(); else spinner_->Stop();
+    progress_->SetVisible(downloading);
+    progress_->SetValue(progress);
     check_->SetEnabled(!pending);
     check_->parent()->SetVisible(available);
     action_->SetText(label);
@@ -15515,6 +15532,7 @@ class WorkspaceShell::AboutView final : public views::View {
  private:
   raw_ptr<SceneParagraph> status_ = nullptr;
   raw_ptr<views::Throbber> spinner_ = nullptr;
+  raw_ptr<SceneProgress> progress_ = nullptr;
   raw_ptr<views::View> check_ = nullptr;
   raw_ptr<SceneTextButton> action_ = nullptr;
   std::u16string announced_;
@@ -15605,11 +15623,26 @@ void WorkspaceShell::ShowUpdateOffer(std::string version, std::u16string message
 
 void WorkspaceShell::SetUpdateDownloadPending(bool pending) {
   update_download_pending_ = pending;
+  update_download_progress_ = -1;
+  RefreshUpdateControls();
+}
+
+void WorkspaceShell::SetUpdateDownloadProgress(double fraction) {
+  if (!update_download_pending_) return;
+  fraction = std::isfinite(fraction) && fraction >= 0 ? std::min(fraction, 1.0) : -1;
+  // Refresh on whole percents only: the status text names the percent.
+  if (static_cast<int>(fraction * 100) == static_cast<int>(update_download_progress_ * 100))
+    return;
+  update_download_progress_ = fraction;
   RefreshUpdateControls();
 }
 
 std::u16string WorkspaceShell::UpdateStatus() const {
-  if (update_download_pending_) return T(u"Pobieranie aktualizacji…");
+  if (update_download_pending_) {
+    if (update_download_progress_ < 0) return T(u"Pobieranie aktualizacji…");
+    return TF(u"Pobieranie aktualizacji… {}",
+              {base::FormatPercent(static_cast<int>(update_download_progress_ * 100))});
+  }
   return update_check_message_.empty() ? update_offer_message_ : update_check_message_;
 }
 
@@ -15641,15 +15674,19 @@ void WorkspaceShell::RefreshUpdateControls() {
   const auto label = UpdateActionLabel();
   const bool busy = update_check_pending_ || update_download_pending_;
   if (about_view_)
-    about_view_->Refresh(status, label, bool(check_update_), busy, update_download_pending_);
+    about_view_->Refresh(status, label, bool(check_update_), busy, update_download_pending_,
+                         update_download_progress_);
   if (!update_preferences_check_) return;
   update_preferences_check_->SetEnabled(check_update_ && !busy);
   SetPanelText(update_preferences_status_, check_update_ ? status :
       T(u"Aktualizacje są niedostępne w tej instalacji."));
   update_preferences_status_->parent()->SetVisible(!status.empty() || !check_update_);
-  update_preferences_spinner_->SetVisible(update_download_pending_);
-  if (update_download_pending_) update_preferences_spinner_->Start();
+  const bool spinning = update_check_pending_ && !update_download_pending_;
+  update_preferences_spinner_->SetVisible(spinning);
+  if (spinning) update_preferences_spinner_->Start();
   else update_preferences_spinner_->Stop();
+  update_preferences_progress_->SetVisible(update_download_pending_);
+  static_cast<SceneProgress*>(update_preferences_progress_.get())->SetValue(update_download_progress_);
   SchedulePreferenceChrome();
   views::AsViewClass<SceneTextButton>(update_preferences_action_)->SetText(label);
   update_preferences_action_->parent()->SetVisible(!label.empty());
@@ -15691,6 +15728,8 @@ void WorkspaceShell::ShowAbout(std::string version) {
 #endif
   PreparePanelText(about->GetRootView());
   about->Show();
+  // Opening About checks right away; the button stays for another try.
+  CheckForUpdates();
 }
 
 namespace {

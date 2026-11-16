@@ -206,6 +206,12 @@ void MacUpdater::DownloadMacInstaller(MacInstaller installer, bool already_cache
         }
       }, weak_factory_.GetWeakPtr(), installer));
   const auto size = installer.size;
+  update_download_->SetOnDownloadProgressCallback(base::BindRepeating(
+      [](base::WeakPtr<MacUpdater> updater, int64_t expected, uint64_t current) {
+        if (updater && updater->update_download_)
+          updater->shell_->SetUpdateDownloadProgress(
+              expected > 0 ? static_cast<double>(current) / expected : -1);
+      }, weak_factory_.GetWeakPtr(), size));
   update_download_->DownloadToTempFile(factory.get(),
       base::BindOnce(&MacUpdater::MacInstallerDownloaded, weak_factory_.GetWeakPtr(), std::move(installer)),
       size);
