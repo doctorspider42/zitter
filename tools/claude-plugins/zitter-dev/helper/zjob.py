@@ -32,7 +32,7 @@ WINDOWS = sys.platform == "win32"
 
 # Commands that use the shared build directory.
 BUSY = re.compile(r"third_party[\\/]ninja[\\/]ninja|[\\/]build\.sh\b|build_app(_win)?\.(sh|ps1)|\bautoninja\b|"
-                  r"install_chromium_overlay|\bsiso(\.exe)?\b|\bninja\.exe\b", re.I)
+                  r"stage_content_embedder|\bsiso(\.exe)?\b|\bninja\.exe\b", re.I)
 
 
 def jobs_dir() -> Path:
@@ -53,20 +53,32 @@ def app_binary(root: Path) -> Path:
 
 
 def processes():
-    """(pid, command line) of every process the user can see."""
+    """(pid, command line) of every process the user can see, but this helper and its ancestors.
+
+    The ancestors are the shell that ran the helper: its command line can name the
+    very patterns callers look for.
+    """
     if WINDOWS:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"],
+             "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.CommandLine)\" }"],
             capture_output=True, text=True, errors="replace", creationflags=subprocess.CREATE_NO_WINDOW).stdout
-        rows = (line.split("\t", 1) for line in out.splitlines() if "\t" in line)
+        rows = [line.split("\t", 2) for line in out.splitlines() if line.count("\t") >= 2]
     else:
-        out = subprocess.run(["/bin/ps", "-axo", "pid=,command="], capture_output=True, text=True, errors="replace").stdout
-        rows = (line.strip().split(" ", 1) for line in out.splitlines() if line.strip())
-    me = os.getpid()
+        out = subprocess.run(["/bin/ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True,
+                             errors="replace").stdout
+        rows = [line.split(None, 2) for line in out.splitlines() if len(line.split(None, 2)) == 3]
+    table = {}
     for row in rows:
-        if len(row) == 2 and row[0].strip().isdigit() and int(row[0]) != me:
-            yield int(row[0]), row[1]
+        if row[0].strip().isdigit() and row[1].strip().isdigit():
+            table[int(row[0])] = (int(row[1]), row[2])
+    skip, pid = set(), os.getpid()
+    while pid in table and pid not in skip:
+        skip.add(pid)
+        pid = table[pid][0]
+    for pid, (_, command) in table.items():
+        if pid not in skip:
+            yield pid, command
 
 
 def app_processes(root: Path):

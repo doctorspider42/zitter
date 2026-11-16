@@ -4,7 +4,7 @@
 // engine. A rule returns why it refuses the command, or undefined.
 
 export type GuardContext = {
-  /** Active approvals the person gave with /dev-allow: `full-ui`, `outdir:<name>`, `delete-out:<name>`. */
+  /** Active approvals the person gave with /dev-allow: `outdir:<name>`, `delete-out:<name>`. */
   approvals: readonly string[]
   /** Names of the existing `.chromium/src/out/*` directories. */
   outDirs: readonly string[]
@@ -66,32 +66,13 @@ const outName = (token: string): string | undefined =>
 
 export const BUILD_ENTRY = at(String.raw`(?:\S*/)?(?:build\.sh|build_app\.sh|build_app_win\.ps1)`)
 const BUILD_LIKE = at(
-  String.raw`(?:\S*third_party/ninja/ninja(?:\.exe)?|autoninja(?:\.bat)?|python3?\s+\S*install_chromium_overlay\.py|\S*install_chromium_overlay\.py|\S*buildtools/(?:mac|win)/gn(?:\.exe)?\s+gen|gn\s+gen|(?:\S*/)?(?:build\.sh|build_app\.sh|build_app_win\.ps1))`,
+  String.raw`(?:\S*third_party/ninja/ninja(?:\.exe)?|autoninja(?:\.bat)?|python3?\s+\S*stage_content_embedder\.py|\S*stage_content_embedder\.py|\S*buildtools/(?:mac|win)/gn(?:\.exe)?\s+gen|gn\s+gen|(?:\S*/)?(?:build\.sh|build_app\.sh|build_app_win\.ps1))`,
 )
-
-function uiLab(command: string): string | undefined {
-  if (!/zitter_ui_lab/.test(command)) return
-  if (!/(build(_app)?\.sh|install_chromium_overlay|rsync|robocopy|\bcp\b|\bmv\b|\bln\b|\brm\b|\btee\b|>|\bgn\s+gen\b|ninja|\bsed\s+-i|Copy-Item|Move-Item|Set-Content)/i.test(command)) return
-  return 'Never stage into or modify .chromium/src/zitter_ui_lab: it is a frozen benchmark reference. Stage into //zitter through the build.'
-}
 
 function homebrewNinja(command: string, ctx: GuardContext): string | undefined {
   if (ctx.platform === 'windows') return
   if (!at(String.raw`(?:/opt/homebrew/bin/|/usr/local/bin/)?ninja`).test(command)) return
   return 'A bare `ninja` resolves to Homebrew\'s, which wipes the v6 build log of a Chromium out dir. Use .chromium/src/third_party/ninja/ninja, or zitter_dev_start.'
-}
-
-function fullUiSuite(command: string, ctx: GuardContext): string | undefined {
-  const binary = new RegExp(START + String.raw`\S*zitter_prototype(?:_ui_lab)?(?:\.exe)?` + END, 'i')
-  for (const segment of segments(command)) {
-    if (!binary.test(segment)) continue
-    if (/--gtest_list_tests\b/.test(segment)) continue
-    const filter = /--gtest_filter[= ](\S+)/.exec(segment)?.[1]
-    const pattern = filter === undefined ? undefined : unquote(filter)
-    const isNarrow = pattern !== undefined && !/^[*:]*$/.test(pattern) && !pattern.startsWith('-')
-    if (isNarrow || ctx.approvals.includes('full-ui')) continue
-    return 'The full browser UI suite takes ~12 minutes and takes over the screen, so it needs the person\'s OK every time: ask them (say how long it takes); they approve with /dev-allow full-ui. Otherwise narrow it with --gtest_filter=… and count first with --gtest_list_tests.'
-  }
 }
 
 function newOutDir(command: string, ctx: GuardContext): string | undefined {
@@ -107,7 +88,7 @@ function newOutDir(command: string, ctx: GuardContext): string | undefined {
   }
   for (const name of names) {
     if (ctx.outDirs.includes(name) || ctx.approvals.includes(`outdir:${name}`)) continue
-    return `Creating the Chromium output directory out/${name} needs the person's OK: it takes 10–40 GB and hours to build and to delete. Ask them with the expected size and build time; they approve with /dev-allow outdir ${name}. Prefer the existing ${ctx.outDir ?? 'out/ZitterOptimized'}.`
+    return `Creating the Chromium output directory out/${name} needs the person's OK: it takes 10–40 GB and hours to build and to delete. Ask them with the expected size and build time; they approve with /dev-allow outdir ${name}. Prefer the existing ${ctx.outDir ?? 'out/ZitterContentBundle'}.`
   }
 }
 
@@ -143,7 +124,7 @@ function deletion(command: string, ctx: GuardContext): string | undefined {
 
 function concurrentBuild(command: string, ctx: GuardContext): string | undefined {
   if (!ctx.busy || !BUILD_LIKE.test(command)) return
-  return `Another build is using the shared build directory (.chromium/src/${ctx.outDir ?? 'out/ZitterOptimized'}): ${ctx.busy}. Do not stage or run ninja now; wait for it with zitter_dev_wait, or queue your build with zitter_dev_start.`
+  return `Another build is using the shared build directory (.chromium/src/${ctx.outDir ?? 'out/ZitterContentBundle'}): ${ctx.busy}. Do not stage or run ninja now; wait for it with zitter_dev_wait, or queue your build with zitter_dev_start.`
 }
 
 function directBuild(command: string): string | undefined {
@@ -156,9 +137,7 @@ function directBuild(command: string): string | undefined {
 export function checkCommand(raw: string, ctx: GuardContext): string | undefined {
   const command = normalize(raw)
   return (
-    uiLab(command) ??
     homebrewNinja(command, ctx) ??
-    fullUiSuite(command, ctx) ??
     newOutDir(command, ctx) ??
     deletion(command, ctx) ??
     concurrentBuild(command, ctx) ??

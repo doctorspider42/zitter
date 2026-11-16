@@ -68,13 +68,11 @@ the same jobs and read their error lines instead of running the build in a
 shell, where a long build times out.
 
 **Guards.** Bash commands that break the repository's rules are refused with
-the reason: staging into the frozen `zitter_ui_lab`, Homebrew's `ninja` on
-macOS, the full browser UI suite without the person's OK, a new
-`.chromium/src/out/*` directory, recursive deletes of output directories or
-of `.chromium`, `robocopy /MIR`, a second build on a busy build directory,
-and direct `build.sh` runs. The person lifts one for 30 minutes with
-`/dev-allow full-ui`, `/dev-allow outdir <name>` or
-`/dev-allow delete-out <name>`.
+the reason: Homebrew's `ninja` on macOS, a new `.chromium/src/out/*`
+directory, recursive deletes of output directories or of `.chromium`,
+`robocopy /MIR`, staging or ninja on a build directory another session is
+using, and direct `build.sh` runs. The person lifts one for 30 minutes with
+`/dev-allow outdir <name>` or `/dev-allow delete-out <name>`.
 
 ## Developing the mod
 
