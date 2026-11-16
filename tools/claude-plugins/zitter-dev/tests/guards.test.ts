@@ -6,59 +6,42 @@ import type { GuardContext } from '../hooks/guards'
 import { body, errorLines, ninjaProgress, ninjaStep, script, tailLines, windowsBody } from '../hooks/jobs'
 import { durationBars, median, remaining, ring, stopwatch } from '../hooks/draw'
 
-const free: GuardContext = { approvals: [], outDirs: ['ZitterOptimized', 'ZitterContentBundle'] }
+const free: GuardContext = { approvals: [], outDirs: ['ZitterContentBundle', 'ZitterContentDev'] }
 const refused = (command: string, ctx = free) => checkCommand(command, ctx) !== undefined
 
 describe('guards', () => {
   test('ordinary commands pass', async () => {
     for (const command of [
       'git status',
-      'ls .chromium/src/out/ZitterOptimized/zitter_prototype',
+      'ls .chromium/src/out/ZitterContentBundle',
       'cat build.sh',
       'grep -rn ninja docs',
-      '.chromium/src/third_party/ninja/ninja -C .chromium/src/out/ZitterOptimized sidebar_scene_unittests',
-      'cd .chromium/src && third_party/ninja/ninja -C out/ZitterOptimized zitter_prototype',
-      '.chromium/src/out/ZitterOptimized/zitter_prototype --gtest_filter=*SpacePanel*',
-      '.chromium/src/out/ZitterOptimized/zitter_prototype --gtest_list_tests',
+      '.chromium/src/third_party/ninja/ninja -C .chromium/src/out/ZitterContentBundle sidebar_scene_unittests',
+      'cd .chromium/src && third_party/ninja/ninja -C out/ZitterContentBundle sidebar_scene_unittests',
       'python3 -m unittest discover -s tests -p "test_*.py"',
       './build.sh --content --plan',
       'ZITTER_DEV_DIRECT=1 ./build.sh',
       'rm -rf build/rust-metal-profile',
-      'cat .chromium/src/zitter_ui_lab/BUILD.gn',
     ]) {
       expect([command, checkCommand(command, free)]).toEqual([command, undefined])
     }
   })
 
-  test('the frozen ui lab is never staged into', async () => {
-    expect(refused('rsync -a zitter/ .chromium/src/zitter_ui_lab/')).toBe(true)
-    expect(refused('cp foo.rs .chromium/src/zitter_ui_lab/src/')).toBe(true)
-  })
-
   test('a bare ninja is Homebrew\'s', async () => {
-    expect(refused('ninja -C .chromium/src/out/ZitterOptimized zitter')).toBe(true)
-    expect(refused('cd .chromium/src && ninja -C out/ZitterOptimized zitter')).toBe(true)
-    expect(refused('/opt/homebrew/bin/ninja -C out/ZitterOptimized')).toBe(true)
-  })
-
-  test('the full UI suite needs an approval', async () => {
-    const bin = '.chromium/src/out/ZitterOptimized/zitter_prototype'
-    expect(refused(bin)).toBe(true)
-    expect(refused(`${bin} --gtest_filter='*'`)).toBe(true)
-    expect(refused(`${bin} --gtest_filter=-Flaky*`)).toBe(true)
-    expect(refused(`cd x && ./zitter_prototype_ui_lab`)).toBe(true)
-    expect(refused(bin, { ...free, approvals: ['full-ui'] })).toBe(false)
+    expect(refused('ninja -C .chromium/src/out/ZitterContentBundle zitter')).toBe(true)
+    expect(refused('cd .chromium/src && ninja -C out/ZitterContentBundle zitter')).toBe(true)
+    expect(refused('/opt/homebrew/bin/ninja -C out/ZitterContentBundle')).toBe(true)
   })
 
   test('a new out dir needs an approval', async () => {
     expect(refused('cd .chromium/src && buildtools/mac/gn gen out/ZitterDebug')).toBe(true)
     expect(refused('mkdir -p .chromium/src/out/Foo')).toBe(true)
-    expect(refused('gn gen out/ZitterOptimized')).toBe(false)
+    expect(refused('gn gen out/ZitterContentBundle')).toBe(false)
     expect(refused('gn gen out/ZitterDebug', { ...free, approvals: ['outdir:ZitterDebug'] })).toBe(false)
   })
 
   test('deleting output dirs or the checkout', async () => {
-    expect(refused('rm -rf .chromium/src/out/ZitterOptimized')).toBe(true)
+    expect(refused('rm -rf .chromium/src/out/ZitterContentBundle')).toBe(true)
     expect(refused('rm -rf .chromium')).toBe(true)
     expect(refused('rm -r -f out/ZitterContentDev/')).toBe(true)
     expect(refused('rm -rf .chromium/src/out/ZitterContentDev', { ...free, approvals: ['delete-out:ZitterContentDev'] })).toBe(false)
@@ -67,7 +50,7 @@ describe('guards', () => {
 
   test('a running build holds the build dir', async () => {
     const busy = { ...free, busy: 'pid 1: ./build.sh' }
-    expect(refused('.chromium/src/third_party/ninja/ninja -C .chromium/src/out/ZitterOptimized zitter', busy)).toBe(true)
+    expect(refused('.chromium/src/third_party/ninja/ninja -C .chromium/src/out/ZitterContentBundle zitter', busy)).toBe(true)
     expect(refused('git status', busy)).toBe(false)
   })
 
@@ -77,6 +60,7 @@ describe('guards', () => {
     expect(refused('zsh .claude/skills/verify-ui/scripts/build_app.sh --run')).toBe(true)
     expect(refused('caffeinate -i ./build.sh')).toBe(true)
     expect(isBuildCommand('./build.sh')).toBe(true)
+    expect(isBuildCommand('python3 tools/stage_content_embedder.py .chromium/src')).toBe(true)
     expect(isBuildCommand('git log')).toBe(false)
   })
 })
@@ -100,10 +84,10 @@ describe('guards on Windows', () => {
 describe('prose about ninja', () => {
   test('backticks in a heredoc are not commands', async () => {
     expect(refused("cat > f <<'EOF'\n/** The last `[done/total]` ninja wrote */\nEOF")).toBe(false)
-    expect(refused("gh pr create --body-file - <<'EOF'\nrefuse staging into zitter_ui_lab > nothing\nEOF")).toBe(false)
-    expect(refused("cat <<EOF > x\nhi\nEOF\nrsync -a zitter/ .chromium/src/zitter_ui_lab/")).toBe(true)
+    expect(refused("gh pr create --body-file - <<'EOF'\nnever run ./build.sh here\nEOF")).toBe(false)
+    expect(refused("cat <<EOF > x\nhi\nEOF\n./build.sh --content")).toBe(true)
     expect(refused('git commit -m "Build it\n(./build.sh --content on macOS)"')).toBe(false)
-    expect(refused("rm -rf '.chromium/src/out/ZitterOptimized'")).toBe(true)
+    expect(refused("rm -rf '.chromium/src/out/ZitterContentBundle'")).toBe(true)
   })
 })
 

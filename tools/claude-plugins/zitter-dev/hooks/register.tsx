@@ -418,7 +418,7 @@ export const register: Register = on => {
     }
     await $.command.register({ name: 'dev-stop', description: 'Zitter: stop the running job and clear the queue' })
     await $.command.register({ name: 'dev-log', description: 'Zitter: show the end of the last job\'s log', argumentHint: '[lines]' })
-    await $.command.register({ name: 'dev-allow', description: 'Zitter: allow for 30 min what the guards refuse', argumentHint: 'full-ui | outdir <name> | delete-out <name>' })
+    await $.command.register({ name: 'dev-allow', description: 'Zitter: allow for 30 min what the guards refuse', argumentHint: 'outdir <name> | delete-out <name>' })
     await $.command.register({ name: 'zitter', description: 'Zitter: open the dev panel' })
 
     await $.tool.register({
@@ -506,11 +506,8 @@ export const register: Register = on => {
     // Only the person grants these: never a plugin's (or a model-driven) run.
     if (e.origin.kind === 'plugin') return { text: 'zitter-dev: approvals come from the person only.' }
     const [what, name] = e.args.trim().split(/\s+/)
-    const key =
-      what === 'full-ui' ? 'full-ui'
-      : (what === 'outdir' || what === 'delete-out') && name && /^[\w.-]+$/.test(name) ? `${what}:${name}`
-      : undefined
-    if (!key) return { text: 'Usage: /dev-allow full-ui | outdir <name> | delete-out <name>' }
+    const key = (what === 'outdir' || what === 'delete-out') && name && /^[\w.-]+$/.test(name) ? `${what}:${name}` : undefined
+    if (!key) return { text: 'Usage: /dev-allow outdir <name> | delete-out <name>' }
     const until = Date.now() + APPROVAL_MS
     await update($, approvalsAtom, list => [...list.filter(a => a.what !== key && a.until > Date.now()), { what: key, until }])
     return { text: `Allowed ${key.replace(':', ' ')} until ${clock(until)}.` }
