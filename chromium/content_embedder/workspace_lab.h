@@ -844,6 +844,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ShowExtensionsToolbarMenu();
   bool SetExtensionToolbarPinned(std::string id, bool pinned);
   void CloseExtensionsToolbarMenu();
+  void ReleaseClosedToolbarBubbles();
+  void RunNightShiftThemeProbe(int phase);
+  int night_shift_theme_probe_attempts_ = 0;
   content::WebContents* ShowExtensionBubble(ProfileContext& profile, const GURL& url,
                                              std::u16string title, gfx::Rect anchor);
   void CloseExtensionPopup();

@@ -463,6 +463,16 @@ class WorkspacePasswordCsvImport final : public ui::SelectFileDialog::Listener,
 
 namespace {
 
+// Runs `release` after Views has finished closing a bubble widget.
+views::Widget::ClosedCallback ReleaseAfterClose(base::OnceClosure release) {
+  return base::BindOnce(
+      [](base::OnceClosure release, views::Widget::ClosedReason) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, std::move(release));
+      },
+      std::move(release));
+}
+
 constexpr char kWebStoreBag[] =
     "M3 6h10l-1 7.5H4zM5.5 6V5a2.5 2.5 0 0 1 5 0v1";
 std::string WebStoreListingId(const GURL& url);
@@ -707,6 +717,7 @@ constexpr char kClosedTabProbePath[] = "/work/recently-closed";
 constexpr char16_t kClosedTabProbeTitle[] = u"Recently closed Work fixture";
 constexpr size_t kMaxClosedTabsPerWorkspace = 50;
 constexpr char kShiftPeekProbe[] = "zitter-content-shift-peek-probe";
+constexpr char kNightShiftThemeProbe[] = "zitter-content-night-shift-theme-probe";
 constexpr char kPeekProbe[] = "zitter-content-peek-probe";
 constexpr char kPopupPolicyProbe[] = "zitter-content-popup-policy-probe";
 constexpr char kPopupProbe[] = "zitter-content-popup-probe";
@@ -3852,6 +3863,12 @@ void WorkspaceLab::StartWorkspace() {
     SelectWorkspace(std::string(kWorkspaceIds[0]));
     shell_->OpenAddress(false);
     return;
+  }
+  if (switches.HasSwitch(kNightShiftThemeProbe)) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE, base::BindOnce(&WorkspaceLab::RunNightShiftThemeProbe,
+                                  weak_factory_.GetWeakPtr(), 0),
+        base::Seconds(2));
   }
   if (adblock_filter_lists_ && session_path_.empty())
     adblock_filter_lists_->Refresh(false);
@@ -17923,8 +17940,70 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
             lab->OpenExternalUrl(GURL("https://chromewebstore.google.com/category/extensions"));
           }, weak));
   panel.SetContentsView(std::move(body));
-  extensions_toolbar_menu_widget_ = views::BubbleDialogDelegate::CreateBubble(&panel);
+  extensions_toolbar_menu_widget_ = views::BubbleDialogDelegate::CreateBubble(
+      &panel, ReleaseAfterClose(base::BindOnce(
+                 &WorkspaceLab::ReleaseClosedToolbarBubbles, weak_factory_.GetWeakPtr())));
   extensions_toolbar_menu_widget_->Show();
+}
+
+// Opens and closes the Night Shift quick panel, then sends the browser window
+// a native theme update, which used to reach the closed panel's delegate.
+void WorkspaceLab::RunNightShiftThemeProbe(int phase) {
+  auto next = [&](base::TimeDelta delay) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE, base::BindOnce(&WorkspaceLab::RunNightShiftThemeProbe,
+                                  weak_factory_.GetWeakPtr(), phase + 1),
+        delay);
+  };
+  switch (phase) {
+    case 0:
+      // The bundled Night Shift extension loads after the window shows.
+      if (!BundledNightShiftSettingsPage(*WorkspaceProfile(active_index_)).is_valid() &&
+          ++night_shift_theme_probe_attempts_ < 40) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+            FROM_HERE, base::BindOnce(&WorkspaceLab::RunNightShiftThemeProbe,
+                                      weak_factory_.GetWeakPtr(), 0),
+            base::Milliseconds(250));
+        return;
+      }
+      if (!OpenNightShiftSettings(nullptr, /*quick_panel=*/true) ||
+          !night_shift_widget_ || !night_shift_widget_->IsVisible()) {
+        LOG(ERROR) << "The Night Shift quick panel did not open (button "
+                   << !!night_shift_button_ << ", editable " << CanEditWorkspace()
+                   << ", session " << !session_path_.empty() << ")";
+        Finish(false);
+        return;
+      }
+      next(base::Seconds(1));
+      return;
+    case 1:
+      CloseNightShiftSettings();
+      next(base::Milliseconds(500));
+      return;
+    case 2:
+      ui::NativeTheme::GetInstanceForNativeUi()->NotifyOnNativeThemeUpdated();
+      next(base::Milliseconds(500));
+      return;
+    default:
+      std::puts("Zitter Content survived a theme update after Night Shift closed");
+      std::fflush(stdout);
+      Finish(true);
+  }
+}
+
+// A closed bubble's delegate keeps observing the browser window through its
+// anchor view, but its widget pointer is gone. The next theme change on the
+// window would then crash in AnchorWidgetObserver::OnWidgetThemeChanged, so
+// toolbar bubbles are released once Views has finished closing them.
+void WorkspaceLab::ReleaseClosedToolbarBubbles() {
+  if (extensions_toolbar_menu_widget_ && extensions_toolbar_menu_widget_->IsClosed()) {
+    extensions_toolbar_menu_widget_.reset();
+    extensions_toolbar_menu_.reset();
+  }
+  if (night_shift_widget_ && night_shift_widget_->IsClosed()) {
+    night_shift_widget_.reset();
+    night_shift_panel_.reset();
+  }
 }
 
 void WorkspaceLab::CloseExtensionsToolbarMenu() {
@@ -18168,7 +18247,9 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
         }
       }, weak_factory_.GetWeakPtr()));
   panel.SetContentsView(std::move(view));
-  night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(&panel);
+  night_shift_widget_ = views::BubbleDialogDelegate::CreateBubble(
+      &panel, ReleaseAfterClose(base::BindOnce(
+                 &WorkspaceLab::ReleaseClosedToolbarBubbles, weak_factory_.GetWeakPtr())));
   night_shift_widget_->SetColorModeOverride(widget_->color_mode_override());
   night_shift_widget_->Show();
   prototype::LoadWorkspaceTab(page, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
