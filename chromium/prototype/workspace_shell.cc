@@ -5701,7 +5701,7 @@ void WorkspaceShell::Detach() {
   scrim_widget_.reset(); scrim_delegate_.reset();
   about_view_ = nullptr; about_dialog_.reset(); about_delegate_.reset();
   update_preferences_status_ = nullptr; update_preferences_check_ = nullptr;
-  update_preferences_spinner_ = nullptr;
+  update_preferences_spinner_ = nullptr; update_preferences_progress_ = nullptr;
   update_preferences_action_ = nullptr;
   auto_update_check_toggle_ = nullptr; auto_update_download_toggle_ = nullptr;
   clear_period_ = nullptr;
