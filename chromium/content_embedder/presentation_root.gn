@@ -81,6 +81,11 @@ if (!is_mac) {
 }
 
 if (is_win) {
+  executable("content_native_message_echo") {
+    testonly = true
+    sources = [ "tests/fixtures/content_native_message_echo.c" ]
+  }
+
   source_set("updater") {
     sources = [
       "chromium/app/updater_win.cc",

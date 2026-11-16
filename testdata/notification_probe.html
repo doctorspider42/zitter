@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zitter notification test</title>
+<style>
+  :root { color-scheme: light dark; font: 1rem system-ui; }
+  body { max-width: 34rem; margin: 4rem auto; padding: 0 1.25rem; }
+  button { font: inherit; padding: .6rem 1rem; }
+</style>
+<h1>Notification test</h1>
+<p>Send a web notification from this site to the current Zitter profile.</p>
+<button type="button">Send test notification</button>
+<p role="status"></p>
+<script>
+  const button = document.querySelector('button');
+  const status = document.querySelector('[role="status"]');
+  let count = 0;
+
+  button.addEventListener('click', async () => {
+    if (!('Notification' in window)) {
+      status.textContent = 'Open this page on localhost or over HTTPS.';
+      return;
+    }
+
+    button.disabled = true;
+    try {
+      let permission = Notification.permission;
+      if (permission === 'default') {
+        permission = await Notification.requestPermission();
+      }
+      if (permission === 'denied') {
+        status.textContent = 'Allow notifications in the site permissions, then try again.';
+        return;
+      }
+      if (permission !== 'granted') {
+        status.textContent = 'Notification permission is required. Click to try again.';
+        return;
+      }
+
+      const notification = new Notification('Zitter test ' + (++count), {
+        body: 'This notification was sent by the test page.',
+      });
+      notification.addEventListener('show', () => {
+        status.textContent = 'Notification shown. Open Notifications in the tab sidebar.';
+      });
+      notification.addEventListener('click', () => {
+        status.textContent = 'Notification clicked.';
+      });
+      notification.addEventListener('error', () => {
+        status.textContent = 'The browser could not show the notification.';
+      });
+      status.textContent = 'Notification requested.';
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+</html>

@@ -245,6 +245,7 @@ class Fixture(ClipboardFixture):
             return
         tab_capture = (
             self.path in ("/site-media-tab-desktop-native-cancel",
+                          "/site-media-tab-desktop-native-screen-cancel",
                           "/site-media-tab-desktop-native-window-allow",
                           "/site-media-tab-desktop-native-screen-allow") or
             self.path in {f"/site-media-tab-{phase}" for phase in TAB_CAPTURE_PHASES}
@@ -327,7 +328,7 @@ def run_site_permission_probe(executable, root, phase, origin, *,
         result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as error:
         raise SystemExit(f"{phase} timed out.\n{error.stderr!r}") from error
-    if phase == "media-tab-desktop-native-cancel" and (
+    if phase.startswith("media-tab-desktop-native-") and phase.endswith("-cancel") and (
         "Zitter Content native desktop picker created" not in result.stdout
     ):
         raise SystemExit(f"The system picker did not create a session.\n{result.stderr}")
@@ -385,13 +386,13 @@ def main():
     mode.add_argument("--tab-capture", action="store_true",
                       help="Verify scratch-tab capture and synthetic desktop video")
     mode.add_argument("--native-desktop-cancel", action="store_true",
-                      help="Open and close the macOS desktop picker without capturing a source")
+                      help="Open and cancel the desktop picker without capturing a source")
     mode.add_argument("--native-desktop", choices=("window", "screen"),
-                      help="Verify capture from a test surface selected in the macOS system picker")
+                      help="Verify a captured video frame (Windows supports the disposable window fixture)")
     args = parser.parse_args()
     windows = os.name == "nt"
-    if (args.native_desktop or args.native_desktop_cancel) and sys.platform != "darwin":
-        parser.error("Native desktop picker trials require macOS 14 or newer")
+    if windows and args.native_desktop == "screen":
+        parser.error("The Windows probe captures only its disposable window fixture")
     if args.read_clipboard and sys.platform != "darwin":
         parser.error("--read-clipboard requires macOS")
     if windows and args.renderer == "metal":
@@ -420,13 +421,27 @@ def main():
 
         if args.native_desktop_cancel:
             run("media-tab-desktop-native-cancel", primary)
+            if windows:
+                run("media-tab-desktop-native-screen-cancel", primary)
             require_rules({}, {})
             print("Content native desktop picker cancellation passed")
             return
 
         if args.native_desktop:
-            print(f"Select the disposable test {args.native_desktop} in the macOS picker.",
-                  flush=True)
+            if windows:
+                # Keep an independently owned capture source alive until Zitter stops.
+                fixture = subprocess.Popen([sys.executable, "-c",
+                    "import tkinter as tk; window = tk.Tk(); "
+                    "window.title('Zitter Capture Fixture'); "
+                    "window.geometry('360x240+30+40'); window.configure(bg='#5744a1'); "
+                    "window.mainloop()"])
+                def stop_fixture():
+                    fixture.terminate()
+                    fixture.wait(5)
+                stack.callback(stop_fixture)
+            else:
+                print(f"Select the disposable test {args.native_desktop} in the macOS picker.",
+                      flush=True)
             run(f"media-tab-desktop-native-{args.native_desktop}-allow", primary)
             require_rules({}, {})
             print(f"Content native {args.native_desktop} delivered a video frame and stopped")

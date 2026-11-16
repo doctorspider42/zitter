@@ -357,6 +357,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void AddTab(size_t workspace, GURL deferred_url = {},
               std::u16string deferred_title = {}, std::string pin = {});
   void OpenPin(std::string id);
+  bool IsProfileFavorite(size_t workspace, const Tab& tab) const;
+  void LoadBackgroundProfileFavorites(size_t workspace);
   bool PinTab(size_t index, std::string parent, std::string before);
   bool Unpin(std::string id, size_t before);
   bool MoveTab(size_t index, size_t before);
@@ -497,7 +499,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
                                 base::OnceCallback<void(bool, bool)> answer);
   void ShowNotificationPrompt(content::RenderFrameHost& frame,
                               base::OnceCallback<void(bool, bool)> answer);
-  enum class PermissionPrompt { kClipboard, kNotification, kDeviceCapture, kTabCapture, kExtension };
+  enum class PermissionPrompt { kClipboard, kNotification, kDeviceCapture, kTabCapture, kDesktopSource, kExtension };
   void ShowPermissionPrompt(std::u16string title, std::u16string text,
                             std::u16string allow, PermissionPrompt kind,
                             std::vector<std::u16string> choices,
@@ -1168,6 +1170,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
     std::unique_ptr<content::WebContents> discarded_page = {};
     bool native_muted = false;
     std::u16string custom_title = {};
+#if BUILDFLAG(IS_WIN)
+    uint64_t last_selection_order = 0;
+#endif
   };
   bool shift_click_peek_ = true;
   bool clean_address_copies_ = true;
@@ -1177,6 +1182,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
 #endif
   // App-wide: GPU use (applied at the next start) and secure DNS.
   bool hardware_acceleration_ = true;
+  bool notifications_menu_visible_ = true;
+  bool middle_click_closes_tabs_ = true;
   bool image_link_previews_ = false;
   base::OneShotTimer preconnect_timer_;
   void SchedulePreconnect(const std::u16string& query);
@@ -1230,6 +1237,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::vector<size_t> selected_;
   std::vector<bool> sleeping_;
   uint64_t next_tab_id_ = 1;
+#if BUILDFLAG(IS_WIN)
+  uint64_t tab_selection_order_ = 0;
+#endif
   size_t restored_workspace_ = 0;
   bool download_close_prompt_pending_ = false;
   bool saving_session_ = false;

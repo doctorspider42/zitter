@@ -252,7 +252,7 @@ class RustFooterLayout final : public views::LayoutManager {
   void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
   // Children: the space rail viewport, a spacer, the Downloads ring and „+”.
   void Layout(views::View* host) override {
-    if (host->children().size()!=4) return;
+    if (host->children().size()!=5) return;
     const auto g=Measure(host,host->width());
     for (size_t i=0;i<g.children.size();++i) {const auto& r=g.children[i];host->children()[i]->SetBounds(r.x,r.y,r.width,r.height);}
   }
@@ -266,11 +266,12 @@ class RustFooterLayout final : public views::LayoutManager {
  private:
   sidebar::ColumnLayout Measure(const views::View* host,int width) const {
     int content=0;
-    if (host->children().size()==4) {
+    const bool notifications = host->children().size() == 5 && host->children()[4]->GetVisible();
+    if (host->children().size()==5) {
       auto* scroll=PanelViewportForView(host->children()[0].get());
       if (scroll&&scroll->contents()) content=scroll->contents()->GetPreferredSize().width();
     }
-    return sidebar::footer_layout(width,content);
+    return sidebar::footer_layout(width,content,notifications);
   }
 };
 class RustDotsLayout final : public views::LayoutManager {

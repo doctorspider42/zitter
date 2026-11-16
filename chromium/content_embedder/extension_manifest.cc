@@ -234,7 +234,6 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
                    .contexts = extensions::StaticSpan(kContexts)}};
     static const base::NoDestructor<extensions::SimpleFeature> side_panel{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kSidePanelData)};
-#if BUILDFLAG(IS_MAC)
     static constexpr std::string_view kNotificationsDependencies[] = {"permission:notifications"};
     static constexpr extensions::SimpleFeatureData kNotificationsData{
         .feature = {.name = "notifications"},
@@ -243,7 +242,6 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
                    .contexts = extensions::StaticSpan(kContexts)}};
     static const base::NoDestructor<extensions::SimpleFeature> notifications{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kNotificationsData)};
-#endif
     static constexpr std::string_view kPrivacyDependencies[] = {"permission:privacy"};
     static constexpr extensions::SimpleFeatureData kPrivacyData{
         .feature = {.name = "privacy"},
@@ -277,9 +275,7 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
     static const base::NoDestructor<extensions::SimpleFeature> downloads{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kDownloadsData)};
     const extensions::Feature* features[] = {
-#if BUILDFLAG(IS_MAC)
         notifications.get(),
-#endif
         identity.get(), browsing_data.get(), downloads.get(),
         privacy.get(), tabs.get(), font_settings.get(), commands.get(), context_menus.get(), action.get(),
         navigation.get(), side_panel.get(), extension.get(), background_page.get(),
@@ -359,13 +355,11 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         .config = {.extension_types = extensions::StaticSpan(kTypes)}};
     static const base::NoDestructor<extensions::SimpleFeature> side_panel{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kSidePanelData)};
-#if BUILDFLAG(IS_MAC)
     static constexpr extensions::SimpleFeatureData kNotificationsData{
         .feature = {.name = "notifications"},
         .config = {.extension_types = extensions::StaticSpan(kTypes)}};
     static const base::NoDestructor<extensions::PermissionFeature> notifications{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kNotificationsData)};
-#endif
     static constexpr extensions::SimpleFeatureData kPrivacyData{
         .feature = {.name = "privacy"},
         .config = {.extension_types = extensions::StaticSpan(kTypes)}};
@@ -397,9 +391,7 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
     static const base::NoDestructor<extensions::PermissionFeature> downloads_ui{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kDownloadsUiData)};
     const extensions::Feature* features[] = {
-#if BUILDFLAG(IS_MAC)
         notifications.get(),
-#endif
         identity.get(), browsing_data.get(), downloads.get(), downloads_open.get(),
         downloads_ui.get(), privacy.get(), tabs.get(), scripting.get(), font_settings.get(), context_menus.get(),
         clipboard_read.get(), clipboard_write.get(), navigation.get(), side_panel.get()};
@@ -409,9 +401,7 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
   void RegisterPermissions(extensions::PermissionsInfo* info) override {
     CoreExtensionsAPIProvider::RegisterPermissions(info);
     static constexpr extensions::APIPermissionInfo::InitInfo kPermissions[] = {
-#if BUILDFLAG(IS_MAC)
         {extensions::mojom::APIPermissionID::kNotifications, "notifications"},
-#endif
         {extensions::mojom::APIPermissionID::kPrivacy, "privacy"},
         {extensions::mojom::APIPermissionID::kIdentity, "identity"},
         {extensions::mojom::APIPermissionID::kBrowsingData, "browsingData",
@@ -1014,7 +1004,7 @@ bool IsSupportedExternalPage(const URLPattern& pattern) {
 
 bool IsSupportedExtensionApi(std::string_view api) {
   static constexpr auto kSupportedApis = base::MakeFixedFlatSet<std::string_view>({
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
       "nativeMessaging", "notifications",
 #endif
       "activeTab", "alarms", "browsingData", "clipboardRead", "clipboardWrite", "contextMenus",

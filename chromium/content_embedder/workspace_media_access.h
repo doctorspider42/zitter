@@ -45,7 +45,7 @@ class WorkspaceMediaAccess {
   using SelectedPage = base::RepeatingCallback<content::WebContents*()>;
   using Sources = base::RepeatingCallback<std::vector<content::WebContents*>()>;
   using Prompt = base::RepeatingCallback<void(
-      std::u16string, std::vector<std::u16string>, size_t, std::u16string,
+      std::u16string, std::vector<std::u16string>, size_t, std::u16string, bool,
       base::OnceCallback<void(std::optional<size_t>, bool)>)>;
 
   WorkspaceMediaAccess(views::Widget& parent, SelectedPage selected,
@@ -75,6 +75,10 @@ class WorkspaceMediaAccess {
   void OnConsent(int id, std::optional<size_t> selection, bool share_audio);
   void OnPlatformAccess(int id, bool allowed);
   void OpenDesktopPicker(int id, content::DesktopMediaID::Type type);
+#if BUILDFLAG(IS_WIN)
+  void ShowWindowsDesktopSources(int id, content::DesktopMediaID::Type type,
+      std::vector<std::pair<content::DesktopMediaID, std::u16string>> sources);
+#endif
   void OnDesktopSelected(int id, content::DesktopMediaID source);
   void OnDesktopDismissed(int id, bool error);
   void Grant(blink::mojom::StreamDevicesPtr devices,

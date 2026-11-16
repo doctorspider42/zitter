@@ -106,7 +106,7 @@ user's mouse, and the app stays in the background.
 
 ## Windows
 
-The loop is the same; the tools differ. `ui.py` runs `ui_win.py` on Windows.
+Run the same `ui.py` commands on Windows. The app uses a local named pipe and returns compositor screenshots. `ui_win.py` backs the explicit `--cursor` and `--screen` fallbacks.
 
 1. **Build:** `powershell -File .claude/skills/verify-ui/scripts/build_app_win.ps1`
    stages the Content embedder and builds `zitter_content` (`zitter.exe` and
@@ -119,18 +119,16 @@ The loop is the same; the tools differ. `ui.py` runs `ui_win.py` on Windows.
 3. **Launch and shoot:**
    ```bash
    python .claude/skills/verify-ui/scripts/ui.py launch --open-panel app-menu
-   python .claude/skills/verify-ui/scripts/ui.py shot build/screens/app-menu.png --as-is
+   python .claude/skills/verify-ui/scripts/ui.py shot build/screens/app-menu.png
    ```
    `launch` starts `zitter.exe --zitter-content-workspace` in the workspace root
    `%TEMP%\zitter-content-probe-ui` (`--fresh` empties it first).
    `ZITTER_UI_OUT=out/<dir>` picks another build directory than
    `out/ZitterWinContent`; `--open-panel assistant-settings` opens Settings → AI
-   Assistant. The Windows Content app refuses `--zitter-rust-raster=metal`. The
-   sidebar, palette and panels are translucent windows that PrintWindow can't
-   capture, so `shot` brings Zitter forward and copies that window's area of the
-   screen. Ask the user before taking over their screen, and don't capture while
-   another app is in front. `--as-is` skips the Alt press that brings the window
-   forward, which also closes open menus. Coordinates are physical pixels.
+   Assistant. Windows uses the compositor renderer. The default captures
+   include the sidebar and owned panels and use device-independent window
+   coordinates. `shot --screen` captures physical pixels and brings the window
+   forward, so ask before using it.
 
 ## Notes
 

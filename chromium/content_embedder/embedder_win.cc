@@ -90,6 +90,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "extension_registry_probe.h"
 #include "legacy_import_win.h"
+#include "ui_automation.h"
 #include "updates_win.h"
 #include "web_apps.h"
 #include "workspace_session_store.h"
@@ -217,6 +218,19 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
       screen_ = views::CreateDesktopScreen();
     views_delegate_ = std::make_unique<LabViewsDelegate>();
     if (workspace_lab_) {
+      const auto& command = *base::CommandLine::ForCurrentProcess();
+      if (command.HasSwitch(kUiAutomation)) {
+        if (!ui_automation_allowed_) {
+          LOG(ERROR) << "--zitter-automation requires a temporary probe workspace";
+          return 1;
+        }
+        base::ScopedAllowBlockingForTesting allow_startup_io;
+        ui_automation_ = UiAutomation::Start(
+            workspace_root_.AppendASCII("automation.sock"),
+            command.GetSwitchValueASCII(kUiAutomation) == "front");
+        if (!ui_automation_)
+          return 1;
+      }
       if (!ConfigureWorkspaceExtensionProbe(workspace_extension_profiles_)) {
         return 1;
       }
@@ -306,6 +320,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
   }
 
   void PostMainMessageLoopRun() override {
+    ui_automation_.reset();
     if (updates_)
       updates_->InstallOnExit();
     updates_.reset();
@@ -460,6 +475,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         return false;
       }
     }
+    ui_automation_allowed_ = !prepared;
     workspace_root_ = std::move(*root);
     workspace_session_ = std::move(*session);
     return true;
@@ -588,6 +604,8 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
   std::array<std::unique_ptr<PrefService>, 2> site_permission_prefs_;
   std::array<std::unique_ptr<PrefService>, 2> file_chooser_prefs_;
   base::FilePath workspace_root_;
+  std::unique_ptr<UiAutomation> ui_automation_;
+  bool ui_automation_allowed_ = false;
   base::DictValue workspace_session_;
   std::unique_ptr<prototype::TimelineStore> workspace_timeline_;
   GURL workspace_probe_url_;

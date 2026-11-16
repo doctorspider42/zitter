@@ -1748,6 +1748,29 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         error => {
           if (!String(error).includes('require a title, message and icon URL')) throw error;
         });
+      if ((await chrome.runtime.getPlatformInfo()).os === 'win') {
+        const api = chrome.notifications;
+        const id = await api.create('windows', {
+          type: 'basic', title: 'Test alert', message: 'Windows notification',
+          iconUrl: 'sandboxed.html', buttons: [{title: 'Open details'}], silent: true,
+        });
+        if (id !== 'windows' || !await api.update(id, {title: 'Updated test alert'}) ||
+            Object.keys(await api.getAll()).join() !== id)
+          throw Error('Create or update did not reach the Windows notification center');
+        let closed;
+        const receive = (id, byUser) => { closed = [id, byUser]; };
+        api.onClosed.addListener(receive);
+        try {
+          if (!await api.clear(id) || Object.keys(await api.getAll()).length)
+            throw Error('Clear missed the Windows notification');
+          for (let attempt = 0; !closed && attempt < 40; ++attempt)
+            await new Promise(resolve => setTimeout(resolve, 25));
+          if (JSON.stringify(closed) !== JSON.stringify([id, false]))
+            throw Error('Windows did not dispatch the programmatic close event');
+        } finally {
+          api.onClosed.removeListener(receive);
+        }
+      }
       if (globalThis.zitterNotificationRole) {
         const api = chrome.notifications;
         const options = title => ({
@@ -1957,10 +1980,15 @@ def verify_extension_pair(executable, root, origin, server, signer, openssl, fla
         if native_messaging:
             hosts = root / "NativeMessagingHosts"
             hosts.mkdir(mode=0o700)
-            executable_host = hosts / "fixture-echo"
-            source = Path(__file__).resolve().parents[1] / "tests/fixtures/content_native_message_echo.c"
-            subprocess.run(["xcrun", "--sdk", "macosx", "clang", source, "-o", executable_host],
-                           check=True)
+            if os.name == "nt":
+                executable_host = executable.with_name("content_native_message_echo.exe")
+                if not executable_host.is_file():
+                    raise RuntimeError("Build zitter:content_native_message_echo for the Windows probe")
+            else:
+                executable_host = hosts / "fixture-echo"
+                source = Path(__file__).resolve().parents[1] / "tests/fixtures/content_native_message_echo.c"
+                subprocess.run(["xcrun", "--sdk", "macosx", "clang", source, "-o", executable_host],
+                               check=True)
             foreign_id = "a" * 32 if extension_id != "a" * 32 else "b" * 32
             for host, allowed_id in (("echo", extension_id), ("denied", foreign_id)):
                 name = f"org.zitter.fixture.{host}"
@@ -2246,7 +2274,8 @@ def verify_managed_extensions(executable, root, origin, server, extension_ids, o
         if offscreen and (lines.count(
                 "Zitter Content verified the offscreen document in its owning profile") < 2 or
                 "Zitter Content verified user script execution and revocation" not in lines):
-            raise SystemExit(f"Offscreen and user script probe failed.\n{result.stdout}\n{result.stderr}")
+            raise SystemExit(f"Offscreen and user script probe failed (exit {result.returncode}).\n"
+                             f"{result.stdout}\n{result.stderr}")
         if dnr and not {
                 "Zitter Content verified profile-scoped static network rules",
                 "Zitter Content verified static, dynamic and session rule APIs",
@@ -2285,8 +2314,10 @@ def verify_managed_extensions(executable, root, origin, server, extension_ids, o
                         rule_settings = {
                             ext_id: {key: value for key, value in prefs.items()
                                      if key.startswith("dnr_")}
-                            for ext_id, prefs in settings.items()
+                            for ext_id, prefs in settings.items() if isinstance(prefs, dict)
                         }
+                        rule_settings = {ext_id: prefs for ext_id, prefs in rule_settings.items()
+                                         if prefs}
                     if rule_settings != {extension_id: {
                         "dnr_static_ruleset": {"1": {"checksum": checksum}},
                         "dnr_dynamic_ruleset": {"checksum": checksum + 1},
@@ -2397,9 +2428,10 @@ def verify_managed_extensions(executable, root, origin, server, extension_ids, o
             raise SystemExit("Settings uninstall changed the wrong permission preferences")
         print("Settings removed only the chosen profile's extension and local storage")
         if not dnr:
-            if (json.loads(rule_pref_paths[owner].read_bytes())["extensions"]["settings"] or
-                    extension_ids[1 - owner] not in
-                    json.loads(rule_pref_paths[1 - owner].read_bytes())["extensions"]["settings"]):
+            owner_settings = json.loads(rule_pref_paths[owner].read_bytes())["extensions"]["settings"]
+            peer_settings = json.loads(rule_pref_paths[1 - owner].read_bytes())["extensions"]["settings"]
+            if (extension_ids[owner] in owner_settings or
+                    extension_ids[1 - owner] not in peer_settings):
                 raise SystemExit("Uninstall removed the wrong profile's ruleset preferences")
             print("Native ruleset preferences survived restart and were removed only for the uninstalled extension")
         else:
@@ -2415,11 +2447,17 @@ def verify_managed_extensions(executable, root, origin, server, extension_ids, o
             if not isinstance(workspace, dict) or "tabs" not in workspace:
                 continue
             tabs = workspace["tabs"]
+            original = before_uninstall[workspace_id]
+            original_urls = {tab.get("url") for tab in original["tabs"]}
             for index in range(len(tabs) - 1, -1, -1):
-                if tabs[index].get("url") == uninstall_url:
+                url = tabs[index].get("url")
+                if url == uninstall_url:
                     opened.append(workspace["profile_id"])
                     tabs.pop(index)
-                    workspace["active"] = before_uninstall[workspace_id]["active"]
+                elif url == "zitter://settings/" and url not in original_urls:
+                    # The uninstall prompt needed a temporary Settings tab.
+                    tabs.pop(index)
+            workspace["active"] = original["active"]
         if opened != [("work", "personal")[owner]]:
             raise SystemExit(f"Settings opened the uninstall URL in the wrong profile: {opened}")
         if (f"/extension-uninstall/{profiles[owner]}", "") not in server.requests:
@@ -2714,12 +2752,14 @@ def main():
         parser.error("--extension-webrequest-auth requires --extension-offscreen")
     if options.extension_privacy and not options.extension_offscreen:
         parser.error("--extension-privacy requires --extension-offscreen")
-    if options.extension_native_messaging and (not options.extension_offscreen or sys.platform != "darwin"):
-        parser.error("--extension-native-messaging requires the macOS offscreen probe")
-    if (options.extension_notifications or options.extension_notification_delivery) and (
+    if options.extension_native_messaging and not options.extension_offscreen:
+        parser.error("--extension-native-messaging requires --extension-offscreen")
+    if options.extension_notifications and not options.extension_offscreen:
+        parser.error("--extension-notifications requires --extension-offscreen")
+    if options.extension_notification_delivery and (
         not options.extension_offscreen or sys.platform != "darwin"
     ):
-        parser.error("Extension notification probes require the macOS offscreen probe")
+        parser.error("--extension-notification-delivery requires the macOS offscreen probe")
     if options.extension_offscreen and (
         not options.extension_manage or options.extension_multi or options.extension_dnr
         or options.restore_installed_extensions or options.extension_restore_extra_profile

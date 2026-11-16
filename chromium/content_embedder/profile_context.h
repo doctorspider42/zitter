@@ -81,11 +81,18 @@ class ProfileContext final : public content::BrowserContext {
   ProfilePermissionController& site_permissions();
 #if BUILDFLAG(IS_WIN)
   using WebNotificationPresenter = base::RepeatingCallback<void(
-      const std::string&, const GURL&, std::u16string, std::u16string,
+      const std::string&, std::u16string, std::u16string, std::u16string,
+      base::RepeatingClosure,
+      std::vector<std::pair<std::u16string, base::RepeatingClosure>>,
       base::RepeatingClosure)>;
   void SetWebNotificationPresenter(
       WebNotificationPresenter show,
       base::RepeatingCallback<void(const std::string&)> close);
+  const WebNotificationPresenter& notification_presenter() const {
+    return notification_presenter_;
+  }
+  void RemovePresentedNotification(const std::string& id);
+
 #endif
   void SetFingerprintPreferences(std::unique_ptr<PrefService> prefs);
   std::optional<bool> GetFingerprintProtection();
@@ -236,6 +243,10 @@ class ProfileContext final : public content::BrowserContext {
   std::unique_ptr<LabFileSystemAccess> file_system_access_;
   std::unique_ptr<LabFederatedIdentity> federated_identity_;
   std::unique_ptr<content::PlatformNotificationService> notifications_;
+#if BUILDFLAG(IS_WIN)
+  WebNotificationPresenter notification_presenter_;
+  base::RepeatingCallback<void(const std::string&)> notification_remover_;
+#endif
   std::unique_ptr<PrefService> file_chooser_prefs_;
   std::unique_ptr<PrefService> page_zoom_prefs_;
   double default_page_zoom_level_ = 0.0;

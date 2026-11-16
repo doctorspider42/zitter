@@ -405,9 +405,11 @@ copy, run `out/ZitterWinContent/zitter.exe` with a disposable
   launches Zitter after a successful browser-initiated update. For an all-users
   update, the original user session waits for elevated setup to finish, then
   starts the browser.
-- Web notifications: a page's request goes through Zitter's site permission
-  prompt, and once allowed `new Notification(…)` shows as a native Windows
-  toast (Chromium's Windows notification platform, attributed to the site).
+- Website notifications use Zitter's site permission prompt. Once allowed,
+  `new Notification(…)` shows an in-app banner and adds an entry for the
+  current profile in the tab sidebar's Notifications panel. To try the flow,
+  run `python -m http.server --bind 127.0.0.1 --directory testdata 8765`
+  and open `http://127.0.0.1:8765/notification_probe.html` in Zitter.
 - Passwords open Chrome's password manager (`chrome://password-manager`) as a
   tab of the active space, as History opens `chrome://history`. The |z⟩ menu
   has „Importuj z przeglądarki…” instead of the passwords entry.
@@ -590,6 +592,24 @@ by name in the same directory: `sidebar_scene_unittests`,
   spelling service needs Google API keys that Zitter does not ship (the switch
   had no effect in the Chrome-based build either). They also hide the ChromeOS
   and Android categories that desktop Chrome hides.
+
+- **Screen sharing.** From a site's sharing request, select a tab, a Windows
+  window or a monitor. For a window or monitor, Zitter lists the sources
+  Chromium can capture and starts sharing after the source is confirmed.
+- **Notifications.** Sites and extensions share the profile's in-app
+  notification center. Open **Notifications** beside **Downloads** in the tab
+  panel. **Settings → Appearance → Notifications in the tab panel** controls
+  whether the bell appears. Extensions can create, update, query and clear basic
+  notifications and receive close, click and button events.
+- **Native messaging.** Extensions with `nativeMessaging` can connect to
+  registered Windows executable hosts. Zitter also discovers Chromium and Chrome
+  registrations in the 32-bit and 64-bit registry views. The manifest must
+  authorize the extension in `allowed_origins`. Private profiles cannot connect
+  to a host.
+- **UI automation.** `ui.py launch` runs a temporary workspace with a local
+  named pipe restricted to the Windows user. It drives Views and page content and
+  captures composited windows without moving the system cursor. Check it with
+  `python tools/verify_content_automation.py .chromium/src/out/ZitterWinContent/zitter.exe`.
 
 Package and check:
 

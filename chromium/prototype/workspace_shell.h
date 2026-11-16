@@ -149,7 +149,7 @@ struct ShellState {
   std::string active_pin;
   std::set<std::string> departed_pins;
   std::map<std::string, std::u16string> pin_page_titles;
-  std::map<std::string, ShellTab> open_pin_audio;
+  std::map<std::string, ShellTab> open_profile_pin_tabs;
   std::u16string workspace_name;
   std::u16string profile_name;
   GURL url;
@@ -191,7 +191,6 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<std::vector<gfx::Range>(std::u16string_view)> check_spelling;
     base::RepeatingCallback<bool(std::u16string, bool)> change_dictionary;
     base::RepeatingCallback<bool(std::u16string)> select_dictionary;
-    bool show_web_notifications = false;
     bool private_mode = false;
     bool can_create_profile = true;
     bool can_reassign_workspace = true;
@@ -809,7 +808,11 @@ class WorkspaceShell final : public ui::EventHandler,
   void HideToast();
   void ShowWebNotification(std::string profile, std::string id, std::u16string origin,
                            std::u16string title, std::u16string body,
-                           base::RepeatingClosure click);
+                           base::RepeatingClosure click,
+                           std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions,
+                           base::RepeatingClosure dismiss);
+  void SetNotificationsMenuVisible(bool visible);
+  void SetMiddleClickClosesTabs(bool enabled) { middle_click_closes_tabs_ = enabled; }
   void RemoveWebNotification(const std::string& profile, const std::string& id);
   // The address pill trembles once (a copied address).
   void TremorAddress();
@@ -1175,7 +1178,16 @@ class WorkspaceShell final : public ui::EventHandler,
     std::u16string title;
     std::u16string body;
     base::RepeatingClosure click;
+    std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions;
+    base::RepeatingClosure dismiss;
   };
+  bool notifications_menu_visible_ = true;
+  bool middle_click_closes_tabs_ = true;
+  raw_ptr<views::View> notifications_button_ = nullptr;
+  raw_ptr<views::View> notification_slot_ = nullptr;
+  void CloseSidebarTabByMiddleClick(std::string workspace,
+                                    std::array<uint64_t, 2> identity,
+                                    std::string pin);
   std::vector<WebNotification> web_notifications_;
   std::optional<std::string> web_banner_;
   bool web_drawer_ = false;

@@ -21,11 +21,13 @@
 #include <vector>
 
 #include "build/build_config.h"
-#if BUILDFLAG(IS_MAC)
-#include "extension_notifications_mac.h"
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#include "extension_notifications.h"
+#endif
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 #include "extensions/browser/api/messaging/native_message_host.h"
 #include "extensions/browser/api/messaging/native_message_port.h"
-#include "workspace_native_messaging_mac.h"
+#include "workspace_native_messaging.h"
 #include "workspace_native_message_port_dispatcher.h"
 #endif
 #if BUILDFLAG(IS_POSIX)
@@ -925,14 +927,14 @@ class LabMessagingDelegate final : public extensions::MessagingDelegate {
  public:
   PolicyPermission IsNativeMessagingHostAllowed(
       BrowserContext* context, const std::string&) override {
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     if (context && !context->IsOffTheRecord() && !context->ShutdownStarted())
       return PolicyPermission::ALLOW_ALL;
 #endif
     return PolicyPermission::DISALLOW;
   }
 
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   std::unique_ptr<extensions::MessagePort> CreateReceiverForNativeApp(
       BrowserContext* context,
       base::WeakPtr<extensions::MessagePort::ChannelDelegate> channel,
@@ -1065,7 +1067,7 @@ class UnconfiguredManagedValueStoreCache final : public extensions::ValueStoreCa
 
 class LabExtensionsAPIClient final : public extensions::ExtensionsAPIClient {
  public:
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   std::unique_ptr<extensions::NativeMessagePortDispatcher> CreateNativeMessagePortDispatcher(
       std::unique_ptr<extensions::NativeMessageHost> host,
       base::WeakPtr<extensions::NativeMessagePort> port,
@@ -3616,7 +3618,7 @@ class LabBrowserExtensionAPIProvider final
     registry->RegisterFunction<LabActionDisableFunction>();
     registry->RegisterFunction<LabActionIsEnabledFunction>();
     registry->RegisterFunction<LabActionOpenPopupFunction>();
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     RegisterExtensionNotificationFunctions(*registry);
 #endif
     registry->RegisterFunction<LabRuntimeOpenOptionsPageFunction>();
@@ -4311,7 +4313,7 @@ class ExtensionRuntimePreferences final
 LabExtensionsBrowserClient::~LabExtensionsBrowserClient() = default;
 
 void LabExtensionsBrowserClient::Unregister(BrowserContext& context) {
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   RemoveExtensionNotifications(context, {});
 #endif
   RevokeProcesses(context);
@@ -4434,7 +4436,7 @@ bool LabExtensionsBrowserClient::DisableFixture(BrowserContext& context,
     }
   }
   CHECK(registry->RemoveEnabled(extension->id()));
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   RemoveExtensionNotifications(context, id);
 #endif
   registry->TriggerOnUnloaded(extension.get(),

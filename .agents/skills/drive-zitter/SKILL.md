@@ -1,13 +1,13 @@
 ---
 name: drive-zitter
-description: Drive the running Zitter app the way a person would (click, hover, drag, scroll, press keys, type) and look at the result through screenshots and animation contact sheets, without touching the person's mouse or keyboard focus. Use it whenever you need to exercise or reproduce something in Zitter's UI, check how a view looks after an interaction, test a flow end to end, inspect an animation or transition, or confirm a fix in the real app. Also use it when the user says "kliknij", "przetestuj", "sprawdź czy działa", "zobacz animację", "przejdź przez flow", "odtwórz buga" or asks how something behaves in the app. On macOS this works with the app in the background; it never moves the system cursor.
+description: Drive the running Zitter app the way a person would (click, hover, drag, scroll, press keys, type) and look at the result through screenshots and animation contact sheets, without touching the person's mouse or keyboard focus. Use it whenever you need to exercise or reproduce something in Zitter's UI, check how a view looks after an interaction, test a flow end to end, inspect an animation or transition, or confirm a fix in the real app. Also use it when the user says "kliknij", "przetestuj", "sprawdź czy działa", "zobacz animację", "przejdź przez flow", "odtwórz buga" or asks how something behaves in the app. On macOS and Windows this works with the app in the background and leaves the system cursor in place.
 ---
 
 # Drive Zitter
 
 The app has an automation channel for agents. `ui.py launch` starts it with
 `--zitter-automation`, and every `ui.py` command then goes through
-`<workspace root>/automation.sock` straight into the app's widgets and web pages:
+`<workspace root>/automation.sock` straight into the app's widgets and web pages. On Windows this file names a local pipe restricted to the current user:
 
 - **The person's mouse never moves** and their app keeps the keyboard. A Zitter
   being driven doesn't bring itself to the front.
@@ -155,7 +155,7 @@ answers each with one line. See `automation()` in `ui.py`. Commands: `ping`,
 - A sidebar drawn with `--raster metal` is a separate Metal layer; the compositor
   shot misses it.
 - Drag and drop between apps (files from Finder) isn't possible.
-- **Windows:** `ui_win.py` still moves the real mouse; ask before you use it.
+- **Windows:** use `ui.py` for compositor captures and in-app input. Ask before using `--cursor` or `shot --screen`.
 - A clicked control edits the test workspace (selected tab, emoji, a new space).
   `launch --fresh` resets it.
 
@@ -163,4 +163,4 @@ answers each with one line. See `automation()` in `ui.py`. Commands: `ping`,
 
 `python3 tools/verify_content_automation.py`, about 10 s. It uses its own probe
 root and passes in the background. Run it after changing
-`chromium/content_embedder/ui_automation_mac.mm` or `ui.py`.
+`chromium/content_embedder/ui_automation_driver.inc` or `ui.py`. On Windows pass the built `zitter.exe` to the check.

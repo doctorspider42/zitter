@@ -3,7 +3,7 @@
 
 #include <dlfcn.h>
 
-#include "extension_notifications_mac.h"
+#include "extension_notifications.h"
 
 #include <algorithm>
 #include <map>

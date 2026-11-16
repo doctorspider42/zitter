@@ -25,6 +25,9 @@ ASSISTANT_EXECUTABLE = "zitter_assistant.exe"
 RUNTIME_MANIFEST = "zitter_content.runtime_deps"
 ROOT_ENTRY = re.compile(r"[a-zA-Z0-9_+.-]+\.(?:exe|dll|pak|dat|bin|json)", re.IGNORECASE)
 LOCALE_ENTRY = re.compile(r"(?:locales/[a-zA-Z0-9_-]+\.pak|Fonts/[a-zA-Z0-9_-]+\.ttf)")
+NIGHT_SHIFT_ENTRY = re.compile(
+    r"resources/night_shift/(?:vendor/)?(?:[a-zA-Z0-9_-]+\.(?:json|png|html|css|js|config)|LICENSE)"
+)
 RUNTIME_CRT = re.compile(r"(?:msvcp|vcruntime|concrt|vccorlib)\d.*\.dll", re.IGNORECASE)
 PE_IMPORT = re.compile(r"^(?:Import|DelayImport) \{\s*Name: ([^\r\n]+)", re.MULTILINE)
 SYSTEM_CPL_IMPORTS = {"bthprops.cpl"}
@@ -36,7 +39,8 @@ def select_runtime_files(manifest):
     debug = {name.casefold() for name in DEBUG_ONLY}
     for line in manifest.splitlines():
         name = line.strip().removeprefix("./")
-        if not (ROOT_ENTRY.fullmatch(name) or LOCALE_ENTRY.fullmatch(name)):
+        if not (ROOT_ENTRY.fullmatch(name) or LOCALE_ENTRY.fullmatch(name)
+                or NIGHT_SHIFT_ENTRY.fullmatch(name)):
             continue
         if RESERVED_DEVICE.fullmatch(PurePosixPath(name).name.partition(".")[0]):
             raise ValueError(f"Reserved Windows runtime path: {name}")

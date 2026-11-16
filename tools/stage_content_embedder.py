@@ -449,6 +449,7 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
         "chromium/app/updater_win_unittest.cc",
         "chromium/app/windows_channel.h",
         "tests/fixtures/assistant_cli.cc",
+        "tests/fixtures/content_native_message_echo.c",
         "third_party/brave_clean_urls/clean-urls.json",
     ):
         files[Path(path)] = ROOT / path

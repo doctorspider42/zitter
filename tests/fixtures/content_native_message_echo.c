@@ -2,7 +2,17 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 int main(void) {
+#ifdef _WIN32
+  if (_setmode(_fileno(stdin), _O_BINARY) == -1 ||
+      _setmode(_fileno(stdout), _O_BINARY) == -1)
+    return 1;
+#endif
   uint32_t size;
   char message[1024];
   while (fread(&size, sizeof(size), 1, stdin) == 1) {

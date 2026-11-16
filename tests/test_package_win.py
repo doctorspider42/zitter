@@ -14,7 +14,7 @@ class WindowsPackageTest(unittest.TestCase):
     def test_keeps_what_runs_and_drops_symbols_sources_and_test_data(self):
         files = package.select_files([
             "./zitter.exe", "./zitter_assistant.exe", "./zitter.exe.pdb", "./base.dll", "chrome_elf.dll", "resources.pak",
-            "locales/pl.pak", "locales/pl.pak.info", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
+            "locales/pl.pak", "locales/pl.pak.info", "zitter_content.pak.info", "Fonts/InstrumentSerif-Regular.ttf", "icudtl.dat",
             "v8_context_snapshot.bin", "gen/third_party/devtools-frontend/src/front_end/Tests.js",
             "pyproto/google/__init__.py", "angledata/foo.bin", "../../third_party/x.txt", "zitter.lib",
             "VkLayer_khronos_validation.dll", "msdia140.dll", "dbghelp.dll", "locales/en-XA.pak",

@@ -104,7 +104,7 @@
 #include "zitter_content/fingerprint_state.mojom.h"
 
 #if BUILDFLAG(IS_MAC)
-#include "extension_notifications_mac.h"
+#include "extension_notifications.h"
 #endif
 
 namespace zitter::content_embedder {
@@ -2137,8 +2137,11 @@ class WindowsWebNotifications final : public content::PlatformNotificationServic
     if (profile_->site_permissions().NotificationSetting(url::Origin::Create(origin)) != 1)
       return;
     entries_.insert_or_assign(id, origin);
-    show_.Run(id, origin, data.title, data.body, base::BindRepeating(
-        &WindowsWebNotifications::Click, weak_factory_.GetWeakPtr(), id, persistent));
+    show_.Run(id, base::UTF8ToUTF16(url::Origin::Create(origin).Serialize()),
+              data.title, data.body, base::BindRepeating(
+                  &WindowsWebNotifications::Click, weak_factory_.GetWeakPtr(), id, persistent),
+              {}, base::BindRepeating(&WindowsWebNotifications::CloseNotification,
+                                      weak_factory_.GetWeakPtr(), id));
     if (!persistent)
       content::NotificationEventDispatcher::GetInstance()->DispatchNonPersistentShowEvent(id);
   }
@@ -2173,8 +2176,15 @@ void ProfileContext::SetWebNotificationPresenter(
     WebNotificationPresenter show,
     base::RepeatingCallback<void(const std::string&)> close) {
   CHECK(!notifications_ && !IsOffTheRecord());
+  notification_presenter_ = std::move(show);
+  notification_remover_ = std::move(close);
   notifications_ = std::make_unique<WindowsWebNotifications>(
-      *this, std::move(show), std::move(close));
+      *this, notification_presenter_, notification_remover_);
+}
+
+void ProfileContext::RemovePresentedNotification(const std::string& id) {
+  if (notification_remover_)
+    notification_remover_.Run(id);
 }
 #endif
 

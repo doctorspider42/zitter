@@ -2497,6 +2497,9 @@ class RustRowView final : public views::View {
   void ViewHierarchyChanged(const views::ViewHierarchyChangedDetails& details) override{if(!details.is_add&&details.parent==this&&details.child==close_)close_=nullptr;if(!details.is_add&&details.parent==this&&details.child==audio_)audio_=nullptr;views::View::ViewHierarchyChanged(details);}
   const Spec& preview_spec() const{return spec_;}
   void SetCallback(views::Button::PressedCallback callback){CancelInput();callback_=std::move(callback);}
+  void SetMiddleClickCallback(base::RepeatingClosure callback) {
+    middle_click_ = std::move(callback);
+  }
   // `zt-tremor`: 1 px shakes in four steps over 180 ms (off under reduced motion).
   void Tremor(){if(gfx::Animation::PrefersReducedMotion())return;tremor_step_=0;tremor_timer_.Start(FROM_HERE,base::Milliseconds(45),base::BindRepeating(&RustRowView::TremorStep,base::Unretained(this)));}
   void SetCapture(int capture){if(spec_.capture==capture)return;spec_.capture=capture;SchedulePaint();if(changed_)changed_.Run();}
@@ -2551,7 +2554,7 @@ class RustRowView final : public views::View {
   void OnBoundsChanged(const gfx::Rect& previous) override{views::View::OnBoundsChanged(previous);if(changed_)changed_.Run();}
   void OnThemeChanged() override{views::View::OnThemeChanged();measured_.reset();SchedulePaint();}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
-  void CancelInput(){const bool changed=state_->action_cancel();if(close_)CancelActionInput(close_);if(audio_)audio_->CancelInput();UpdateClose();UpdateWatch();if(changed)SchedulePaint();}
+  void CancelInput(){middle_pressed_=false;const bool changed=state_->action_cancel();if(close_)CancelActionInput(close_);if(audio_)audio_->CancelInput();UpdateClose();UpdateWatch();if(changed)SchedulePaint();}
   void SyncViewport() {
     if (!PointerInputVisible()) {
       CancelInput();
@@ -2626,6 +2629,19 @@ class RustRowView final : public views::View {
   void ChildChanged(){UpdateWatch();if(changed_)changed_.Run();}
   void UpdateWatch(){if(!watch_)return;bool pending=state_->action_pending()||(audio_&&audio_->Pending());if(close_)if(auto* action=views::AsViewClass<RustActionView>(close_.get()))pending=pending||action->Pending();watch_.Run(this,pending?base::BindRepeating(&RustRowView::SyncViewport,weak_factory_.GetWeakPtr()):base::RepeatingClosure());}
   bool Pointer(sidebar::PointerPhase phase,const ui::MouseEvent& event){
+    if (phase == sidebar::PointerPhase::Press && event.IsOnlyMiddleMouseButton()) {
+      middle_pressed_ = middle_click_ && PointerInputVisible() && GetEnabledInViewsSubtree();
+      return middle_pressed_;
+    }
+    if (middle_pressed_ && phase == sidebar::PointerPhase::Release &&
+        (event.changed_button_flags() & ui::EF_MIDDLE_MOUSE_BUTTON)) {
+      middle_pressed_ = false;
+      if (middle_click_ && PointerInputVisible() && GetEnabledInViewsSubtree() &&
+          HitTestPoint(event.location()) && GetVisibleBounds().Contains(event.location())) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, middle_click_);
+      }
+      return true;
+    }
     if(phase==sidebar::PointerPhase::Press)grab_=event.location();
     const bool handled=PointerInput(phase,event);
     if(phase==sidebar::PointerPhase::Drag&&spec_.drag&&state_->action_row_dragging()){dragging_=true;auto drag=spec_.drag;auto point=event.location();views::View::ConvertPointToScreen(this,&point);drag.Run(this,grab_,point);}
@@ -2634,6 +2650,8 @@ class RustRowView final : public views::View {
   }
   void EndDrag(){if(!dragging_)return;dragging_=false;if(spec_.drag){auto drag=spec_.drag;drag.Run(this,grab_,std::nullopt);}}
   bool dragging_=false;
+  bool middle_pressed_ = false;
+  base::RepeatingClosure middle_click_;
   gfx::Point grab_;
   bool PointerInput(sidebar::PointerPhase phase,const ui::MouseEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_row_pointer(phase,event.x(),event.y(),phase!=sidebar::PointerPhase::Exit&&HitTestPoint(event.location())&&GetVisibleBounds().Contains(event.location()),event.IsLeftMouseButton(),PointerInputVisible(),!spec_.drop.is_null()),event,before);}
   bool Key(bool pressed,const ui::KeyEvent& event){SyncEnabled();const auto before=state_->action_snapshot().visual;return Apply(state_->action_key(pressed,event.key_code()==ui::VKEY_SPACE?1:event.key_code()==ui::VKEY_RETURN?2:0,true,Interactive()),event,before);}
@@ -4623,14 +4641,6 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
         base::BindRepeating(callbacks_.page_command, static_cast<PageCommand>(i)),
         commands[i].second, GlyphButton::Glyph::kVector, commands[i].first,header_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader,weak),true,{chrome_node_graph_,4,{},command_nodes[i]}));
   }
-  if (callbacks_.show_web_notifications) {
-    header->AddChildView(CreateSceneAction(
-        base::BindRepeating(&WorkspaceShell::ToggleWebNotifications, weak),
-        T(u"Powiadomienia"), GlyphButton::Glyph::kVector,
-        &vector_icons::kNotificationsIcon, header_visible,
-        base::BindRepeating(&WorkspaceShell::ScheduleMetalHeader, weak), true,
-        {chrome_node_graph_, 4, {}, "header.notifications"}));
-  }
   for (auto& child : header->children()) child->SetPreferredSize(gfx::Size(kHeaderButtonSize, kHeaderButtonSize));
   auto* developer = root->AddChildView(std::make_unique<SceneActionGroup>(false, 0));
   developer->UseFrameBackground();
@@ -5056,6 +5066,8 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   settings->ReorderChildView(appearance,settings->GetIndexOf(settings_header).value()+1);
   save_hint->SetVisible(false);
 
+  notification_slot_ = sidebar->AddChildView(std::make_unique<views::View>());
+  notification_slot_->SetVisible(false);
   auto* footer = sidebar->AddChildView(std::make_unique<views::View>());
   sidebar_footer_=footer;
   auto footer_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -5086,6 +5098,16 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   add_button_=footer->AddChildView(CreateSceneAction(
       base::BindRepeating(&WorkspaceShell::ShowAddMenu,weak),
       T(u"Dodaj kartę, folder lub przestrzeń"),GlyphButton::Glyph::kVector,&vector_icons::kAdd2Icon,footer_visible,base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak),true,{chrome_node_graph_,4,{},"sidebar.add"}));
+  notifications_button_ = footer->AddChildView(CreateSceneAction(
+      base::BindRepeating(&WorkspaceShell::ToggleWebNotifications, weak),
+      T(u"Powiadomienia"), GlyphButton::Glyph::kVector,
+      &vector_icons::kNotificationsIcon, footer_visible,
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak)));
+#if BUILDFLAG(IS_WIN)
+  notifications_button_->SetVisible(!callbacks_.private_mode && notifications_menu_visible_);
+#else
+  notifications_button_->SetVisible(false);
+#endif
   footer->SetLayoutManager(CreateSidebarFooterLayout());
 
   // Command palette: input, suggestions, keyboard hints.
@@ -5629,6 +5651,7 @@ void WorkspaceShell::Detach() {
   nav_buttons_.fill(nullptr);
   copy_url_button_ = nullptr; password_key_ = nullptr; permission_chip_ = nullptr; capture_chip_ = nullptr;
   workspace_buttons_.clear();
+  notification_slot_ = nullptr; notifications_button_ = nullptr;
   workspace_dots_ = nullptr; add_button_ = nullptr; downloads_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
   profile_picker_ = nullptr;
@@ -6181,11 +6204,18 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
         auto* row=views::AsViewClass<RustRowView>(adapter.get());CHECK(row);const auto binding=row->TabBinding();CHECK(binding.valid);
         auto callback=[&](bool close){return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,base::WeakPtr<RustRowView> row,std::weak_ptr<SidebarNodeGraphState> owner,std::string workspace,std::array<uint64_t,2> identity,uint64_t id,bool close){const auto scope=owner.lock();if(!shell||!row||!scope||shell->state_.workspace_id!=workspace||row->GetWidget()!=shell->sidebar_widget_.get()||!SceneIsVisible(row.get())||!row->GetEnabledInViewsSubtree())return;auto cache=shell->tab_lists_.find(workspace);if(cache==shell->tab_lists_.end()||cache->second.node_graph!=scope||!cache->second.root||!cache->second.root->Contains(row.get())||row->LogicalNodeId()!=id||!row->BelongsTo(*scope)||(close&&!row->AttachedClose()))return;const auto target=scope->graph->tab_target(identity[0],identity[1],id,close);if(!target.valid)return;const auto projected=std::find_if(shell->state_.tabs.begin(),shell->state_.tabs.end(),[&](const ShellTab& tab){return tab.index==target.index&&tab.identity==identity;});if(projected==shell->state_.tabs.end())return;if(close)shell->callbacks_.close_tab.Run(target.index);else shell->callbacks_.select_tab.Run(target.index);},weak_factory_.GetWeakPtr(),row->GetWeakPtr(),std::weak_ptr<SidebarNodeGraphState>(cache.node_graph),state_.workspace_id,tab.identity,binding.id,close);};
         if(fresh)row->SetCallback(callback(false));views::Button::PressedCallback close_callback;if(state_.tabs.size()>1&&row->TabCloseNeedsCallback(*cache.node_graph))close_callback=callback(true);row->ConfigureTabClose(state_.tabs.size()>1,std::move(close_callback),{cache.node_graph,10,tab.identity,{}});
+        row->SetMiddleClickCallback(base::BindRepeating(
+            &WorkspaceShell::CloseSidebarTabByMiddleClick, weak_factory_.GetWeakPtr(),
+            state_.workspace_id, tab.identity, std::string()));
         auto* attached=parent->AddChildView(std::move(adapter));cache.tab_buttons[tab.index]=attached;attached->set_context_menu_controller(this);return attached;
       }
       if (state_.tabs.size() > 1) spec.close = base::BindRepeating(callbacks_.close_tab, tab.index);
       cache.tab_buttons[tab.index] = parent->AddChildView(CreateSceneRow(
           base::BindRepeating(callbacks_.select_tab,tab.index),std::move(spec),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::WatchSceneRowInput,weak_factory_.GetWeakPtr()),{cache.node_graph,1,tab.identity,{}}));
+      views::AsViewClass<RustRowView>(cache.tab_buttons[tab.index].get())->SetMiddleClickCallback(
+          base::BindRepeating(&WorkspaceShell::CloseSidebarTabByMiddleClick,
+                              weak_factory_.GetWeakPtr(), state_.workspace_id,
+                              tab.identity, std::string()));
       cache.tab_buttons[tab.index]->set_context_menu_controller(this);
       return cache.tab_buttons[tab.index].get();
     };
@@ -6277,8 +6307,8 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
                                                  &ShellTab::identity);
               if (tab != shell->state_.tabs.end()) index = tab->index;
             } else {
-              const auto tab = shell->state_.open_pin_audio.find(pin);
-              if (tab != shell->state_.open_pin_audio.end() &&
+              const auto tab = shell->state_.open_profile_pin_tabs.find(pin);
+              if (tab != shell->state_.open_profile_pin_tabs.end() &&
                   tab->second.identity == identity)
                 index = tab->second.index;
             }
@@ -6310,9 +6340,9 @@ void WorkspaceShell::RebuildTabs(std::string_view previous_workspace, bool catal
             ? base::UTF8ToUTF16(pin.display_title()) : page_title->second;
         if (row->GetTooltipText() != title) row->SetTitle(std::move(title));
         ConfigureSidebarTabActions(row, pin.id, pin.profile_pin);
-        const auto audio = state_.open_pin_audio.find(pin.id);
-        configure_audio(row, audio == state_.open_pin_audio.end() ? nullptr
-                                                                 : &audio->second,
+        const auto tab = state_.open_profile_pin_tabs.find(pin.id);
+        configure_audio(row, tab == state_.open_profile_pin_tabs.end() ? nullptr
+                                                                       : &tab->second,
                         pin.id);
       }
     }
@@ -6711,6 +6741,10 @@ void WorkspaceShell::UpdateMetalSidebar() {
   }
   if (auto* button=downloads_button_.get()) {
     const auto rect=local_rect(button); append_glyph(button,rect,rect);
+  }
+  if (notifications_button_ && notifications_button_->GetVisible()) {
+    const auto rect = local_rect(notifications_button_);
+    append_glyph(notifications_button_, rect, rect);
   }
   auto* dot_viewport=workspace_dots_->parent();
   {
@@ -7265,6 +7299,11 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
     }else
     if(pin->folder){SetRowCallback(button,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,views::View* group,views::View* button,std::string workspace,std::string id,std::u16string title){if(!shell)return;const bool collapsed=shell->sidebar_tree_.Toggle(workspace,id);shell->RefreshFolderPeek(workspace,id,group,collapsed);SetRowTitle(button,(collapsed?u"▸ ":u"▾ ")+title);shell->ScheduleMetalSidebar();},weak_factory_.GetWeakPtr(),base::Unretained(folder_group),base::Unretained(button),workspace,pin->id,base::UTF8ToUTF16(pin->title)));}
     else SetRowCallback(button,base::BindRepeating(callbacks_.open_pin,pin->id));
+    if (!pin->folder) {
+      views::AsViewClass<RustRowView>(button)->SetMiddleClickCallback(base::BindRepeating(
+          &WorkspaceShell::CloseSidebarTabByMiddleClick, weak_factory_.GetWeakPtr(),
+          workspace, std::array<uint64_t, 2>{}, pin->id));
+    }
     cache.pin_buttons[pin->id] = button;
     button->set_context_menu_controller(this);
   }
@@ -10688,8 +10727,16 @@ void WorkspaceShell::RefreshGeneralControls() {
     if (it != values.end() || key.starts_with("extension_enabled") ||
         key.starts_with("extension_user_scripts."))
       SetToggleOn(control, it != values.end() && it->second.value != 0);
-    control->SetTooltipText(control_view(true, it != values.end(), it != values.end() && it->second.editable, it == values.end() ? T(u"Profil nie jest jeszcze gotowy") :
-        !it->second.editable ? T(u"To ustawienie jest zarządzane") : T(u"Dotyczy aktywnego profilu")));
+    const bool editable = it != values.end() && it->second.editable;
+    if (key == "notifications_menu_visible" && editable) {
+      control->SetTooltipText(T(u"Powiadomienia w panelu kart"));
+    } else if (key == "middle_click_closes_tabs" && editable) {
+      control->SetTooltipText(T(u"Zamykanie kart środkowym przyciskiem"));
+    } else {
+      control->SetTooltipText(control_view(true, it != values.end(), editable,
+          it == values.end() ? T(u"Profil nie jest jeszcze gotowy") :
+          !editable ? T(u"To ustawienie jest zarządzane") : T(u"Dotyczy aktywnego profilu")));
+    }
   }
   for (const auto& [key, pin] : extension_pin_buttons_) {
     const auto value = values.find(key);
@@ -12280,14 +12327,17 @@ void WorkspaceShell::PositionToast(){
 }
 void WorkspaceShell::ShowWebNotification(
     std::string profile, std::string id, std::u16string origin, std::u16string title,
-    std::u16string body, base::RepeatingClosure click) {
+    std::u16string body, base::RepeatingClosure click,
+    std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions,
+    base::RepeatingClosure dismiss) {
   std::erase_if(web_notifications_, [&](const auto& item) {
     return item.profile == profile && item.id == id;
   });
   if (web_notifications_.size() >= 20)
     web_notifications_.pop_back();
   web_notifications_.insert(web_notifications_.begin(),
-      {profile, id, std::move(origin), std::move(title), std::move(body), std::move(click)});
+      {profile, id, std::move(origin), std::move(title), std::move(body),
+       std::move(click), std::move(actions), std::move(dismiss)});
   if (profile != state_.profile_id || !widget_ || !widget_->IsVisible())
     return;
   if (!web_drawer_) {
@@ -12311,6 +12361,39 @@ void WorkspaceShell::RemoveWebNotification(const std::string& profile,
     HideWebNotifications();
 }
 
+void WorkspaceShell::CloseSidebarTabByMiddleClick(
+    std::string workspace, std::array<uint64_t, 2> identity, std::string pin) {
+  if (!middle_click_closes_tabs_ || state_.workspace_id != workspace ||
+      !callbacks_.close_tab) {
+    return;
+  }
+  if (!pin.empty()) {
+    const auto profile_tab = state_.open_profile_pin_tabs.find(pin);
+    if (profile_tab != state_.open_profile_pin_tabs.end()) {
+      callbacks_.close_tab.Run(profile_tab->second.index);
+      return;
+    }
+  }
+  const auto tab = std::ranges::find_if(state_.tabs, [&](const ShellTab& tab) {
+    return pin.empty() ? tab.identity == identity : tab.pin_id == pin;
+  });
+  if (tab != state_.tabs.end())
+    callbacks_.close_tab.Run(tab->index);
+}
+
+void WorkspaceShell::SetNotificationsMenuVisible(bool visible) {
+  notifications_menu_visible_ = visible;
+  if (!notifications_button_)
+    return;
+#if BUILDFLAG(IS_WIN)
+  notifications_button_->SetVisible(visible && !callbacks_.private_mode);
+  if (!visible && web_drawer_)
+    HideWebNotifications();
+  sidebar_footer_->InvalidateLayout();
+  ScheduleMetalSidebar();
+#endif
+}
+
 void WorkspaceShell::ToggleWebNotifications() {
   if (web_drawer_) {
     HideWebNotifications();
@@ -12326,6 +12409,8 @@ void WorkspaceShell::HideWebNotifications() {
   web_notification_timer_.Stop();
   web_banner_.reset();
   web_drawer_ = false;
+  if (notification_slot_)
+    notification_slot_->SetVisible(false);
   if (web_notification_widget_)
     web_notification_widget_->Hide();
 }
@@ -12334,8 +12419,9 @@ void WorkspaceShell::RenderWebNotifications() {
   if (!web_notification_widget_) {
     auto body = std::make_unique<views::View>();
     web_notification_contents_ = body.get();
-    auto scroll = std::make_unique<views::ScrollView>();
-    scroll->SetContents(std::move(body));
+    PanelViewport* viewport = nullptr;
+    auto scroll = CreatePanelViewport(&viewport, {}, {0, 10000, false});
+    viewport->SetPanelContents(std::move(body));
     CreatePanelWidget(std::move(scroll), web_notification_delegate_,
                       web_notification_widget_, T(u"Powiadomienia"));
   }
@@ -12344,8 +12430,21 @@ void WorkspaceShell::RenderWebNotifications() {
   body->SetBackground(views::CreateSolidBackground(Tone(root_, kCard)));
   SetSidebarPanelLayout(body, true, gfx::Insets(14), 8);
   const auto weak = weak_factory_.GetWeakPtr();
-  auto* controls = ActionGroup(body, false, 6);
-  if (web_drawer_) {
+  auto* header = body->AddChildView(std::make_unique<views::View>());
+  auto* title = PanelText(header, web_drawer_ ? T(u"Powiadomienia") : std::u16string(),
+                          kLabelText, kInk);
+  auto* close = header->AddChildView(CreateSceneAction(
+      base::BindRepeating(&WorkspaceShell::HideWebNotifications, weak), T(u"Zamknij"),
+      GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon, {}, {}));
+  close->SetPreferredSize(gfx::Size(28, 28));
+  SetSidebarPanelLayout(header, false, gfx::Insets(), 4, title, true);
+  if (web_drawer_)
+    body->AddChildView(std::make_unique<SceneHairline>());
+  const bool has_items = std::ranges::any_of(web_notifications_, [&](const auto& item) {
+    return item.profile == state_.profile_id;
+  });
+  if (web_drawer_ && has_items) {
+    auto* controls = ActionGroup(body, false, 6);
     AddAction(controls, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
       if (!shell)
         return;
@@ -12353,17 +12452,20 @@ void WorkspaceShell::RenderWebNotifications() {
           FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> current) {
             if (!current || !current->web_drawer_)
               return;
-            std::erase_if(current->web_notifications_, [&](const auto& item) {
-              return item.profile == current->state_.profile_id;
+            std::vector<base::RepeatingClosure> dismissals;
+            std::erase_if(current->web_notifications_, [&](auto& item) {
+              if (item.profile != current->state_.profile_id)
+                return false;
+              if (item.dismiss)
+                dismissals.push_back(std::move(item.dismiss));
+              return true;
             });
+            for (const auto& dismiss : dismissals)
+              dismiss.Run();
             current->RenderWebNotifications();
           }, shell));
     }, weak), T(u"Wyczyść"));
   }
-  AddAction(controls, base::BindRepeating(&WorkspaceShell::HideWebNotifications, weak),
-            T(u"Zamknij"));
-  if (web_drawer_)
-    PanelText(body, T(u"Powiadomienia"), kTitleText, kInk);
 
   bool shown = false;
   for (const auto& item : web_notifications_) {
@@ -12383,28 +12485,56 @@ void WorkspaceShell::RenderWebNotifications() {
         [](base::WeakPtr<WorkspaceShell> shell, base::RepeatingClosure click) {
           if (shell)
             shell->HideWebNotifications();
-          click.Run();
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, click);
         }, weak, item.click), T(u"Otwórz"));
+    for (const auto& [action_title, action] : item.actions) {
+      AddAction(actions, base::BindRepeating([](base::RepeatingClosure callback) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, callback);
+      }, action), action_title);
+    }
   }
-  if (!shown)
-    Label(body, T(u"Brak powiadomień"), kMuted);
+  if (!shown) {
+    auto badge = std::make_unique<views::ImageView>(
+        ui::ImageModel::FromVectorIcon(vector_icons::kNotificationsIcon,
+                                       ui::kColorLabelForeground, 18));
+    badge->SetHorizontalAlignment(views::ImageView::Alignment::kCenter);
+    body->AddChildView(std::move(badge));
+    auto* empty = Label(body, T(u"Brak powiadomień"), kInk);
+    empty->SetHorizontalAlignment(gfx::ALIGN_CENTER);
+    auto* detail = Label(body, T(u"Nowe powiadomienia pojawią się tutaj."), kMuted);
+    detail->SetMultiLine(true);
+    detail->SetHorizontalAlignment(gfx::ALIGN_CENTER);
+  }
   web_notification_widget_->SetColorModeOverride(widget_->color_mode_override());
+  body->InvalidateLayout();
   PositionWebNotifications();
-  if (web_drawer_)
+  web_notification_widget_->LayoutRootViewIfNecessary();
+  if (web_drawer_) {
     web_notification_widget_->Show();
-  else
+    web_notification_widget_->StackAboveWidget(sidebar_widget_.get());
+  } else
     web_notification_widget_->ShowInactive();
 }
 
 void WorkspaceShell::PositionWebNotifications() {
   const auto area = widget_->GetClientAreaBoundsInScreen();
+  if (web_drawer_ && notification_slot_ && sidebar_widget_) {
+    const auto sidebar = sidebar_widget_->GetClientAreaBoundsInScreen();
+    const int width = std::max(1, sidebar.width() - kSidebarInsets.width());
+    const int height = std::clamp(web_notification_contents_->GetHeightForWidth(width),
+                                  128, std::max(128, sidebar.height() / 2));
+    notification_slot_->SetPreferredSize(gfx::Size(width, height));
+    notification_slot_->SetVisible(true);
+    sidebar_widget_->LayoutRootViewIfNecessary();
+    SetWidgetBounds(web_notification_widget_.get(), notification_slot_->GetBoundsInScreen());
+    return;
+  }
   const int width = std::clamp(area.width() - 32, 1, 352);
   const int height = std::clamp(web_notification_contents_->GetHeightForWidth(width),
                                 1, std::max(1, area.height() - 64));
-  const int y = web_drawer_ ? area.y() + kShellHeaderHeight + 8
-                            : area.bottom() - height - 16;
   SetWidgetBounds(web_notification_widget_.get(),
-                  gfx::Rect(area.right() - width - 16, y, width, height));
+                  gfx::Rect(area.right() - width - 16, area.bottom() - height - 16,
+                            width, height));
 }
 
 void WorkspaceShell::PositionPanels() {
@@ -13778,6 +13908,7 @@ void WorkspaceShell::ShowSidebar() {
   if (!pinned_) sidebar_hover_timer_.Start(FROM_HERE, base::Milliseconds(40), this, &WorkspaceShell::PollSidebar);
 }
 void WorkspaceShell::HideSidebar() {
+  if (web_drawer_) HideWebNotifications();
   FinishSidebarRename(false);
   sidebar_hover_timer_.Stop();
   sidebar_left_at_ = base::TimeTicks();
@@ -13785,7 +13916,7 @@ void WorkspaceShell::HideSidebar() {
 }
 void WorkspaceShell::PollSidebar() {
   if (!sidebar_visible() || pinned_ || content_fullscreen_) { sidebar_hover_timer_.Stop(); return; }
-  const bool blocked = (sidebar_rename_widget_ && sidebar_rename_widget_->IsVisible()) ||
+  const bool blocked = web_drawer_ || (sidebar_rename_widget_ && sidebar_rename_widget_->IsVisible()) ||
       sidebar_resizing_ || drag_row_.view() || settings_visible() || address_visible() ||
       (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) ||
@@ -14066,7 +14197,9 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
       (!callbacks_.open_preferences_tab && general_widget_ && general_widget_->IsVisible()) ||
       (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) || (!keep_sidebar && !pinned_ && sidebar_visible()) ||
-      find_visible() || print_visible() || site_settings_page_ || renaming;
+      find_visible() || print_visible() || site_settings_page_ || renaming ||
+      (web_notification_widget_ && web_notification_widget_->IsVisible());
+  HideWebNotifications();
   HideFind();
   HidePrint();
   CloseSitePanel();
@@ -14153,7 +14286,10 @@ void WorkspaceShell::FitInitialSidebarWidth() {
       state_.workspaces.empty()) return;
   sidebar_width_initialized_ = true;
   const int rail_width = workspace_dots_->GetPreferredSize().width();
-  const int footer_width = sidebar::footer_layout(-1, rail_width).width;
+  const bool notifications_visible =
+      notifications_button_ && notifications_button_->GetVisible();
+  const int footer_width =
+      sidebar::footer_layout(-1, rail_width, notifications_visible).width;
   const int width = std::clamp(footer_width + kSidebarInsets.width() +
                                    sidebar_root_->GetInsets().width(),
                                kSidebarWidth, kMaxSidebarWidth);
@@ -17587,7 +17723,7 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   }
   if (widget == settings_widget_.get()) settings_widget_->Hide();
   if(widget==sidebar_widget_.get()) {
-    if (site_panel_ && site_panel_->IsVisible()) return;
+    if (web_drawer_ || (site_panel_ && site_panel_->IsVisible())) return;
     bool hide=!pinned_&&!settings_visible();
     if(metal_sidebar_)hide=sidebar::sidebar_auto_hide(pinned_,settings_visible(),false,false);
     if(hide)HideSidebar();

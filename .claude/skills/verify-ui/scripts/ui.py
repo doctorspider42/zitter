@@ -21,15 +21,13 @@ may stay in the background, and screenshots come from the window's compositor, s
 windows covering it don't matter. --cursor (click) and --screen (shot) fall back to the
 real mouse and screencapture. Window coordinates are points; a scale-2 shot is 2x.
 """
-import argparse, json, os, plistlib, secrets, shutil, socket, subprocess, sys, tempfile, time
+import argparse, json, os, plistlib, secrets, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
-if sys.platform == "win32":
-    # The same commands for the Windows development build.
-    sys.path.insert(0, str(Path(__file__).parent))
+from ui_ipc import request
+
+if os.name == "nt":
     import ui_win
-    ui_win.main()
-    sys.exit()
 
 ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
                            cwd=Path(__file__).parent).stdout.strip())
@@ -40,7 +38,7 @@ APP = Path(os.environ.get("ZITTER_UI_APP", ROOT / "build/ZitterContentLab.app"))
 # zitter-content-probe-*.
 PROFILE = Path(tempfile.gettempdir()).resolve() / "zitter-content-probe-ui"
 HERE = Path(__file__).parent
-BIN = Path(os.environ.get("TMPDIR", "/tmp")) / "zitter-uidrive"
+BIN = Path(tempfile.gettempdir()) / "zitter-uidrive"
 SOCKET = PROFILE / "automation.sock"
 WINDOW_TITLES = {"main": {"Zitter"}, "sidebar": {"Zitter — Karty", "Zitter — Tabs"},
                  "panel": {"Zitter — Ustawienia przestrzeni", "Zitter — Space settings"}}
@@ -68,6 +66,8 @@ ROOT_SWITCH = f"zitter-content-workspace-root={PROFILE}"
 
 
 def running():
+    if os.name == "nt":
+        return ui_win.processes()
     return subprocess.run(["pgrep", "-f", ROOT_SWITCH], capture_output=True, text=True).stdout.split()
 
 
@@ -75,20 +75,10 @@ def automation(command, timeout=130):
     """Send one command to the running app; returns its JSON answer."""
     if not SOCKET.exists():
         sys.exit("No automation socket; relaunch with `ui.py launch` (it passes --zitter-automation).")
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-        conn.settimeout(timeout)
-        try:
-            conn.connect(str(SOCKET))
-        except OSError as error:
-            sys.exit(f"The app does not answer on {SOCKET}: {error}")
-        conn.sendall((json.dumps(command) + "\n").encode())
-        data = b""
-        while not data.endswith(b"\n"):
-            chunk = conn.recv(65536)
-            if not chunk:
-                break
-            data += chunk
-    answer = json.loads(data or b'{"ok": false, "error": "no answer"}')
+    try:
+        answer = request(SOCKET, command, timeout)
+    except OSError as error:
+        sys.exit(f"The app does not answer on {SOCKET}: {error}")
     if not answer.get("ok"):
         sys.exit(f"{command['cmd']}: {answer.get('error')}")
     return answer
@@ -98,11 +88,7 @@ def automation_ready():
     if not SOCKET.exists():
         return False
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
-            conn.settimeout(3)
-            conn.connect(str(SOCKET))
-            conn.sendall(b'{"cmd": "ping"}\n')
-            return b'"ok":true' in conn.recv(4096)
+        return request(SOCKET, {"cmd": "ping"}, 3).get("ok", False)
     except OSError:
         return False
 
@@ -166,6 +152,8 @@ def windows():
     if not getattr(windows, "cursor", False) and automation_ready():
         listed = automation({"cmd": "windows"})["windows"]
         return [dict(w, onscreen=w["visible"]) for w in listed]
+    if os.name == "nt":
+        return ui_win.windows()
     pids = running()
     return [json.loads(line) for pid in pids for line in drive("windows", pid).splitlines() if line]
 
@@ -192,10 +180,20 @@ def wait(predicate, timeout=15.0):
 
 
 def launch(a):
-    if not (APP / "Contents/Info.plist").is_file():
-        sys.exit(f"No packaged app at {APP}; build and package first (build_app.sh).")
-    # A second instance cannot share the workspace root; quit the old one first.
-    subprocess.run(["pkill", "-TERM", "-f", ROOT_SWITCH])
+    if os.name == "nt":
+        if a.raster == "metal":
+            sys.exit("Metal requires macOS.")
+        binary = ui_win.EXE
+        if not binary.is_file():
+            sys.exit(f"No build at {binary}; build zitter_content first (build_app_win.ps1).")
+        for pid in running():
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+    else:
+        if not (APP / "Contents/Info.plist").is_file():
+            sys.exit(f"No packaged app at {APP}; build and package first (build_app.sh).")
+        binary = executable()
+        # A second instance cannot share the workspace root.
+        subprocess.run(["pkill", "-TERM", "-f", ROOT_SWITCH])
     if not wait(lambda: not running(), 10):
         sys.exit("The running copy did not quit.")
     if a.fresh and PROFILE.exists():
@@ -203,12 +201,12 @@ def launch(a):
     PROFILE.mkdir(parents=True, exist_ok=True)
     PROFILE.chmod(0o700)
     key = PROFILE / "probe-cookie-key"
-    if not key.is_file():
+    if os.name != "nt" and not key.is_file():
         # The workspace encrypts cookies with this private key instead of the
         # login keychain, so a test root never touches the user's keychain item.
         key.write_bytes(secrets.token_bytes(32))
         key.chmod(0o600)
-    command = [str(executable()), "--zitter-content-workspace",
+    command = [str(binary), "--zitter-content-workspace",
                f"--zitter-content-workspace-root={PROFILE}",
                "--zitter-automation=front" if a.front else "--zitter-automation"]
     SOCKET.unlink(missing_ok=True)
@@ -220,13 +218,15 @@ def launch(a):
         command.append(f"--zitter-rust-raster={a.raster}")
     if a.scale:
         command.append(f"--force-device-scale-factor={a.scale:g}")
-    log = open(BIN.with_suffix(".log"), "w")
-    subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+    log_path = ui_win.LOG if os.name == "nt" else BIN.with_suffix(".log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as log:
+        subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
     if not wait(automation_ready, 30):
-        sys.exit(f"The app did not open its automation socket; see {log.name}")
+        sys.exit(f"The app did not open its automation socket; see {log_path}")
     w = wait(lambda: (m := main_window()) and m["width"] > 600 and m)
     if not w:
-        sys.exit(f"The app did not show a window; see {log.name}")
+        sys.exit(f"The app did not show a window; see {log_path}")
     time.sleep(2)  # first paint and the sidebar's Metal surface
     # Only the space panel is a window find() knows; the others open in place.
     space = getattr(a, "open_panel", None) == "space"
@@ -237,6 +237,9 @@ def launch(a):
 
 def click(a, button="left"):
     if a.cursor:
+        if os.name == "nt":
+            ui_win.click(a, button)
+            return
         activate()
         drive("rightclick" if button == "right" else "click", a.x, a.y)
         return
@@ -312,6 +315,10 @@ def shot(a):
         if a.alone:
             command["alone"] = True
         show(automation(command))
+        return
+    if os.name == "nt":
+        a.as_is = False
+        ui_win.shot(a)
         return
     windows.cursor = True
     w = find(a.window)

@@ -707,7 +707,7 @@ class ProfileMigrationTrialTest(unittest.TestCase):
         self.assertEqual(session["extra_workspaces"], [{"id": mapped_space, "name": "Lab"}])
         timeline = json.loads((target / "ContentKeychainWorkspaceSession.timeline.jsonl").read_text())
         self.assertEqual((timeline["w"], timeline["p"]), (mapped_space, mapped_profile))
-        settings = json.loads((target / "KeychainWorkspaceSettings.json").read_text())
+        settings = json.loads((target / "KeychainWorkspaceSettings.json").read_text(encoding="utf-8"))
         self.assertEqual(settings, {
             "theme": "dark", "sidebar_width": 320, mapped_space: "#345678",
             "workspace_emoji": {mapped_space: "★"},

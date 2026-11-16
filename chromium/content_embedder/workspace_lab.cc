@@ -2,6 +2,8 @@
 
 #include "workspace_lab.h"
 
+#include "ui_automation.h"
+
 #include "chromium/prototype/site_storage.h"
 #include "http_auth_prompt.h"
 
@@ -143,6 +145,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
+#include "content/public/browser/site_instance.h"
 #include "zitter_content/fingerprint_state.mojom.h"
 #include "browsing_preferences.h"
 #include "net/base/network_anonymization_key.h"
@@ -1849,7 +1852,6 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   }
 #endif
 #if BUILDFLAG(IS_WIN)
-  callbacks.show_web_notifications = !private_owner_;
 #endif
   callbacks.private_mode = private_owner_ != nullptr;
   // Enhanced spell check needs Google's spelling service; Content has none.
@@ -2430,7 +2432,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, std::u16string text,
                              std::vector<std::u16string> choices,
                              size_t tab_count,
-                             std::u16string audio_option,
+                             std::u16string audio_option, bool desktop_sources,
                              base::OnceCallback<void(std::optional<size_t>, bool)> answer) {
         if (!lab) {
           std::move(answer).Run(std::nullopt, false);
@@ -2442,12 +2444,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                 : prototype::T(u"Zezwolić na przechwytywanie?"),
             std::move(text),
             tab ? prototype::T(u"Udostępnij") : prototype::T(u"Zezwól"),
-            tab ? PermissionPrompt::kTabCapture : PermissionPrompt::kDeviceCapture,
+            desktop_sources ? PermissionPrompt::kDesktopSource
+                            : tab ? PermissionPrompt::kTabCapture : PermissionPrompt::kDeviceCapture,
             std::move(choices), tab_count, std::move(audio_option), std::move(answer),
             /*offer_remember=*/!tab);
       }, weak));
   ArmCloseHandler();
   shell_->Attach(widget_.get(), this);
+  shell_->SetNotificationsMenuVisible(!private_owner_);
   if (private_owner_ || smoke_ || !startup_import_probe_.empty() ||
       base::CommandLine::ForCurrentProcess()->HasSwitch("zitter-content-workspace-theme")) {
     shell_->SetThemeMode(dark_ ? prototype::ThemeMode::kDark
@@ -2552,8 +2556,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   clean_address_copies_ = session.FindBool("clean_address_copies").value_or(true);
   image_link_previews_ = private_owner_ ? private_owner_->image_link_previews_
                                         : session.FindBool("image_link_previews").value_or(false);
+  middle_click_closes_tabs_ = private_owner_
+      ? private_owner_->middle_click_closes_tabs_
+      : session.FindBool("middle_click_closes_tabs").value_or(true);
+  shell_->SetMiddleClickClosesTabs(middle_click_closes_tabs_);
   if (!private_owner_) {
     hardware_acceleration_ = session.FindBool("hardware_acceleration").value_or(true);
+    notifications_menu_visible_ = session.FindBool("notifications_menu_visible").value_or(true);
+    shell_->SetNotificationsMenuVisible(notifications_menu_visible_);
     dns_mode_ = session.FindInt("dns_mode").value_or(0);
     if (const auto* templates = session.FindString("dns_templates"))
       dns_templates_ = *templates;
@@ -3162,16 +3172,18 @@ void WorkspaceLab::ConfigureProfileForWorkspace(ProfileContext& profile) {
     profile.SetWebNotificationPresenter(
         base::BindRepeating(
             [](base::WeakPtr<WorkspaceLab> lab, base::RepeatingCallback<std::string()> profile_id,
-               const std::string& id, const GURL& origin, std::u16string title,
-               std::u16string body, base::RepeatingClosure click) {
+               const std::string& id, std::u16string sender, std::u16string title,
+               std::u16string body, base::RepeatingClosure click,
+               std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions,
+               base::RepeatingClosure dismiss) {
               if (!lab || !lab->shell_)
                 return;
               auto owner = profile_id.Run();
               if (owner.empty())
                 return;
               lab->shell_->ShowWebNotification(
-                  std::move(owner), id, base::UTF8ToUTF16(url::Origin::Create(origin).Serialize()),
-                  std::move(title), std::move(body), std::move(click));
+                  std::move(owner), id, std::move(sender), std::move(title),
+                  std::move(body), std::move(click), std::move(actions), std::move(dismiss));
             }, weak_factory_.GetWeakPtr(), profile_id),
         base::BindRepeating(
             [](base::WeakPtr<WorkspaceLab> lab, base::RepeatingCallback<std::string()> profile_id,
@@ -3852,7 +3864,8 @@ void WorkspaceLab::StartWorkspace() {
 #if BUILDFLAG(ENABLE_PRINTING)
   active_probe |= switches.HasSwitch(kPdfExportProbe);
 #endif
-  if (smoke_ || (session_probe_url_.is_valid() && !active_probe) ||
+  if (smoke_ || UiAutomationBlocksActivation() ||
+      (session_probe_url_.is_valid() && !active_probe) ||
       private_adblock_probe_url_.is_valid()) {
     widget_->ShowInactive();
   } else {
@@ -3969,6 +3982,7 @@ void WorkspaceLab::StartWorkspace() {
          site_permission_probe_phase_ != "media-tab-desktop-screen-allow" &&
          site_permission_probe_phase_ != "media-tab-desktop-exclude-allow" &&
          site_permission_probe_phase_ != "media-tab-desktop-native-cancel" &&
+         site_permission_probe_phase_ != "media-tab-desktop-native-screen-cancel" &&
          site_permission_probe_phase_ != "media-tab-desktop-native-window-allow" &&
          site_permission_probe_phase_ != "media-tab-desktop-native-screen-allow" &&
          site_permission_probe_phase_ != "other")) {
@@ -3986,7 +4000,8 @@ void WorkspaceLab::StartWorkspace() {
     if (site_permission_probe_phase_.starts_with("media-tab-")) {
       using DesktopProbe = WorkspaceMediaAccess::DesktopProbe;
       auto mode = DesktopProbe::kTabsOnly;
-      if (site_permission_probe_phase_ == "media-tab-desktop-native-cancel")
+      if (site_permission_probe_phase_.starts_with("media-tab-desktop-native-") &&
+          site_permission_probe_phase_.ends_with("-cancel"))
         mode = DesktopProbe::kNativeCancel;
       else if (site_permission_probe_phase_.starts_with("media-tab-desktop-native-"))
         mode = DesktopProbe::kNone;
@@ -4050,6 +4065,12 @@ void WorkspaceLab::StartWorkspace() {
   if (restore_extensions)
     session_probe_advancing_ = true;
   SelectWorkspace(model_.workspaces()[restored_workspace_].id);
+#if BUILDFLAG(IS_WIN)
+  for (size_t workspace = 0; workspace < tabs_.size(); ++workspace) {
+    if (workspace != active_index_)
+      LoadBackgroundProfileFavorites(workspace);
+  }
+#endif
   if (std::exchange(restore_window_fullscreen_, false)) {
     // AppKit needs the main window and its content to be ready before
     // entering a full-screen space during launch.
@@ -4123,7 +4144,7 @@ bool WorkspaceLab::Activate(std::string_view workspace_id,
       for (auto& tab : tabs_[active_index_]) {
         if (tab.view->GetVisible())
           HideTabView(*tab.view);
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
         // Remove the native surface from this window without destroying the
         // WebContents or the tab's navigation state.
         if (tab.view->parent()) {
@@ -4136,6 +4157,9 @@ bool WorkspaceLab::Activate(std::string_view workspace_id,
     active_index_ = index;
     sleeping_[index] = false;
     ShowTab();
+#if BUILDFLAG(IS_WIN)
+    LoadBackgroundProfileFavorites(index);
+#endif
     if (!smoke_) {
       downloads_->SetSource(
           WorkspaceProfile(index)->GetDownloadManager(), base::UTF8ToUTF16(WorkspaceProfileName(index)),
@@ -4160,7 +4184,26 @@ bool WorkspaceLab::AcceleratorPressed(const ui::Accelerator& accelerator) {
       DismissBrowserImport();
     return shell_->CloseOverlays() || shell_->DismissPreferencesTab();
   }
-  return RunShortcut(shell_->ShortcutFor(accelerator));
+  auto shortcut = shell_->ShortcutFor(accelerator);
+#if BUILDFLAG(IS_WIN)
+  if (shortcut == "next_tab" && accelerator.key_code() == ui::VKEY_TAB &&
+      accelerator.modifiers() == ui::EF_CONTROL_DOWN) {
+    const auto& tabs = tabs_[active_index_];
+    if (tabs.size() < 2)
+      return false;
+    const size_t current = selected_[active_index_];
+    size_t recent = (current + 1) % tabs.size();
+    for (size_t index = 0; index < tabs.size(); ++index) {
+      if (index != current &&
+          tabs[index].last_selection_order > tabs[recent].last_selection_order) {
+        recent = index;
+      }
+    }
+    SelectTab(recent);
+    return true;
+  }
+#endif
+  return RunShortcut(std::move(shortcut));
 }
 
 bool WorkspaceLab::CanHandleAccelerators() const {
@@ -5474,6 +5517,30 @@ void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
   permission_prompt_widget_->SetColorModeOverride(widget_->color_mode_override());
   permission_prompt_widget_->Show();
   const bool tab_probe = site_permission_probe_phase_.starts_with("media-tab-");
+#if BUILDFLAG(IS_WIN)
+  if (kind == PermissionPrompt::kDesktopSource &&
+      site_permission_probe_phase_.starts_with("media-tab-desktop-native-")) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+          if (!lab || !lab->permission_prompt_widget_ || !lab->permission_prompt_choices_)
+            return;
+          if (lab->site_permission_probe_phase_.ends_with("-cancel")) {
+            lab->permission_prompt_delegate_->CancelDialog();
+            return;
+          }
+          const auto* model = lab->permission_prompt_choices_->GetModel();
+          for (size_t i = 0; i < model->GetItemCount(); ++i) {
+            if (model->GetItemAt(i) == u"Zitter Capture Fixture") {
+              lab->permission_prompt_choices_->SetSelectedIndex(i);
+              lab->permission_prompt_delegate_->AcceptDialog();
+              return;
+            }
+          }
+          LOG(ERROR) << "The Windows picker did not enumerate the disposable fixture window";
+          lab->Finish(false);
+        }, weak_factory_.GetWeakPtr()));
+  }
+#endif
   if ((kind == PermissionPrompt::kClipboard &&
        site_permission_probe_phase_ == kClipboardReadProbePhase) ||
       (kind == PermissionPrompt::kTabCapture && tab_probe) ||
@@ -5506,7 +5573,7 @@ void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
                 lab->Finish(false);
                 return;
               }
-              choices->MenuSelectionAt(phase.ends_with("-screen-allow") ? 2 : 1);
+              choices->MenuSelectionAt(phase.find("-screen-") != std::string::npos ? 2 : 1);
               if (lab->permission_prompt_audio_ && lab->permission_prompt_audio_->GetEnabled()) {
                 LOG(ERROR) << "Tab audio option remained enabled for a system source";
                 lab->Finish(false);
@@ -5526,6 +5593,7 @@ void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
             }
             if (other || phase.ends_with("-allow") || phase.ends_with("-switch") ||
                 phase == "media-tab-desktop-native-cancel" ||
+                phase == "media-tab-desktop-native-screen-cancel" ||
                 phase == kClipboardReadProbePhase) {
               lab->permission_prompt_delegate_->AcceptDialog();
             } else {
@@ -5745,7 +5813,8 @@ void WorkspaceLab::CheckSitePermissionProbe() {
           : page->GetTitle() == u"Zitter media denied" &&
               site_permission_prompt_shown_ ==
                   (site_permission_probe_phase_.ends_with("-deny") ||
-                   site_permission_probe_phase_ == "media-tab-desktop-native-cancel");
+                   site_permission_probe_phase_ == "media-tab-desktop-native-cancel" ||
+                   site_permission_probe_phase_ == "media-tab-desktop-native-screen-cancel");
       if (!valid) {
         LOG(ERROR) << "Unexpected media permission or capture outcome";
         Finish(false);
@@ -7617,9 +7686,22 @@ content::WebContents& WorkspaceLab::EnsureHiddenTabPage(
     return *page;
   if (tab.discarded_page)
     tab.view->SetOwnedWebContents(std::move(tab.discarded_page));
+#if BUILDFLAG(IS_WIN)
+  if (!tab.view->web_contents()) {
+    content::WebContents::CreateParams params(WorkspaceProfile(workspace));
+    params.initially_hidden = true;
+    if (!url.is_empty() && !prototype::IsRssTabUrl(url)) {
+      params.site_instance =
+          content::SiteInstance::CreateForURL(WorkspaceProfile(workspace), url);
+    }
+    tab.view->SetOwnedWebContents(content::WebContents::Create(params));
+  }
+#endif
   auto* page = tab.view->GetWebContents(
       url.is_empty() || prototype::IsRssTabUrl(url) ? GURL("about:blank") : url);
   SetWorkspaceExtensionTabPage(tab.extension_tab.get(), page);
+  if (!tab.extension_tab && tab.native_muted)
+    page->SetAudioMuted(true);
   AttachPageServices(*page, workspace);
   HideTabView(*tab.view);
   sleeping_[workspace] = false;
@@ -7717,6 +7799,10 @@ WorkspaceExtensionTab* WorkspaceLab::DiscardExtensionTab(
           (workspace == active_index_ && selected_[workspace] == index)) {
         continue;
       }
+#if BUILDFLAG(IS_WIN)
+      if (!target && IsProfileFavorite(workspace, tab))
+        continue;
+#endif
       auto* page = tab.view->web_contents();
       if (!page || page->GetVisibility() != content::Visibility::HIDDEN ||
           page->IsLoading() || page->NeedToFireBeforeUnload() ||
@@ -8606,8 +8692,12 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
     settings["accept_languages"] = {.editable = editable,
                                     .text = BrowsingAcceptLanguages(browsing)};
   }
+  settings["middle_click_closes_tabs"] = {.value = middle_click_closes_tabs_,
+                                         .editable = CanEditWorkspace() && !private_owner_};
   if (!private_owner_) {
 #if BUILDFLAG(IS_WIN)
+    settings["notifications_menu_visible"] = {.value = notifications_menu_visible_,
+                                              .editable = CanEditWorkspace()};
     settings["hardware_acceleration"] = {.value = hardware_acceleration_,
                                          .editable = CanEditWorkspace()};
 #endif
@@ -8764,6 +8854,22 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
       return false;
     auto* probe = ExtensionProbeForProfile(profile);
     return probe && probe->SetUserEnabled(value == 1);
+  }
+  if (key == "middle_click_closes_tabs") {
+    if (private_owner_ || !CanEditWorkspace())
+      return false;
+    middle_click_closes_tabs_ = value == 1;
+    shell_->SetMiddleClickClosesTabs(middle_click_closes_tabs_);
+    PersistWorkspaceChanges();
+    return true;
+  }
+  if (key == "notifications_menu_visible") {
+    if (private_owner_ || !CanEditWorkspace())
+      return false;
+    notifications_menu_visible_ = value == 1;
+    shell_->SetNotificationsMenuVisible(notifications_menu_visible_);
+    PersistWorkspaceChanges();
+    return true;
   }
   if (key == "hardware_acceleration") {
     if (private_owner_ || !CanEditWorkspace())
@@ -9291,6 +9397,28 @@ void WorkspaceLab::OpenPin(std::string id) {
   AddTab(active_index_, pin->url, base::UTF8ToUTF16(pin->title), std::move(id));
   SelectTab(tabs.size() - 1);
   PersistWorkspaceChanges();
+}
+
+bool WorkspaceLab::IsProfileFavorite(size_t workspace, const Tab& tab) const {
+  if (tab.pin.empty())
+    return false;
+  const auto favorites = profile_favorites_.find(model_.workspaces()[workspace].profile_id);
+  return favorites != profile_favorites_.end() &&
+         std::ranges::contains(favorites->second, tab.pin, &prototype::PinnedItem::id);
+}
+
+void WorkspaceLab::LoadBackgroundProfileFavorites(size_t workspace) {
+  if (sleeping_[workspace])
+    return;
+  for (auto& tab : tabs_[workspace]) {
+    if (tab.view->web_contents() || tab.discarded_page ||
+        !tab.deferred_url.SchemeIsHTTPOrHTTPS() ||
+        !IsProfileFavorite(workspace, tab)) {
+      continue;
+    }
+    EnsureHiddenTabPage(workspace, tab, tab.deferred_url);
+    tab.view->LoadInitialURL(tab.deferred_url);
+  }
 }
 
 bool WorkspaceLab::CanEditWorkspace() const {
@@ -10111,6 +10239,10 @@ void WorkspaceLab::OnWidgetShowStateChanged(views::Widget* widget) {
 }
 
 void WorkspaceLab::ShowTab() {
+#if BUILDFLAG(IS_WIN)
+  tabs_[active_index_][selected_[active_index_]].last_selection_order =
+      ++tab_selection_order_;
+#endif
   if (fullscreen_page_) {
     if (fullscreen_page_.get() == PeekPage() ||
         tabs_[active_index_][selected_[active_index_]].view->web_contents() ==
@@ -10127,8 +10259,14 @@ void WorkspaceLab::ShowTab() {
   const bool show_split = SplitShown();
   const auto visible = show_split ? split.tabs : std::vector<size_t>{selected};
   for (size_t index = 0; index < tabs.size(); ++index) {
-    if (tabs[index].view->GetVisible() && !std::ranges::contains(visible, index))
-      HideTabView(*tabs[index].view);
+    auto& tab = tabs[index];
+    if (!tab.view->GetVisible() || std::ranges::contains(visible, index))
+      continue;
+    HideTabView(*tab.view);
+#if BUILDFLAG(IS_WIN)
+    // Reattach the Aura surface at the pane's new bounds on the next show.
+    tab.detached_view = shell_->content_host()->RemoveChildViewT(tab.view.get());
+#endif
   }
   std::vector<views::View*> panes;
   std::vector<size_t> pending_navigation;
@@ -11595,8 +11733,7 @@ void WorkspaceLab::RefreshShell() {
         !std::ranges::contains(split.tabs, index)) {
       if (!untitled && !row.custom_title)
         state.pin_page_titles.emplace(row.pin_id, row.title);
-      if (row.audible || row.muted)
-        state.open_pin_audio.emplace(row.pin_id, std::move(row));
+      state.open_profile_pin_tabs.emplace(row.pin_id, std::move(row));
       continue;
     }
     state.tabs.push_back(std::move(row));
@@ -12555,6 +12692,10 @@ base::DictValue WorkspaceLab::CaptureSession() const {
     session.Set("clean_address_copies", false);
   if (!hardware_acceleration_)
     session.Set("hardware_acceleration", false);
+  if (!notifications_menu_visible_)
+    session.Set("notifications_menu_visible", false);
+  if (!middle_click_closes_tabs_)
+    session.Set("middle_click_closes_tabs", false);
   if (image_link_previews_)
     session.Set("image_link_previews", true);
   if (dns_mode_ != 0)
@@ -12829,6 +12970,14 @@ void WorkspaceLab::CheckSessionProbePage() {
       session_probe_url_.Resolve(kProbePaths[workspace][selected]);
   const auto& companion = tabs_[workspace][1 - selected];
   const bool split_visible = SplitShown();
+  const auto& work_tab = tabs_[0][kProbeSelection[0]];
+  auto* work_page = work_tab.view->web_contents();
+  bool expect_background_work_page = false;
+#if BUILDFLAG(IS_WIN)
+  expect_background_work_page = !sleeping_[0] &&
+                                work_tab.deferred_url.SchemeIsHTTPOrHTTPS() &&
+                                IsProfileFavorite(0, work_tab);
+#endif
 #if BUILDFLAG(IS_MAC)
   if (std::ranges::any_of(tabs_[1 - workspace], [](const Tab& tab) {
         return tab.view->parent() != nullptr;
@@ -12843,7 +12992,9 @@ void WorkspaceLab::CheckSessionProbePage() {
       static_cast<bool>(companion.view->web_contents()) != split_visible ||
       companion.view->GetVisible() != split_visible ||
       shell_->split_tabs_for_testing() != splits_[workspace].tabs ||
-      (workspace == 1 && tabs_[0][kProbeSelection[0]].view->web_contents())) {
+      (workspace == 1 &&
+       (static_cast<bool>(work_page) != expect_background_work_page ||
+        (work_page && work_page->GetVisibility() != content::Visibility::HIDDEN)))) {
     Finish(false);
     return;
   }
@@ -19747,6 +19898,18 @@ bool WorkspaceLab::ToggleExtensionFromSettingsForProbe(ProfileContext& owner,
   if (!owner_index)
     return false;
   const auto original_workspace = model_.active()->id;
+  const auto original_selection = selected_;
+  const auto close_probe_tab = [&](size_t workspace) {
+    if (active_index_ != workspace)
+      return;
+    const size_t opened = selected_[workspace];
+    if (opened == original_selection[workspace] ||
+        !prototype::IsSettingsTabUrl(TabUrl(opened, {}))) {
+      return;
+    }
+    SelectTab(original_selection[workspace]);
+    CloseTab(opened);
+  };
   const auto* manager = ManagedExtensionForProfile(owner, id);
   const auto key = manager
                        ? (user_scripts ? "extension_user_scripts." : "extension_enabled.") +
@@ -19782,6 +19945,7 @@ bool WorkspaceLab::ToggleExtensionFromSettingsForProbe(ProfileContext& owner,
         peer && peer->editable() &&
         (!user_scripts || (peer->enabled() && peer->UserScriptsAllowed().has_value()));
     isolated &= control && control->GetEnabled() == peer_editable;
+    close_probe_tab(index);
   }
   auto* control = show_toggle(*owner_index);
   ui::AXActionData action;
@@ -19793,6 +19957,7 @@ bool WorkspaceLab::ToggleExtensionFromSettingsForProbe(ProfileContext& owner,
       control->HandleAccessibleAction(action) &&
       shell_->preference_switch_checked_for_testing(key) == enabled;
   shell_->CloseOverlays(true);
+  close_probe_tab(*owner_index);
   SelectWorkspace(original_workspace);
   if (changed) {
     std::puts("Zitter Content changed the active profile extension through Settings");

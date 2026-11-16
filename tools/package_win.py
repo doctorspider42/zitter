@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / ".chromium/src"
 # Not needed at run time: symbols, link products, generated sources (DevTools'
 # front end ships inside resources.pak), Python protos and ANGLE's test data.
-EXCLUDED = re.compile(r"(^gen/|^\.\./|^pyproto/|^angledata/|\.(pdb|lib|exp|ilk)$)")
+EXCLUDED = re.compile(r"(^gen/|^\.\./|^pyproto/|^angledata/|\.(pdb|lib|exp|ilk|pak\.info)$)")
 # Debugging aids that Chrome's own installer (chrome.release) leaves out too:
 # the Vulkan validation layer, the mock driver, symbol readers and the
 # pseudolocales a non-official build generates.

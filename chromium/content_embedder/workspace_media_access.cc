@@ -18,6 +18,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/bind_post_task.h"
+#include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/page_dialogs.h"
@@ -60,6 +61,34 @@ std::u16string DesktopLabel(DesktopID::Type type) {
   return prototype::T(type == DesktopID::TYPE_SCREEN ? u"Ekran systemowy"
                                                      : u"Okno systemowe");
 }
+
+#if BUILDFLAG(IS_WIN)
+std::vector<std::pair<DesktopID, std::u16string>> WindowsDesktopSources(
+    DesktopID::Type type) {
+  auto options = content::desktop_capture::CreateDesktopCaptureOptions();
+  auto capturer = type == DesktopID::TYPE_SCREEN
+      ? content::desktop_capture::CreateScreenCapturer(std::move(options), false)
+      : content::desktop_capture::CreateWindowCapturer(std::move(options));
+  webrtc::DesktopCapturer::SourceList list;
+  if (!capturer || !capturer->GetSourceList(&list))
+    return {};
+  std::vector<std::pair<DesktopID, std::u16string>> sources;
+  for (const auto& source : list) {
+    std::u16string title;
+    if (type == DesktopID::TYPE_SCREEN) {
+      title = prototype::TF(u"Ekran {}", {base::NumberToString16(sources.size() + 1)});
+    } else {
+      gfx::ElideString(base::CollapseWhitespace(base::UTF8ToUTF16(source.title), true),
+                       72, &title);
+      if (title.empty())
+        continue;
+      base::i18n::SanitizeUserSuppliedString(&title);
+    }
+    sources.emplace_back(DesktopID(type, source.id), std::move(title));
+  }
+  return sources;
+}
+#endif
 
 bool IsTabCapture(Type type) {
   return type == Type::DISPLAY_VIDEO_CAPTURE ||
@@ -337,6 +366,9 @@ void WorkspaceMediaAccess::Request(content::WebContents* page,
     desktop |= (desktop_probe_ == DesktopProbe::kNone ||
                 desktop_probe_ == DesktopProbe::kNativeCancel) &&
                CanUseWorkspaceDesktopPicker();
+#elif BUILDFLAG(IS_WIN)
+    desktop |= desktop_probe_ == DesktopProbe::kNone ||
+               desktop_probe_ == DesktopProbe::kNativeCancel;
 #endif
     if (desktop) {
       for (auto type : {DesktopID::TYPE_WINDOW, DesktopID::TYPE_SCREEN}) {
@@ -366,7 +398,7 @@ void WorkspaceMediaAccess::Request(content::WebContents* page,
   prompt_.Run(
       tab ? prototype::TF(u"{} chce udostępnić obraz.", {origin})
           : prototype::TF(u"{} chce użyć urządzeń: {}.", {origin, description}),
-      std::move(choices), tab_count, std::move(audio_option),
+      std::move(choices), tab_count, std::move(audio_option), false,
       base::BindOnce(&WorkspaceMediaAccess::OnConsent,
                      weak_factory_.GetWeakPtr(), ++request_id_));
 }
@@ -448,6 +480,13 @@ void WorkspaceMediaAccess::OpenDesktopPicker(int id, DesktopID::Type type) {
     OnDesktopSelected(id, DesktopID(type, DesktopID::kFakeId));
     return;
   }
+#if BUILDFLAG(IS_WIN)
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&WindowsDesktopSources, type),
+      base::BindOnce(&WorkspaceMediaAccess::ShowWindowsDesktopSources,
+                     weak_factory_.GetWeakPtr(), id, type));
+#else
   auto weak = weak_factory_.GetWeakPtr();
   content::GetIOThreadTaskRunner({})->PostTask(
       FROM_HERE, base::BindOnce(
@@ -480,7 +519,47 @@ void WorkspaceMediaAccess::OpenDesktopPicker(int id, DesktopID::Type type) {
               &WorkspaceMediaAccess::OnDesktopDismissed, weak, id, false)),
           base::BindPostTaskToCurrentDefault(base::BindOnce(
               &WorkspaceMediaAccess::OnDesktopDismissed, weak, id, true))));
+#endif
 }
+
+#if BUILDFLAG(IS_WIN)
+void WorkspaceMediaAccess::ShowWindowsDesktopSources(
+    int id, DesktopID::Type type,
+    std::vector<std::pair<DesktopID, std::u16string>> sources) {
+  if (id != request_id_ || !pending_)
+    return;
+  if (!IsCurrentRequest() || sources.empty()) {
+    OnDesktopDismissed(id, sources.empty());
+    return;
+  }
+  if (desktop_probe_ == DesktopProbe::kNativeCancel)
+    std::puts("Zitter Content native desktop picker created");
+  std::vector<std::u16string> choices;
+  std::vector<DesktopID> ids;
+  for (auto& [source, title] : sources) {
+    choices.push_back(std::move(title));
+    ids.push_back(source);
+  }
+  const auto origin = base::UTF8ToUTF16(pending_->request.url_origin.Serialize());
+  prompt_.Run(
+      type == DesktopID::TYPE_SCREEN
+          ? prototype::TF(u"Wybierz ekran do udostępnienia witrynie {}.", {origin})
+          : prototype::TF(u"Wybierz okno do udostępnienia witrynie {}.", {origin}),
+      std::move(choices), 0, {}, true,
+      base::BindOnce([](base::WeakPtr<WorkspaceMediaAccess> self, int id,
+                         std::vector<DesktopID> ids, std::optional<size_t> selected,
+                         bool) {
+        if (!self || id != self->request_id_ || !self->pending_)
+          return;
+        if (!selected || *selected >= ids.size()) {
+          self->OnDesktopDismissed(id, false);
+          return;
+        }
+        self->pending_->desktop_picker = ids[*selected];
+        self->OnDesktopSelected(id, ids[*selected]);
+      }, weak_factory_.GetWeakPtr(), id, std::move(ids)));
+}
+#endif
 
 void WorkspaceMediaAccess::OnDesktopSelected(int id, DesktopID source) {
   if (id != request_id_ || !pending_)

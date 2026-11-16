@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows counterpart of ui.py: launch the Content build, find its windows,
+r"""Windows counterpart of ui.py: launch the Content build, find its windows,
 click, and screenshot them.
 
   ui.py launch [--open-panel space] [--scale 1.25] [--theme light] [--fresh]

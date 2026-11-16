@@ -721,7 +721,7 @@ mod ffi {
         fn split_layout(width: i32, height: i32, count: usize) -> ColumnLayout;
         fn folder_indent(depth: i32) -> i32;
         fn close_visible(active: bool, tile: bool, hovered: bool) -> bool;
-        fn footer_layout(width: i32, content_width: i32) -> ColumnLayout;
+        fn footer_layout(width: i32, content_width: i32, notifications: bool) -> ColumnLayout;
         fn strip_layout(width: i32, height: i32, spacing: i32, children: &[ColumnChild]) -> ColumnLayout;
         fn address_layout(width: i32, height: i32, host_width: i32) -> RowLayout;
         fn row_layout(width: i32, height: i32, title_width: i32,
@@ -1125,6 +1125,10 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(0,K::Pinned,"",t("Zawsze widoczny panel kart"),t("Przypnij karty i przestrzenie przy lewej krawędzi."),vec![],"",A::None));
     rows.push(preference_spec(0,K::Animations,"",t("Animacje przestrzeni"),t("Płynne przejścia. Systemowe ograniczenie ruchu ma pierwszeństwo."),vec![],"",A::None));
     rows.push(preference_spec(0,K::WorkspaceNames,"",t("Nazwa aktywnej przestrzeni"),t("Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart."),vec![],"",A::None));
+    if cfg!(target_os = "windows") {
+        rows.push(preference_spec(0,K::Toggle,"notifications_menu_visible",t("Powiadomienia w panelu kart"),t("Pokazuj dzwonek obok pobranych plików."),vec![],"",A::None));
+    }
+    rows.push(preference_spec(0,K::Toggle,"middle_click_closes_tabs",t("Zamykanie kart środkowym przyciskiem"),t("Środkowy przycisk zamyka otwartą kartę i zachowuje przypięcie."),vec![],"",A::None));
     rows.push(preference_spec(0,K::Language,"",t("Język interfejsu"),t("Zmiana zadziała po ponownym uruchomieniu Zitter."),vec![t("Systemowy").into(),"Polski".into(),"English".into()],"",A::None));
     rows.push(preference_spec(0,K::FoldersCollapsed,"",t("Zwinięte foldery przypiętych"),t("Foldery startują zwinięte. Karta otwarta z Command Center pokazuje się pod folderem bez rozwijania reszty."),vec![],"",A::None));
     rows.push(preference_spec(0,K::Toggle,"image_link_previews",t("Magiczny podgląd obrazków"),t("Po najechaniu na link do obrazka pokaż jego podgląd. Może pobrać obraz bez kliknięcia. Domyślnie wyłączone. Dotyczy całej aplikacji."),vec![],"",A::None));
@@ -2561,7 +2565,7 @@ impl ActionGraph {
         let previous=self.order.iter().filter_map(|id|previous_by_id.get(id).copied()).collect::<Vec<_>>();
         let geometry_changed=previous.into_iter().ne(items.iter().map(|i|i.key.as_str()))||items.iter().any(|item|self.nodes.get(&(3,0,0,item.key.clone())).is_some_and(|node|{let n=node.borrow();matches!(n.model.as_deref(),Some(NodeModel::Workspace(p)) if p.label!=item.label)}));
         let mut keys=Vec::with_capacity(11+items.len());
-        for name in ["sidebar.add","sidebar.downloads","header.sidebar","header.back","header.forward","header.reload","header.notifications","sidebar.address"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
+        for name in ["sidebar.add","sidebar.downloads","header.sidebar","header.back","header.forward","header.reload","sidebar.address"]{keys.push(ffi::ActionNodeKey{kind:4,high:0,low:0,name:name.into()});}
         keys.push(ffi::ActionNodeKey{kind:11,high:0,low:0,name:group.3.clone()});
         for item in &items{keys.push(ffi::ActionNodeKey{kind:3,high:0,low:0,name:item.key.clone()});}
         let plan=self.reconcile(keys);if !plan.admitted{return plan;}
@@ -2926,24 +2930,25 @@ fn row_layout(width: i32, height: i32, title_width: i32,
     }
 }
 
-fn footer_layout(width: i32, content_width: i32) -> ffi::ColumnLayout {
+fn footer_layout(width: i32, content_width: i32, notifications: bool) -> ffi::ColumnLayout {
     // Two 28 px IconButtons close the 32 px row: Downloads on the leading edge,
     // „+” on the trailing one. The space rail is centred between them.
     const BUTTON: i32 = 28; const GAP: i32 = 4;
-    let lead=BUTTON+GAP;
-    // An unconstrained width fits the full rail and both footer actions.
-    let width=if width<0 {content_width.max(0).saturating_add(2*lead)} else {width};
-    let middle=(width-2*lead).max(0);
+    let trailing=BUTTON+GAP;
+    let lead=trailing * if notifications {2} else {1};
+    let width=if width<0 {content_width.max(0).saturating_add(lead+trailing)} else {width};
+    let middle=(width-lead-trailing).max(0);
     let overflow=content_width>middle;
     let height=if overflow {47} else {32};
     let strip_width=if overflow {middle} else {content_width.max(0)};
-    let strip_x=((width-strip_width)/2).min(width-lead-strip_width).max(lead.min(width));
+    let strip_x=((width-strip_width)/2).min(width-trailing-strip_width).max(lead.min(width));
     let button_y=(32-BUTTON)/2;
     ffi::ColumnLayout {width,height,children:vec![
         ffi::Rect{x:strip_x,y:0,width:strip_width,height},
-        ffi::Rect{x:(width-lead).max(0),y:0,width:1,height:1},
+        ffi::Rect{x:(width-trailing).max(0),y:0,width:1,height:1},
         ffi::Rect{x:0,y:button_y,width:BUTTON.min(width),height:BUTTON},
         ffi::Rect{x:(width-BUTTON).max(0),y:button_y,width:BUTTON.min(width),height:BUTTON},
+        if notifications { ffi::Rect{x:trailing,y:button_y,width:BUTTON.min(width),height:BUTTON} } else { ffi::Rect{x:0,y:0,width:0,height:0} },
     ]}
 }
 fn strip_layout(width: i32, height: i32, spacing: i32, children: &[ffi::ColumnChild]) -> ffi::ColumnLayout {
@@ -4054,14 +4059,14 @@ mod tests {
         assert_eq!((label.x+label.width/2.0,label.y+label.height/2.0),(14.0,14.0));assert!(!counted.iter().any(|p|p.width==1.6));
     }
     #[test] fn footer_reserves_a_horizontal_scroll_gutter_only_for_overflow() {
-        let normal=footer_layout(240,60); assert_eq!(normal.height,32);
+        let normal=footer_layout(240,60,false); assert_eq!(normal.height,32);
         assert_eq!((normal.children[0].x,normal.children[0].width),(90,60));
         // Downloads leads the row and „+” ends it; a wide rail stays between them.
         assert_eq!((normal.children[2].x,normal.children[2].width,normal.children[2].y),(0,28,2));
         assert_eq!((normal.children[3].x,normal.children[3].width),(212,28));
-        let wide=footer_layout(240,170); assert_eq!(wide.height,32);assert_eq!((wide.children[0].x,wide.children[0].width),(35,170));
-        assert_eq!(footer_layout(240,200).children[0].x,32);
-        let overflow=footer_layout(200,300); assert_eq!(overflow.height,47);
+        let wide=footer_layout(240,170,false); assert_eq!(wide.height,32);assert_eq!((wide.children[0].x,wide.children[0].width),(35,170));
+        assert_eq!(footer_layout(240,200,false).children[0].x,32);
+        let overflow=footer_layout(200,300,false); assert_eq!(overflow.height,47);
         assert_eq!((overflow.children[0].x,overflow.children[0].width,overflow.children[0].height),(32,136,47));
         assert_eq!((overflow.children[3].x,overflow.children[3].width),(172,28)); assert_eq!(overflow.children[3].y,2);
         assert_eq!(overflow.children[2].x,0);
@@ -4329,15 +4334,16 @@ mod tests {
     }
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),83);
-        let mut counts=[0;12];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[13,5,9,7,12,5,5,3,1,6,12,5]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),43);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),82);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let windows_options = usize::from(cfg!(target_os = "windows"));
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam"]);assert_eq!(c.descriptions.len(),12);assert_eq!(c.rows.len(),84 + windows_options);
+        let mut counts=[0;12];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[14 + windows_options,5,9,7,12,5,5,3,1,6,12,5]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),44 + windows_options);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),83 + windows_options);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
         for row in &c.rows{if row.kind==K::Text||row.kind==K::Toggle||row.kind==K::Picker{assert!(!row.key.is_empty());assert!(keys.insert(row.key.clone()));}else{assert!(row.key.is_empty());}}
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle).map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","online_search_suggestions","clean_address_copies","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration","assistant_enabled","assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web","assistant_confirm_clicks","assistant_background","assistant_confirm_background","ad_blocking","ad_blocking_stealth"]);
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle && r.key!="notifications_menu_visible" && r.key!="middle_click_closes_tabs").map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","online_search_suggestions","clean_address_copies","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration","assistant_enabled","assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web","assistant_confirm_clicks","assistant_background","assistant_confirm_background","ad_blocking","ad_blocking_stealth"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).map(|r|r.key.as_str()).collect::<Vec<_>>(),["font_standard","font_serif","font_sans","font_fixed","accept_languages","dns_templates"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","assistant_concurrency"]);
         for key in ["hardware_acceleration","dns_mode","dns_templates"]{let row=c.rows.iter().find(|r|r.key==key).unwrap();assert!(row.detail.contains("całej aplikacji"));}

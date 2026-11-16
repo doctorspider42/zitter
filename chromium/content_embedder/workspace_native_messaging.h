@@ -1,6 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-#ifndef ZITTER_CONTENT_WORKSPACE_NATIVE_MESSAGING_MAC_H_
-#define ZITTER_CONTENT_WORKSPACE_NATIVE_MESSAGING_MAC_H_
+#ifndef ZITTER_CONTENT_WORKSPACE_NATIVE_MESSAGING_H_
+#define ZITTER_CONTENT_WORKSPACE_NATIVE_MESSAGING_H_
 
 #include <memory>
 #include <string>
@@ -18,4 +18,4 @@ std::unique_ptr<extensions::NativeMessageHost> CreateWorkspaceNativeMessageHost(
     const std::string& host_name, bool allow_user_level);
 }  // namespace zitter::content_embedder
 
-#endif  // ZITTER_CONTENT_WORKSPACE_NATIVE_MESSAGING_MAC_H_
+#endif  // ZITTER_CONTENT_WORKSPACE_NATIVE_MESSAGING_H_
