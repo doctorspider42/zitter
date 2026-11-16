@@ -14,7 +14,6 @@
   ui.py key return [--mod cmd]      press a key; ui.py type "text" types into the focused field
   ui.py shot OUT.png [--window W]   capture one window: main (default), sidebar, panel, a title or id
   ui.py frames OUT.png --count 8    capture an animation into one contact sheet (--then-click ...)
-  ui.py open-space-panel            click the sidebar's settings button (prefer launch --open-panel)
 
 The app runs with --zitter-automation: commands go through a socket in the workspace
 root, straight to the app's widgets and pages. The system cursor never moves, the app
@@ -198,7 +197,8 @@ def launch(a):
         key.write_bytes(secrets.token_bytes(32))
         key.chmod(0o600)
     command = [str(executable()), "--zitter-content-workspace",
-               f"--zitter-content-workspace-root={PROFILE}", "--zitter-automation"]
+               f"--zitter-content-workspace-root={PROFILE}",
+               "--zitter-automation=front" if a.front else "--zitter-automation"]
     SOCKET.unlink(missing_ok=True)
     if a.open_panel:
         command.append(f"--zitter-open-panel={a.open_panel}")
@@ -265,29 +265,11 @@ def frames(a):
         command["columns"] = a.columns
     if a.crop:
         command["crop"] = crop(a.crop)
+    if a.alone:
+        command["alone"] = True
     if (first := then_command(a)):
         command["start_with"] = first
     show(automation(command))
-
-
-def open_space_panel(_):
-    # The sidebar is its own window; its settings button sits 19 pt from the right
-    # edge and 22 pt from the bottom.
-    def panel():
-        return find("panel")
-    for _ in range(3):
-        if (p := panel()):
-            break
-        sidebar = find("sidebar")
-        if not sidebar:
-            sys.exit("No sidebar window; is the sidebar pinned and the app running?")
-        automation({"cmd": "click", "window": sidebar["id"],
-                    "x": sidebar["width"] - 19, "y": sidebar["height"] - 22})
-        p = wait(panel, 3)
-    if not p:
-        sys.exit("The space panel did not open.")
-    time.sleep(0.5)
-    print(json.dumps(p))
 
 
 def find(name):
@@ -315,6 +297,8 @@ def shot(a):
         command = {"cmd": "shot", "path": output(a.out), "window": window_ref(a.window), "scale": a.scale}
         if a.crop:
             command["crop"] = crop(a.crop)
+        if a.alone:
+            command["alone"] = True
         show(automation(command))
         return
     windows.cursor = True
@@ -337,6 +321,8 @@ l.add_argument("--theme", choices=["dark", "light"], help="Noc (dark) or Papier 
 l.add_argument("--raster", choices=["compositor", "metal"], help="Rust UI painting (default: compositor)")
 l.add_argument("--scale", type=float, help="force a device scale factor (HiDPI checks)")
 l.add_argument("--fresh", action="store_true", help="start from an empty workspace root")
+l.add_argument("--front", action="store_true",
+    help="let the app come to the front (by default it stays behind your own app)")
 l.set_defaults(run=launch)
 sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
 
@@ -391,11 +377,11 @@ def tree(a):
 
 
 tr.set_defaults(run=tree)
-sub.add_parser("open-space-panel").set_defaults(run=open_space_panel)
 s = sub.add_parser("shot"); s.add_argument("out"); s.add_argument("--window", default="main",
     help="main, sidebar, panel (the space panel), a title or a window id")
 s.add_argument("--scale", type=float, default=1, help="pixels per point (1 = window points; 2 = Retina)")
 s.add_argument("--crop", help="x,y,width,height in window points")
+s.add_argument("--alone", action="store_true", help="without the window's child windows (sidebar, panels)")
 s.add_argument("--screen", action="store_true", help="old way: screencapture (needs the window on screen)")
 s.set_defaults(run=shot)
 f = sub.add_parser("frames", help="an animation's frames on one contact sheet")
@@ -404,6 +390,7 @@ f.add_argument("--count", type=int, default=6); f.add_argument("--interval", typ
 f.add_argument("--delay", type=int, default=0, help="ms before the first frame")
 f.add_argument("--scale", type=float, default=0.5, help="pixels per point (default 0.5 saves context)")
 f.add_argument("--columns", type=int); f.add_argument("--crop", help="x,y,width,height in window points")
+f.add_argument("--alone", action="store_true", help="without child windows")
 f.add_argument("--separate", action="store_true", help="one file per frame instead of a sheet")
 f.add_argument("--then-click", type=float, nargs=2, metavar=("X", "Y"), help="click first (window points with --window)")
 f.add_argument("--then-name", help="click this named view first"); f.add_argument("--then-key")

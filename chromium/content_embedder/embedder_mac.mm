@@ -406,6 +406,17 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
   }
   return false;
 }
+// UI automation keeps the app behind the person's own app (ui_automation.h).
+- (void)activateIgnoringOtherApps:(BOOL)flag {
+  if (zitter::content_embedder::UiAutomationBlocksActivation())
+    return;
+  [super activateIgnoringOtherApps:flag];
+}
+- (void)activate {
+  if (zitter::content_embedder::UiAutomationBlocksActivation())
+    return;
+  [super activate];
+}
 - (void)terminate:(id)sender {
   if (_workspaceQuit) {
     _workspaceQuit.Run();
@@ -1180,8 +1191,11 @@ class LabMainParts final : public content::BrowserMainParts,
     // Development: agents drive the UI and take screenshots through a socket
     // in a private probe root, without the system cursor (ui_automation.h).
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(kUiAutomation)) {
-      if (IsProbeRoot(workspace_root_))
-        ui_automation_ = UiAutomation::Start(workspace_root_.AppendASCII("automation.sock"));
+      if (ui_automation_allowed_)
+        ui_automation_ = UiAutomation::Start(
+            workspace_root_.AppendASCII("automation.sock"),
+            base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(kUiAutomation) ==
+                "front");
       else
         LOG(ERROR) << "--zitter-automation needs a private zitter-content-probe-* workspace root";
     }
@@ -1603,6 +1617,8 @@ class LabMainParts final : public content::BrowserMainParts,
     }
 
     workspace_root_ = root;
+    // Checked here, where file access is allowed; StartWorkspace runs on the UI thread.
+    ui_automation_allowed_ = IsProbeRoot(root);
     workspace_session_ = std::move(*restored);
     return true;
   }
@@ -2176,6 +2192,7 @@ class LabMainParts final : public content::BrowserMainParts,
   int fingerprint_step_ = 0;
   std::unique_ptr<DownloadProbe> download_probe_;
   std::unique_ptr<UiAutomation> ui_automation_;
+  bool ui_automation_allowed_ = false;
   bool grant_storage_probe_ = false;
   bool profile_probe_complete_ = false;
   bool workspace_smoke_ = false;

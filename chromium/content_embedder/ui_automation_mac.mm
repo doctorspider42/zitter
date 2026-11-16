@@ -46,7 +46,10 @@
 #include "content/public/browser/web_contents.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/common/input/web_mouse_wheel_event.h"
+#include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkImage.h"
 #include "ui/accessibility/ax_enum_util.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
@@ -72,6 +75,8 @@
 
 namespace zitter::content_embedder {
 namespace {
+
+bool g_blocks_activation = false;
 
 using Reply = base::OnceCallback<void(base::DictValue)>;
 
@@ -327,10 +332,9 @@ int BlinkModifiers(int flags) {
 
 // ---------------------------------------------------------------- capture
 
-// Copies a widget's composited frame (web pages included) at `scale` pixels
-// per window point; empty on failure or after `timeout`.
-void CaptureWidget(views::Widget* widget, float scale,
-                   base::OnceCallback<void(SkBitmap)> done) {
+// Copies a widget's composited frame (web pages included) in device pixels;
+// empty on failure or after five seconds.
+void CopyFrame(views::Widget* widget, base::OnceCallback<void(SkBitmap)> done) {
   ui::Compositor* compositor = widget->GetCompositor();
   ui::Layer* layer = widget->GetLayer();
   if (!compositor || !layer) {
@@ -359,14 +363,75 @@ void CaptureWidget(views::Widget* widget, float scale,
                                 : result->ScopedAccessSkBitmap().GetOutScopedBitmap());
           },
           pending));
-  const int from = std::lround(compositor->device_scale_factor() * 100);
-  const int to = std::max(1L, std::lround(scale * 100));
-  if (from != to)
-    request->SetUniformScaleRatio(from, to);
   layer->RequestCopyOfOutput(std::move(request));
   compositor->ScheduleFullRedraw();
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE, base::BindOnce(&Pending::Finish, pending, SkBitmap()), base::Seconds(5));
+}
+
+// The widget's visible child windows (the sidebar, panels), back to front,
+// with their own children after them.
+void AddChildWidgets(views::Widget* widget, std::vector<views::Widget*>* out) {
+  for (NSWindow* child in WindowFor(widget).childWindows) {
+    views::Widget* child_widget = WidgetFor(child);
+    if (child_widget && child.isVisible && child_widget->IsVisible()) {
+      out->push_back(child_widget);
+      AddChildWidgets(child_widget, out);
+    }
+  }
+}
+
+// The window as the person sees it: its frame at `scale` pixels per point,
+// with its visible child windows drawn on top unless `alone`.
+void CaptureWidget(views::Widget* widget, float scale, bool alone,
+                   base::OnceCallback<void(SkBitmap)> done) {
+  std::vector<views::Widget*> widgets{widget};
+  if (!alone)
+    AddChildWidgets(widget, &widgets);
+  struct Stack : base::RefCounted<Stack> {
+    float scale = 1;
+    gfx::Point origin;
+    std::vector<std::pair<SkBitmap, gfx::Rect>> layers;  // Bounds in screen points.
+    size_t pending = 0;
+    base::OnceCallback<void(SkBitmap)> done;
+    void Add(size_t index, SkBitmap bitmap) {
+      layers[index].first = std::move(bitmap);
+      if (--pending)
+        return;
+      SkBitmap base = Scaled(layers[0].first, layers[0].second.size());
+      if (base.drawsNothing() || layers.size() == 1)
+        return std::move(done).Run(std::move(base));
+      SkCanvas canvas(base);
+      for (size_t i = 1; i < layers.size(); ++i) {
+        const SkBitmap child = Scaled(layers[i].first, layers[i].second.size());
+        if (child.drawsNothing())
+          continue;
+        const gfx::Vector2d offset = layers[i].second.origin() - origin;
+        canvas.drawImage(child.asImage(), offset.x() * scale, offset.y() * scale);
+      }
+      std::move(done).Run(std::move(base));
+    }
+    SkBitmap Scaled(const SkBitmap& bitmap, const gfx::Size& points) const {
+      const int width = std::max(1, static_cast<int>(std::lround(points.width() * scale)));
+      const int height = std::max(1, static_cast<int>(std::lround(points.height() * scale)));
+      if (bitmap.drawsNothing() || (bitmap.width() == width && bitmap.height() == height))
+        return bitmap;
+      return skia::ImageOperations::Resize(bitmap, skia::ImageOperations::RESIZE_GOOD, width,
+                                           height);
+    }
+   private:
+    friend class base::RefCounted<Stack>;
+    ~Stack() = default;
+  };
+  auto stack = base::MakeRefCounted<Stack>();
+  stack->scale = scale;
+  stack->origin = widget->GetClientAreaBoundsInScreen().origin();
+  stack->pending = widgets.size();
+  stack->done = std::move(done);
+  for (views::Widget* each : widgets)
+    stack->layers.emplace_back(SkBitmap(), each->GetClientAreaBoundsInScreen());
+  for (size_t i = 0; i < widgets.size(); ++i)
+    CopyFrame(widgets[i], base::BindOnce(&Stack::Add, stack, i));
 }
 
 SkBitmap Crop(const SkBitmap& bitmap, const base::DictValue& args, float scale) {
@@ -773,11 +838,20 @@ class Driver final : public views::WidgetObserver {
       event.SetPositionInWidget(gfx::PointF(point));
       event.SetPositionInScreen(
           gfx::PointF(point + web->GetBoundsInScreen().OffsetFromOrigin()));
+      event.delta_units = ui::ScrollGranularity::kScrollByPrecisePixel;
+      // macOS input expects a phased gesture, like a trackpad: began with the
+      // whole delta, then ended.
+      content::RenderWidgetHost* host =
+          web->web_contents()->GetRenderWidgetHostView()->GetRenderWidgetHost();
+      event.phase = blink::WebMouseWheelEvent::kPhaseBegan;
       event.delta_x = -dx;
       event.delta_y = -dy;
-      event.delta_units = ui::ScrollGranularity::kScrollByPrecisePixel;
-      web->web_contents()->GetRenderWidgetHostView()->GetRenderWidgetHost()->ForwardWheelEvent(
-          event);
+      host->ForwardWheelEvent(event);
+      event.phase = blink::WebMouseWheelEvent::kPhaseEnded;
+      event.delta_x = 0;
+      event.delta_y = 0;
+      event.SetTimeStamp(ui::EventTimeForNow());
+      host->ForwardWheelEvent(event);
     } else {
       ui::MouseWheelEvent event(gfx::Vector2d(-dx, -dy), gfx::PointF(target->point),
                                 gfx::PointF(target->point), ui::EventTimeForNow(), 0, 0);
@@ -809,6 +883,9 @@ class Driver final : public views::WidgetObserver {
     NSWindow* window = WindowFor(widget);
     if (!window.isKeyWindow)
       [window makeKeyWindow];
+    // NSApp sends keys to its key window, which an app in the background
+    // doesn't have; then the window itself takes them.
+    const bool through_app = NSApp.keyWindow == window;
     NSString* characters = character ? [NSString stringWithCharacters:&character length:1] : @"";
     NSString* unmodified = shifted ? [NSString stringWithCharacters:&shifted length:1] : @"";
     for (NSEventType type : {NSEventTypeKeyDown, NSEventTypeKeyUp}) {
@@ -822,10 +899,18 @@ class Driver final : public views::WidgetObserver {
                      charactersIgnoringModifiers:unmodified
                                        isARepeat:NO
                                          keyCode:static_cast<unsigned short>(mac_code)];
-      [NSApp postEvent:event atStart:NO];
+      if (through_app) {
+        [NSApp postEvent:event atStart:NO];
+      } else {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, base::BindOnce(
+                           [](NSWindow* target, NSEvent* key) { [target sendEvent:key]; },
+                           window, event));
+      }
     }
     base::DictValue result = Ok();
     result.Set("window", Title(widget));
+    result.Set("via", through_app ? "app" : "window");
     std::move(reply).Run(std::move(result));
   }
 
@@ -871,10 +956,18 @@ class Driver final : public views::WidgetObserver {
     std::move(reply).Run(std::move(result));
   }
 
-  // The window keys would go to: the key window, else the main one.
+  // The window keys would go to: the key window. In the background the app
+  // has none; then the frontmost window that could be key and has a focused
+  // view (the panel that just opened), else the main one.
   views::Widget* KeyWidget() {
     if (views::Widget* widget = WidgetFor(NSApp.keyWindow))
       return widget;
+    for (views::Widget* widget : OrderedWidgets(true)) {
+      if (WindowFor(widget).canBecomeKeyWindow && widget->GetFocusManager() &&
+          widget->GetFocusManager()->GetFocusedView()) {
+        return widget;
+      }
+    }
     std::string ignored;
     return FindWidget(base::DictValue(), &ignored);
   }
@@ -893,7 +986,7 @@ class Driver final : public views::WidgetObserver {
     base::DictValue result;
     result.Set("window", Title(widget));
     result.Set("scale", scale);
-    CaptureWidget(widget, scale,
+    CaptureWidget(widget, scale, args.FindBool("alone").value_or(false),
         base::BindOnce(
             [](base::DictValue args, float scale, base::FilePath path, Reply reply,
                base::DictValue result, SkBitmap bitmap) {
@@ -979,7 +1072,7 @@ class Driver final : public views::WidgetObserver {
       FrameDone(run, index, SkBitmap());
       return;
     }
-    CaptureWidget(run->widget, run->scale,
+    CaptureWidget(run->widget, run->scale, run->args.FindBool("alone").value_or(false),
                   base::BindOnce(&Driver::FrameDone, GetWeakPtr(), base::Unretained(run), index));
   }
 
@@ -1156,6 +1249,7 @@ class UiAutomationImpl final : public UiAutomation {
   }
 
   ~UiAutomationImpl() override {
+    g_blocks_activation = false;
     listener_->Stop();
     unlink(socket_.value().c_str());
   }
@@ -1168,8 +1262,12 @@ class UiAutomationImpl final : public UiAutomation {
 
 }  // namespace
 
+bool UiAutomationBlocksActivation() {
+  return g_blocks_activation;
+}
+
 // static
-std::unique_ptr<UiAutomation> UiAutomation::Start(const base::FilePath& socket) {
+std::unique_ptr<UiAutomation> UiAutomation::Start(const base::FilePath& socket, bool front) {
   sockaddr_un address{};
   address.sun_family = AF_UNIX;
   if (socket.value().size() >= sizeof(address.sun_path)) {
@@ -1190,6 +1288,7 @@ std::unique_ptr<UiAutomation> UiAutomation::Start(const base::FilePath& socket) 
     close(fd);
     return nullptr;
   }
+  g_blocks_activation = !front;
   LOG(WARNING) << "UI automation listening on " << socket.value();
   return std::make_unique<UiAutomationImpl>(socket, fd);
 }

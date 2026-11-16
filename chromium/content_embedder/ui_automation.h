@@ -23,8 +23,13 @@ class UiAutomation {
  public:
   virtual ~UiAutomation() = default;
   // Null when the socket can't be opened.
-  static std::unique_ptr<UiAutomation> Start(const base::FilePath& socket);
+  static std::unique_ptr<UiAutomation> Start(const base::FilePath& socket, bool front);
 };
+
+// While automation runs, the app doesn't bring itself to the front (a panel
+// opening calls -[NSApp activate]), so it never takes the keyboard from the
+// person's own app. --zitter-automation=front lets it activate as usual.
+bool UiAutomationBlocksActivation();
 
 }  // namespace zitter::content_embedder
 
