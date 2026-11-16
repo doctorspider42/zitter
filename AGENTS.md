@@ -22,8 +22,7 @@ Review UI changes in light and dark themes across the affected renderers
 - Zitter builds only on the Content embedder (`//zitter_content:zitter_content`).
   Build in the existing output directories. macOS: `./build.sh` uses
   `out/ZitterContentBundle` (`--build-only`: `out/ZitterContentDev`);
-  `ZITTER_CONTENT_OUT=out/<dir>` picks another existing one, such as
-  `out/ZitterOptimized`, which holds an earlier Content build. Windows:
+  `ZITTER_CONTENT_OUT=out/<dir>` picks another existing one. Windows:
   `out/ZitterWinContent`.
 - Create a new `.chromium/src/out/*` directory only after the user explicitly
   agrees, asked each time. A Chromium output directory takes 10–40 GB and hours
