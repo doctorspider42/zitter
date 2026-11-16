@@ -18404,6 +18404,12 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
   if (!review) {
     SetExtensionManagerStatus(
         prototype::T(u"Nie udało się zweryfikować tego rozszerzenia."), true);
+    // The store page only stops its spinner; say why on the page's window.
+    if (!store_id.empty()) {
+      shell_->ShowToast(prototype::T(
+          u"Nie udało się zainstalować rozszerzenia. Może używać funkcji, których Zitter jeszcze nie obsługuje."),
+          {}, {});
+    }
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(kExtensionInstallUiProbe)) {
       LOG(ERROR) << "The Settings package review failed";
       Finish(false);
@@ -18420,118 +18426,77 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
     base::i18n::SanitizeUserSuppliedString(&result);
     return result;
   };
-  std::u16string detail = prototype::TF(u"Profil: {}",
-      {text(profiles_[profile].name)});
+  // Design: a short Chrome-style summary of what the extension can do. The
+  // signing key, resources and script details stay out of the prompt.
   const auto* previous_version = review->FindString("previous_version");
-  detail += u"\n" + (previous_version
-      ? prototype::TF(u"Wersja: {} → {}",
-                     {text(*previous_version), text(*review->FindString("version"))})
-      : prototype::TF(u"Wersja: {}", {text(*review->FindString("version"))}));
-  if (review->FindBool("scope_expanded").value_or(false)) {
-    detail += u"\n" + prototype::T(
-        u"Ta aktualizacja zmienia zakres dostępu lub zabezpieczenia rozszerzenia.");
-  }
-  detail += u"\n" + prototype::TF(u"Klucz podpisu SHA-256: {}",
-      {text(*review->FindString("key_sha256"))});
-  const auto append = [&](std::u16string label, const base::ListValue& values) {
-    for (const auto& value : values)
-      detail += u"\n" + label + u" " + text(value.GetString());
-  };
-  append(prototype::T(u"Uprawnienie:"), *review->FindList("api_permissions"));
-  if (review->FindBool("file_access_blocked").value_or(false))
-    detail += u"\n" + prototype::T(u"Dostęp rozszerzenia do lokalnych plików jest wyłączony.");
-  if (const auto* commands = review->FindDict("commands")) {
-    for (const auto [name, value] : *commands) {
-      detail += u"\n" + prototype::TF(u"Polecenie rozszerzenia: {}", {text(name)});
-      if (const auto* keys = value.GetDict().FindDict("suggested_key")) {
-        for (const auto [platform, key] : *keys) {
-          if (key.is_string())
-            detail += u" " + text(platform) + u" " + text(key.GetString());
-        }
+  const auto& apis = *review->FindList("api_permissions");
+  const auto has_api = [&](std::string_view name) { return apis.contains(name); };
+  std::vector<std::string> hosts;
+  bool all_sites = false;
+  const auto add_hosts = [&](const base::ListValue* patterns) {
+    if (!patterns)
+      return;
+    for (const auto& value : *patterns) {
+      if (!value.is_string())
+        continue;
+      const auto& pattern = value.GetString();
+      if (pattern == "<all_urls>" || pattern == "*://*/*" || pattern == "http://*/*" ||
+          pattern == "https://*/*") {
+        all_sites = true;
+        continue;
       }
+      const auto scheme = pattern.find("://");
+      if (scheme == std::string::npos)
+        continue;
+      auto host = pattern.substr(scheme + 3, pattern.find('/', scheme + 3) - scheme - 3);
+      if (host.starts_with("*."))
+        host.erase(0, 2);
+      if (!host.empty() && host != "*" && !std::ranges::contains(hosts, host))
+        hosts.push_back(std::move(host));
     }
+  };
+  add_hosts(review->FindList("host_permissions"));
+  for (const auto& value : *review->FindList("content_scripts"))
+    add_hosts(value.GetDict().FindList("matches"));
+  std::vector<std::u16string> abilities;
+  if (all_sites) {
+    abilities.push_back(prototype::T(u"Odczytywać i zmieniać Twoje dane na wszystkich stronach"));
+  } else if (!hosts.empty()) {
+    std::u16string list;
+    for (size_t i = 0; i < hosts.size() && i < 3; ++i)
+      list += (i ? u", " : u"") + text(hosts[i]);
+    if (hosts.size() > 3)
+      list += u" " + prototype::TF(u"i {} innych", {base::NumberToString16(hosts.size() - 3)});
+    abilities.push_back(prototype::TF(u"Odczytywać i zmieniać Twoje dane na: {}", {list}));
   }
-
-  if (const auto* options = review->FindString("options_page"))
-    detail += u"\n" + prototype::TF(u"Strona opcji: {}", {text(*options)});
-  if (const auto* popup = review->FindString("action_popup"))
-    detail += u"\n" + prototype::TF(u"Strona popupu: {}", {text(*popup)});
-  if (const auto* previous_policy = review->FindString("previous_extension_pages_csp")) {
-    detail += u"\n" + prototype::TF(
-        u"Poprzednia polityka CSP rozszerzenia: {}", {text(*previous_policy)});
-  }
-  if (const auto* policy = review->FindString("extension_pages_csp")) {
-    detail += u"\n" + prototype::TF(u"Polityka CSP rozszerzenia: {}", {text(*policy)});
-  }
-  if (const auto* sandbox = review->FindList("sandbox_pages")) {
-    detail += u"\n" + text("Sandbox CSP") + u"  " + text(*review->FindString("sandbox_csp"));
-    append(prototype::T(u"Zasób:"), *sandbox);
-  }
-  if (const auto* resources = review->FindList("web_accessible_resources")) {
-    for (const auto& entry : *resources) {
-      const auto& resource = entry.GetDict();
-      detail += u"\n" + prototype::T(
-          resource.FindBool("use_dynamic_url").value_or(false)
-              ? u"Zasoby dostępne dla witryn pod adresem dynamicznym"
-              : u"Zasoby dostępne dla witryn");
-      append(prototype::T(u"Zasób:"), *resource.FindList("resources"));
-      append(prototype::T(u"Dostęp dla:"), *resource.FindList("matches"));
-    }
-  }
-  append(prototype::T(u"Odczyt danych kart dla:"),
-         *review->FindList("host_permissions"));
-  append(prototype::T(u"Odczyt odpowiedzi z:"),
-         *review->FindList("network_hosts"));
-  append(prototype::T(u"Nieaktywne uprawnienie opcjonalne:"),
-         *review->FindList("optional_api_permissions"));
-  append(prototype::T(u"Nieaktywny opcjonalny dostęp do hosta:"),
-         *review->FindList("optional_host_permissions"));
-  if (review->FindList("api_permissions")->contains("fontSettings")) {
-    detail += u"\n" + prototype::T(u"Odczyt listy zainstalowanych czcionek.");
-  }
-  if (review->FindList("api_permissions")->contains("tabs")) {
-    detail += u"\n" + prototype::T(u"Odczyt adresów i tytułów kart w tym profilu.");
-  }
-  const auto& external_ids = *review->FindList("external_extension_ids");
-  if (external_ids.size() == 1 && external_ids[0].GetString() == "*") {
-    detail += u"\n" + prototype::T(u"Wiadomości może wysyłać każde rozszerzenie w tym profilu.");
+  if (has_api("tabs") || has_api("webNavigation"))
+    abilities.push_back(prototype::T(u"Odczytywać historię przeglądania"));
+  if (has_api("declarativeNetRequest"))
+    abilities.push_back(prototype::T(u"Blokować treści na stronach"));
+  if (has_api("clipboardRead"))
+    abilities.push_back(prototype::T(u"Odczytywać dane skopiowane do schowka"));
+  if (has_api("clipboardWrite"))
+    abilities.push_back(prototype::T(u"Zmieniać dane w schowku"));
+  if (has_api("notifications"))
+    abilities.push_back(prototype::T(u"Wyświetlać powiadomienia"));
+  if (has_api("nativeMessaging"))
+    abilities.push_back(prototype::T(u"Komunikować się z aplikacjami na tym komputerze"));
+  if (has_api("privacy"))
+    abilities.push_back(prototype::T(u"Zmieniać ustawienia prywatności"));
+  if (has_api("fontSettings"))
+    abilities.push_back(prototype::T(u"Odczytywać listę zainstalowanych czcionek"));
+  std::u16string detail;
+  if (review->FindBool("scope_expanded").value_or(false))
+    detail = prototype::T(u"Ta aktualizacja prosi o nowe uprawnienia.") + u"\n";
+  if (abilities.empty()) {
+    detail += prototype::T(u"Rozszerzenie nie prosi o specjalne uprawnienia.");
   } else {
-    append(prototype::T(u"Nadawca wiadomości:"), external_ids);
+    detail += prototype::T(u"Rozszerzenie może:");
+    for (const auto& ability : abilities)
+      detail += u"\n• " + ability;
   }
-  for (const auto& value : *review->FindList("content_scripts")) {
-    const auto& script = value.GetDict();
-    detail += u"\n" + prototype::T(
-        script.FindBool("all_frames").value_or(false)
-            ? u"Skrypt na stronach i w pasujących ramkach"
-            : u"Skrypt na stronach");
-    if (script.FindBool("match_origin_as_fallback").value_or(false)) {
-      detail += u"\n" + prototype::T(
-          u"Skrypt może dopasować origin inicjatora dokumentu, niezależnie od ścieżki inicjatora.");
-    } else if (script.FindBool("match_about_blank").value_or(false)) {
-      detail += u"\n" + prototype::T(
-          u"Skrypt może też działać w dokumentach about:blank i about:srcdoc powiązanych z pasującą stroną.");
-    }
-    if (*script.FindString("world") == "MAIN")
-      detail += u"\n" + prototype::T(u"Skrypt działa w tym samym środowisku co kod strony.");
-    const auto& timing = *script.FindString("run_at");
-    detail += u"\n" + prototype::T(
-        timing == "document_start" ? u"Uruchamia się na początku ładowania strony."
-        : timing == "document_end" ? u"Uruchamia się po odczytaniu dokumentu."
-                                   : u"Uruchamia się, gdy dokument jest gotowy.");
-    append(prototype::T(u"Adres:"), *script.FindList("matches"));
-    append(prototype::T(u"Wykluczony adres:"), *script.FindList("exclude_matches"));
-    append(prototype::T(u"Wzorzec:"), *script.FindList("include_globs"));
-    append(prototype::T(u"Wykluczony wzorzec:"), *script.FindList("exclude_globs"));
-  }
-  // The modal scrolls. Bound rendering work for exceptionally large manifests
-  // without truncating the permissions the user is asked to approve.
-  constexpr size_t kMaxExtensionReviewCharacters = 16 * 1024;
-  if (detail.size() > kMaxExtensionReviewCharacters) {
-    SetExtensionManagerStatus(
-        prototype::T(u"Zakres dostępu jest za długi, aby wyświetlić go w całości."),
-        true);
-    return;
-  }
+  detail += u"\n\n" + prototype::TF(u"Profil {} · wersja {}",
+      {text(profiles_[profile].name), text(*review->FindString("version"))});
   const bool is_update = previous_version != nullptr;
   if (is_update && base::CommandLine::ForCurrentProcess()->HasSwitch(kExtensionInstallUiProbe) &&
       review->FindBool("scope_expanded") == true) {
@@ -18542,7 +18507,7 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
       settings, prototype::TF(is_update ? u"Zaktualizować {}?" : u"Zainstalować {}?",
                              {text(*review->FindString("name"))}),
       std::move(detail),
-      prototype::T(u"Rozszerzenie działa w tle. Podpis identyfikuje klucz, ale Zitter nie potwierdza tożsamości wydawcy."),
+      prototype::T(u"Instaluj tylko rozszerzenia, którym ufasz."),
       prototype::T(is_update ? u"Zaktualizuj" : u"Zainstaluj"),
       base::BindOnce(
           [](base::WeakPtr<WorkspaceLab> lab, size_t profile, bool is_update,
