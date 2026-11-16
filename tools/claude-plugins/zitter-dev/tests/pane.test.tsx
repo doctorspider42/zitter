@@ -70,7 +70,20 @@ test('a failed build offers the fix and shows its error lines, on every surface'
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ key: 'fix' })).toBeDefined()
     expect(await ui.find({ key: 'retry' })).toBeDefined()
+    expect(await ui.find({ key: 'dismiss' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Build & run failed/ })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('a dismissed failure gives the card back to Build & run', async ($, on) => {
+  seed(on, {
+    repo: REPO,
+    dismissed: 'j1',
+    jobs: { shape: 'jobs-1', value: [job({ state: 'failed', exitCode: 1 })] },
+  })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ key: 'fix' })).toBeUndefined()
+  expect(await ui.find({ key: 'run' })).toBeDefined()
+  await ui.unmount()
 })

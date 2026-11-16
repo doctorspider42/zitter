@@ -63,6 +63,8 @@ declare module 'claude-code' {
       blocked: Blocked[]
       shownLog: string
       autoOpened: boolean
+      /** The failed job whose card the person dismissed. */
+      dismissed: string
     }
   }
 }

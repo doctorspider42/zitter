@@ -21,6 +21,7 @@ const approvalsAtom = atom({ plugin: 'zitter-dev', key: 'approvals' } as const, 
 const blockedAtom = atom({ plugin: 'zitter-dev', key: 'blocked' } as const, [] as Blocked[])
 const shownLogAtom = atom({ plugin: 'zitter-dev', key: 'shownLog' } as const, '')
 const autoOpenedAtom = atom({ plugin: 'zitter-dev', key: 'autoOpened' } as const, false)
+const dismissedAtom = atom({ plugin: 'zitter-dev', key: 'dismissed' } as const, '')
 
 // The module's own variables start over on a reload; session.start sets them again.
 let root: string | undefined
@@ -331,6 +332,9 @@ async function quitApp($: $) {
   lastEnvAt = 0
 }
 
+/** Hides a failed job's card and band; the job stays in Recent. */
+const dismiss = ($: $, job: Job) => update($, dismissedAtom, () => job.id)
+
 const toggleShown = ($: $, what: string) => update($, shownLogAtom, shown => (shown === what ? '' : what))
 
 // ---------------------------------------------------------------------------
@@ -576,6 +580,8 @@ type Model = {
   approvals: Approval[]
   blocked: Blocked[]
   shown: string
+  /** The last job, when it failed and the person has not dismissed it. */
+  failure?: Job
   running?: Job
   queued: Job[]
   recent: Job[]
@@ -587,7 +593,10 @@ async function model($: $): Promise<Model> {
   const jobs = await read($, jobsAtom)
   const lock = await read($, lockAtom)
   const finished = jobs.filter(isDone)
+  const last = finished.at(-1)
+  const dismissed = await read($, dismissedAtom)
   return {
+    failure: last?.state === 'failed' && last.id !== dismissed ? last : undefined,
     jobs,
     lock,
     repo: await read($, repoAtom),
@@ -677,8 +686,8 @@ function drawing(on: On) {
         </Box>
       )
     }
-    if (m.last?.state === 'failed') {
-      const failed = m.last
+    if (m.failure) {
+      const failed = m.failure
       return (
         <Box flexDirection="row" gap={1} alignItems="center">
           {pic(icon('cross', COLORS.error), 'Failed', '✗')}
@@ -687,6 +696,7 @@ function drawing(on: On) {
           <Box flexGrow={1} />
           <Button key="band-fix" label="Ask Claude to fix" variant="primary" onPress={() => void askToFix($, failed)} />
           <Button key="band-retry" label="Retry" onPress={() => void retry($, failed)} />
+          <Button key="band-dismiss" label="Dismiss" plain onPress={() => void dismiss($, failed)} />
         </Box>
       )
     }
@@ -710,7 +720,7 @@ function drawing(on: On) {
     const press = (kind: JobKind) => () => void enqueue($, kind, 'person')
     const uiTests = () => void $.prompt.fill({ text: '/dev-uitest ', mode: 'replace' })
     const fraction = m.running?.progress ? m.running.progress.done / m.running.progress.total : undefined
-    const failed = !m.running && m.last?.state === 'failed' ? m.last : undefined
+    const failed = !m.running ? m.failure : undefined
     const fresh = freshness(m.repo)
     const cols = e.props.bodyColumns
 
@@ -807,6 +817,8 @@ function drawing(on: On) {
           <Box flexDirection="row" gap={1}>
             <Button key="retry" label="Retry" hotkey="r" onPress={() => void retry($, failed)} />
             <Button key="full-log" label="Full log" onPress={() => void openLog($, failed)} />
+            <Box flexGrow={1} />
+            <Button key="dismiss" label="Dismiss" plain onPress={() => void dismiss($, failed)} />
           </Box>
         </Box>
       )
