@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Launch the packaged Zitter app, find its windows, click, and screenshot them.
+"""Launch the packaged Zitter Content app, find its windows, click, and screenshot them.
 
-  ui.py launch [--open-panel space] [--load-extension DIR] quit the running copy, start build/ZitterRustMetal.app
-                                    (and open the space panel by itself, without the mouse)
+  ui.py launch [--open-panel space] [--theme dark] [--raster metal] [--scale 2]
+                                    quit the running copy, start build/ZitterContentLab.app in the
+                                    workspace root $TMPDIR/zitter-content-probe-ui (and open the
+                                    space panel by itself, without the mouse)
+  ui.py launch --fresh ...          the same with an empty workspace root
   ui.py windows                     the app's windows (id, onscreen, bounds in points)
   ui.py click X Y                   hover, then click at screen point X, Y
   ui.py rightclick X Y              the same with the right button (context menus)
@@ -12,7 +15,7 @@
 Screenshots capture the app's own window (screencapture -l), or for a child panel
 just its area of the screen. Coordinates are macOS points; a Retina capture is 2x.
 """
-import argparse, json, os, subprocess, sys, time
+import argparse, json, os, plistlib, secrets, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -24,7 +27,12 @@ if sys.platform == "win32":
 
 ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
                            cwd=Path(__file__).parent).stdout.strip())
-APP = ROOT / "build/ZitterRustMetal.app"
+APP = Path(os.environ.get("ZITTER_UI_APP", ROOT / "build/ZitterContentLab.app"))
+# A persistent workspace root: the app keeps its spaces, tabs and settings here
+# between launches, apart from the user's own Zitter data. The app accepts a
+# workspace root only as a private directory directly in $TMPDIR named
+# zitter-content-probe-*.
+PROFILE = Path(tempfile.gettempdir()).resolve() / "zitter-content-probe-ui"
 HERE = Path(__file__).parent
 BIN = Path(os.environ.get("TMPDIR", "/tmp")) / "zitter-uidrive"
 
@@ -36,8 +44,27 @@ def drive(*args):
     return subprocess.run([str(BIN), *map(str, args)], check=True, capture_output=True, text=True).stdout
 
 
+def app_info():
+    with (APP / "Contents/Info.plist").open("rb") as stream:
+        return plistlib.load(stream)
+
+
+def executable():
+    return APP / "Contents/MacOS" / app_info()["CFBundleExecutable"]
+
+
+# The browser process of this workspace root; its helpers don't carry the switch.
+# The user's own Zitter has the same bundle name, so windows are matched by process.
+ROOT_SWITCH = f"zitter-content-workspace-root={PROFILE}"
+
+
+def running():
+    return subprocess.run(["pgrep", "-f", ROOT_SWITCH], capture_output=True, text=True).stdout.split()
+
+
 def windows():
-    return [json.loads(line) for line in drive("windows", "Zitter").splitlines() if line]
+    pids = running()
+    return [json.loads(line) for pid in pids for line in drive("windows", pid).splitlines() if line]
 
 
 def main_window():
@@ -47,8 +74,7 @@ def main_window():
 
 def activate():
     # An inactive app drops synthetic clicks; bring it to the front first.
-    pid = subprocess.run(["pgrep", "-f", f"{APP}/Contents/MacOS/Chromium --user-data-dir"],
-                         capture_output=True, text=True).stdout.split()
+    pid = running()
     if pid:
         drive("activate", pid[0])
 
@@ -63,17 +89,34 @@ def wait(predicate, timeout=15.0):
 
 
 def launch(a):
-    if not APP.exists():
-        sys.exit(f"No packaged app at {APP}; build and package first.")
-    # A second instance cannot share the isolated profile; quit the old one first.
-    subprocess.run(["pkill", "-TERM", "-f", f"{APP}/Contents/MacOS/Chromium --user-data-dir"])
-    subprocess.run(["pkill", "-f", "tools/run_metal_sidebar.py"])
-    wait(lambda: subprocess.run(["pgrep", "-f", f"{APP}/Contents/MacOS/"], capture_output=True).returncode != 0, 10)
+    if not (APP / "Contents/Info.plist").is_file():
+        sys.exit(f"No packaged app at {APP}; build and package first (build_app.sh).")
+    # A second instance cannot share the workspace root; quit the old one first.
+    subprocess.run(["pkill", "-TERM", "-f", ROOT_SWITCH])
+    if not wait(lambda: not running(), 10):
+        sys.exit("The running copy did not quit.")
+    if a.fresh and PROFILE.exists():
+        shutil.rmtree(PROFILE)
+    PROFILE.mkdir(parents=True, exist_ok=True)
+    PROFILE.chmod(0o700)
+    key = PROFILE / "probe-cookie-key"
+    if not key.is_file():
+        # The workspace encrypts cookies with this private key instead of the
+        # login keychain, so a test root never touches the user's keychain item.
+        key.write_bytes(secrets.token_bytes(32))
+        key.chmod(0o600)
+    command = [str(executable()), "--zitter-content-workspace",
+               f"--zitter-content-workspace-root={PROFILE}"]
+    if a.open_panel:
+        command.append(f"--zitter-open-panel={a.open_panel}")
+    if a.theme:
+        command.append(f"--zitter-content-workspace-theme={a.theme}")
+    if a.raster:
+        command.append(f"--zitter-rust-raster={a.raster}")
+    if a.scale:
+        command.append(f"--force-device-scale-factor={a.scale:g}")
     log = open(BIN.with_suffix(".log"), "w")
-    panel = ["--open-panel", a.open_panel] if getattr(a, "open_panel", None) else []
-    panel += [arg for path in getattr(a, "load_extension", None) or [] for arg in ("--load-extension", path)]
-    subprocess.Popen([sys.executable, str(ROOT / "tools/run_metal_sidebar.py"), "--app", str(APP), *panel],
-                     cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+    subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
     w = wait(lambda: (m := main_window()) and m["width"] > 600 and m)
     if not w:
         sys.exit(f"The app did not show a window; see {log.name}")
@@ -128,9 +171,12 @@ def shot(a):
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sub = parser.add_subparsers(dest="command", required=True)
-l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads", "history", "rss", "time-machine", "extensions", "extension-popup", "fingerprint", "menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop", "passwords", "site", "site-data", "permission"],
+l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads", "history", "rss", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "night-shift", "ad-blocking", "menu", "app-menu", "dialog", "toast", "add", "space-end", "space-new", "remove", "drop", "passwords", "site", "site-data", "permission"],
     help="open this panel once the window is up (no mouse needed)")
-l.add_argument("--load-extension", action="append", help="load an unpacked extension into the profiles (repeatable)")
+l.add_argument("--theme", choices=["dark", "light"], help="Noc (dark) or Papier (light); default: the saved setting")
+l.add_argument("--raster", choices=["compositor", "metal"], help="Rust UI painting (default: compositor)")
+l.add_argument("--scale", type=float, help="force a device scale factor (HiDPI checks)")
+l.add_argument("--fresh", action="store_true", help="start from an empty workspace root")
 l.set_defaults(run=launch)
 sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
 c = sub.add_parser("click"); c.add_argument("x", type=float); c.add_argument("y", type=float)

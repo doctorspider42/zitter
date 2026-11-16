@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Windows counterpart of ui.py: launch the development build, find its windows,
+"""Windows counterpart of ui.py: launch the Content build, find its windows,
 click, and screenshot them.
 
-  ui.py launch [--open-panel space] [--scale 1.25] [--theme light]
-                                     quit the running copy, start out/ZitterWin/zitter.exe
-                                     in the isolated profile (build/win-ui-profile)
+  ui.py launch [--open-panel space] [--scale 1.25] [--theme light] [--fresh]
+                                     quit the running copy, start out/ZitterWinContent/zitter.exe
+                                     in the workspace root %TEMP%\zitter-content-probe-ui
   ui.py windows                      the app's top-level windows (id, title, bounds in pixels)
   ui.py click X Y | rightclick X Y   bring the app forward, then click at screen pixel X, Y
   ui.py shot OUT.png [--window W]    capture one window: main (default), sidebar, panel, or an id
@@ -13,15 +13,17 @@ The sidebar, palette and panels are translucent windows that PrintWindow leaves
 blank, so shot brings the app forward and copies that window's area of the
 screen, never more. Coordinates are physical pixels (this process is DPI aware).
 """
-import argparse, ctypes, json, os, subprocess, sys, time
+import argparse, ctypes, json, os, shutil, subprocess, sys, tempfile, time
 from ctypes import wintypes
 from pathlib import Path
 
 ROOT = Path(subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
                            cwd=Path(__file__).parent).stdout.strip())
-# ZITTER_UI_OUT picks another build directory, e.g. out/ZitterAssistant.
-EXE = ROOT / ".chromium/src" / os.environ.get("ZITTER_UI_OUT", "out/ZitterWin") / "zitter.exe"
-PROFILE = ROOT / "build/win-ui-profile"
+# ZITTER_UI_OUT picks another build directory than out/ZitterWinContent.
+EXE = ROOT / ".chromium/src" / os.environ.get("ZITTER_UI_OUT", "out/ZitterWinContent") / "zitter.exe"
+# The Windows Content app opens a workspace root only directly under %TEMP%
+# with this name prefix. It persists between launches, apart from the user's data.
+PROFILE = Path(tempfile.gettempdir()).resolve() / "zitter-content-probe-ui"
 LOG = ROOT / "build/win-ui.log"
 
 user32, dwmapi, kernel32 = ctypes.windll.user32, ctypes.windll.dwmapi, ctypes.windll.kernel32
@@ -99,19 +101,23 @@ def activate():
 
 def launch(a):
     if not EXE.exists():
-        sys.exit(f"No build at {EXE}; build zitter.exe first (docs/windows-port.md).")
+        sys.exit(f"No build at {EXE}; build zitter_content first (build_app_win.ps1).")
     for pid in processes():
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
     wait(lambda: not processes(), 10)
-    panel = ["--open-panel", a.open_panel] if a.open_panel else []
+    if a.fresh and PROFILE.exists():
+        shutil.rmtree(PROFILE)
+    PROFILE.mkdir(exist_ok=True)
+    command = [str(EXE), "--zitter-content-workspace", f"--zitter-content-workspace-root={PROFILE}"]
+    if a.open_panel:
+        command.append(f"--zitter-open-panel={a.open_panel}")
     if a.scale:
-        panel += ["--scale", str(a.scale)]
+        command.append(f"--force-device-scale-factor={a.scale:g}")
     if a.theme:
-        panel += ["--theme", a.theme]
+        command.append(f"--zitter-content-workspace-theme={a.theme}")
     LOG.parent.mkdir(exist_ok=True)
     log = open(LOG, "w", encoding="utf-8")
-    subprocess.Popen([sys.executable, str(ROOT / "tools/run_metal_sidebar.py"), "--app", str(EXE),
-                      "--profile", str(PROFILE), *panel], cwd=ROOT, stdout=log, stderr=log,
+    subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log,
                      creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
     w = wait(lambda: (m := main_window()) and m["width"] > 600 and m)
     if not w:
@@ -153,7 +159,8 @@ def main():
                                             "add", "space-end", "space-new", "remove", "drop"],
                    help="open this panel once the window is up (no mouse needed)")
     l.add_argument("--scale", type=float, help="force a device scale factor, as 1.25 or 1.5 (HiDPI)")
-    l.add_argument("--theme", choices=["dark", "light", "system"], help="Noc (dark) or Papier (light)")
+    l.add_argument("--theme", choices=["dark", "light"], help="Noc (dark) or Papier (light)")
+    l.add_argument("--fresh", action="store_true", help="start from an empty workspace root")
     l.set_defaults(run=launch)
     sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
     for name, button in (("click", "left"), ("rightclick", "right")):

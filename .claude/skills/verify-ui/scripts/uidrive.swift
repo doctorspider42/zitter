@@ -1,5 +1,5 @@
 // Lists the app's windows and clicks at screen points (macOS points, origin top-left).
-//   uidrive windows <owner>   one JSON object per window: id, title, onscreen, x, y, width, height
+//   uidrive windows <owner|pid> one JSON object per window: id, title, onscreen, x, y, width, height
 //   uidrive click <x> <y>     hover 0.6 s (hover states settle), then a left click
 //   uidrive rightclick <x> <y> the same with the right button (context menus)
 //   uidrive activate <pid>    bring the app to the front (an inactive app drops clicks)
@@ -9,13 +9,16 @@ import Foundation
 
 let args = CommandLine.arguments
 func fail(_ message: String) -> Never { FileHandle.standardError.write((message + "\n").data(using: .utf8)!); exit(2) }
-guard args.count >= 2 else { fail("usage: uidrive windows <owner> | click <x> <y>") }
+guard args.count >= 2 else { fail("usage: uidrive windows <owner|pid> | click <x> <y>") }
 
 switch args[1] {
 case "windows":
+  // A number selects one process: other apps can share the bundle's name.
   let owner = args.count > 2 ? args[2] : "Zitter"
+  let pid = Int(owner)
   let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
-  for w in list where (w[kCGWindowOwnerName as String] as? String) == owner {
+  for w in list where pid.map({ (w[kCGWindowOwnerPID as String] as? Int) == $0 })
+      ?? ((w[kCGWindowOwnerName as String] as? String) == owner) {
     guard let b = w[kCGWindowBounds as String] as? [String: Double], (w[kCGWindowLayer as String] as? Int) == 0 else { continue }
     let item: [String: Any] = ["id": w[kCGWindowNumber as String] as? Int ?? 0, "title": w[kCGWindowName as String] as? String ?? "", "onscreen": w[kCGWindowIsOnscreen as String] as? Bool ?? false,
                                "x": b["X"] ?? 0, "y": b["Y"] ?? 0, "width": b["Width"] ?? 0, "height": b["Height"] ?? 0]

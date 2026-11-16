@@ -19,30 +19,37 @@ against the design, and fixed until it matches.
    ```bash
    zsh .claude/skills/verify-ui/scripts/build_app.sh
    ```
-   It runs `ZITTER_BUILD_TESTS=1 ./build.sh` (see `docs/local-releases.md`): the
-   `.chromium/src/zitter` overlay, `zitter` and `zitter_prototype`, the license audit
-   and the package `build/ZitterRustMetal.app`. Then it builds
-   `sidebar_scene_unittests`. Signing reads `.zitter-signing.json`. Never stage
-   into `.chromium/src/zitter_ui_lab`: it is a frozen benchmark reference, and its
-   targets cannot see the vendored ad-blocking crates. Only the packaged app has the
-   design system's fonts; test binaries fall back to system fonts.
+   It runs `./build.sh`: it stages the Content embedder into `.chromium/src`
+   (`tools/stage_content_embedder.py`), builds `//zitter_content:zitter_content` in
+   `out/ZitterContentBundle`, runs the license audit and packages
+   `build/ZitterContentLab.app` with a local signature. Then it builds
+   `sidebar_scene_unittests` in the same output directory. Only the packaged app has
+   the design system's fonts; test binaries fall back to system fonts.
 
-2. **Run the tests that cover the change**: Rust tests, plus browser tests named with
-   `--gtest_filter`. Count them first with `--gtest_list_tests`. A broad pattern like
-   `*Profile*` matches ~195 tests and takes over the screen. Never run the full UI suite
-   without the user's explicit OK.
+2. **Run the tests that cover the change**: the Rust tests
+   (`out/ZitterContentBundle/sidebar_scene_unittests`) and the `tools/verify_content_*.py`
+   checks for the area you changed (for example `verify_content_workspace_session.py`
+   for the workspace UI). The `verify_content_*` checks open app windows; run only the
+   ones the change needs, and ask the user before running many of them.
 
 3. **Launch and open the view.**
    ```bash
    python3 .claude/skills/verify-ui/scripts/ui.py launch --open-panel space
    python3 .claude/skills/verify-ui/scripts/ui.py shot build/screens/space-panel.png --window panel
    ```
-   `launch` quits the running copy and starts the app with its isolated profile
-   (`build/rust-metal-profile`). Prefer launch switches over clicking:
-   `--zitter-open-panel=space` opens the space panel by itself.
+   `launch` quits the running copy and starts the app with
+   `--zitter-content-workspace` in its own workspace root,
+   `$TMPDIR/zitter-content-probe-ui` (the app accepts a root only as a private
+   `zitter-content-probe-*` directory in `$TMPDIR`). The root keeps spaces, tabs and
+   settings between launches; `--fresh` starts from an empty one. `--theme dark|light`,
+   `--raster metal` and `--scale 2` pass the matching app switches. Prefer launch
+   switches over clicking: `--open-panel space` passes `--zitter-open-panel=space`,
+   which opens the space panel by itself.
    - For another view, add a value to that switch next to the `space` case in
-     `workspace_shell.cc`, and to `--open-panel` in `tools/run_metal_sidebar.py` and
-     `ui.py`.
+     `workspace_shell.cc`, and to `--open-panel` in `ui.py` and `ui_win.py`.
+   - The user's own Zitter has the same bundle name ("Zitter Content Lab"). `ui.py`
+     therefore finds windows by the process that owns the test workspace root, never
+     by name, so it leaves the user's browser alone.
    - Synthetic clicks (`ui.py click X Y`) move the user's real mouse. They are dropped
      while the app is not frontmost, so use them only for what a switch can't reach.
      Keep in mind a stray click edits the test profile (an emoji, a selected tab).
@@ -92,20 +99,23 @@ against the design, and fixed until it matches.
 The loop is the same; the tools differ. `ui.py` runs `ui_win.py` on Windows.
 
 1. **Build:** `powershell -File .claude/skills/verify-ui/scripts/build_app_win.ps1`
-   installs the overlay and builds `zitter.exe` and its tests in
-   `.chromium/src/out/ZitterWin`. There is no package: the build directory, with the
-   design fonts in its `Fonts\`, is the app.
-2. **Tests:** `out\ZitterWin\sidebar_scene_unittests.exe`,
-   `editor_text_layout_unittests.exe`, `arc_importer_unittests.exe`; browser tests
-   run with `zitter_prototype.exe --gtest_filter=…`.
+   stages the Content embedder and builds `zitter_content` (`zitter.exe` and
+   `zitter_setup.exe`) and the UI tests in `.chromium/src/out/ZitterWinContent`. There
+   is no package: the build directory, with the design fonts in its `Fonts\`, is the
+   app.
+2. **Tests:** `out\ZitterWinContent\sidebar_scene_unittests.exe` and
+   `editor_text_layout_unittests.exe`; the Windows Content checks are
+   `tools/verify_content_windows_bundle.py` and `verify_content_windows_migration.py`.
 3. **Launch and shoot:**
    ```bash
    python .claude/skills/verify-ui/scripts/ui.py launch --open-panel app-menu
    python .claude/skills/verify-ui/scripts/ui.py shot build/screens/app-menu.png --as-is
    ```
-   `launch` starts `zitter.exe` with the seeded profile `build/win-ui-profile`.
-   `ZITTER_UI_OUT=out/ZitterAssistant` picks another build directory than
-   `out/ZitterWin`; `--open-panel assistant-settings` opens Settings → AI Assistant. The
+   `launch` starts `zitter.exe --zitter-content-workspace` in the workspace root
+   `%TEMP%\zitter-content-probe-ui` (`--fresh` empties it first).
+   `ZITTER_UI_OUT=out/<dir>` picks another build directory than
+   `out/ZitterWinContent`; `--open-panel assistant-settings` opens Settings → AI
+   Assistant. The Windows Content app refuses `--zitter-rust-raster=metal`. The
    sidebar, palette and panels are translucent windows that PrintWindow can't
    capture, so `shot` brings Zitter forward and copies that window's area of the
    screen. Ask the user before taking over their screen, and don't capture while

@@ -18,3 +18,110 @@ executable("assistant_cli_fixture") {
   sources = [ "tests/fixtures/assistant_cli.cc" ]
   deps = [ "//base" ]
 }
+
+# Unit tests for the shared code the Content app links. They need no browser
+# and no //chrome: build them by name in a Content output directory.
+import("//testing/test.gni")
+
+source_set("network_policy") {
+  sources = [
+    "chromium/app/network_policy.cc",
+    "chromium/app/network_policy.h",
+    "chromium/app/network_policy_components.inc",
+    "chromium/app/network_policy_features.inc",
+  ]
+  include_dirs = [ "." ]
+  public_deps = [ "//base" ]
+}
+
+test("network_policy_tests") {
+  # A unique binary name: Chromium has other network policy tests.
+  output_name = "zitter_network_policy_tests"
+  sources = [ "chromium/app/network_policy_unittest.cc" ]
+  include_dirs = [ "." ]
+  deps = [
+    ":network_policy",
+    "//base/test:run_all_unittests",
+    "//base/test:test_support",
+    "//testing/gtest",
+  ]
+}
+
+# The importer alone, with its messages in their Polish source.
+test("arc_importer_unittests") {
+  sources = [
+    "chromium/prototype/arc_importer.cc",
+    "chromium/prototype/arc_importer.h",
+    "chromium/prototype/arc_importer_unittest.cc",
+    "chromium/prototype/browser_data.h",
+  ]
+  include_dirs = [ "." ]
+  deps = [
+    ":core",
+    "//base",
+    "//base/test:run_all_unittests",
+    "//base/test:test_support",
+    "//sql",
+    "//testing/gtest",
+    "//url",
+  ]
+}
+
+if (!is_mac) {
+  # macOS keeps the CoreText harness: tools/check_editor_text_layout.py.
+  test("editor_text_layout_unittests") {
+    sources = [ "chromium/prototype/editor_text_layout_unittest.cc" ]
+    include_dirs = [ "." ]
+    deps = [
+      ":text_services",
+      "//base/test:test_support",
+      "//testing/gtest",
+    ]
+  }
+}
+
+if (is_win) {
+  source_set("updater") {
+    sources = [
+      "chromium/app/updater_win.cc",
+      "chromium/app/updater_win.h",
+    ]
+    include_dirs = [ "." ]
+    public_deps = [ "//base" ]
+    deps = [
+      "//crypto",
+      "//url",
+    ]
+    libs = [
+      "advapi32.lib",
+      "winhttp.lib",
+    ]
+  }
+
+  test("updater_unittests") {
+    sources = [ "chromium/app/updater_win_unittest.cc" ]
+    include_dirs = [ "." ]
+    deps = [
+      ":updater",
+      "//base/test:run_all_unittests",
+      "//base/test:test_support",
+      "//crypto",
+      "//testing/gtest",
+    ]
+  }
+
+  executable("setup_runtime_tests") {
+    testonly = true
+    sources = [
+      "chromium/installer/setup_runtime.cc",
+      "chromium/installer/setup_runtime_test.cc",
+    ]
+    include_dirs = [ "." ]
+    libs = [
+      "ole32.lib",
+      "oleaut32.lib",
+      "shell32.lib",
+      "user32.lib",
+    ]
+  }
+}

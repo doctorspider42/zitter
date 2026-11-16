@@ -95,7 +95,7 @@ void WriteJumpList(std::vector<JumpListSpace> spaces, std::u16string spaces_titl
   if (dev && command.HasSwitch(windows::kCleanProfileSwitch)) return;
   ComPtr<ICustomDestinationList> list;
   if (FAILED(::CoCreateInstance(CLSID_DestinationList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&list)))) return;
-  // The same ID as the window and the installer's shortcuts (main.cc).
+  // The same ID as the window and the installer's shortcuts (embedder_win.cc).
   list->SetAppID(dev ? windows::kDevAppId : windows::kStableAppId);
   UINT slots = 0;
   ComPtr<IObjectArray> removed;

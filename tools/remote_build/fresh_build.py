@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""Fresh Chromium checkout + full Zitter build with remote compiles.
+"""Fresh Chromium checkout + full Zitter Content build with remote compiles.
 
 The case remote builds are for: a new Chromium revision means rebuilding
 everything. Steps, each timed in <log-dir>/fresh_build.log:
 
   checkout  move an existing .chromium/src aside (renamed, never deleted), write
             .gclient, `gclient sync` at chromium/revision.json, `gclient runhooks`
-  overlay   content: tools/stage_content_embedder.py;
-            chrome: tools/install_chromium_overlay.py
+  overlay   tools/stage_content_embedder.py
   siso      tools/remote_build/setup_siso.py (hermetic toolchain, Linux clang)
-  gn        content: chromium/windows-release.args.gn (no ThinLTO or PGO, as the
-            macOS Content build), root target //zitter_content:zitter_content;
-            chrome: chromium/windows-official.args.gn;
-            both with Siso and remote execution on
-  build     tools/remote_build/build.py: zitter_content, or zitter zitter_setup
+  gn        chromium/windows-release.args.gn (no ThinLTO or PGO, as the
+            macOS Content build), root target //zitter_content:zitter_content,
+            with Siso and remote execution on
+  build     tools/remote_build/build.py zitter_content
 
-  python tools/remote_build/fresh_build.py              # Content, all steps
+  python tools/remote_build/fresh_build.py              # all steps
   python tools/remote_build/fresh_build.py --from gn    # resume at a step
-  python tools/remote_build/fresh_build.py --product chrome
 
 --keep-going keeps compiling past failed steps, for first builds where the
 point is to measure the whole compile and collect every error at once.
@@ -109,21 +106,12 @@ def step_checkout(log_dir):
     run(["gclient", "runhooks"], CHROMIUM, logfile=glog)
 
 
-PRODUCTS = {
-    "content": {
-        "stage": "stage_content_embedder.py",
-        "args": "windows-release.args.gn",
-        "out": "out/ZitterWinContent",
-        "gn_extra": ["--root-target=//zitter_content:zitter_content"],
-        "targets": ["zitter_content"],
-    },
-    "chrome": {
-        "stage": "install_chromium_overlay.py",
-        "args": "windows-official.args.gn",
-        "out": "out/ZitterWinOfficial",
-        "gn_extra": [],
-        "targets": ["zitter", "zitter_setup"],
-    },
+PRODUCT = {
+    "stage": "stage_content_embedder.py",
+    "args": "windows-release.args.gn",
+    "out": "out/ZitterWinContent",
+    "gn_extra": ["--root-target=//zitter_content:zitter_content"],
+    "targets": ["zitter_content"],
 }
 
 
@@ -171,20 +159,18 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--from", dest="start", choices=STEPS, default="checkout")
     p.add_argument("--to", dest="stop", choices=STEPS, default="build")
-    p.add_argument("--product", choices=sorted(PRODUCTS), default="content")
-    p.add_argument("--out", help="output dir (default per product)")
+    p.add_argument("--out", default=PRODUCT["out"], help="output dir")
     p.add_argument("--remote-jobs", type=int, default=44)
     p.add_argument("--scheduler", default="127.0.0.1")
     p.add_argument("--keep-going", action="store_true")
     p.add_argument("--log-dir", default=os.path.join(REPO, "build", "fresh-build"))
     a = p.parse_args()
-    product = PRODUCTS[a.product]
-    a.out = a.out or product["out"]
+    product = PRODUCT
 
     os.makedirs(a.log_dir, exist_ok=True)
     LOG = os.path.join(a.log_dir, "fresh_build.log")
     steps = STEPS[STEPS.index(a.start):STEPS.index(a.stop) + 1]
-    log(f"=== fresh build: {a.product}, steps {', '.join(steps)}; out {a.out}")
+    log(f"=== fresh build: content, steps {', '.join(steps)}; out {a.out}")
     total = time.monotonic()
     for s in steps:
         t = time.monotonic()

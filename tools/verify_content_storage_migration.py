@@ -28,7 +28,7 @@ from content_file_keychain_fixture import (
     compile_file_keychain_fixture, file_keychain_environment, seal_legacy_copy,
     shared_keychain_environments,
 )
-from package_app import BUNDLE_ID
+from macos_signing import BUNDLE_ID
 from profile_migration_trial import (
     ASSISTANT_SESSIONS_FILE, COOKIE_FILES, HISTORY_FILES, LOCAL_STORAGE,
     copy_verified, import_workspace_profiles,

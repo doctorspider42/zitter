@@ -691,7 +691,7 @@ if (is_mac) {
   }
 
   # The design fonts beside zitter.exe; embedder_win.cc adds them to the
-  # browser's DirectWrite collection, as chromium/app/main.cc does.
+  # browser's DirectWrite collection.
   copy("design_fonts_win") {
     sources = [
       "fonts/InstrumentSerif-Italic.ttf",

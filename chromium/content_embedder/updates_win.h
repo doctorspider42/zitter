@@ -1,7 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-// Automatic updates for an installed Windows Content build: the Chrome
-// build's WindowsUpdater (chromium/app/updater_win.cc) behind Settings and
-// the update toasts, as chromium/app/runtime.cc wires it.
+// Automatic updates for an installed Windows Content build: WindowsUpdater
+// (chromium/app/updater_win.cc) behind Settings and the update toasts.
 
 #ifndef ZITTER_CONTENT_UPDATES_WIN_H_
 #define ZITTER_CONTENT_UPDATES_WIN_H_

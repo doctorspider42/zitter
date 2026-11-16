@@ -104,7 +104,7 @@
 
 namespace zitter::prototype {
 void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts) {
-  // Menu titles are translated (chromium/app/app_shell_mac.mm); match them alike.
+  // Menu titles are translated (chromium/content_embedder/embedder_mac.mm); match them alike.
   auto title = [](std::u16string_view polish) { return base::UTF16ToUTF8(T(polish)); };
   const std::map<std::string, std::string> commands = {
       {title(u"Nowa karta"), "new_tab"}, {title(u"Nowe okno prywatne"), "private_window"}, {title(u"Otwórz adres…"), "address"},

@@ -1,52 +1,49 @@
 #!/bin/zsh
-# Build the latest Zitter (Rust UI) app bundle; with --run, also launch it.
+# Build the Zitter app on the Content embedder (//zitter_content:zitter_content)
+# and package build/ZitterContentLab.app; with --run, also launch it.
 #
-#   ./build.sh                 stage, build and package build/ZitterRustMetal.app
-#   ./build.sh --run           ...then launch it with an isolated profile
-#   ./build.sh --content       build and package the standalone Content lab
-#   ./build.sh --content --plan preview the local Content build without compiling
-#   ./build.sh --content --build-only build the local Content target without packaging
-#   ./build.sh --content --archive package a sealed Content app as a local ZIP
-#   ./build.sh --content --run launch the Content lab with temporary profiles
-#   ./build.sh --run --raster metal   extra arguments go to tools/run_metal_sidebar.py
+#   ./build.sh                     stage, build and package build/ZitterContentLab.app
+#   ./build.sh --run               ...then launch it with temporary profiles
+#   ./build.sh --plan              preview the local build without compiling
+#   ./build.sh --build-only        build the local target without packaging
+#   ./build.sh --plan --build-only preview the --build-only output
+#   ./build.sh --archive           package a sealed app as a local ZIP
+#   ./build.sh --run [app args...] extra arguments go to the app
+#
+# --content is accepted before any of these for older callers
+# (./build.sh --content, ./build.sh --content --run) and changes nothing.
 set -euo pipefail
 
 ROOT=${0:A:h}
 SRC=$ROOT/.chromium/src
-OUT=out/ZitterOptimized
-APP=$ROOT/build/ZitterRustMetal.app
 
-content=false
-if [[ ${1:-} == --content ]]; then content=true; shift; fi
+if [[ ${1:-} == --content ]]; then shift; fi
 plan=false
-if $content && [[ ${1:-} == --plan ]]; then plan=true; shift; fi
+if [[ ${1:-} == --plan ]]; then plan=true; shift; fi
 build_only=false
-if $content && [[ ${1:-} == --build-only ]]; then build_only=true; shift; fi
+if [[ ${1:-} == --build-only ]]; then build_only=true; shift; fi
 archive=false
-if $content && [[ ${1:-} == --archive ]]; then archive=true; shift; fi
+if [[ ${1:-} == --archive ]]; then archive=true; shift; fi
 run=false
 if [[ ${1:-} == --run ]]; then run=true; shift; fi
 if [[ ($# -gt 0 && $run == false) || (($plan == true || $build_only == true) && $archive == true) ||
       ($run == true && ($plan == true || $build_only == true || $archive == true)) ]]; then
-  echo "usage: $0 [--content] [--run [launcher args...]] | $0 --content [--plan [--build-only] | --build-only | --archive]" >&2
+  echo "usage: $0 [--content] [--run [app args...] | --plan [--build-only] | --build-only | --archive]" >&2
   exit 2
 fi
 
-# Install the complete browser overlay, including bootstrap, renderer hooks and
-# vendored ad-blocking crates. The installer refuses modified/unowned sources.
 ZITTER_PYTHON_BIN=${ZITTER_PYTHON:-$ROOT/.chromium/depot_tools/python-bin/python3}
 if [[ ! -x $ZITTER_PYTHON_BIN ]]; then ZITTER_PYTHON_BIN=$(command -v python3); fi
 
-if $content; then
-  default_output=out/ZitterContentBundle
-  if $build_only; then default_output=out/ZitterContentDev; fi
-  OUT=${ZITTER_CONTENT_OUT:-$default_output}
-  package=true
-  if $plan || $build_only; then package=false; fi
-  package_dir=${ZITTER_CONTENT_PACKAGE_DIR:-$ROOT/build}
-  APP="${package_dir:A}/ZitterContentLab.app"
-  if $archive; then APP="${package_dir:A}/ZitterContentLab-local.zip"; fi
-  "$ZITTER_PYTHON_BIN" - "$ROOT" "$SRC/$OUT" "$build_only" "$package" <<'PYTHON'
+default_output=out/ZitterContentBundle
+if $build_only; then default_output=out/ZitterContentDev; fi
+OUT=${ZITTER_CONTENT_OUT:-$default_output}
+package=true
+if $plan || $build_only; then package=false; fi
+package_dir=${ZITTER_CONTENT_PACKAGE_DIR:-$ROOT/build}
+APP="${package_dir:A}/ZitterContentLab.app"
+if $archive; then APP="${package_dir:A}/ZitterContentLab-local.zip"; fi
+"$ZITTER_PYTHON_BIN" - "$ROOT" "$SRC/$OUT" "$build_only" "$package" <<'PYTHON'
 from pathlib import Path
 import platform
 import re
@@ -75,16 +72,16 @@ if package and not all(re.search(pattern, args, re.M) for pattern in (
 )):
     raise SystemExit('The Content bundle requires proprietary_codecs = true and ffmpeg_branding = "Chrome"')
 PYTHON
-  if $package; then
-    content_source_commit=$(git -C "$ROOT" rev-parse HEAD)
-    content_source_dirty=false
-    if [[ -n $(git -C "$ROOT" status --porcelain --untracked-files=normal) ]]; then
-      content_source_dirty=true
-    fi
+if $package; then
+  content_source_commit=$(git -C "$ROOT" rev-parse HEAD)
+  content_source_dirty=false
+  if [[ -n $(git -C "$ROOT" status --porcelain --untracked-files=normal) ]]; then
+    content_source_dirty=true
   fi
-  "$ZITTER_PYTHON_BIN" "$ROOT/tools/stage_content_embedder.py" "$SRC"
-  (cd "$SRC" && buildtools/mac/gn gen "$OUT" --root-target=//zitter_content:zitter_content --fail-on-unused-args)
-  content_graph_summary=$(PYTHONPATH="$ROOT/tools" "$ZITTER_PYTHON_BIN" - "$SRC" "$OUT" <<'PYTHON'
+fi
+"$ZITTER_PYTHON_BIN" "$ROOT/tools/stage_content_embedder.py" "$SRC"
+(cd "$SRC" && buildtools/mac/gn gen "$OUT" --root-target=//zitter_content:zitter_content --fail-on-unused-args)
+content_graph_summary=$(PYTHONPATH="$ROOT/tools" "$ZITTER_PYTHON_BIN" - "$SRC" "$OUT" <<'PYTHON'
 import json
 from pathlib import Path
 import sys
@@ -102,8 +99,8 @@ print("Content //chrome metadata inputs: " + (", ".join(summary["chrome_metadata
       file=sys.stderr)
 PYTHON
 )
-  if $plan; then
-    PYTHONPATH="$ROOT/tools" "$ZITTER_PYTHON_BIN" - "$SRC" "$OUT" <<'PYTHON'
+if $plan; then
+  PYTHONPATH="$ROOT/tools" "$ZITTER_PYTHON_BIN" - "$SRC" "$OUT" <<'PYTHON'
 from pathlib import Path
 import sys
 from stage_content_embedder import preview_build
@@ -111,12 +108,12 @@ from stage_content_embedder import preview_build
 checkout = Path(sys.argv[1])
 preview_build(checkout, checkout / sys.argv[2], checkout / "third_party/ninja/ninja")
 PYTHON
-    exit 0
-  fi
-  (cd "$SRC" && third_party/ninja/ninja -C "$OUT" -j "${ZITTER_BUILD_JOBS:-6}" zitter_content)
-  if $build_only; then exit 0; fi
-  "$ZITTER_PYTHON_BIN" - "$ROOT" "$SRC" "$SRC/$OUT" "$APP" \
-    "$content_source_commit" "$content_source_dirty" "$content_graph_summary" "$archive" <<'PYTHON'
+  exit 0
+fi
+(cd "$SRC" && third_party/ninja/ninja -C "$OUT" -j "${ZITTER_BUILD_JOBS:-6}" zitter_content)
+if $build_only; then exit 0; fi
+"$ZITTER_PYTHON_BIN" - "$ROOT" "$SRC" "$SRC/$OUT" "$APP" \
+  "$content_source_commit" "$content_source_dirty" "$content_graph_summary" "$archive" <<'PYTHON'
 from contextlib import ExitStack
 import hashlib
 import json
@@ -208,9 +205,9 @@ with ExitStack() as stack:
         raise
 print(f"Content lab package: {destination}")
 PYTHON
-  "$ZITTER_PYTHON_BIN" "$ROOT/tools/forget_dev_apps.py"
-  if $run; then
-    exec "$ZITTER_PYTHON_BIN" - "$APP" "$@" <<'PYTHON'
+"$ZITTER_PYTHON_BIN" "$ROOT/tools/forget_dev_apps.py"
+if $run; then
+  exec "$ZITTER_PYTHON_BIN" - "$APP" "$@" <<'PYTHON'
 from pathlib import Path
 import secrets
 import subprocess
@@ -227,47 +224,4 @@ with TemporaryDirectory(prefix="zitter-content-probe-") as directory:
                *sys.argv[2:]]
     raise SystemExit(subprocess.run(command).returncode)
 PYTHON
-  fi
-  exit 0
-fi
-
-"$ZITTER_PYTHON_BIN" - "$SRC/$OUT/args.gn" <<'EOF'
-from pathlib import Path
-import re, sys
-args = Path(sys.argv[1]).read_text()
-if not re.search(r"^is_debug\s*=\s*false\s*$", args, re.M):
-    raise SystemExit("The local app requires an existing Release output (is_debug = false)")
-if not all(re.search(pattern, args, re.M) for pattern in (
-    r"^proprietary_codecs[ \t]*=[ \t]*true[ \t]*(?:#.*)?$",
-    r'^ffmpeg_branding[ \t]*=[ \t]*"Chrome"[ \t]*(?:#.*)?$',
-)):
-    raise SystemExit(
-        'The local app requires proprietary_codecs = true and ffmpeg_branding = "Chrome" in args.gn'
-    )
-EOF
-"$ZITTER_PYTHON_BIN" "$ROOT/tools/install_chromium_overlay.py" "$SRC"
-targets=(zitter)
-if [[ ${ZITTER_BUILD_TESTS:-0} == 1 ]]; then targets+=(zitter_prototype); fi
-# The standard target owns the adblock vendor visibility and full browser client.
-(cd "$SRC" && buildtools/mac/gn gen "$OUT" --root-target=//zitter)
-(cd "$SRC" && third_party/ninja/ninja -C "$OUT" -j "${ZITTER_BUILD_JOBS:-6}" $targets)
-
-if $run; then
-  # A second instance cannot share the isolated profile; quit the old one first.
-  if pkill -TERM -f "$APP/Contents/MacOS/Chromium --user-data-dir"; then
-    for _ in {1..20}; do pgrep -f "$APP/Contents/MacOS/" >/dev/null || break; sleep 0.5; done
-  fi
-fi
-
-# Package once for the concrete binary audit, then include its fresh notices
-# before the final signature. Keep the public release/notarization flow separate.
-audit="$ROOT/build/license-audit/mac-local"
-"$ZITTER_PYTHON_BIN" "$ROOT/tools/package_app.py" --out "$SRC/$OUT" --binary zitter --destination "$APP" --no-register
-"$ZITTER_PYTHON_BIN" "$ROOT/tools/audit_licenses.py" --app "$APP" --out "$SRC/$OUT" \
-  --target //zitter:zitter --destination "$audit"
-"$ZITTER_PYTHON_BIN" "$ROOT/tools/package_app.py" --out "$SRC/$OUT" --binary zitter --destination "$APP" \
-  --no-register --third-party-licenses "$audit/THIRD_PARTY_LICENSES.txt"
-
-if $run; then
-  exec "$ZITTER_PYTHON_BIN" "$ROOT/tools/run_metal_sidebar.py" --app "$APP" "$@"
 fi

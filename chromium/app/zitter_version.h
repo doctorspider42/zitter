@@ -1,6 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 // Zitter's version on Windows: zitter.exe's version resource, the installer
-// and tools/package_win.py read it here. Keep in step with tools/package_app.py.
+// and tools/package_win.py read it here. Keep in step with the macOS release
+// version (tools/notarize_app.py --content-version).
 #ifndef ZITTER_CHROMIUM_APP_ZITTER_VERSION_H_
 #define ZITTER_CHROMIUM_APP_ZITTER_VERSION_H_
 

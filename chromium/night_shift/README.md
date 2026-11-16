@@ -30,9 +30,9 @@ content scripts. A site's own tuning overrides only the values it sets; the
 rest follow the defaults.
 
 The extension has no toolbar action or popup page. Zitter shows a native moon
-button in the header and a native panel under it (`extensions_bar.cc`). The
-panel reads and writes the site's record in the extension's local storage
-(`night_shift.cc`), so it opens without starting an extension page. The page's
+button in the header and a native panel under it. The panel reads and writes
+the site's record in the extension's local storage
+(`chromium/content_embedder/night_shift_site.cc`), so it opens without starting an extension page. The page's
 content script follows each change through `storage.onChanged`. The moon can be
 unpinned from the extensions menu, where Night Shift keeps its own row.
 
@@ -54,24 +54,11 @@ checks both upstream archives and uses a pinned esbuild version.
 
 ## Browser verification
 
-The Chromium-backed `NightShiftBrowserTest.NativeActionReviewsScopedRepair`
-opens the native panel in both appearance modes. Each appearance change must produce fresh Metal frames in
-the browser header and sidebar when Metal is requested. The compositor run
-checks that both Metal surfaces are hidden. A loopback model fixture drives the
-native assistant tool round-trip, including refusal of an unrelated tool, then
-verifies preview, save and undo in the inspected tab.
-
-On macOS, build `zitter_prototype` and run the case once with
-`--zitter-rust-raster=compositor` and once with `--zitter-rust-raster=metal`.
-Run from the Chromium source directory so the browser fixture finds its
-resources:
-
-```sh
-out/ZitterOptimized/zitter_prototype \
-  --gtest_filter=NightShiftBrowserTest.NativeActionReviewsScopedRepair \
-  --test-launcher-jobs=1 --enable-pixel-output-in-tests \
-  --zitter-rust-raster=metal
-```
+`tools/verify_content_night_shift.py build/ZitterContentLab.app` checks the
+bundled extension across ordinary macOS starts of the Content app with
+disposable profiles. The Chrome-based browser test
+`NightShiftBrowserTest.NativeActionReviewsScopedRepair` was removed with the
+Chrome build.
 
 Run `node --test tests/night_shift_policy.test.mjs` for site scoping and typed
 repair validation. Run `python tests/night_shift_browser.py <chromium-executable>`

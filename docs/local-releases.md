@@ -5,6 +5,10 @@ application to `doctorspider42/zitter`. A request for a local build alone does n
 authorize GitHub publication. A request to publish a release authorizes creating
 the release and uploading its files without another confirmation.
 
+Zitter builds only on Chromium's Content embedder
+(`//zitter_content:zitter_content`); the Chrome-based build and its packaging
+tools were removed after v0.9.5, which shipped only the macOS Content DMG.
+
 The default macOS download is a signed and notarized **DMG**, containing the
 signed/notarized `Zitter.app` and an `Applications` shortcut. Users open the DMG,
 drag the app into Applications, eject the image and launch the installed app.
@@ -67,104 +71,67 @@ not proof because it can contain a branch name. Do not label uncommitted product
 changes as a build of a clean published tag. Documentation-only additions do not
 require rebuilding an already published binary.
 
-## macOS: build the optimized application
+## macOS: build the Content application
 
-The local build uses `.chromium/src/zitter`, `.chromium/src/out/ZitterOptimized`,
-and the standard `zitter` target. The former `zitter_ui_lab` overlay remains a
-benchmark reference. Check for another active build before staging into these
-shared directories; do not interrupt it.
+`./build.sh` stages the Content embedder into `.chromium/src` with
+`tools/stage_content_embedder.py`, generates `out/ZitterContentBundle` with
+`--root-target=//zitter_content:zitter_content`, builds with Chromium's own
+Ninja, checks that the dependency graph has nothing under `//chrome`, audits the
+linked licenses and packages `build/ZitterContentLab.app` with an ad hoc seal and
+the bundled notices. Check for another active build before staging into the
+shared checkout; do not interrupt it.
 
 ```sh
 pgrep -fl 'ninja|build.sh'
-cat .chromium/src/out/ZitterOptimized/args.gn
+cat .chromium/src/out/ZitterContentBundle/args.gn
 ./build.sh
 ```
 
-Read the actual GN arguments, not just the output directory's name. A release
-requires `is_debug = false`. The optimized setup used for v0.1.0 also has
-`is_component_build = false`, ThinLTO, and PGO. `chromium/release.args.gn` is an
-older component configuration, not the authoritative optimized configuration.
-Add `proprietary_codecs = true` and `ffmpeg_branding = "Chrome"` from
-`chromium/optimized.args.gn` to existing output directories. The local build
-checks both settings so packaged builds support H.264 and AAC.
-If PGO is enabled, its pinned profile must be available. Do not silently fall
-back to a Debug build when a release configuration fails.
+On first use the script writes the output's `args.gn` from
+`chromium/release.args.gn` as a non-component Release build with ThinLTO and PGO
+disabled. Read the actual GN arguments, not just the output directory's name.
+Packaging requires `is_debug = false`, `is_component_build = false`,
+`proprietary_codecs = true` and `ffmpeg_branding = "Chrome"`, so packaged builds
+support H.264 and AAC. `ZITTER_CONTENT_OUT` selects another output directory,
+`ZITTER_BUILD_JOBS` sets Ninja concurrency (default 6), and `ZITTER_PYTHON`
+overrides the depot-tools Python runtime. The license collection is written to
+`build/license-audit/mac-content-local/THIRD_PARTY_LICENSES.txt`.
 
-`build.sh` runs the guarded full overlay installer, including application/bootstrap
-sources, assistant assets, renderer hooks and vendored ad-blocking crates. It
-generates the standard target's graph with `--root-target=//zitter`, builds with
-Chromium's own Ninja, audits the concrete bundle and repackages
-`build/ZitterRustMetal.app` with fresh license notices and the local signature.
-The standard target also matches the ad-blocking vendor's GN visibility; copying
-only the UI into the old lab overlay no longer synchronizes the whole browser.
+It requires the pinned Chromium checkout; it is not a fresh-checkout toolchain
+bootstrap. `./build.sh --run` launches the app with temporary profiles. A local
+build does not create a release tag, submit to Apple, or upload distribution
+assets.
 
-It requires the pinned Chromium checkout, optimized output and local signing
-configuration; it is not a fresh-checkout toolchain bootstrap. Modified or
-unowned overlay files are refused. Use `ZITTER_BUILD_TESTS=1 ./build.sh` to build
-`zitter_prototype` too, and `ZITTER_BUILD_JOBS` to set Ninja concurrency (default
-6). The depot-tools Python runtime is preferred; `ZITTER_PYTHON` can override it.
-`--run` retains the owned isolated-profile launcher. A local build does not create
-a release tag, submit to Apple, or upload distribution assets.
+The build records the Zitter commit, dirty state, Chromium revision, SHA-256 of
+the GN arguments and the dependency audit in the sealed bundle metadata
+(`Contents/Resources/zitter-build.json`). Content signing and DMG preparation
+require that metadata and carry it into the DMG build record. Use the dirty
+state to distinguish a local rehearsal from a tagged build.
 
-Audit the actual target and collect its license notices:
-
-```sh
-python3 tools/audit_licenses.py \
-  --app build/ZitterRustMetal.app \
-  --out .chromium/src/out/ZitterOptimized \
-  --target //zitter:zitter \
-  --destination build/releases/v0.1.0/audit
-python3 tools/package_app.py \
-  --out .chromium/src/out/ZitterOptimized \
-  --binary zitter \
-  --app-version 0.1.0 --hardened-runtime \
-  --destination build/releases/v0.1.0/Zitter.app \
-  --no-register \
-  --third-party-licenses build/releases/v0.1.0/audit/THIRD_PARTY_LICENSES.txt
-```
+Publish macOS images as `Zitter-v<version>-macos-content-<architecture>.dmg`.
+The Content updater selects this filename from the release feed. In a writable
+installation under `/Applications`, the updater checks the replacement against
+the current app's designated signing requirement and Gatekeeper before applying
+it on restart. When testing an updater change, exercise an actual upgrade from
+a signed build that contains the new updater.
 
 Signing uses `ZITTER_CODESIGN_IDENTITY` or `.zitter-signing.json` and the macOS
-Keychain. Do not commit credentials. Pass `--app-version` to set both bundle
-version fields. `--hardened-runtime` signs nested code from the inside out using
-the Chromium browser/renderer/GPU entitlement split in `chromium/signing/`.
-These entitlements match the pinned Chromium signing configuration; renderer
-and GPU helpers, including Aperitif variants, receive `allow-jit`.
+Keychain; an isolated checkout may lack the local signing configuration, so set
+`ZITTER_CODESIGN_IDENTITY` to the configured Developer ID Application identity
+there. Do not commit credentials. Signing applies Hardened Runtime to nested code
+from the inside out using the Chromium browser/renderer/GPU entitlement split in
+`chromium/signing/`; renderer and GPU helpers receive `allow-jit`.
 
 Inspect the audit's unmatched binaries, dependency paths and metadata diagnostics.
 The repository's `docs/licenses/supplements.json` covers known metadata gaps;
-do not describe scanner output as a complete compliance certificate. Include
-`LICENSE`, `NOTICE`, fonts and their licenses, and `THIRD_PARTY_LICENSES.txt` in
-the app. Check for absolute checkout dependencies and broken symlinks: the
-packager's development-bundle description does not promise a portable installer.
+do not describe scanner output as a complete compliance certificate.
+Developer ID signing and Apple notarization are separate: report the actual
+notarization status and possible first-launch Gatekeeper block. Do not claim a
+notarized installer or working updater unless verified.
 
-Run the packaged application with an isolated profile. The existing short
-navigation probe exercises page loading, new tabs, Split View and clean exit:
-
-```sh
-python3 tools/benchmark_app.py \
-  --app build/releases/v0.1.0/Zitter.app \
-  --scenario navigation --iterations 1 --tabs 2 \
-  --label v0.1.0-release-smoke --results build/releases/v0.1.0/smoke
-```
-
-This probe expects the packager's ownership marker. After verification, replace
-`Contents/Resources/zitter-development-bundle` with release build metadata so
-the distributed app does not expose the local checkout path. Make all resource
-and version changes before signing the outer bundle again with the configured
-identity. Verify the final seal:
-
-```sh
-codesign --verify --deep --strict build/releases/v0.1.0/Zitter.app
-```
-
-Validate the archive and, when portability is uncertain, launch an extracted copy
-outside the checkout. Developer ID signing and Apple notarization are separate:
-report the actual notarization status and possible first-launch Gatekeeper block.
-Do not claim a notarized installer or working updater unless verified.
-
-For distribution, use the automated app notarization and DMG workflow below.
-It removes the development marker itself. ZIPs produced during app notarization
-are intermediate artifacts and are not uploaded as the default user download.
+For distribution, use the app notarization and DMG workflow below. ZIPs produced
+during app notarization are intermediate artifacts and are not uploaded as the
+default user download.
 
 ## Apple notarization
 
@@ -206,17 +173,20 @@ navigate to the settings, but the user must generate and enter the new credentia
 Prepare a private copy without contacting Apple:
 
 ```sh
-python3 tools/notarize_app.py \
-  --app build/releases/v0.1.0/Zitter.app \
-  --destination build/notarization/v0.1.0 --prepare-only
-python3 tools/smoke_release_app.py \
-  --app build/notarization/v0.1.0/work/Zitter.app \
-  --results build/notarization/v0.1.0-smoke
+python3 tools/notarize_app.py --app build/ZitterContentLab.app \
+  --destination build/notarization/v0.1.0 --content-version 0.1.0 \
+  --content-release --prepare-only \
+  --third-party-licenses build/license-audit/mac-content-local/THIRD_PARTY_LICENSES.txt
+python3 tools/verify_content_bundle.py --content-release --preserve-signature \
+  build/notarization/v0.1.0/work/Zitter.app
 ```
 
-`--results` must be a new directory. This smoke probe exercises navigation,
-new tabs, Split View and clean exit using normal Chromium helpers and an isolated
-profile. It does not modify signed app resources or require a development marker.
+`--content-release` sets the display name to Zitter and writes
+`work/Zitter.app`. The verifier keeps the Developer ID seal and tests the
+relocated Workspace, DevTools, isolated profiles and private windows. Pass
+`--crx-signer` with the local Chromium `crx3_build_action` to add the signed
+extension registry suite. Pass `--scratch` with an existing directory on another
+local volume if the system volume lacks space for the relocated app.
 
 The preparer preserves the source application and build outputs, removes local
 development markers, signs all nested code with Hardened Runtime and a timestamp,
@@ -231,14 +201,12 @@ timestamp and Hardened Runtime, including duplicate hard-linked library copies.
 deduplication during signing leaves those copies ad-hoc signed. A successful
 outer `codesign --verify --deep` alone does not catch this notarization failure.
 
-After the Keychain setup and smoke test, run the same command without
-`--prepare-only`:
+After the Keychain setup and verification, submit the prepared candidate:
 
 ```sh
-python3 tools/notarize_app.py \
-  --app build/releases/v0.1.0/Zitter.app \
-  --destination build/notarization/v0.1.0 \
-  --keychain-profile zitter-notary
+python3 tools/notarize_app.py --app build/ZitterContentLab.app \
+  --destination build/notarization/v0.1.0 --content-release \
+  --submit-content-candidate --keychain-profile zitter-notary
 ```
 
 It validates the Keychain credential, submits the ZIP to Apple, records the
@@ -270,10 +238,11 @@ script does not upload or replace GitHub release assets.
 After app notarization completes, package the stapled app:
 
 ```sh
-python3 tools/package_dmg.py \
+python3 tools/package_dmg.py --content-release \
   --app build/notarization/v0.1.0/work/Zitter.app \
-  --destination build/releases/v0.1.0-dmg \
-  --keychain-profile zitter-notary
+  --destination build/releases/v0.1.0-dmg --keychain-profile zitter-notary
+python3 tools/verify_content_bundle.py --content-release --preserve-signature \
+  build/releases/v0.1.0-dmg/Zitter-v0.1.0-macos-content-arm64.dmg
 ```
 
 This command validates the source app and its ticket, copies it without changing
@@ -303,9 +272,9 @@ Mounted test volumes are detached automatically.
 
 Publish only these final outputs by default:
 
-- `Zitter-v0.1.0-macos-arm64.dmg`
-- `SHA256SUMS-macos-arm64-dmg.txt`
-- `Zitter-v0.1.0-macos-arm64-dmg-build.json`
+- `Zitter-v0.1.0-macos-content-arm64.dmg`
+- `SHA256SUMS-macos-content-arm64-dmg.txt`
+- `Zitter-v0.1.0-macos-content-arm64-dmg-build.json`
 
 For an existing version, append the DMG to that same release and make its direct
 download link prominent in the release notes. Clearly label earlier ZIPs as
@@ -323,79 +292,26 @@ earlier signature and no stapled ticket. Avoid that ambiguity in future releases
 References: [Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
 [Apple app-specific passwords](https://support.apple.com/en-us/102654).
 
-## macOS: prepare and verify a Content candidate
+## macOS: clean-install checks
 
-Use the isolated Content checkout and a local non-component Release
-output. The examples below use 0.1.1 for the rehearsal. For an actual
-release, use the version and clean source tag selected above.
-The build records the Zitter commit, dirty state, Chromium revision,
-and SHA-256 of the GN arguments in the sealed bundle metadata. Content
-DMG preparation carries those fields into its build record. Production
-Content signing and DMG preparation require the bundle's build metadata,
-including its dependency audit and the declared Chromium metadata inputs.
-Use the dirty state when distinguishing a local rehearsal from a tagged build.
-Publish production Content images as
-`Zitter-v<version>-macos-content-<architecture>.dmg`. The Content
-updater selects this filename from the release feed. The first Content
-installation can be downloaded manually from the release page.
-Content builds with in-app installation use the published DMG and its GitHub
-asset digest. In a writable installation under `/Applications`, the updater
-checks the replacement against the current app's designated signing requirement
-and Gatekeeper before applying it on restart. When testing an updater change,
-exercise an actual upgrade from a signed build that contains the new updater.
-An isolated checkout may lack the local signing configuration. Set
-`ZITTER_CODESIGN_IDENTITY` to the configured Developer ID Application
-identity before running the preparation and packaging commands in that
-checkout.
-
-```sh
-./build.sh --content
-python3 tools/notarize_app.py --app build/ZitterContentLab.app \
-  --destination build/notarization/content-0.1.1 --content-version 0.1.1 \
-  --content-release --prepare-only \
-  --third-party-licenses build/license-audit/mac-content-local/THIRD_PARTY_LICENSES.txt
-python3 tools/verify_content_bundle.py --content-release --preserve-signature \
-  build/notarization/content-0.1.1/work/Zitter.app
-```
-
-The verifier keeps the Developer ID seal and tests the relocated
-Workspace, DevTools, isolated profiles, and private windows. Pass
-`--crx-signer` with the local Chromium `crx3_build_action` to add the
-signed extension registry suite. Pass `--scratch` with an existing
-directory on another local volume if the system volume lacks space for
-the relocated app. The disposable runtime profiles still use the
-account's ordinary temporary directory.
-
-```sh
-python3 tools/notarize_app.py --app build/ZitterContentLab.app \
-  --destination build/notarization/content-0.1.1 --content-release \
-  --submit-content-candidate --keychain-profile zitter-notary
-python3 tools/package_dmg.py --content-release \
-  --app build/notarization/content-0.1.1/work/Zitter.app \
-  --destination build/releases/content-0.1.1-dmg --keychain-profile zitter-notary
-python3 tools/verify_content_bundle.py --content-release --preserve-signature \
-  build/releases/content-0.1.1-dmg/Zitter-v0.1.1-macos-content-arm64.dmg
-```
-
-Run the ordinary startup and system Keychain checks in a disposable
-macOS account before switching the production backend. The migration
-plan also records the signed replacement and release feed checks.
-[Content embedder migration](content-embedder-migration.md)
+Run the ordinary startup and system Keychain checks in a disposable macOS
+account. The migration plan records the signed replacement and release feed
+checks: [Content embedder migration](content-embedder-migration.md).
 
 ## Windows: build the same tagged source
 
 Use a Windows machine with Chromium's Windows toolchain and the revision pinned
-in `chromium/revision.json`. Inspect the checkout's Windows build support and
-use its actual native target with `is_debug=false` and the intended architecture.
-The macOS `build.sh` and `tools/package_app.py` do not build or package Windows.
-Read `docs/windows-port.md` for the current toolchain, build and validation
-instructions. The current main branch provides component, static Release and
-ThinLTO/PGO configurations, plus `tools/package_win.py` for a portable ZIP and a
-standalone setup EXE. Prefer the standalone installer as the user download;
-include the audited license collection. For an already built official target:
+in `chromium/revision.json`. The macOS `build.sh` does not build or package
+Windows. Read `docs/windows-port.md` ("Content on Windows") for the toolchain,
+build and validation instructions: the Content build lives in
+`out/ZitterWinContent` with `chromium/windows-release.args.gn` and the root
+target `//zitter_content:zitter_content`. `tools/package_win.py` writes a
+portable ZIP and a standalone setup EXE from it. Prefer the standalone installer
+as the user download; include the audited license collection. For an already
+built and verified output:
 
 ```powershell
-python tools/package_win.py --out .chromium/src/out/ZitterWinOfficial --setup .chromium/src/out/ZitterWinOfficial/zitter_setup.exe --destination build/official --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
+python tools/package_win.py --out .chromium/src/out/ZitterWinContent --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe --destination build/content-installer --third-party-licenses build/license-audit/windows-content/THIRD_PARTY_LICENSES.txt
 ```
 
 Inspect the actual outputs and Authenticode status; the documented installer
@@ -427,9 +343,9 @@ If the release does not exist, create it against the exact built commit:
 
 ```sh
 gh release create v0.1.0 \
-  build/releases/v0.1.0-dmg/Zitter-v0.1.0-macos-arm64.dmg \
-  build/releases/v0.1.0-dmg/SHA256SUMS-macos-arm64-dmg.txt \
-  build/releases/v0.1.0-dmg/Zitter-v0.1.0-macos-arm64-dmg-build.json \
+  build/releases/v0.1.0-dmg/Zitter-v0.1.0-macos-content-arm64.dmg \
+  build/releases/v0.1.0-dmg/SHA256SUMS-macos-content-arm64-dmg.txt \
+  build/releases/v0.1.0-dmg/Zitter-v0.1.0-macos-content-arm64-dmg-build.json \
   --repo doctorspider42/zitter --target FULL_SOURCE_COMMIT_SHA \
   --title 'Zitter v0.1.0' --notes-file build/releases/v0.1.0/release-notes.md
 ```

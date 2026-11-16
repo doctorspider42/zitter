@@ -19,9 +19,12 @@ Review UI changes in light and dark themes across the affected renderers
 
 ## Build directories and disk space
 
-- Build in the existing output directories: `out/ZitterOptimized` on macOS;
-  `out/ZitterWin`, `out/ZitterWinDev`, `out/ZitterDevInstaller` (zitter-dev-install
-  skill) and `out/ZitterWinOfficial` on Windows.
+- Zitter builds only on the Content embedder (`//zitter_content:zitter_content`).
+  Build in the existing output directories. macOS: `./build.sh` uses
+  `out/ZitterContentBundle` (`--build-only`: `out/ZitterContentDev`);
+  `ZITTER_CONTENT_OUT=out/<dir>` picks another existing one, such as
+  `out/ZitterOptimized`, which holds an earlier Content build. Windows:
+  `out/ZitterWinContent`.
 - Create a new `.chromium/src/out/*` directory only after the user explicitly
   agrees, asked each time. A Chromium output directory takes 10–40 GB and hours
   to build and to delete. When asking, give the expected size and build time.
@@ -40,9 +43,3 @@ Review UI changes in light and dark themes across the affected renderers
 
 Use `.agents/skills/zitter-local-release/SKILL.md` for local release builds and
 GitHub publication. The shared workflow is in `docs/local-releases.md`.
-
-## Local Dev installation
-
-Use `.agents/skills/zitter-dev-install/SKILL.md` for side-by-side Windows Dev
-installs. After changing browser behavior, UI, or the installer, offer to build
-and launch Zitter Dev for a hands-on check if it has not already been launched.

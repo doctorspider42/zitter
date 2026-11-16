@@ -29,8 +29,8 @@ def catalogue(name):
     return entries, duplicates
 
 
-# The macOS menu lives in the app target.
-EXTRA = [ROOT / "chromium/app/app_shell_mac.mm"]
+# The macOS menu lives in the Content app target.
+EXTRA = [ROOT / "chromium/content_embedder/embedder_mac.mm"]
 
 
 def sources():

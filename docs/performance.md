@@ -1,3 +1,5 @@
+> The Chrome-based build and the tooling this page uses (`stage_performance_candidate.py`, `package_app.py`, `run_metal_sidebar.py`, `benchmark_*.py`, `zitter_prototype*`, `out/ZitterOptimized`) were removed; Zitter builds only on the Content embedder (`./build.sh`, see [development](development.md)). The commands below record the removed build.
+
 # Browser performance
 
 All original optimization items have been evaluated. The selected application is

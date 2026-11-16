@@ -4,6 +4,14 @@ Plan and status of the Windows (x64) version of Zitter. About 95% of the code is
 shared with macOS. The new work, roughly 2–3k lines, is in the text layer, the
 Windows entry point, the native frame and packaging.
 
+Windows builds only the Content embedder (`//zitter_content:zitter_content`) in
+`out/ZitterWinContent`; see [Content on Windows](#content-on-windows) for the
+current build, package and check steps. The Chrome-based Windows build
+(`//zitter:zitter`, the overlay installer, the `zitter_prototype` browser tests
+and the `out/ZitterWin`, `out/ZitterWinDev`, `out/ZitterWinRelease` and
+`out/ZitterWinOfficial` directories) was removed from the repository. Phases 0–6
+below record how that port was done; their notes describe the removed build.
+
 ## Decisions
 
 - **x64 only** for now. ARM64 comes later.
@@ -53,18 +61,15 @@ gclient runhooks
 
 Then:
 
-1. Build and run a plain `chrome.exe`. This separates toolchain problems from
-   Zitter problems.
-2. Check that `tools/install_chromium_overlay.py` works on Windows (paths, line
-   endings). The Keychain patch applies only to macOS.
-3. Add `chromium/windows.args.gn` with `target_cpu = "x64"` and a component
-   Release build for development.
+1. Optionally build and run a plain `chrome.exe`. This separates toolchain
+   problems from Zitter problems.
+2. Build Zitter as described in [Content on Windows](#content-on-windows).
 
 If ninja stops on a MIDL output mismatch (the local `midl.exe` writes different
 `.tlb` bytes than Chromium's checked-in ones), run the `copy /y` command it prints
 to rebaseline `third_party/win_build_output/midl` in the checkout, then resume.
 
-**Done when** vanilla Chromium runs and the overlay installs.
+**Done when** vanilla Chromium runs and the Content build links `zitter.exe`.
 
 ## Phase 1: the non-Mac build (shared with Linux)
 
@@ -204,6 +209,10 @@ Notes:
     closes its window then. `WM_ENDSESSION` saves the session as Chrome does.
 ## Phase 5: tests and tools
 
+The browser test suite (`zitter_prototype`) and `run_metal_sidebar.py` described
+here belonged to the removed Chrome-based build. The Content build has no browser
+UI suite; its checks are the `tools/verify_content_*.py` scripts.
+
 - Run `zitter_prototype` on Windows. The macOS native keyboard tests (12 `IS_MAC`
   blocks in `profile_workspace_browsertest.cc`) get Windows counterparts.
 - Replace `tools/ui_capture.swift` with a window capture through
@@ -271,7 +280,8 @@ Notes:
 
 Notes:
 
-- `tools/package_win.py` packs GN's runtime_deps of `//zitter:zitter` (without
+- `tools/package_win.py` packs GN's runtime_deps of
+  `//zitter_content:zitter_content` (`OUT/zitter_content.runtime_deps`, without
   symbols, generated sources and test data) into
   `build/Zitter-<version>-win-x64-portable.zip`, and with `--setup` appends the
   same files to `zitter_setup.exe` as `Zitter-<version>-win-x64-setup.exe`. The
@@ -297,6 +307,9 @@ Notes:
   through `QuietUninstallString` leaving nothing. The elevated copy starts a
   moment after UAC (Windows checks the unsigned file first), so scripts should
   wait for it rather than for the first process.
+- The notes below on `out/ZitterWinRelease` and `out/ZitterWinOfficial` measured
+  the removed Chrome-based build. The Content build packages from
+  `out/ZitterWinContent`, which uses `chromium/windows-release.args.gn`.
 - A component build's installer needs its DLLs beside it; the standalone one
   comes from the static release build in `out/ZitterWinRelease`
   (`chromium/windows-release.args.gn`, about 8 hours from scratch on this
@@ -325,22 +338,16 @@ Notes:
   the autoconf exception), ISimpleDOM (MPL-1.1, accessibility interfaces) and
   WTL (MS-PL, headers with no link evidence). `zitter.exe` imports no MSVC
   runtime DLL: the static build carries the CRT. `package_win.py
-  --third-party-licenses` ships the collection beside `zitter.exe`.
-  ```
-  python tools/audit_licenses.py --app build/release/Zitter-0.1.0-win-x64-portable.zip --out .chromium/src/out/ZitterWinRelease --destination build/license-audit/windows
-  python tools/package_win.py --out .chromium/src/out/ZitterWinRelease --setup .chromium/src/out/ZitterWinRelease/zitter_setup.exe --destination build/release --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
-  ```
+  --third-party-licenses` ships the collection beside `zitter.exe`. The current
+  commands are under [Content on Windows](#content-on-windows).
 - `chromium/windows-official.args.gn` (`out/ZitterWinOfficial`) is the release
   build with `is_official_build`, which brings ThinLTO, and PGO from Chromium's
   win64 profile (gclient `checkout_pgo_profiles`): about 7 hours from scratch
   here, the LTO link last. `zitter.exe` is 296 MB against 325 MB without them,
   and the package 188 MB (189 MB installer). Checked: quiet install from the
   installer alone, the network service in its AppContainer, a page loading,
-  the first-run wizard, quiet removal leaving nothing. This is the build to
-  ship:
-  ```
-  python tools/package_win.py --out .chromium/src/out/ZitterWinOfficial --setup .chromium/src/out/ZitterWinOfficial/zitter_setup.exe --destination build/official --third-party-licenses build/license-audit/windows/THIRD_PARTY_LICENSES.txt
-  ```
+  the first-run wizard, quiet removal leaving nothing. It was the Chrome-based
+  build that shipped; it was removed with that build.
 - Not done: Authenticode signing (no certificate yet).
 - The installer draws its own controls, so it describes them to UI Automation
   itself (`setup_accessibility.cc`): headings and sentences as text, the two
@@ -358,39 +365,11 @@ cluster. See [remote-builds.md](remote-builds.md).
 
 ## Zitter Dev for side-by-side testing
 
-For the incremental component browser and standalone setup workflow, see the
-[local Dev install skill](../.agents/skills/zitter-dev-install/SKILL.md).
-
-Enable `zitter_dev_build = true` in a Windows build directory's `args.gn`. Start
-from `chromium/windows-release.args.gn` and save the arguments to
-`.chromium/src/out/ZitterWinDev/args.gn`. Use the toolchain environment above.
-Setup must come from a static build so it can start before extracting the
-browser's DLLs. For faster local linking, you can build the browser in a separate
-component directory with the same Dev option and package it with the static Dev
-setup.
-
-```powershell
-python tools/install_chromium_overlay.py .chromium/src
-cd .chromium/src
-gn gen out/ZitterWinDev
-autoninja -C out/ZitterWinDev zitter zitter_setup
-cd ../..
-python tools/package_win.py --out .chromium/src/out/ZitterWinDev --setup .chromium/src/out/ZitterWinDev/zitter_setup.exe --destination build/dev
-```
-
-The unsigned `Zitter-Dev-*-win-x64-setup.exe` installs for the current user under
-`%LOCALAPPDATA%\Programs\Zitter Dev`. Dev uses a lime version of the Windows app
-and setup icon. It has its own Start menu shortcuts, taskbar identity,
-Apps & features entry and browsing data under
-`%LOCALAPPDATA%\Zitter Dev`. Explicit `--user-data-dir` paths must be inside
-that directory. Install a newer local build over it to keep Dev data.
-
-Open **Zitter Dev - Clean profile** from the Start menu to test first run.
-Each launch starts with a fresh profile. The test profiles stay in
-`%LOCALAPPDATA%\Zitter Dev\Clean Profiles` for inspection. To reset the installation
-itself, uninstall **Zitter Dev** and select **Also remove browsing data** before
-reinstalling. Build and run setup again to refresh Dev. The Dev build uses manual
-updates and is intended for local testing.
+The Zitter Dev channel (`zitter_dev_build`, `out/ZitterWinDev`, the
+`zitter-dev-install` skill) depended on the removed Chrome-based build. The
+Content build has no Dev channel yet. To test a local build beside an installed
+copy, run `out/ZitterWinContent/zitter.exe` with a disposable
+`--zitter-content-workspace-root`.
 
 ## Windows integration
 
@@ -496,19 +475,40 @@ open during resizing, dragging, and its menus or settings.
 | Phase | State |
 | --- | --- |
 | Design | Done ([canvas](https://claude.ai/artifact/V1fAXXfmYYMv3QMbAURWjJ)) |
-| 0 — environment | Done: vanilla `chrome.exe` runs (`out/ZitterWin`), the overlay installs |
+| 0 — environment | Done: vanilla `chrome.exe` runs |
 | 1 — non-Mac build | Done: `:shell` compiles on `text_services_skia.cc`; `sidebar_scene_unittests` (532), `zitter_network_policy_tests` (3) and `editor_text_layout_unittests` (6) pass. The `zitter` target for `is_win` moves to phase 2 |
 | 2 — first launch | Done: `zitter.exe` opens the window, loads pages and restores the session and its space after a restart. The download shutdown prompt moves to phase 3 |
 | 3 — native look | Done: own titlebar on the system frame (shadow, snap, resize), 46 × 38 caption buttons, Snap Layouts (HTMAXBUTTON, Windows 11), the Zitter menu with icons and mono shortcuts, Windows shortcuts and Kbd words, the emoji panel, the downloads prompt on close, centered dialogs, clickable sidebar and toasts, the jump list, the first-run wizard, links from other apps, the app icon, design fonts. verify-ui: Noc and Papier, restored and maximized, 125% and 150%. The Snap Layouts flyout itself awaits a Windows 11 machine |
 | 4 — import and security | Done: Arc (MSIX), Chrome, Edge and Brave paths, real Arc and Chrome data read, CSV passwords, no cookie option, sandbox checked, network audit clean after two fixes |
-| 5 — tests and tools | Done but the docs: the full browser suite passes (226), Rust (532) and Python (83) tests pass, verify-ui works on Windows. Open: Windows sections in CLAUDE.md and README, waiting on their rewrite |
-| 6 — packaging | Done but signing: static release and ThinLTO + PGO builds (188 MB package), portable ZIP and standalone installer (191 MB), install, update and quiet remove checked for one user and for everyone, browser registration, network sandbox, license audit, installer accessibility. Open: Authenticode signing (no certificate) |
+| 5 — tests and tools | Done but the docs: the full browser suite passed (226; removed with the Chrome-based build), Rust (532) and Python (83) tests pass, verify-ui works on Windows. Open: Windows sections in CLAUDE.md and README, waiting on their rewrite |
+| 6 — packaging | Done but signing (Chrome-based build): static release and ThinLTO + PGO builds (188 MB package), portable ZIP and standalone installer (191 MB), install, update and quiet remove checked for one user and for everyone, browser registration, network sandbox, license audit, installer accessibility. Open: Authenticode signing (no certificate) |
 
 ## Content on Windows
 
 The Content embedder (`//zitter_content:zitter_content`, `out/ZitterWinContent`)
-builds as `zitter.exe`, so the installer, browser registration, shortcuts and
-the updater's installation check stay the same as for the Chrome-based build.
+is the only Windows build. It builds as `zitter.exe`, so the installer, browser
+registration, shortcuts and the updater's installation check stay the same as
+for the removed Chrome-based build.
+
+Build with the Phase 0 toolchain environment, from the repository root:
+
+```powershell
+python tools/stage_content_embedder.py .chromium/src
+cd .chromium/src
+mkdir out/ZitterWinContent   # first build only
+copy ..\..\chromium\windows-release.args.gn out\ZitterWinContent\args.gn   # first build only
+gn gen out/ZitterWinContent --root-target=//zitter_content:zitter_content
+autoninja -C out/ZitterWinContent zitter_content   # zitter.exe and zitter_setup.exe
+```
+
+`gn gen` also writes `out/ZitterWinContent/zitter_content.runtime_deps`, the file
+list that `package_win.py` and the bundle verifier read. The unit tests build
+by name in the same directory: `sidebar_scene_unittests`,
+`content_blocking_engine_unittests`, `assistant_engine_unittests` (Rust),
+`zitter_network_policy_tests`, `arc_importer_unittests`,
+`zitter:editor_text_layout_unittests`, `updater_unittests` and
+`setup_runtime_tests`. The `verify-ui` skill builds the same directory with
+`build_app_win.ps1`.
 
 - **Startup.** A plain launch (Explorer, a shortcut, the jump list, a link from
   another app) opens the durable Workspace in `%LOCALAPPDATA%\Zitter Content`
@@ -595,7 +595,7 @@ Package and check:
 
 ```powershell
 python tools/verify_content_windows_bundle.py .chromium/src/out/ZitterWinContent --third-party-licenses build/license-audit/windows-content/THIRD_PARTY_LICENSES.txt --archive build/Zitter-content.zip
-python tools/package_win.py --out .chromium/src/out/ZitterWinContent --runtime-deps .chromium/src/out/ZitterWinContent/zitter_content.runtime_deps --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe --destination build/content-installer --third-party-licenses build/license-audit/windows-content/THIRD_PARTY_LICENSES.txt
+python tools/package_win.py --out .chromium/src/out/ZitterWinContent --setup .chromium/src/out/ZitterWinContent/zitter_setup.exe --destination build/content-installer --third-party-licenses build/license-audit/windows-content/THIRD_PARTY_LICENSES.txt
 ```
 
 The bundle verifier needs `llvm-readobj`; a fresh checkout has only the Linux

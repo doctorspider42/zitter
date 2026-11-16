@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 from notarize_app import verify_nested_signatures
-from package_app import BUNDLE_ID
+from macos_signing import BUNDLE_ID
 from verify_content_assistant_helper import verify_assistant_helper
 
 

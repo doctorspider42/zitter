@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds with Siso, sending clang-cl compiles to the LAN NativeLink cluster.
 
-  python tools/remote_build/build.py -C out/ZitterWinDev zitter zitter_setup
+  python tools/remote_build/build.py -C out/ZitterWinContent zitter_content
 
 The output directory needs `use_siso = true` and `use_remoteexec = true` (see
 windows-remote.args.gn) and the checkout needs setup_siso.py.

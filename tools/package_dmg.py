@@ -21,7 +21,7 @@ from notarize_app import (
     run, save, sha256,
     verify_nested_signatures, wait_for_acceptance,
 )
-from package_app import BUNDLE_ID, signing_identity
+from macos_signing import BUNDLE_ID, signing_identity
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
