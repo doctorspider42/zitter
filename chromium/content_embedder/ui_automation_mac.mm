@@ -957,14 +957,14 @@ class Driver final : public views::WidgetObserver {
   }
 
   // The window keys would go to: the key window. In the background the app
-  // has none; then the frontmost window that could be key and has a focused
-  // view (the panel that just opened), else the main one.
+  // has none; then the frontmost window that could be key (a menu or panel
+  // that just opened), else the main one.
   views::Widget* KeyWidget() {
     if (views::Widget* widget = WidgetFor(NSApp.keyWindow))
       return widget;
     for (views::Widget* widget : OrderedWidgets(true)) {
-      if (WindowFor(widget).canBecomeKeyWindow && widget->GetFocusManager() &&
-          widget->GetFocusManager()->GetFocusedView()) {
+      if (WindowFor(widget).canBecomeKeyWindow &&
+          widget->GetWindowBoundsInScreen().width() > 1) {
         return widget;
       }
     }

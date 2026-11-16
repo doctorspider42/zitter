@@ -53,7 +53,7 @@ against the design, and fixed until it matches.
    - `launch` also passes `--zitter-automation`. The app then takes commands on
      `<workspace root>/automation.sock` and delivers them straight to its own widgets
      and pages. The user's cursor never moves, the app may stay in the background, and
-     other windows may cover it. See "Driving the app" below.
+     other windows may cover it. See the `drive-zitter` skill.
    - `shot` copies the window's own composited frame, web pages included. It never
      captures the screen, so it needs no Screen Recording permission and works on a
      covered window. Keep screenshots in `build/screens/`, which git ignores.
@@ -98,47 +98,11 @@ against the design, and fixed until it matches.
 
 ## Driving the app
 
-Prefer launch switches (`--open-panel`) where one exists. For anything else, drive
-the app through `ui.py`. On macOS every command goes through the automation socket:
-
-```bash
-python3 .claude/skills/verify-ui/scripts/ui.py tree --window sidebar      # named views, window points
-python3 .claude/skills/verify-ui/scripts/ui.py click --name "Nowa karta"   # by accessible name
-python3 .claude/skills/verify-ui/scripts/ui.py click 120 300 --window sidebar
-python3 .claude/skills/verify-ui/scripts/ui.py rightclick --name "Projekty" --window sidebar
-python3 .claude/skills/verify-ui/scripts/ui.py move 40 80 --window sidebar  # hover states
-python3 .claude/skills/verify-ui/scripts/ui.py drag 40 80 --to 40 200 --window sidebar
-python3 .claude/skills/verify-ui/scripts/ui.py scroll 400 300 --dy 240     # screen points
-python3 .claude/skills/verify-ui/scripts/ui.py key escape; ui.py key t --mod cmd
-python3 .claude/skills/verify-ui/scripts/ui.py type "zitter.dev"           # into the focused field
-python3 .claude/skills/verify-ui/scripts/ui.py shot build/screens/x.png --window panel --crop 0,0,360,200
-python3 .claude/skills/verify-ui/scripts/ui.py frames build/screens/anim.png --window sidebar \
-    --then-name "Nowa karta" --count 8 --interval 40 --crop 0,0,280,400
-```
-
-- **Coordinates.** With `--window`, X Y are window points: the coordinates of a
-  `shot --scale 1` image of that window. Without it, X Y are screen points. `tree`
-  lists bounds in window points, so `--name` is usually simpler and more robust.
-- **Clicks by name** match the accessible name exactly, ignoring case, then as a
-  part of the name. When several views match, the error lists them; add `--index N`.
-- **Pages.** Clicks, drags and wheel events over a web view go to the page.
-  `type` reaches the focused page field too.
-- **Saving context.** `shot --scale 0.5` and `--crop x,y,w,h` keep images small.
-  `frames` takes `--count` frames `--interval` ms apart into one contact sheet, at
-  `--scale 0.5` by default. Each frame is labeled with its time.
-  `--then-click X Y`, `--then-name N` or `--then-key K` starts the animation first.
-  `--separate` writes one file per frame instead.
-- **Timing.** Pointer commands answer at once and dispatch right after, then
-  `ui.py` waits `--settle` (0.3 s) so the next shot shows the result.
-- **Limits.** Native macOS menus (`NSMenu`) and system dialogs are not part of a
-  window's frame. A `shot` misses them, so use `shot --screen` with the app in front.
-  The sidebar drawn with `--raster metal` is a separate Metal layer, so the compositor
-  shot misses it too. `--cursor` (click) and `--screen` (shot) fall back to the real
-  mouse and `screencapture`; those take over the user's screen, so ask before using
-  them. On Windows, `ui_win.py` still drives the real mouse.
-- **Check:** `python3 tools/verify_content_automation.py` (about 30 s, its own
-  probe root). It verifies that clicks, screenshots and frames work and that the
-  cursor stays put.
+To reach a view that has no `--open-panel` switch, or to check an interaction, a
+hover state or an animation, drive the app with the `drive-zitter` skill
+(`.claude/skills/drive-zitter/SKILL.md`). It covers clicks by name, keys, typing,
+scrolling, `shot` options and `frames` contact sheets. On macOS it never moves the
+user's mouse, and the app stays in the background.
 
 ## Windows
 

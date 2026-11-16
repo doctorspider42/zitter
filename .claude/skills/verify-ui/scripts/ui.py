@@ -114,6 +114,12 @@ def window_ref(name):
     listed = automation({"cmd": "windows"})["windows"]
     if name.isdigit():
         return int(name)
+    if name == "menu":
+        # Context menus are untitled windows; the frontmost one.
+        for w in listed_front_to_back(listed):
+            if w["visible"] and not w["title"] and w["width"] > 1:
+                return w["id"]
+        sys.exit("No open menu.")
     titles = WINDOW_TITLES.get(name, {name})
     for w in listed:
         if w["title"] in titles and w["visible"]:
@@ -122,6 +128,12 @@ def window_ref(name):
         if w["visible"] and name.lower() in w["title"].lower():
             return w["id"]
     sys.exit(f"No visible {name} window; list them with `ui.py windows`.")
+
+
+def listed_front_to_back(listed):
+    # `windows` lists all windows; the visible ones come front to back first
+    # only from the app's ordered list, so prefer the newest (highest id).
+    return sorted(listed, key=lambda w: -w["id"])
 
 
 def target(a, command):
@@ -329,7 +341,7 @@ sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.du
 
 def pointer_args(p, name=True):
     p.add_argument("x", type=float, nargs="?"); p.add_argument("y", type=float, nargs="?")
-    p.add_argument("--window", help="X Y are points in this window (main, sidebar, panel, a title or id)")
+    p.add_argument("--window", help="X Y are points in this window (main, sidebar, panel, menu, a title or id)")
     if name:
         p.add_argument("--name", help="the view with this accessible name (see `ui.py tree`)")
         p.add_argument("--index", type=int, help="which of several views with that name")
@@ -378,7 +390,7 @@ def tree(a):
 
 tr.set_defaults(run=tree)
 s = sub.add_parser("shot"); s.add_argument("out"); s.add_argument("--window", default="main",
-    help="main, sidebar, panel (the space panel), a title or a window id")
+    help="main, sidebar, panel (the space panel), menu (the open context menu), a title or a window id")
 s.add_argument("--scale", type=float, default=1, help="pixels per point (1 = window points; 2 = Retina)")
 s.add_argument("--crop", help="x,y,width,height in window points")
 s.add_argument("--alone", action="store_true", help="without the window's child windows (sidebar, panels)")

@@ -17,6 +17,14 @@ layouts and a clear hierarchy of actions instead of heavy admin-style forms.
 Review UI changes in light and dark themes across the affected renderers
 (compositor and Metal).
 
+## Checking the running app
+
+To exercise or look at Zitter's UI (clicks, typing, scrolling, screenshots,
+animation frames), follow `.agents/skills/drive-zitter/SKILL.md`. On macOS it
+drives the app through its automation socket: the user's mouse never moves and
+the app stays in the background, so it needs no permission to take over the
+screen.
+
 ## Build directories and disk space
 
 - Zitter builds only on the Content embedder (`//zitter_content:zitter_content`).
