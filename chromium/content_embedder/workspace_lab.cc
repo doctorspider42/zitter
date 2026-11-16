@@ -2441,9 +2441,10 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
             tab ? prototype::T(u"Co udostępnić?")
                 : prototype::T(u"Zezwolić na przechwytywanie?"),
             std::move(text),
-            tab ? prototype::T(u"Udostępnij") : prototype::T(u"Zezwól raz"),
+            tab ? prototype::T(u"Udostępnij") : prototype::T(u"Zezwól"),
             tab ? PermissionPrompt::kTabCapture : PermissionPrompt::kDeviceCapture,
-            std::move(choices), tab_count, std::move(audio_option), std::move(answer));
+            std::move(choices), tab_count, std::move(audio_option), std::move(answer),
+            /*offer_remember=*/!tab);
       }, weak));
   ArmCloseHandler();
   shell_->Attach(widget_.get(), this);
@@ -4840,7 +4841,7 @@ void WorkspaceLab::InitializePrivateSession(
   session->profile->site_permissions().SetClipboardReadPrompt(
       base::BindRepeating(
           [](base::WeakPtr<WorkspaceLab> owner, content::RenderFrameHost& frame,
-             base::OnceCallback<void(bool)> answer) {
+             base::OnceCallback<void(bool, bool)> answer) {
             if (owner && owner->private_session_) {
               for (const auto& window : owner->private_session_->windows) {
                 auto* page = window->web_contents();
@@ -4851,7 +4852,7 @@ void WorkspaceLab::InitializePrivateSession(
                 }
               }
             }
-            std::move(answer).Run(false);
+            std::move(answer).Run(false, false);
           }, weak_factory_.GetWeakPtr()));
   session->filter_ready =
       session->profile->ObserveAdblockSettings(base::BindRepeating(
@@ -5201,7 +5202,7 @@ void WorkspaceLab::OpenSitePanel() {
           });
           if (full && current->CanClearSitePermissions()) {
             for (const auto* key : {"media-stream-camera", "media-stream-mic"})
-              summary.permissions.push_back({.key = key, .setting = current->MediaSetting(origin, prototype::SiteDefaultKey(key)), .can_allow = false});
+              summary.permissions.push_back({.key = key, .setting = current->MediaSetting(origin, prototype::SiteDefaultKey(key))});
           }
           for (const auto& scheme : current->AllowedExternalProtocols(origin))
             summary.permissions.push_back({.key = "protocol:" + scheme, .setting = 1});
@@ -5308,33 +5309,31 @@ void WorkspaceLab::PromptExtensionPermissions(
 
 void WorkspaceLab::ShowClipboardReadPrompt(
     content::RenderFrameHost& frame,
-    base::OnceCallback<void(bool)> answer) {
+    base::OnceCallback<void(bool, bool)> answer) {
   auto* page = web_contents();
   if (!page || page->GetPrimaryMainFrame() != &frame) {
-    std::move(answer).Run(false);
+    std::move(answer).Run(false, false);
     return;
   }
-  const std::u16string_view prompt_text = frame.GetBrowserContext()->IsOffTheRecord()
-      ? u"{} chce odczytać schowek. Zgoda dla tej witryny wygaśnie po zakończeniu sesji prywatnej."
-      : u"{} chce odczytać schowek. Zgoda zostanie zapisana dla tej witryny w bieżącym profilu.";
   ShowPermissionPrompt(prototype::T(u"Zezwolić na odczyt schowka?"),
-                       prototype::TF(prompt_text,
+                       prototype::TF(u"{} chce odczytać schowek.",
                          {base::UTF8ToUTF16(frame.GetLastCommittedOrigin().Serialize())}),
-                       prototype::T(u"Zezwól dla witryny"),
+                       prototype::T(u"Zezwól"),
                        PermissionPrompt::kClipboard, {}, 0, {},
-                       base::BindOnce([](base::OnceCallback<void(bool)> done,
-                                         std::optional<size_t> accepted, bool) {
-                         std::move(done).Run(accepted.has_value());
-                       }, std::move(answer)));
+                       base::BindOnce([](base::OnceCallback<void(bool, bool)> done,
+                                         std::optional<size_t> accepted, bool remember) {
+                         std::move(done).Run(accepted.has_value(), remember);
+                       }, std::move(answer)),
+                       /*offer_remember=*/true);
 }
 
 void WorkspaceLab::ShowSitePermissionPrompt(
-    content::RenderFrameHost& frame, std::string_view key,
-    base::OnceCallback<void(bool)> answer) {
+    content::RenderFrameHost& frame, std::string_view key, bool offer_remember,
+    base::OnceCallback<void(bool, bool)> answer) {
   auto* page = content::WebContents::FromRenderFrameHost(&frame);
   if (!page || page != web_contents() || !widget_ || !widget_->IsActive() ||
       page->GetVisibility() != content::Visibility::VISIBLE) {
-    std::move(answer).Run(false);
+    std::move(answer).Run(false, false);
     return;
   }
   const auto origin = base::UTF8ToUTF16(
@@ -5356,33 +5355,38 @@ void WorkspaceLab::ShowSitePermissionPrompt(
   }
   ShowPermissionPrompt(
       prototype::T(u"Zezwolić witrynie?"), std::move(detail),
-      prototype::T(u"Zezwól dla witryny"), PermissionPrompt::kNotification,
+      prototype::T(offer_remember ? u"Zezwól" : u"Zezwól dla witryny"),
+      PermissionPrompt::kNotification,
       {}, 0, {}, base::BindOnce(
-          [](base::OnceCallback<void(bool)> done, std::optional<size_t> accepted, bool) {
-            std::move(done).Run(accepted.has_value());
+          [](base::OnceCallback<void(bool, bool)> done, std::optional<size_t> accepted,
+             bool remember) {
+            std::move(done).Run(accepted.has_value(), remember);
           },
-          std::move(answer)));
+          std::move(answer)),
+      offer_remember);
 }
 
 void WorkspaceLab::ShowNotificationPrompt(
     content::RenderFrameHost& frame,
-    base::OnceCallback<void(bool)> answer) {
+    base::OnceCallback<void(bool, bool)> answer) {
   auto* page = web_contents();
   if (!page || page->GetPrimaryMainFrame() != &frame || !widget_ ||
       !widget_->IsActive()) {
-    std::move(answer).Run(false);
+    std::move(answer).Run(false, false);
     return;
   }
   ShowPermissionPrompt(
       prototype::T(u"Wysyłać powiadomienia?"),
       prototype::TF(u"{} chce wysyłać powiadomienia.",
                     {base::UTF8ToUTF16(frame.GetLastCommittedOrigin().Serialize())}),
-      prototype::T(u"Zezwól dla witryny"), PermissionPrompt::kNotification,
+      prototype::T(u"Zezwól"), PermissionPrompt::kNotification,
       {}, 0, {}, base::BindOnce(
-          [](base::OnceCallback<void(bool)> done, std::optional<size_t> accepted, bool) {
-            std::move(done).Run(accepted.has_value());
+          [](base::OnceCallback<void(bool, bool)> done, std::optional<size_t> accepted,
+             bool remember) {
+            std::move(done).Run(accepted.has_value(), remember);
           },
-          std::move(answer)));
+          std::move(answer)),
+      /*offer_remember=*/true);
 }
 
 
@@ -5393,7 +5397,8 @@ void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
                                          std::vector<std::u16string> choices,
                                          size_t tab_count,
                                          std::u16string audio_option,
-                                         base::OnceCallback<void(std::optional<size_t>, bool)> answer) {
+                                         base::OnceCallback<void(std::optional<size_t>, bool)> answer,
+                                         bool offer_remember) {
   if (!widget_->IsVisible() || permission_prompt_widget_ || saving_session_ ||
       before_unload_batch_.pending()) {
     std::move(answer).Run(std::nullopt, false);
@@ -5422,6 +5427,15 @@ void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
   if (!audio_option.empty()) {
     permission_prompt_audio_ = body->AddChildView(
         std::make_unique<views::Checkbox>(std::move(audio_option)));
+  } else if (offer_remember) {
+    // Every site prompt offers the same choice; the answer's second value
+    // then means "remember for this site". Unticked, the permission lasts
+    // while the page stays open.
+    permission_prompt_remember_ = prototype::AddPageDialogCheckbox(
+        body.get(), prototype::T(u"Zawsze zezwalaj tej witrynie"));
+    prototype::SetPageDialogCheckboxChecked(permission_prompt_remember_, true);
+  }
+  if (permission_prompt_audio_ && permission_prompt_choices_) {
     permission_prompt_choices_->SetCallback(base::BindRepeating(
         [](base::WeakPtr<WorkspaceLab> lab, size_t tab_count) {
           if (!lab || !lab->permission_prompt_choices_ ||
@@ -5536,10 +5550,14 @@ void WorkspaceLab::FinishPermissionPrompt(bool accepted) {
                                            : std::optional<size_t>(0);
   }
   const bool share_audio =
-      selection && permission_prompt_audio_ && permission_prompt_audio_->GetEnabled() &&
-      permission_prompt_audio_->GetChecked();
+      selection &&
+      ((permission_prompt_audio_ && permission_prompt_audio_->GetEnabled() &&
+        permission_prompt_audio_->GetChecked()) ||
+       (permission_prompt_remember_ &&
+        prototype::IsPageDialogCheckboxChecked(permission_prompt_remember_)));
   permission_prompt_choices_ = nullptr;
   permission_prompt_audio_ = nullptr;
+  permission_prompt_remember_ = nullptr;
   permission_prompt_widget_.reset();
   permission_prompt_delegate_.reset();
   if (permission_prompt_answer_)
@@ -5711,8 +5729,8 @@ void WorkspaceLab::CheckSitePermissionProbe() {
                                base::TimeTicks::Now() + base::Seconds(5));
         return;
       }
-      if (!media_access_->StopFromIndicatorForTesting()) {
-        LOG(ERROR) << "The active stream did not expose its Stop control";
+      if (!media_access_->StopForTesting()) {
+        LOG(ERROR) << "The active stream was not live";
         Finish(false);
       }
       return;
@@ -10149,7 +10167,7 @@ void WorkspaceLab::ShowTab() {
 #endif
     shell_->ResetFind();
     find_page_.reset();
-    media_access_->Stop();
+    media_access_->StopOutside(page->GetBrowserContext());
   }
   if (devtools_ && !devtools_->IsOpenFor(page))
     devtools_.reset();
@@ -11606,7 +11624,7 @@ void WorkspaceLab::DidStartNavigation(content::NavigationHandle* navigation) {
     find_page_.reset();
     CloseAdblockShield();
     CancelPermissionPrompt();
-    media_access_->Stop();
+    media_access_->CancelPending();
   }
 }
 

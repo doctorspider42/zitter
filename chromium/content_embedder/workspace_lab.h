@@ -491,19 +491,20 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void DownloadCompleted(std::string guid, std::u16string name);
   void OpenSitePanel();
   void ShowClipboardReadPrompt(content::RenderFrameHost& frame,
-                               base::OnceCallback<void(bool)> answer);
+                               base::OnceCallback<void(bool, bool)> answer);
   void ShowSitePermissionPrompt(content::RenderFrameHost& frame,
-                                std::string_view key,
-                                base::OnceCallback<void(bool)> answer);
+                                std::string_view key, bool offer_remember,
+                                base::OnceCallback<void(bool, bool)> answer);
   void ShowNotificationPrompt(content::RenderFrameHost& frame,
-                              base::OnceCallback<void(bool)> answer);
+                              base::OnceCallback<void(bool, bool)> answer);
   enum class PermissionPrompt { kClipboard, kNotification, kDeviceCapture, kTabCapture, kExtension };
   void ShowPermissionPrompt(std::u16string title, std::u16string text,
                             std::u16string allow, PermissionPrompt kind,
                             std::vector<std::u16string> choices,
                             size_t tab_count,
                             std::u16string audio_option,
-                            base::OnceCallback<void(std::optional<size_t>, bool)> answer);
+                            base::OnceCallback<void(std::optional<size_t>, bool)> answer,
+                            bool offer_remember = false);
   void CancelPermissionPrompt();
   void FinishPermissionPrompt(bool accepted);
   GURL SitePermissionProbeUrl() const;
@@ -1099,6 +1100,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::unique_ptr<views::Widget> permission_prompt_widget_;
   raw_ptr<views::Combobox> permission_prompt_choices_ = nullptr;
   raw_ptr<views::Checkbox> permission_prompt_audio_ = nullptr;
+  // "Zawsze zezwalaj tej witrynie" on site prompts.
+  raw_ptr<views::View> permission_prompt_remember_ = nullptr;
   base::OnceCallback<void(std::optional<size_t>, bool)> permission_prompt_answer_;
   bool permission_prompt_cancelled_ = false;
   struct CachedFavicon {

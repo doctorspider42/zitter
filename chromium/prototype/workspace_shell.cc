@@ -4523,6 +4523,9 @@ views::View* AddPageDialogCheckbox(views::View* parent, std::u16string label) {
 bool IsPageDialogCheckboxChecked(views::View* checkbox) {
   return CheckValue(checkbox);
 }
+void SetPageDialogCheckboxChecked(views::View* checkbox, bool checked) {
+  SetCheckValue(checkbox, checked);
+}
 std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget, bool primary_action){
   auto* delegate=widget->widget_delegate()->AsDialogDelegate();
   auto group=std::make_unique<SceneActionGroup>(false,views::LayoutProvider::Get()->GetDistanceMetric(views::DISTANCE_RELATED_BUTTON_HORIZONTAL),true,true);

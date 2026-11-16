@@ -71,7 +71,9 @@ video { display: block; margin-top: 60px }</style>
     document.title = 'Zitter media requesting';
     fetch('/site-media-report?stage=request');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({audio: true, video: true});
+      // Google Meet asks for pan, tilt and zoom with every camera.
+      const stream = await navigator.mediaDevices.getUserMedia(
+          {audio: true, video: {pan: true, tilt: true, zoom: true}});
       fetch('/site-media-report?stage=granted');
       const tracks = stream.getTracks();
       if (tracks.length !== 2 || tracks.some(track => track.readyState !== 'live')) {
@@ -286,6 +288,23 @@ def clipboard_rules(profile):
     return json.loads(path.read_text(encoding="utf-8")).get("zitter", {}).get("clipboard_permissions", {})
 
 
+def media_rules(profile):
+    path = profile / "Content Site Permissions"
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8")).get("zitter", {}).get("media_permissions", {})
+
+
+def clear_media_rules(profile):
+    path = profile / "Content Site Permissions"
+    if not path.is_file():
+        return
+    prefs = json.loads(path.read_text(encoding="utf-8"))
+    prefs.get("zitter", {}).pop("media_permissions", None)
+    prefs.get("zitter", {}).pop("media_permission_times", None)
+    path.write_text(json.dumps(prefs), encoding="utf-8")
+
+
 def run_site_permission_probe(executable, root, phase, origin, *,
                               theme="light", renderer="compositor", rejected=False,
                               env=None, missing_clipboard_fixture=False):
@@ -428,6 +447,15 @@ def main():
             for phase in ("media-deny", "media-policy", "media-allow", "media-switch"):
                 run(phase, primary)
                 require_rules({}, {})
+                rules = media_rules(work)
+                if phase.endswith(("-allow", "-switch")):
+                    # Allowing is remembered for the site until revoked.
+                    if sorted(rules.values()) != [1, 1] or not all(
+                            key.endswith((" camera", " microphone")) for key in rules):
+                        raise SystemExit(f"Allowing did not remember the site: {rules}")
+                    clear_media_rules(work)
+                elif rules:
+                    raise SystemExit(f"Unexpected camera or microphone rules: {rules}")
                 print(f"Content camera and microphone probe passed: {phase}")
             return
 

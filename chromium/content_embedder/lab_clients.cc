@@ -54,6 +54,7 @@
 
 #include "base/check.h"
 #include "base/command_line.h"
+#include "base/strings/strcat.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/no_destructor.h"
@@ -555,6 +556,18 @@ void LabContentClient::AddAdditionalSchemes(Schemes* schemes) {
 
 void LabBrowserClientBase::AppendExtraCommandLineSwitches(
     base::CommandLine* command_line, int child_process_id) {
+  if (command_line->GetSwitchValueASCII(switches::kProcessType) ==
+      switches::kRendererProcess) {
+    // <usermedia> and <geolocation> wait for the permission to turn granted
+    // after a page-embedded request. Zitter asks per capture instead, so
+    // without them sites such as Google Meet fall back to getUserMedia(),
+    // which shows the Zitter prompt.
+    const auto disabled = command_line->GetSwitchValueASCII(switches::kDisableBlinkFeatures);
+    command_line->AppendSwitchASCII(
+        switches::kDisableBlinkFeatures,
+        base::StrCat({disabled, disabled.empty() ? "" : ",",
+                      "UserMediaElement,GeolocationElement"}));
+  }
   if (!IsWorkspaceExtensionRuntime())
     return;
   const auto& browser = *base::CommandLine::ForCurrentProcess();

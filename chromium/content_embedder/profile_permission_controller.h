@@ -18,6 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "content/public/browser/permission_controller_delegate.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "url/origin.h"
 
@@ -61,6 +62,7 @@ class ProfilePermissionController final
   static constexpr char kMediaRuleTimes[] = "zitter.media_permission_times";
   bool PromptByDefault(std::string_view key) const;
   bool SetPromptByDefault(std::string_view key, bool prompt);
+  // Camera ("camera") and microphone ("microphone"): 1 allow, 2 block, 3 ask.
   int MediaSetting(const url::Origin& origin, std::string_view key) const;
   bool SetMediaSetting(const url::Origin& origin, std::string_view key, int setting);
 
@@ -79,8 +81,11 @@ class ProfilePermissionController final
   ClipboardSetting GetClipboardSetting(const url::Origin& origin) const;
   bool SetClipboardSetting(const url::Origin& origin, std::optional<ClipboardSetting> setting);
   bool HasClipboardReadGrant(content::RenderFrameHost* frame);
+  // Prompt answers: (allowed, remember). "remember" is the prompt's
+  // "Zawsze zezwalaj tej witrynie" checkbox; without it an allowed
+  // permission lasts while the page that asked stays open.
   using ClipboardReadPrompt = base::RepeatingCallback<void(
-      content::RenderFrameHost&, base::OnceCallback<void(bool)>)>;
+      content::RenderFrameHost&, base::OnceCallback<void(bool, bool)>)>;
   void SetClipboardReadPrompt(ClipboardReadPrompt prompt);
   static constexpr char kNotificationPrefs[] = "zitter.notification_permissions";
   static constexpr char kNotificationRuleTimes[] = "zitter.notification_permission_times";
@@ -137,12 +142,23 @@ class ProfilePermissionController final
                              const std::string& key, base::DictValue details);
   const base::DictValue* DeviceGrantDetails(std::string_view api, const url::Origin& origin,
                                             const std::string& key) const;
+  // `offer_remember` shows the "always allow" checkbox.
   using SitePrompt = base::RepeatingCallback<void(
-      content::RenderFrameHost&, std::string_view key, base::OnceCallback<void(bool)>)>;
+      content::RenderFrameHost&, std::string_view key, bool offer_remember,
+      base::OnceCallback<void(bool, bool)>)>;
   void SetSitePrompt(SitePrompt prompt);
   // Asks the user through the Zitter prompt; answers false without one.
   void RunSitePrompt(content::RenderFrameHost& frame, std::string_view key,
                      base::OnceCallback<void(bool)> answer);
+  // The same with the "always allow" checkbox: answers (allowed, remember).
+  void RunSitePrompt(content::RenderFrameHost& frame, std::string_view key,
+                     base::OnceCallback<void(bool, bool)> answer);
+
+  // Allows `key` ("camera", "microphone", "clipboard", "notifications" or a
+  // site category) for `origin` while the frame's document lives. The
+  // settings above read it as allowed; changing a setting drops it.
+  void GrantForDocument(content::RenderFrameHost& frame, const url::Origin& origin,
+                        std::string_view key);
 
   // navigator.registerProtocolHandler(): the handlers people accepted, kept
   // in the site permission store. Null without that store (private sessions).
@@ -224,6 +240,14 @@ class ProfilePermissionController final
   std::optional<url::Origin> storage_probe_origin_;
   ClipboardReadPrompt clipboard_read_prompt_;
   ClipboardReadPrompt notification_prompt_;
+  bool HasDocumentGrant(const url::Origin& origin, std::string_view key) const;
+  void DropDocumentGrants(const url::Origin& origin, std::string_view key);
+  struct DocumentGrant {
+    content::WeakDocumentPtr document;
+    url::Origin origin;
+    std::string key;
+  };
+  mutable std::vector<DocumentGrant> document_grants_;
   base::WeakPtrFactory<ProfilePermissionController> weak_factory_{this};
 };
 

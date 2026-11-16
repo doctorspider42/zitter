@@ -12,9 +12,12 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/media_stream_request.h"
+#include "content/public/browser/weak_document_ptr.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-forward.h"
+#include "url/origin.h"
 
 namespace content {
+class BrowserContext;
 class RenderFrameHost;
 class WebContents;
 }
@@ -60,7 +63,10 @@ class WorkspaceMediaAccess {
   void SetDesktopProbe(DesktopProbe probe) { desktop_probe_ = probe; }
   void Stop();
   bool IsCapturing(content::WebContents* page) const;
-  bool StopFromIndicatorForTesting();
+  // Ends captures from other profiles and any open prompt.
+  void StopOutside(content::BrowserContext* context);
+  void CancelPending();
+  bool StopForTesting();
 
  private:
   class Stream;
@@ -75,15 +81,29 @@ class WorkspaceMediaAccess {
              content::WebContents* source = nullptr,
              std::u16string source_label = {},
              content::DesktopMediaID desktop_source = {});
+  void Reply(content::WeakDocumentPtr document,
+             const content::MediaStreamRequest& request,
+             content::MediaResponseCallback reply,
+             blink::mojom::StreamDevicesPtr devices,
+             content::WebContents* source = nullptr,
+             std::u16string source_label = {},
+             content::DesktopMediaID desktop_source = {});
+  bool HasGrant(content::RenderFrameHost* frame, const url::Origin& origin,
+                bool audio, bool video);
+  void GrantDevices(content::WeakDocumentPtr document,
+                    const content::MediaStreamRequest& request,
+                    content::MediaResponseCallback reply);
   bool IsCurrentRequest() const;
   void Reject(blink::mojom::MediaStreamRequestResult result);
+  void StopStreams();
+
 
   const raw_ref<views::Widget> parent_;
   SelectedPage selected_;
   Sources sources_;
   Prompt prompt_;
   std::unique_ptr<Pending> pending_;
-  base::WeakPtr<Stream> stream_;
+  std::vector<base::WeakPtr<Stream>> streams_;
   int request_id_ = 0;
   DesktopProbe desktop_probe_ = DesktopProbe::kNone;
   base::WeakPtrFactory<WorkspaceMediaAccess> weak_factory_{this};

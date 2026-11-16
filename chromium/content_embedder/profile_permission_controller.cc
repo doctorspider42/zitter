@@ -40,6 +40,30 @@ bool IsNotification(const blink::mojom::PermissionDescriptorPtr& descriptor) {
   return descriptor && descriptor->name == blink::mojom::PermissionName::NOTIFICATIONS;
 }
 
+// Camera and microphone: the Permissions API reports the site setting, and
+// "prompt" while Zitter asks per capture. Google Meet queries the camera with
+// pan, tilt and zoom, reads "denied" as blocked in the browser and never
+// asks. Pan, tilt and zoom are never granted.
+const char* MediaKey(blink::PermissionType type) {
+  switch (type) {
+    case blink::PermissionType::VIDEO_CAPTURE:
+    case blink::PermissionType::CAMERA_PAN_TILT_ZOOM:
+      return "camera";
+    case blink::PermissionType::AUDIO_CAPTURE:
+      return "microphone";
+    default:
+      return nullptr;
+  }
+}
+
+PermissionResult MediaResult(blink::PermissionType type, int setting) {
+  if (setting == 2)
+    return PermissionResult(PermissionStatus::DENIED);
+  return PermissionResult(setting == 1 && type != blink::PermissionType::CAMERA_PAN_TILT_ZOOM
+                              ? PermissionStatus::GRANTED
+                              : PermissionStatus::ASK);
+}
+
 PermissionResult NotificationResult(int setting) {
   if (setting == 1)
     return PermissionResult(PermissionStatus::GRANTED);
@@ -189,6 +213,7 @@ bool ProfilePermissionController::CanClearSitePermissions() const {
 void ProfilePermissionController::ClearSitePermissions(base::Time begin,
                                                        base::Time end) {
   CHECK(CanClearSitePermissions());
+  document_grants_.clear();
   auto clear = [&](const char* rules_pref, const char* times_pref) {
     std::vector<std::string> removed;
     ScopedDictPrefUpdate rules(site_permission_prefs_.get(), rules_pref);
@@ -275,8 +300,12 @@ int ProfilePermissionController::NotificationSetting(const url::Origin& origin) 
     return 2;
   const auto value = site_permission_prefs_->GetDict(kNotificationPrefs)
                          .FindInt(origin.Serialize());
-  if (value == 1 || value == 2 || value == 3)
+  if (value == 1 || value == 2)
     return *value;
+  if (HasDocumentGrant(origin, "notifications"))
+    return 1;
+  if (value == 3)
+    return 3;
   return PromptByDefault("notifications") ? 3 : 2;
 }
 
@@ -291,6 +320,7 @@ bool ProfilePermissionController::SetNotificationSetting(const url::Origin& orig
                         256)) {
     return false;
   }
+  DropDocumentGrants(origin, "notifications");
   NotifyNotificationPermissionChanged(origin);
   return true;
 }
@@ -371,8 +401,14 @@ int ProfilePermissionController::MediaSetting(const url::Origin& origin,
   if (site_permission_prefs_) {
     const auto rule = site_permission_prefs_->GetDict(kMediaRules)
         .FindInt(origin.Serialize() + " " + std::string(key));
-    if (rule == 2 || rule == 3)
+    if (rule == 1 || rule == 2)
       return *rule;
+    if (HasDocumentGrant(origin, key))
+      return 1;
+    if (rule == 3)
+      return 3;
+  } else if (HasDocumentGrant(origin, key)) {
+    return 1;
   }
   return PromptByDefault(key) ? 3 : 2;
 }
@@ -381,12 +417,16 @@ bool ProfilePermissionController::SetMediaSetting(
     const url::Origin& origin, std::string_view key, int setting) {
   if (!CanClearSitePermissions() || !IsPopupOriginEligible(origin) ||
       (key != "camera" && key != "microphone") ||
-      (setting != 0 && setting != 2 && setting != 3))
+      (setting != 0 && setting != 1 && setting != 2 && setting != 3))
     return false;
   base::DictValue unused_private_rules;
-  return WriteSiteSetting(site_permission_prefs_.get(), kMediaRules, kMediaRuleTimes,
-                          unused_private_rules, origin.Serialize() + " " + std::string(key),
-                          setting ? std::optional(setting) : std::nullopt, 256);
+  if (!WriteSiteSetting(site_permission_prefs_.get(), kMediaRules, kMediaRuleTimes,
+                        unused_private_rules, origin.Serialize() + " " + std::string(key),
+                        setting ? std::optional(setting) : std::nullopt, 256)) {
+    return false;
+  }
+  DropDocumentGrants(origin, key);
+  return true;
 }
 
 ProfilePermissionController::ClipboardSetting
@@ -398,6 +438,8 @@ ProfilePermissionController::GetClipboardSetting(const url::Origin& origin) cons
     return ClipboardSetting::kAllow;
   if (value == static_cast<int>(ClipboardSetting::kBlock))
     return ClipboardSetting::kBlock;
+  if (HasDocumentGrant(origin, "clipboard"))
+    return ClipboardSetting::kAllow;
   if (value == static_cast<int>(ClipboardSetting::kAsk) || PromptByDefault("clipboard"))
     return ClipboardSetting::kAsk;
   return ClipboardSetting::kBlock;
@@ -414,6 +456,7 @@ bool ProfilePermissionController::SetClipboardSetting(
                           private_clipboard_rules_, origin.Serialize(), stored, kMaxClipboardRules)) {
     return false;
   }
+  DropDocumentGrants(origin, "clipboard");
   NotifyClipboardPermissionChanged(origin);
   return true;
 }
@@ -642,7 +685,7 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
             [](base::WeakPtr<ProfilePermissionController> self,
                content::WeakDocumentPtr document,
                base::OnceCallback<void(const std::vector<PermissionResult>&)> reply,
-               bool accepted) {
+               bool accepted, bool remember) {
               auto* current = document.AsRenderFrameHostIfValid();
               auto* contents = current ? content::WebContents::FromRenderFrameHost(current) : nullptr;
               if (!self || !IsTrustworthyMainDocument(current, &*self->context_) ||
@@ -651,8 +694,14 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
                 return;
               }
               const auto origin = current->GetLastCommittedOrigin();
-              if (accepted && self->NotificationSetting(origin) == 3)
-                self->SetNotificationSetting(origin, 1);
+              if (accepted && self->NotificationSetting(origin) == 3) {
+                if (remember) {
+                  self->SetNotificationSetting(origin, 1);
+                } else {
+                  self->GrantForDocument(*current, origin, "notifications");
+                  self->NotifyNotificationPermissionChanged(origin);
+                }
+              }
               std::move(reply).Run({NotificationResult(self->NotificationSetting(origin))});
             },
             weak_factory_.GetWeakPtr(), frame->GetWeakDocumentPtr(), std::move(callback)));
@@ -670,7 +719,7 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
             [](base::WeakPtr<ProfilePermissionController> self,
                const content::WeakDocumentPtr& document,
                base::OnceCallback<void(const std::vector<PermissionResult>&)> reply,
-               bool accepted) {
+               bool accepted, bool remember) {
               auto* current = document.AsRenderFrameHostIfValid();
               bool allowed = false;
               auto* contents = current
@@ -683,9 +732,15 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
                       network::mojom::PermissionsPolicyFeature::kClipboardRead)) {
                 const auto& origin = current->GetLastCommittedOrigin();
                 const auto setting = self->GetClipboardSetting(origin);
-                allowed = setting == ClipboardSetting::kAllow ||
-                    (setting == ClipboardSetting::kAsk &&
-                     self->SetClipboardSetting(origin, ClipboardSetting::kAllow));
+                if (setting == ClipboardSetting::kAsk && !remember) {
+                  self->GrantForDocument(*current, origin, "clipboard");
+                  self->NotifyClipboardPermissionChanged(origin);
+                  allowed = true;
+                } else {
+                  allowed = setting == ClipboardSetting::kAllow ||
+                      (setting == ClipboardSetting::kAsk &&
+                       self->SetClipboardSetting(origin, ClipboardSetting::kAllow));
+                }
               }
               std::move(reply).Run({PermissionResult(
                   allowed ? PermissionStatus::GRANTED : PermissionStatus::DENIED)});
@@ -704,21 +759,26 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
         SiteSetting(category->key, origin) == 3) {
       const std::string key(category->key);
       site_prompt_.Run(
-          *frame, key,
+          *frame, key, category->can_allow,
           base::BindOnce(
               [](base::WeakPtr<ProfilePermissionController> self, std::string key,
-                 url::Origin origin,
+                 url::Origin origin, content::WeakDocumentPtr document,
                  base::OnceCallback<void(const std::vector<PermissionResult>&)> reply,
-                 bool accepted) {
+                 bool accepted, bool remember) {
                 if (!self) {
                   std::move(reply).Run({PermissionResult(PermissionStatus::DENIED)});
                   return;
                 }
-                self->SetSiteRule(key, origin, accepted ? 1 : 2);
+                auto* current = document.AsRenderFrameHostIfValid();
+                if (accepted && !remember && current)
+                  self->GrantForDocument(*current, origin, key);
+                else
+                  self->SetSiteRule(key, origin, accepted ? 1 : 2);
                 std::move(reply).Run({PermissionResult(
                     accepted ? PermissionStatus::GRANTED : PermissionStatus::DENIED)});
               },
-              weak_factory_.GetWeakPtr(), key, origin, std::move(callback)));
+              weak_factory_.GetWeakPtr(), key, origin, frame->GetWeakDocumentPtr(),
+              std::move(callback)));
       return;
     }
   }
@@ -773,6 +833,8 @@ ProfilePermissionController::GetPermissionResultForOriginWithoutContext(
     const auto type = blink::PermissionDescriptorToPermissionType(descriptor);
     if (type == blink::PermissionType::MIDI)
       return PermissionResult(PermissionStatus::GRANTED);
+    if (const char* key = MediaKey(type))
+      return MediaResult(type, MediaSetting(embedder, key));
     if (const auto* category = FindSiteCategory(type))
       return SiteResult(*category, embedder);
   }
@@ -815,6 +877,10 @@ ProfilePermissionController::GetPermissionResultForCurrentDocument(
     const auto type = blink::PermissionDescriptorToPermissionType(descriptor);
     if (type == blink::PermissionType::MIDI)
       return PermissionResult(PermissionStatus::GRANTED);
+    if (const char* key = MediaKey(type)) {
+      return MediaResult(type, MediaSetting(
+          frame->GetOutermostMainFrame()->GetLastCommittedOrigin(), key));
+    }
     if (const auto* category = FindSiteCategory(type)) {
       // The main document's site decides for its frames, as in Chrome.
       return SiteResult(*category, frame->GetOutermostMainFrame()->GetLastCommittedOrigin());
@@ -1119,9 +1185,17 @@ int ProfilePermissionController::SiteSetting(std::string_view key,
   if (site_permission_prefs_) {
     if (const auto* rules = site_permission_prefs_->GetDict(kSiteRules).FindDict(key)) {
       if (const auto rule = rules->FindInt(origin.Serialize());
-          rule && IsValidSiteSetting(*category, *rule)) {
+          rule && IsValidSiteSetting(*category, *rule) && *rule != 3) {
         return *rule;
       }
+    }
+  }
+  if (category->can_allow && HasDocumentGrant(origin, key))
+    return 1;
+  if (site_permission_prefs_) {
+    if (const auto* rules = site_permission_prefs_->GetDict(kSiteRules).FindDict(key)) {
+      if (rules->FindInt(origin.Serialize()) == 3)
+        return 3;
     }
   }
   return SiteDefault(key);
@@ -1140,6 +1214,7 @@ bool ProfilePermissionController::SetSiteRule(std::string_view key,
   auto* list = rules->EnsureDict(key);
   auto* stamps = times->EnsureDict(key);
   const auto serialized = origin.Serialize();
+  DropDocumentGrants(origin, key);
   if (setting) {
     list->Set(serialized, *setting);
     stamps->Set(serialized, base::NumberToString(
@@ -1248,7 +1323,43 @@ void ProfilePermissionController::RunSitePrompt(content::RenderFrameHost& frame,
     std::move(answer).Run(false);
     return;
   }
-  site_prompt_.Run(frame, key, std::move(answer));
+  site_prompt_.Run(frame, key, /*offer_remember=*/false,
+                   base::BindOnce([](base::OnceCallback<void(bool)> answer, bool allowed,
+                                     bool) { std::move(answer).Run(allowed); },
+                                  std::move(answer)));
+}
+
+void ProfilePermissionController::RunSitePrompt(
+    content::RenderFrameHost& frame, std::string_view key,
+    base::OnceCallback<void(bool, bool)> answer) {
+  if (!site_prompt_ || !CanEditSitePermissions()) {
+    std::move(answer).Run(false, false);
+    return;
+  }
+  site_prompt_.Run(frame, key, /*offer_remember=*/true, std::move(answer));
+}
+
+void ProfilePermissionController::GrantForDocument(content::RenderFrameHost& frame,
+                                                   const url::Origin& origin,
+                                                   std::string_view key) {
+  document_grants_.push_back({frame.GetWeakDocumentPtr(), origin, std::string(key)});
+}
+
+bool ProfilePermissionController::HasDocumentGrant(const url::Origin& origin,
+                                                   std::string_view key) const {
+  std::erase_if(document_grants_, [](const DocumentGrant& grant) {
+    return !grant.document.AsRenderFrameHostIfValid();
+  });
+  return std::ranges::any_of(document_grants_, [&](const DocumentGrant& grant) {
+    return grant.origin == origin && grant.key == key;
+  });
+}
+
+void ProfilePermissionController::DropDocumentGrants(const url::Origin& origin,
+                                                     std::string_view key) {
+  std::erase_if(document_grants_, [&](const DocumentGrant& grant) {
+    return grant.origin == origin && grant.key == key;
+  });
 }
 
 void ProfilePermissionController::SetSitePrompt(SitePrompt prompt) {

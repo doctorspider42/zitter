@@ -869,8 +869,10 @@ void ProfileDownloadDelegate::CheckDownloadAllowed(
               *frame, "automatic-downloads",
               base::BindOnce(
                   [](base::WeakPtr<content::BrowserContext> context, url::Origin origin,
-                     content::CheckDownloadAllowedCallback callback, bool allowed) {
-                    if (context) {
+                     content::CheckDownloadAllowedCallback callback, bool allowed,
+                     bool remember) {
+                    // Without "always allow" only this download goes ahead.
+                    if (context && (remember || !allowed)) {
                       static_cast<ProfileContext*>(context.get())
                           ->site_permissions()
                           .SetSiteRule("automatic-downloads", origin, allowed ? 1 : 2);

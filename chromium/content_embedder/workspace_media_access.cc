@@ -84,6 +84,16 @@ bool IsEligible(content::RenderFrameHost* frame, content::WebContents* page,
          (!tab || frame->IsFeatureEnabled(Policy::kDisplayCapture));
 }
 
+bool IsAlwaysAllowed(content::RenderFrameHost* frame, const url::Origin& origin,
+                     bool audio, bool video) {
+  if (!frame || !(audio || video))
+    return false;
+  const auto& permissions =
+      static_cast<ProfileContext*>(frame->GetBrowserContext())->site_permissions();
+  return (!audio || permissions.MediaSetting(origin, "microphone") == 1) &&
+         (!video || permissions.MediaSetting(origin, "camera") == 1);
+}
+
 std::optional<blink::MediaStreamDevice> SelectDevice(
     const blink::MediaStreamDevices& devices,
     const std::vector<std::string>& requested) {
@@ -92,6 +102,23 @@ std::optional<blink::MediaStreamDevice> SelectDevice(
       return device;
   }
   return std::nullopt;
+}
+
+blink::mojom::StreamDevicesPtr SelectCaptureDevices(
+    const content::MediaStreamRequest& request) {
+  auto* capture_devices = content::MediaCaptureDevices::GetInstance();
+  auto devices = blink::mojom::StreamDevices::New();
+  const bool audio = request.audio_type == Type::DEVICE_AUDIO_CAPTURE;
+  const bool video = request.video_type == Type::DEVICE_VIDEO_CAPTURE;
+  if (audio)
+    devices->audio_device = SelectDevice(capture_devices->GetAudioCaptureDevices(),
+                                         request.requested_audio_device_ids);
+  if (video)
+    devices->video_device = SelectDevice(capture_devices->GetVideoCaptureDevices(),
+                                         request.requested_video_device_ids);
+  if ((audio && !devices->audio_device) || (video && !devices->video_device))
+    return nullptr;
+  return devices;
 }
 
 }  // namespace
@@ -116,12 +143,13 @@ struct WorkspaceMediaAccess::Pending {
   content::MediaResponseCallback reply;
   std::vector<Source> sources;
   DesktopID desktop_picker;
+  bool remember = false;
 };
 
 class WorkspaceMediaAccess::Stream final : public content::MediaStreamUI,
                                           public content::WebContentsObserver {
  public:
-  Stream(views::Widget& parent,
+  Stream(base::WeakPtr<WorkspaceMediaAccess> owner,
          content::WeakDocumentPtr document,
          const url::Origin& origin,
          Type audio,
@@ -130,7 +158,7 @@ class WorkspaceMediaAccess::Stream final : public content::MediaStreamUI,
          std::u16string source_label,
          DesktopID desktop_source)
       : content::WebContentsObserver(source),
-        parent_(parent.GetWeakPtr()),
+        owner_(std::move(owner)),
         document_(std::move(document)),
         origin_(origin),
         audio_(audio),
@@ -141,10 +169,15 @@ class WorkspaceMediaAccess::Stream final : public content::MediaStreamUI,
   ~Stream() override {
     weak_factory_.InvalidateWeakPtrs();
     CloseDesktopPicker(desktop_source_);
-    widget_.reset();
   }
 
   base::WeakPtr<Stream> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
+
+  bool IsLive() const { return started_ && !stopped_; }
+  bool IsDeviceCapture() const {
+    return audio_ == Type::DEVICE_AUDIO_CAPTURE || video_ == Type::DEVICE_VIDEO_CAPTURE;
+  }
+  const content::WeakDocumentPtr& document() const { return document_; }
 
   bool Matches(content::RenderFrameHost* frame, const url::Origin& origin,
                Type type) const {
@@ -164,39 +197,14 @@ class WorkspaceMediaAccess::Stream final : public content::MediaStreamUI,
                               const std::string& label,
                               std::vector<content::DesktopMediaID> ids,
                               StateChangeCallback state_change) override {
-    if (stopped_ || !parent_ || !document_.AsRenderFrameHostIfValid()) {
+    if (stopped_ || !owner_ || !document_.AsRenderFrameHostIfValid()) {
       stop.Run();
       return 0;
     }
     stop_ = std::move(stop);
-    const bool desktop = !desktop_source_.is_null();
+    started_ = true;
     // The capture manager now owns the native picker session's lifetime.
     desktop_source_ = {};
-    const auto origin = base::UTF8ToUTF16(origin_.Serialize());
-    auto body = std::make_unique<views::Label>(desktop
-        ? prototype::TF(u"{} udostępnia obraz: {}.", {origin, source_label_})
-        : IsTabCapture(video_) ? prototype::TF(audio_ == Type::DISPLAY_AUDIO_CAPTURE
-                            ? u"{} udostępnia obraz i dźwięk karty: {}."
-                            : u"{} udostępnia obraz karty: {}.",
-                        {origin, source_label_})
-        : prototype::TF(u"{} korzysta z kamery lub mikrofonu.", {origin}));
-    body->SetMultiLine(true);
-    body->SetAllowCharacterBreak(true);
-    delegate_ = prototype::CreateSceneModalDialog(std::move(body), false, false);
-    delegate_->SetTitle(prototype::T(u"Trwa przechwytywanie"));
-    delegate_->SetButtons(static_cast<int>(ui::mojom::DialogButton::kCancel));
-    delegate_->SetButtonLabel(ui::mojom::DialogButton::kCancel,
-                              prototype::T(u"Zatrzymaj"));
-    widget_.reset(views::DialogDelegate::CreateDialogWidget(
-        delegate_.get(), parent_->GetNativeWindow(), parent_->GetNativeView()));
-    widget_->SetColorModeOverride(parent_->color_mode_override());
-    widget_->MakeCloseSynchronous(base::BindOnce(
-        [](base::WeakPtr<Stream> stream, views::Widget::ClosedReason) {
-          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-              FROM_HERE, base::BindOnce(&Stream::Stop, stream));
-        },
-        weak_factory_.GetWeakPtr()));
-    widget_->ShowInactive();
     return 0;
   }
 
@@ -218,33 +226,29 @@ class WorkspaceMediaAccess::Stream final : public content::MediaStreamUI,
   void Stop() {
     stopped_ = true;
     Observe(nullptr);
-    widget_.reset();
-    delegate_.reset();
     if (stop_) {
       auto stop = std::move(stop_);
       stop.Run();
     }
   }
 
-  bool StopFromIndicatorForTesting() {
-    if (!widget_ || !widget_->IsVisible() || widget_->IsClosed())
-      return false;
-    delegate_->CancelDialog();
-    return true;
+  content::BrowserContext* GetBrowserContext() const {
+    auto* frame = document_.AsRenderFrameHostIfValid();
+    return frame ? frame->GetBrowserContext() : nullptr;
   }
 
  private:
-  const base::WeakPtr<views::Widget> parent_;
+
+  const base::WeakPtr<WorkspaceMediaAccess> owner_;
   content::WeakDocumentPtr document_;
   const url::Origin origin_;
   const Type audio_;
   const Type video_;
   const std::u16string source_label_;
   DesktopID desktop_source_;
+  bool started_ = false;
   bool stopped_ = false;
   base::RepeatingClosure stop_;
-  std::unique_ptr<views::DialogDelegate> delegate_;
-  std::unique_ptr<views::Widget> widget_;
   base::WeakPtrFactory<Stream> weak_factory_{this};
 };
 
@@ -274,14 +278,26 @@ void WorkspaceMediaAccess::Request(content::WebContents* page,
             (audio || request.audio_type == Type::NO_SERVICE) &&
             (video || request.video_type == Type::NO_SERVICE);
   VLOG(1) << "Workspace media capture requested, tab=" << tab;
-  if (pending_ || stream_ || page != selected_.Run() || !request.user_gesture ||
-      request.request_type != blink::MEDIA_GENERATE_STREAM ||
-      request.request_pan_tilt_zoom_permission || !valid_types ||
-      !IsEligible(frame, page, request.url_origin, audio, video, tab) ||
-      !frame->IsFocused() || !frame->ConsumeTransientUserActivation()) {
+  if (page != selected_.Run() || request.request_type != blink::MEDIA_GENERATE_STREAM ||
+      !valid_types || !IsEligible(frame, page, request.url_origin, audio, video, tab)) {
     std::move(reply).Run({}, Result::PERMISSION_DENIED, nullptr);
     return;
   }
+  // An allowed site keeps access without asking again: Google Meet checks
+  // access with one stream, stops it and then opens the camera and the
+  // microphone separately, without a user gesture.
+  if (!tab && HasGrant(frame, request.url_origin, audio, video)) {
+    GrantDevices(frame->GetWeakDocumentPtr(), request, std::move(reply));
+    return;
+  }
+  if (pending_ || !request.user_gesture || !frame->IsFocused() ||
+      !frame->ConsumeTransientUserActivation()) {
+    std::move(reply).Run({}, Result::PERMISSION_DENIED, nullptr);
+    return;
+  }
+  // Pan, tilt and zoom (Google Meet asks for them with every camera) stay
+  // denied: the page gets the camera without control over it, as in Chrome
+  // when moving the camera is blocked.
   pending_ = std::make_unique<Pending>(
       Pending{frame->GetWeakDocumentPtr(), request, std::move(reply), {}, {}});
   std::vector<std::u16string> choices;
@@ -416,6 +432,7 @@ void WorkspaceMediaAccess::OnConsent(int id, std::optional<size_t> selection,
     Grant(std::move(devices), page, std::move(selected_source.label));
     return;
   }
+  pending_->remember = share_audio;
   RequestWorkspaceCaptureAccess(
       pending_->request.audio_type == Type::DEVICE_AUDIO_CAPTURE,
       pending_->request.video_type == Type::DEVICE_VIDEO_CAPTURE,
@@ -501,48 +518,136 @@ void WorkspaceMediaAccess::OnPlatformAccess(int id, bool allowed) {
     Reject(allowed ? Result::PERMISSION_DENIED : Result::PERMISSION_DENIED_BY_SYSTEM);
     return;
   }
-  auto& request = pending_->request;
-  auto* capture_devices = content::MediaCaptureDevices::GetInstance();
-  auto devices = blink::mojom::StreamDevices::New();
-  const bool audio = request.audio_type == Type::DEVICE_AUDIO_CAPTURE;
-  const bool video = request.video_type == Type::DEVICE_VIDEO_CAPTURE;
-  if (audio)
-    devices->audio_device = SelectDevice(capture_devices->GetAudioCaptureDevices(),
-                                         request.requested_audio_device_ids);
-  if (video)
-    devices->video_device = SelectDevice(capture_devices->GetVideoCaptureDevices(),
-                                         request.requested_video_device_ids);
-  if ((audio && !devices->audio_device) || (video && !devices->video_device)) {
+  auto devices = SelectCaptureDevices(pending_->request);
+  if (!devices) {
     Reject(Result::NO_HARDWARE);
     return;
   }
+  const auto& request = pending_->request;
+  const bool audio = request.audio_type == Type::DEVICE_AUDIO_CAPTURE;
+  const bool video = request.video_type == Type::DEVICE_VIDEO_CAPTURE;
+  // "Always allow" keeps it until revoked in Site settings; otherwise, and in
+  // profiles that keep no site settings, it lasts while the page is open.
+  if (auto* frame = pending_->document.AsRenderFrameHostIfValid()) {
+    auto& permissions =
+        static_cast<ProfileContext*>(frame->GetBrowserContext())->site_permissions();
+    for (const auto* key : {audio ? "microphone" : nullptr, video ? "camera" : nullptr}) {
+      if (key && !(pending_->remember &&
+                   permissions.SetMediaSetting(request.url_origin, key, 1))) {
+        permissions.GrantForDocument(*frame, request.url_origin, key);
+      }
+    }
+  }
   Grant(std::move(devices));
+}
+
+bool WorkspaceMediaAccess::HasGrant(content::RenderFrameHost* frame,
+                                    const url::Origin& origin, bool audio,
+                                    bool video) {
+  return IsAlwaysAllowed(frame, origin, audio, video);
+}
+
+void WorkspaceMediaAccess::GrantDevices(content::WeakDocumentPtr document,
+                                        const content::MediaStreamRequest& request,
+                                        content::MediaResponseCallback reply) {
+  const bool audio = request.audio_type == Type::DEVICE_AUDIO_CAPTURE;
+  const bool video = request.video_type == Type::DEVICE_VIDEO_CAPTURE;
+  auto still_current = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceMediaAccess> self, content::WeakDocumentPtr document,
+         url::Origin origin, bool audio, bool video) {
+        auto* frame = document.AsRenderFrameHostIfValid();
+        return self && frame && self->HasGrant(frame, origin, audio, video) &&
+               IsEligible(frame, self->selected_.Run(), origin, audio, video);
+      },
+      weak_factory_.GetWeakPtr(), document, request.url_origin, audio, video);
+  RequestWorkspaceCaptureAccess(
+      audio, video, still_current,
+      base::BindOnce(
+          [](base::WeakPtr<WorkspaceMediaAccess> self,
+             base::RepeatingCallback<bool()> still_current,
+             content::WeakDocumentPtr document, content::MediaStreamRequest request,
+             content::MediaResponseCallback reply, bool allowed) {
+                      if (!allowed || !still_current.Run()) {
+              std::move(reply).Run({}, allowed ? Result::PERMISSION_DENIED
+                                               : Result::PERMISSION_DENIED_BY_SYSTEM,
+                                   nullptr);
+              return;
+            }
+            auto devices = SelectCaptureDevices(request);
+            if (!devices) {
+              std::move(reply).Run({}, Result::NO_HARDWARE, nullptr);
+              return;
+            }
+            self->Reply(std::move(document), request, std::move(reply), std::move(devices));
+          },
+          weak_factory_.GetWeakPtr(), still_current, document, request, std::move(reply)));
 }
 
 void WorkspaceMediaAccess::Grant(blink::mojom::StreamDevicesPtr devices,
                                  content::WebContents* source,
                                  std::u16string source_label,
                                  DesktopID desktop_source) {
-  const auto& request = pending_->request;
-  auto stream = std::make_unique<Stream>(*parent_, pending_->document,
+  auto pending = std::move(pending_);
+  Reply(pending->document, pending->request, std::move(pending->reply),
+        std::move(devices), source, std::move(source_label), desktop_source);
+}
+
+void WorkspaceMediaAccess::Reply(content::WeakDocumentPtr document,
+                                 const content::MediaStreamRequest& request,
+                                 content::MediaResponseCallback reply,
+                                 blink::mojom::StreamDevicesPtr devices,
+                                 content::WebContents* source,
+                                 std::u16string source_label,
+                                 DesktopID desktop_source) {
+  auto stream = std::make_unique<Stream>(weak_factory_.GetWeakPtr(), std::move(document),
                                          request.url_origin,
                                          devices->audio_device
                                              ? devices->audio_device->type
                                              : Type::NO_SERVICE,
                                          request.video_type, source,
                                          std::move(source_label), desktop_source);
-  stream_ = stream->GetWeakPtr();
+  std::erase_if(streams_, [](const auto& stream) { return !stream; });
+  streams_.push_back(stream->GetWeakPtr());
   blink::mojom::StreamDevicesSet granted;
   granted.stream_devices.push_back(std::move(devices));
-  auto pending = std::move(pending_);
-  std::move(pending->reply).Run(granted, Result::OK, std::move(stream));
+  std::move(reply).Run(granted, Result::OK, std::move(stream));
+}
+
+void WorkspaceMediaAccess::StopOutside(content::BrowserContext* context) {
+  if (pending_)
+    Reject(Result::PERMISSION_DENIED);
+  for (const auto& stream : streams_) {
+    if (stream && stream->GetBrowserContext() != context)
+      stream->Stop();
+  }
+}
+
+void WorkspaceMediaAccess::CancelPending() {
+  if (pending_)
+    Reject(Result::PERMISSION_DENIED);
+}
+
+void WorkspaceMediaAccess::StopStreams() {
+  auto streams = std::move(streams_);
+  for (const auto& stream : streams) {
+    if (stream)
+      stream->Stop();
+  }
 }
 
 bool WorkspaceMediaAccess::Check(content::RenderFrameHost* frame,
                                   const url::Origin& origin, Type type) const {
-  return frame && stream_ && IsEligible(frame, selected_.Run(), origin,
-      type == Type::DEVICE_AUDIO_CAPTURE, type == Type::DEVICE_VIDEO_CAPTURE) &&
-      stream_->Matches(frame, origin, type);
+  if (!frame || !IsEligible(frame, selected_.Run(), origin,
+                            type == Type::DEVICE_AUDIO_CAPTURE,
+                            type == Type::DEVICE_VIDEO_CAPTURE)) {
+    return false;
+  }
+  for (const auto& stream : streams_) {
+    if (stream && stream->Matches(frame, origin, type))
+      return true;
+  }
+  return IsAlwaysAllowed(frame, origin, type == Type::DEVICE_AUDIO_CAPTURE,
+                         type == Type::DEVICE_VIDEO_CAPTURE);
 }
 
 void WorkspaceMediaAccess::Reject(Result result) {
@@ -552,18 +657,22 @@ void WorkspaceMediaAccess::Reject(Result result) {
 }
 
 void WorkspaceMediaAccess::Stop() {
-  if (stream_)
-    stream_->Stop();
+  StopStreams();
   if (pending_)
     Reject(Result::PERMISSION_DENIED);
 }
 
 bool WorkspaceMediaAccess::IsCapturing(content::WebContents* page) const {
-  return stream_ && stream_->CapturesOrBelongsTo(page);
+  return std::ranges::any_of(streams_, [page](const auto& stream) {
+    return stream && stream->CapturesOrBelongsTo(page);
+  });
 }
 
-bool WorkspaceMediaAccess::StopFromIndicatorForTesting() {
-  return stream_ && stream_->StopFromIndicatorForTesting();
+bool WorkspaceMediaAccess::StopForTesting() {
+  const bool live = std::ranges::any_of(
+      streams_, [](const auto& stream) { return stream && stream->IsLive(); });
+  StopStreams();
+  return live;
 }
 
 }  // namespace zitter::content_embedder

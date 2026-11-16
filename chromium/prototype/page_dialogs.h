@@ -24,6 +24,7 @@ std::unique_ptr<views::DialogDelegate> CreateSceneModalDialog(std::unique_ptr<vi
 std::unique_ptr<PageDialogScene> CreatePageDialogScene(views::View* root);
 views::View* AddPageDialogCheckbox(views::View* parent, std::u16string label);
 bool IsPageDialogCheckboxChecked(views::View* checkbox);
+void SetPageDialogCheckboxChecked(views::View* checkbox, bool checked);
 std::unique_ptr<views::View> CreatePageDialogActions(views::Widget* widget, bool primary_action);
 views::ClientView* CreateSceneDialogClient(views::Widget* widget,views::View* contents);
 views::View* DialogActionButton(views::Widget* widget,bool accept);
