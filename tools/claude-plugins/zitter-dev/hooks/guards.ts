@@ -46,7 +46,15 @@ export function stripHeredocs(command: string): string {
 }
 
 /** Windows paths read as POSIX ones, so one set of patterns serves both. */
-const normalize = (command: string) => stripHeredocs(command).replace(/\\/g, '/')
+/**
+ * Quoted arguments that span text (a commit message, a PR title) are data too:
+ * a double- or single-quoted string with a space or newline in it is blanked.
+ * A quoted path or a quoted flag has no space and stays.
+ */
+export const stripQuotedText = (command: string) =>
+  command.replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, quoted => (/\s/.test(quoted.slice(1, -1)) ? '""' : quoted))
+
+const normalize = (command: string) => stripQuotedText(stripHeredocs(command)).replace(/\\/g, '/')
 
 /** The segments of a command line: split on separators, newlines and pipes. */
 const segments = (command: string) => command.split(/\n|;|&&|\|\||\|/).map(s => s.trim()).filter(Boolean)
@@ -141,7 +149,7 @@ function concurrentBuild(command: string, ctx: GuardContext): string | undefined
 function directBuild(command: string): string | undefined {
   if (!BUILD_ENTRY.test(command) || /\bZITTER_DEV_DIRECT=1\b/.test(command)) return
   if (/--(plan|help)\b/.test(command)) return
-  return 'Builds go through zitter-dev so they run detached, queue on the shared build directory and show progress to the person. Call mcp__zitter-dev__zitter_dev_start (kind: build, run, full, test, uitest, content, content-run), then mcp__zitter-dev__zitter_dev_wait. Prefix ZITTER_DEV_DIRECT=1 only when the person asked for a direct run.'
+  return 'Builds go through zitter-dev so they run detached, queue on the shared build directory and show progress to the person. Call mcp__zitter-dev__zitter_dev_start (kind: build, run, launch, test), then mcp__zitter-dev__zitter_dev_wait. Prefix ZITTER_DEV_DIRECT=1 only when the person asked for a direct run.'
 }
 
 /** Why the Bash command is refused here, or undefined when it may run. */

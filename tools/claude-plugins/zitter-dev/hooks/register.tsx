@@ -4,7 +4,7 @@ import type { CodeProps, ElementConstructor, MarkdownProps, EngineInterface, On,
 
 import type { Approval, Blocked, Job, JobKind, Lock, Repo } from '../types'
 import { checkCommand, isBuildCommand } from './guards'
-import { ERROR_PATTERN, KINDS, OUT_DIR, errorLines, formatDuration, kindsFor, ninjaProgress, ninjaStep, script, tailLines } from './jobs'
+import { ERROR_PATTERN, KIND_NAMES, KINDS, OUT_DIR, errorLines, formatDuration, isKind, ninjaProgress, ninjaStep, script, tailLines } from './jobs'
 import type { Platform } from './jobs'
 import { COLORS, badge, dot, durationBars, grouped, icon, median, duration, minutesLeft, remaining, ring, stopwatch } from './draw'
 
@@ -14,7 +14,7 @@ const PANE = 'zitter'
 const APPROVAL_MS = 30 * 60 * 1000
 const KEEP_JOBS = 30
 
-const jobsAtom = atom({ plugin: 'zitter-dev', key: 'jobs' } as const, [] as Job[], { shape: 'jobs-1' })
+const jobsAtom = atom({ plugin: 'zitter-dev', key: 'jobs' } as const, [] as Job[], { shape: 'jobs-2' })
 const lockAtom = atom({ plugin: 'zitter-dev', key: 'lock' } as const, { checkedAt: 0 } as Lock)
 const repoAtom = atom({ plugin: 'zitter-dev', key: 'repo' } as const, { root: '', branch: '', head: '', dirty: 0 } as Repo)
 const approvalsAtom = atom({ plugin: 'zitter-dev', key: 'approvals' } as const, [] as Approval[])
@@ -100,7 +100,7 @@ async function enqueue($: $, kind: JobKind, by: Job['by'], filter?: string): Pro
   const job: Job = {
     id: `j${now.toString(36)}${Math.floor(Math.random() * 36 ** 2).toString(36)}`,
     kind,
-    title: kind === 'uitest' && filter ? `UI tests ${filter}` : KINDS[kind].title,
+    title: KINDS[kind].title,
     state: 'queued',
     by,
     filter,
@@ -124,7 +124,7 @@ async function start($: $, job: Job): Promise<boolean> {
     }
   }
   const files = filesOf(job.id)
-  await $.fs.write(files.script, script(platform, root, files.exit, job.title, job.kind, job.filter))
+  await $.fs.write(files.script, script(platform, root, files.exit, job.title, job.kind, helperPath, python))
   const head = (await sh($, ['git', 'rev-parse', '--short', 'HEAD'])).stdout.trim()
   const launched = await helper($, ['start', files.script, files.log])
   const pid = Number(launched.stdout.trim())
@@ -157,7 +157,7 @@ async function finish($: $, job: Job, code: number | undefined, endedAt: number)
   const done = await setJob($, job.id, j => ({ ...j, state, exitCode: code, endedAt, errors }))
   if (!done) return
   const took = formatDuration(endedAt - (done.startedAt ?? done.queuedAt))
-  if (state === 'ok' && (done.kind === 'build' || done.kind === 'run' || done.kind === 'full') && done.head) {
+  if (state === 'ok' && (done.kind === 'build' || done.kind === 'run') && done.head) {
     await $.store.set('builtHead', done.head)
     lastEnvAt = 0
   }
@@ -295,8 +295,8 @@ async function loadHistory($: $) {
     if (known.has(id) || !(await $.fs.exists(filesOf(id).meta))) continue
     try {
       const job = JSON.parse(await $.fs.read(filesOf(id).meta)) as Job
-      // A job another session runs stays that session's to track.
-      if (!isDone(job)) continue
+      // A job another session runs stays that session's to track; Chrome-era kinds are gone.
+      if (!isDone(job) || !isKind(job.kind)) continue
       loaded.push(job)
     } catch {
       // A meta file cut short: skip it.
@@ -381,10 +381,7 @@ const COMMANDS: { name: string; kind: JobKind; argumentHint?: string }[] = [
   { name: 'dev', kind: 'build' },
   { name: 'dev-run', kind: 'run' },
   { name: 'dev-launch', kind: 'launch' },
-  { name: 'dev-full', kind: 'full' },
   { name: 'dev-test', kind: 'test' },
-  { name: 'dev-uitest', kind: 'uitest', argumentHint: '<gtest filter>' },
-  { name: 'dev-content', kind: 'content', argumentHint: '[run]' },
 ]
 
 export const register: Register = on => {
@@ -416,7 +413,7 @@ export const register: Register = on => {
     platform = info.platform
     jobsDir = info.jobsDir
 
-    for (const c of COMMANDS.filter(c => kindsFor(platform).includes(c.kind))) {
+    for (const c of COMMANDS) {
       await $.command.register({ name: c.name, description: `Zitter: ${KINDS[c.kind].description}`, argumentHint: c.argumentHint })
     }
     await $.command.register({ name: 'dev-stop', description: 'Zitter: stop the running job and clear the queue' })
@@ -429,13 +426,12 @@ export const register: Register = on => {
       description:
         `Start a Zitter dev job detached, in the queue of the shared build directory (.chromium/src/${OUT_DIR[platform]}), and return its id at once. ` +
         'Use this instead of running ./build.sh or build_app.sh in Bash. The person sees its progress. Kinds: ' +
-        kindsFor(platform).map(k => `${k}: ${KINDS[k].description}`).join('; ') +
+        KIND_NAMES.map(k => `${k}: ${KINDS[k].description}`).join('; ') +
         '. Then call zitter_dev_wait with the id.',
       inputSchema: {
         type: 'object',
         properties: {
-          kind: { type: 'string', enum: kindsFor(platform) },
-          filter: { type: 'string', description: 'For uitest: the --gtest_filter pattern (at most 25 tests).' },
+          kind: { type: 'string', enum: KIND_NAMES },
         },
         required: ['kind'],
       },
@@ -480,11 +476,8 @@ export const register: Register = on => {
   for (const c of COMMANDS) {
     on('command.run', { command: c.name }, async ($, e) => {
       if (!root) return { text: 'zitter-dev: this session is not in a Zitter checkout.' }
-      let kind = c.kind
-      const args = e.args.trim()
-      if (c.kind === 'content' && args === 'run') kind = 'content-run'
-      if (c.kind === 'uitest' && !args) return { text: 'Usage: /dev-uitest <gtest filter>, e.g. /dev-uitest *SpacePanel*' }
-      const job = await enqueue($, kind, 'person', c.kind === 'uitest' ? args : undefined)
+      const kind = c.kind
+      const job = await enqueue($, kind, 'person')
       void $.ui.open({ id: PANE, title: 'Zitter', placement: 'widget' })
       const lock = await read($, lockAtom)
       const waits = KINDS[kind].usesBuildDir && lock.busy
@@ -545,11 +538,10 @@ export const register: Register = on => {
 
   on('tool.call', { tool: 'mcp__zitter-dev__zitter_dev_start' }, async ($, e) => {
     if (!root) return { deny: 'zitter-dev: this session is not in a Zitter checkout.' }
-    const input = e as unknown as { kind?: string; filter?: string }
-    const kind = kindsFor(platform).find(k => k === input.kind)
-    if (!kind) return { deny: `Unknown kind ${input.kind} here; one of ${kindsFor(platform).join(', ')}.` }
-    if (kind === 'uitest' && !input.filter?.trim()) return { deny: 'uitest needs a filter (a --gtest_filter pattern).' }
-    const job = await enqueue($, kind, 'model', input.filter?.trim())
+    const input = e as unknown as { kind?: string }
+    const kind = KIND_NAMES.find(k => k === input.kind)
+    if (!kind) return { deny: `Unknown kind ${input.kind}; one of ${KIND_NAMES.join(', ')}.` }
+    const job = await enqueue($, kind, 'model')
     const lock = await read($, lockAtom)
     const waits = KINDS[kind].usesBuildDir && lock.busy
     return {
@@ -611,7 +603,7 @@ async function model($: $): Promise<Model> {
   }
 }
 
-const BUILDS = new Set<JobKind>(['build', 'run', 'full'])
+const BUILDS = new Set<JobKind>(['build', 'run'])
 
 function freshness(repo: Repo): { text: string; color: string } {
   const changed = repo.dirty ? ` · ${repo.dirty} file${repo.dirty === 1 ? '' : 's'} changed` : ' · clean tree'
@@ -718,7 +710,6 @@ function drawing(on: On) {
     if (!m.repo.root) return <Text color="inactive">This session is not in a Zitter checkout.</Text>
 
     const press = (kind: JobKind) => () => void enqueue($, kind, 'person')
-    const uiTests = () => void $.prompt.fill({ text: '/dev-uitest ', mode: 'replace' })
     const fraction = m.running?.progress ? m.running.progress.done / m.running.progress.total : undefined
     const failed = !m.running ? m.failure : undefined
     const fresh = freshness(m.repo)
@@ -839,7 +830,7 @@ function drawing(on: On) {
               </Box>
             </Box>
           ) : (
-            <Text color="inactive">Build &amp; run stages //zitter, builds the app and relaunches it.</Text>
+            <Text color="inactive">Build &amp; run builds the Content browser and relaunches it.</Text>
           )}
           <Button key="run" label="Build & run" hotkey="r" variant="primary" onPress={press('run')} />
           <Box flexDirection="row" gap={1}>
@@ -868,29 +859,17 @@ function drawing(on: On) {
     )
 
     // ---- actions
-    const grid = m.running || failed
-      ? [
-          <Button key="build" label="Build" hotkey="b" onPress={press('build')} />,
-          <Button key="launch" label="Launch" hotkey="l" onPress={press('launch')} />,
-          <Button key="test" label="Tests" hotkey="t" onPress={press('test')} />,
-          <Button key="full" label="App + tests" hotkey="f" onPress={press('full')} />,
-          <Button key="uitest" label="UI tests…" onPress={uiTests} />,
-          platform === 'macos' ? <Button key="content" label="Content" hotkey="c" onPress={press('content')} /> : <Button key="dev-log" label="Last log" onPress={() => m.last && void openLog($, m.last)} />,
-        ]
-      : [
-          <Button key="build" label="Build" hotkey="b" onPress={press('build')} />,
-          <Button key="test" label="Tests" hotkey="t" onPress={press('test')} />,
-          <Button key="full" label="App + tests" hotkey="f" onPress={press('full')} />,
-          <Button key="uitest" label="UI tests…" onPress={uiTests} />,
-          ...(platform === 'macos'
-            ? [<Button key="content" label="Content" hotkey="c" onPress={press('content')} />, <Button key="content-run" label="Content run" onPress={press('content-run')} />]
-            : [<Button key="launch" label="Launch" hotkey="l" onPress={press('launch')} />]),
-        ]
+    // Idle, the card holds Build & run and Relaunch; the row keeps the rest.
+    const idle = !m.running && !failed
     const actions = (
       <Box flexDirection="column" gap={1}>
         {m.running && <Button key="run" label="Build & run" hotkey="r" variant="primary" onPress={press('run')} />}
-        <Box flexDirection="row" gap={1}>{grid.slice(0, 3)}</Box>
-        <Box flexDirection="row" gap={1}>{grid.slice(3)}</Box>
+        <Box flexDirection="row" gap={1}>
+          <Button key="build" label="Build" hotkey="b" onPress={press('build')} />
+          {!idle && <Button key="launch" label="Launch" hotkey="l" onPress={press('launch')} />}
+          <Button key="test" label="Tests" hotkey="t" onPress={press('test')} />
+          {m.last && <Button key="last-log" label="Last log" onPress={() => m.last && void openLog($, m.last)} />}
+        </Box>
       </Box>
     )
 

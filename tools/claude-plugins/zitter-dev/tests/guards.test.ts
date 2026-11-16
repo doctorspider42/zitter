@@ -3,7 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { checkCommand, isBuildCommand } from '../hooks/guards'
 import type { GuardContext } from '../hooks/guards'
-import { body, errorLines, ninjaProgress, ninjaStep, tailLines } from '../hooks/jobs'
+import { body, errorLines, ninjaProgress, ninjaStep, script, tailLines, windowsBody } from '../hooks/jobs'
 import { durationBars, median, remaining, ring, stopwatch } from '../hooks/draw'
 
 const free: GuardContext = { approvals: [], outDirs: ['ZitterOptimized', 'ZitterContentBundle'] }
@@ -102,6 +102,8 @@ describe('prose about ninja', () => {
     expect(refused("cat > f <<'EOF'\n/** The last `[done/total]` ninja wrote */\nEOF")).toBe(false)
     expect(refused("gh pr create --body-file - <<'EOF'\nrefuse staging into zitter_ui_lab > nothing\nEOF")).toBe(false)
     expect(refused("cat <<EOF > x\nhi\nEOF\nrsync -a zitter/ .chromium/src/zitter_ui_lab/")).toBe(true)
+    expect(refused('git commit -m "Build it\n(./build.sh --content on macOS)"')).toBe(false)
+    expect(refused("rm -rf '.chromium/src/out/ZitterOptimized'")).toBe(true)
   })
 })
 
@@ -115,8 +117,13 @@ describe('jobs', () => {
     expect(tailLines('a\n\nb\rc\n\x1b[1mbold\x1b[0m\n', 2)).toEqual(['c', 'bold'])
   })
 
-  test('a ui test job quotes its filter', async () => {
-    expect(body('uitest', "a'b")).toContain(`F='a'\\''b'`)
+  test('every job builds or runs the Content browser', async () => {
+    expect(body('build')).toBe('./build.sh --content')
+    expect(body('run')).toContain('./build.sh --content && ')
+    expect(body('run')).toContain('$LAUNCH')
+    expect(windowsBody('build')).toContain('autoninja -C .chromium\\src\\out\\ZitterWinContent zitter_content')
+    expect(windowsBody('build')).toContain('stage_content_embedder.py')
+    expect(script('macos', '/r', '/x.exit', 'Build', 'run', '/h/zjob.py', ['python3'])).toContain("LAUNCH=('python3' '/h/zjob.py' launch '/r')")
   })
 })
 

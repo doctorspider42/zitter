@@ -105,7 +105,7 @@ For a separate per-user installer and fresh-profile testing, see
 <details>
 <summary><strong>Developing with Claude Code</strong></summary>
 
-The [`zitter-dev`](tools/claude-plugins/zitter-dev/README.md) mod adds dev build and run commands (`/dev`, `/dev-run`, `/dev-test`), a live build panel and guards for this repository's build rules to Claude Code sessions in a Zitter checkout, on macOS and Windows. At the prompt of a Claude Code terminal session:
+The [`zitter-dev`](tools/claude-plugins/zitter-dev/README.md) mod adds Content build and run commands (`/dev`, `/dev-run`, `/dev-test`), a live build panel and guards for this repository's build rules to Claude Code sessions in a Zitter checkout, on macOS and Windows. At the prompt of a Claude Code terminal session:
 
 ```
 /plugin install zitter-dev --marketplace doctorspider42/zitter

@@ -33,7 +33,7 @@ test('the panel shows the repo, the buttons and a running job, on every surface'
   seed(on, {
     repo: REPO,
     lock: { busy: "this session's Build & run (j2)", checkedAt: 0 },
-    jobs: { shape: 'jobs-1', value: [job({}), job({ id: 'j2', state: 'running', progress: { done: 50, total: 100 }, tail: ['[50/100] CXX x.o'] })] },
+    jobs: { shape: 'jobs-2', value: [job({}), job({ id: 'j2', state: 'running', progress: { done: 50, total: 100 }, tail: ['[50/100] CXX x.o'] })] },
   })
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
@@ -53,7 +53,7 @@ test('outside a Zitter checkout the panel says so', async ($, on) => {
 })
 
 test('the widget offers Build & run when idle', async ($, on) => {
-  seed(on, { repo: REPO, jobs: { shape: 'jobs-1', value: [job({})] } })
+  seed(on, { repo: REPO, jobs: { shape: 'jobs-2', value: [job({})] } })
   const ui = await $.ui.mount({ ...PANE, props: { ...PANE.props, placement: 'widget' }, surface: 'desktop' })
   expect(await ui.find({ key: 'w-run' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Build & run done/ })).toBeDefined()
@@ -64,7 +64,7 @@ test('a failed build offers the fix and shows its error lines, on every surface'
   seed(on, {
     repo: REPO,
     lock: { checkedAt: 0 },
-    jobs: { shape: 'jobs-1', value: [job({ state: 'failed', exitCode: 1, errors: ["shell.cc:412:7: error: no member named 'SetPinned'"] })] },
+    jobs: { shape: 'jobs-2', value: [job({ state: 'failed', exitCode: 1, errors: ["shell.cc:412:7: error: no member named 'SetPinned'"] })] },
   })
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
@@ -80,7 +80,7 @@ test('a dismissed failure gives the card back to Build & run', async ($, on) => 
   seed(on, {
     repo: REPO,
     dismissed: 'j1',
-    jobs: { shape: 'jobs-1', value: [job({ state: 'failed', exitCode: 1 })] },
+    jobs: { shape: 'jobs-2', value: [job({ state: 'failed', exitCode: 1 })] },
   })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ key: 'fix' })).toBeUndefined()

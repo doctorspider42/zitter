@@ -13,7 +13,8 @@ exits 0 unless it says otherwise.
   zjob.py tail <file> <bytes>       the last bytes of a file, as text
   zjob.py grep <file> <regex>       matching lines as `<n>:<line>`
   zjob.py status <root>             {"busy", "appRunning", "appBuiltAt", "diskFree"}
-  zjob.py quit-app <root>           quit the dev app and its launcher
+  zjob.py quit-app <root>           quit the Content dev browser
+  zjob.py launch <root>             quit it, then start the last Content build detached; print its pid
   zjob.py rm <file>...              delete files (missing ones are fine)
   zjob.py sleep <seconds>           wait
   zjob.py open <file>               open a file in the default text editor
@@ -43,7 +44,12 @@ def jobs_dir() -> Path:
 
 
 def app_path(root: Path) -> Path:
-    return root / (".chromium/src/out/ZitterWin/zitter.exe" if WINDOWS else "build/ZitterRustMetal.app")
+    """The Content browser the dev build makes."""
+    return root / (".chromium/src/out/ZitterWinContent/zitter.exe" if WINDOWS else "build/ZitterContentLab.app")
+
+
+def app_binary(root: Path) -> Path:
+    return app_path(root) if WINDOWS else app_path(root) / "Contents/MacOS/Zitter Content Lab"
 
 
 def processes():
@@ -103,6 +109,43 @@ def kill_tree(pid: int):
             pass
 
 
+def quit_app(root: Path):
+    import time
+    pids = list(app_processes(root))
+    for pid in pids:
+        kill_tree(pid) if WINDOWS else os.kill(pid, signal.SIGTERM)
+    for _ in range(50):
+        if not any(alive(pid) for pid in pids):
+            return
+        time.sleep(0.2)
+
+
+def launch(root: Path) -> int:
+    """Start the Content browser the way `./build.sh --content --run` does, but detached."""
+    binary = app_binary(root)
+    if not binary.exists():
+        print(f"No Content build at {app_path(root)}; build it first.")
+        return 1
+    quit_app(root)
+    if WINDOWS:
+        # A copy started from an MSIX-packaged parent (the Claude app) sees a virtualized
+        # AppData; Explorer starts it as a plain launch (docs/windows-port.md).
+        subprocess.Popen(["explorer.exe", str(binary)])
+        print(f"Started {binary}")
+        return 0
+    import secrets
+    import tempfile
+    workspace = Path(tempfile.mkdtemp(prefix="zitter-content-dev-")).resolve()
+    key = workspace / "probe-cookie-key"
+    key.write_bytes(secrets.token_bytes(32))
+    key.chmod(0o600)
+    proc = subprocess.Popen([str(binary), "--zitter-content-workspace", f"--zitter-content-workspace-root={workspace}"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                            start_new_session=True)
+    print(f"Started the Content browser (pid {proc.pid}) with a fresh workspace in {workspace}")
+    return 0
+
+
 def main(argv):
     command, args = argv[0], argv[1:]
     if command == "info":
@@ -147,12 +190,9 @@ def main(argv):
             "diskFree": shutil.disk_usage(root / ".chromium" if (root / ".chromium").exists() else root).free,
         }))
     elif command == "quit-app":
-        root = Path(args[0])
-        for pid in list(app_processes(root)):
-            kill_tree(pid) if WINDOWS else os.kill(pid, signal.SIGTERM)
-        for pid, cmd in processes():
-            if "run_metal_sidebar.py" in cmd:
-                kill_tree(pid) if WINDOWS else os.kill(pid, signal.SIGTERM)
+        quit_app(Path(args[0]))
+    elif command == "launch":
+        return launch(Path(args[0]))
     elif command == "rm":
         for name in args:
             Path(name).unlink(missing_ok=True)

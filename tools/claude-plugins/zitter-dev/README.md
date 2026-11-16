@@ -1,8 +1,9 @@
 # zitter-dev: a Claude Code mod for Zitter development
 
 `zitter-dev` gives a Claude Code session in a Zitter checkout one-click dev
-builds, a live build panel and hard guards for the repository's rules. It
-runs on macOS and Windows and stays off in any other repository.
+builds of the Content browser (`//zitter_content:zitter_content`), a live
+build panel and hard guards for the repository's rules. It runs on macOS and
+Windows and stays off in any other repository.
 
 ## Install
 
@@ -46,22 +47,21 @@ directory.
 
 | Command | Job |
 | --- | --- |
-| `/dev` | stage `//zitter` and build the app |
-| `/dev-run` | build, then relaunch the app with its isolated profile |
-| `/dev-launch` | relaunch the last build |
-| `/dev-full` | app, `zitter_prototype` and Rust test binaries (`verify-ui` build) |
-| `/dev-test` | build and run the Rust and Python tests |
-| `/dev-uitest <filter>` | browser tests one `--gtest_filter` names (25 at most) |
-| `/dev-content [run]` | the Content lab (macOS) |
+| `/dev` | stage and build the Content browser |
+| `/dev-run` | build, then relaunch the Content browser |
+| `/dev-launch` | relaunch the last Content build |
+| `/dev-test` | run the Python tests (`tests/test_*.py`) |
 | `/dev-stop`, `/dev-log [n]` | stop the running job and clear the queue; the end of the last log |
 | `/dev-allow …` | let the person approve, for 30 minutes, what a guard refuses |
 
 | | macOS | Windows |
 | --- | --- | --- |
-| Build | `./build.sh` → `build/ZitterRustMetal.app` | overlay + `autoninja -C out/ZitterWin zitter:zitter` |
-| Run | `verify-ui/scripts/ui.py launch` | `verify-ui/scripts/ui_win.py launch` |
-| App + tests | `verify-ui/scripts/build_app.sh` | `verify-ui/scripts/build_app_win.ps1` |
+| Build | `./build.sh --content` → `build/ZitterContentLab.app` (`out/ZitterContentBundle`) | `tools/stage_content_embedder.py` + `autoninja -C out/ZitterWinContent zitter_content` |
+| Launch | the app with a fresh temporary workspace, as `./build.sh --content --run` does, but detached | `zitter.exe` through Explorer (its durable Workspace) |
 | Job logs | `~/Library/Caches/zitter-dev/jobs` | `%LOCALAPPDATA%\zitter-dev\jobs` |
+
+On Windows, `out/ZitterWinContent` has to be set up first (`args.gn`, see
+`docs/remote-builds.md`); the build job says so when it is missing.
 
 **Tools for Claude.** `zitter_dev_start` and `zitter_dev_wait` let Claude run
 the same jobs and read their error lines instead of running the build in a
