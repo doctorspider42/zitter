@@ -1,5 +1,5 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-export type JobKind = 'build' | 'run' | 'launch' | 'full' | 'test' | 'uitest' | 'content' | 'content-run'
+export type JobKind = 'build' | 'run' | 'launch' | 'test'
 
 export type JobState = 'queued' | 'running' | 'ok' | 'failed' | 'stopped'
 

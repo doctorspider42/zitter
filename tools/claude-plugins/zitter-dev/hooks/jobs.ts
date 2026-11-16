@@ -1,14 +1,15 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 // What each zitter-dev job runs. A job is one script (zsh on macOS, PowerShell
 // on Windows) that helper/zjob.py starts detached in its own process group, so
-// it outlives a reload of the mod and can be stopped as a whole.
+// it outlives a reload of the mod and can be stopped as a whole. Every job
+// builds or runs the Content browser (`//zitter_content:zitter_content`).
 
 import type { JobKind } from '../types'
 
 export type Platform = 'macos' | 'windows'
 
-/** The output directory the dev build uses on each platform. */
-export const OUT_DIR: Record<Platform, string> = { macos: 'out/ZitterOptimized', windows: 'out/ZitterWin' }
+/** The Content output directory each platform builds in. */
+export const OUT_DIR: Record<Platform, string> = { macos: 'out/ZitterContentBundle', windows: 'out/ZitterWinContent' }
 
 export type KindInfo = {
   title: string
@@ -16,89 +17,47 @@ export type KindInfo = {
   description: string
   /** Whether it stages or builds in the shared build directory. */
   usesBuildDir: boolean
-  /** The platforms it runs on; all when absent. */
-  only?: Platform
 }
 
 export const KINDS: Record<JobKind, KindInfo> = {
-  build: { title: 'Build', description: 'stage //zitter, build and package build/ZitterRustMetal.app (./build.sh)', usesBuildDir: true },
-  run: { title: 'Build & run', description: 'build, then relaunch the app with its isolated profile', usesBuildDir: true },
-  launch: { title: 'Launch', description: 'relaunch the last packaged app without building', usesBuildDir: false },
-  full: { title: 'Build app + tests', description: 'build the app, zitter_prototype and the Rust tests (verify-ui build_app.sh)', usesBuildDir: true },
-  test: { title: 'Tests', description: 'build and run sidebar_scene_unittests, then the Python tests', usesBuildDir: true },
-  uitest: { title: 'UI tests', description: 'build zitter_prototype and run the browser tests one --gtest_filter names (at most 25)', usesBuildDir: true },
-  content: { title: 'Content build', description: 'build and package the Content lab (./build.sh --content; macOS)', usesBuildDir: true, only: 'macos' },
-  'content-run': { title: 'Content run', description: 'build the Content lab and run it with temporary profiles (macOS)', usesBuildDir: true, only: 'macos' },
+  build: { title: 'Build', description: 'stage and build the Content browser (macOS: ./build.sh --content → build/ZitterContentLab.app; Windows: out/ZitterWinContent)', usesBuildDir: true },
+  run: { title: 'Build & run', description: 'build the Content browser, then relaunch it', usesBuildDir: true },
+  launch: { title: 'Launch', description: 'relaunch the last Content build without building', usesBuildDir: false },
+  test: { title: 'Tests', description: 'run the Python tests (tests/test_*.py)', usesBuildDir: false },
 }
 
 export const KIND_NAMES = Object.keys(KINDS) as JobKind[]
 
-export const kindsFor = (platform: Platform) => KIND_NAMES.filter(k => (KINDS[k].only ?? platform) === platform)
+export const isKind = (kind: string): kind is JobKind => kind in KINDS
 
 /** A single-quoted shell word. */
 export const sq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 
-const PRELUDE = [
-  'set -o pipefail',
-  'PY=.chromium/depot_tools/python-bin/python3; [[ -x $PY ]] || PY=python3',
-  'NINJA=(.chromium/src/third_party/ninja/ninja -C .chromium/src/out/ZitterOptimized -j ${ZITTER_BUILD_JOBS:-6})',
-  'LAUNCH=(python3 .claude/skills/verify-ui/scripts/ui.py launch)',
-].join('\n')
-
-const MAX_UI_TESTS = 25
-
-/** The body of a job's script, run from the repository root. */
-export function body(kind: JobKind, filter?: string): string {
+/** The body of a macOS job's script, run from the repository root. */
+export function body(kind: JobKind): string {
   switch (kind) {
     case 'build':
-      return './build.sh'
+      return './build.sh --content'
     case 'run':
-      return './build.sh && echo "== Relaunching the app" && $LAUNCH'
+      return './build.sh --content && echo "== Relaunching the Content browser" && $LAUNCH'
     case 'launch':
       return '$LAUNCH'
-    case 'full':
-      return 'zsh .claude/skills/verify-ui/scripts/build_app.sh'
     case 'test':
-      return [
-        '$PY tools/install_chromium_overlay.py .chromium/src || exit 1',
-        '$NINJA sidebar_scene_unittests || exit 1',
-        'r=0',
-        'echo "== Rust: sidebar_scene_unittests"',
-        '.chromium/src/out/ZitterOptimized/sidebar_scene_unittests || r=1',
-        'echo "== Python: tests/test_*.py"',
-        "python3 -m unittest discover -s tests -p 'test_*.py' || r=1",
-        'exit $r',
-      ].join('\n')
-    case 'uitest':
-      return [
-        `F=${sq(filter ?? '')}`,
-        '[[ -n $F && $F != "*" ]] || { echo "Name the tests with a --gtest_filter pattern."; exit 2 }',
-        '$PY tools/install_chromium_overlay.py .chromium/src || exit 1',
-        '$NINJA zitter_prototype || exit 1',
-        'B=.chromium/src/out/ZitterOptimized/zitter_prototype',
-        'n=$($B --gtest_filter="$F" --gtest_list_tests | grep -c "^  ")',
-        'echo "== $n browser tests match $F"',
-        '(( n > 0 )) || { echo "No test matches."; exit 1 }',
-        `(( n <= ${MAX_UI_TESTS} )) || { echo "Too broad: $n tests would take over the screen for long. Narrow the filter."; exit 3 }`,
-        '$B --gtest_filter="$F"',
-      ].join('\n')
-    case 'content':
-      return './build.sh --content'
-    case 'content-run':
-      return './build.sh --content --run'
+      return "python3 -m unittest discover -s tests -p 'test_*.py'"
   }
 }
 
 /** The whole script of a job: it writes `<exit code> <end time>` when it ends. */
-export function script(platform: Platform, root: string, exitFile: string, title: string, kind: JobKind, filter?: string): string {
-  if (platform === 'windows') return windowsScript(root, exitFile, title, kind, filter)
+export function script(platform: Platform, root: string, exitFile: string, title: string, kind: JobKind, helper: string, python: readonly string[]): string {
+  if (platform === 'windows') return windowsScript(root, exitFile, title, kind, helper, python)
   return [
     '#!/bin/zsh',
     `cd -- ${sq(root)} || { print -r -- "1 $(date +%s)" > ${sq(exitFile)}; exit 1 }`,
-    PRELUDE,
+    'set -o pipefail',
+    `LAUNCH=(${python.map(sq).join(' ')} ${sq(helper)} launch ${sq(root)})`,
     `print -r -- "== zitter-dev: ${title.replace(/["$`\\]/g, '')} ($(date '+%H:%M:%S'), $(git rev-parse --short HEAD))"`,
     '(',
-    body(kind, filter),
+    body(kind),
     ')',
     'code=$?',
     `print -r -- "$code $(date +%s)" > ${sq(exitFile)}`,
@@ -111,61 +70,37 @@ export function script(platform: Platform, root: string, exitFile: string, title
 /** A single-quoted PowerShell string. */
 export const psq = (s: string) => `'${s.replace(/'/g, "''")}'`
 
-/** The body of a Windows job, in PowerShell, run from the repository root (docs/windows-port.md). */
-export function windowsBody(kind: JobKind, filter?: string): string {
-  const stage = 'python tools\\install_chromium_overlay.py .chromium\\src; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
-  const build = (targets: string) => `autoninja -C .chromium\\src\\out\\ZitterWin ${targets}; if ($LASTEXITCODE) { exit $LASTEXITCODE }`
-  const launch = 'python .claude\\skills\\verify-ui\\scripts\\ui_win.py launch; exit $LASTEXITCODE'
+/** The body of a Windows job, in PowerShell, run from the repository root (docs/remote-builds.md). */
+export function windowsBody(kind: JobKind): string {
+  const stage = 'python tools\\stage_content_embedder.py .chromium\\src; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
+  const ready =
+    "if (-not (Test-Path .chromium\\src\\out\\ZitterWinContent\\args.gn)) { Write-Output 'Set up out/ZitterWinContent first (docs/remote-builds.md).'; exit 2 }"
+  const build = 'autoninja -C .chromium\\src\\out\\ZitterWinContent zitter_content; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
+  const launch = '& $Launch; exit $LASTEXITCODE'
   switch (kind) {
     case 'build':
-      return [stage, build('zitter:zitter')].join('\n')
+      return [ready, stage, build].join('\n')
     case 'run':
-      return [stage, build('zitter:zitter'), "Write-Output '== Relaunching the app'", launch].join('\n')
+      return [ready, stage, build, "Write-Output '== Relaunching the Content browser'", launch].join('\n')
     case 'launch':
       return launch
-    case 'full':
-      return '& .claude\\skills\\verify-ui\\scripts\\build_app_win.ps1; exit $LASTEXITCODE'
     case 'test':
-      return [
-        stage,
-        build('zitter:sidebar_scene_unittests zitter:editor_text_layout_unittests'),
-        '$r = 0',
-        "Write-Output '== Rust: sidebar_scene_unittests, editor_text_layout_unittests'",
-        '& .chromium\\src\\out\\ZitterWin\\sidebar_scene_unittests.exe; if ($LASTEXITCODE) { $r = 1 }',
-        '& .chromium\\src\\out\\ZitterWin\\editor_text_layout_unittests.exe; if ($LASTEXITCODE) { $r = 1 }',
-        "Write-Output '== Python: tests/test_*.py'",
-        "python -m unittest discover -s tests -p 'test_*.py'; if ($LASTEXITCODE) { $r = 1 }",
-        'exit $r',
-      ].join('\n')
-    case 'uitest':
-      return [
-        `$F = ${psq(filter ?? '')}`,
-        "if (-not $F -or $F -eq '*') { Write-Output 'Name the tests with a --gtest_filter pattern.'; exit 2 }",
-        stage,
-        build('zitter:zitter_prototype'),
-        '$B = ".chromium\\src\\out\\ZitterWin\\zitter_prototype.exe"',
-        '$n = @(& $B "--gtest_filter=$F" --gtest_list_tests | Where-Object { $_ -match "^  " }).Count',
-        'Write-Output "== $n browser tests match $F"',
-        "if ($n -eq 0) { Write-Output 'No test matches.'; exit 1 }",
-        `if ($n -gt ${MAX_UI_TESTS}) { Write-Output "Too broad: $n tests would take over the screen for long. Narrow the filter."; exit 3 }`,
-        '& $B "--gtest_filter=$F"; exit $LASTEXITCODE',
-      ].join('\n')
-    case 'content':
-    case 'content-run':
-      return "Write-Output 'The Content lab builds on macOS only.'; exit 2"
+      return "python -m unittest discover -s tests -p 'test_*.py'; exit $LASTEXITCODE"
   }
 }
 
-function windowsScript(root: string, exitFile: string, title: string, kind: JobKind, filter?: string): string {
+function windowsScript(root: string, exitFile: string, title: string, kind: JobKind, helper: string, python: readonly string[]): string {
   // The body runs as a script block, so its `exit` ends the block and the exit file is still written.
+  const [exe = 'python', ...pre] = python
   return [
     "$ErrorActionPreference = 'Continue'",
     "$env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'",
     `Set-Location -LiteralPath ${psq(root)}`,
     "$env:PATH = \"$(Join-Path (Get-Location) '.chromium\\depot_tools');$env:PATH\"",
+    `$Launch = { & ${psq(exe)} ${[...pre, helper, 'launch', root].map(psq).join(' ')} }`,
     `Write-Output "== zitter-dev: ${title.replace(/["$`]/g, '')} ($(Get-Date -Format HH:mm:ss), $(git rev-parse --short HEAD))"`,
     '$job = {',
-    windowsBody(kind, filter),
+    windowsBody(kind),
     '}',
     '$code = 0',
     'try { & $job; $code = $LASTEXITCODE } catch { Write-Output $_; $code = 1 }',
