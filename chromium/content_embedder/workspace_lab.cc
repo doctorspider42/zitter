@@ -18464,21 +18464,31 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
   add_hosts(review->FindList("host_permissions"));
   for (const auto& value : *review->FindList("content_scripts"))
     add_hosts(value.GetDict().FindList("matches"));
+  const auto host_list = [&](const std::vector<std::string>& names) {
+    std::u16string list;
+    for (size_t i = 0; i < names.size() && i < 3; ++i)
+      list += (i ? u", " : u"") + text(names[i]);
+    if (names.size() > 3)
+      list += u" " + prototype::TF(u"i {} innych", {base::NumberToString16(names.size() - 3)});
+    return list;
+  };
   std::vector<std::u16string> abilities;
   if (all_sites) {
     abilities.push_back(prototype::T(u"Odczytywać i zmieniać Twoje dane na wszystkich stronach"));
   } else if (!hosts.empty()) {
-    std::u16string list;
-    for (size_t i = 0; i < hosts.size() && i < 3; ++i)
-      list += (i ? u", " : u"") + text(hosts[i]);
-    if (hosts.size() > 3)
-      list += u" " + prototype::TF(u"i {} innych", {base::NumberToString16(hosts.size() - 3)});
-    abilities.push_back(prototype::TF(u"Odczytywać i zmieniać Twoje dane na: {}", {list}));
+    abilities.push_back(prototype::TF(u"Odczytywać i zmieniać Twoje dane na: {}", {host_list(hosts)}));
   }
+  hosts.clear();
+  all_sites = false;
+  add_hosts(review->FindList("external_web_matches"));
+  if (!hosts.empty())
+    abilities.push_back(prototype::TF(u"Wymieniać wiadomości ze stronami: {}", {host_list(hosts)}));
   if (has_api("tabs") || has_api("webNavigation"))
     abilities.push_back(prototype::T(u"Odczytywać historię przeglądania"));
   if (has_api("declarativeNetRequest"))
     abilities.push_back(prototype::T(u"Blokować treści na stronach"));
+  if (has_api("browsingData"))
+    abilities.push_back(prototype::T(u"Usuwać pliki cookie i dane stron"));
   if (has_api("clipboardRead"))
     abilities.push_back(prototype::T(u"Odczytywać dane skopiowane do schowka"));
   if (has_api("clipboardWrite"))

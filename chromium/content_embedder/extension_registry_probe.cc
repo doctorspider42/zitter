@@ -67,6 +67,8 @@
 #include "content/public/browser/font_list_async.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/back_forward_cache.h"
+#include "content/public/browser/browsing_data_filter_builder.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/document_user_data.h"
@@ -2825,6 +2827,136 @@ class LabWebStoreGetPromotion final : public LabWebStoreFunction {
   }
 };
 
+// identity: Zitter has no browser-wide Google account, so it answers as
+// Chrome does when nobody is signed in. Extensions then use their own sign-in.
+class LabIdentityGetAuthTokenFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("identity.getAuthToken", EXPERIMENTAL_IDENTITY_GETAUTHTOKEN)
+
+ private:
+  ~LabIdentityGetAuthTokenFunction() override = default;
+  ResponseAction Run() override { return RespondNow(Error("The user is not signed in.")); }
+};
+
+class LabIdentityRemoveCachedAuthTokenFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("identity.removeCachedAuthToken",
+                             EXPERIMENTAL_IDENTITY_REMOVECACHEDAUTHTOKEN)
+
+ private:
+  ~LabIdentityRemoveCachedAuthTokenFunction() override = default;
+  ResponseAction Run() override { return RespondNow(NoArguments()); }
+};
+
+class LabIdentityClearAllCachedAuthTokensFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("identity.clearAllCachedAuthTokens",
+                             IDENTITY_CLEARALLCACHEDAUTHTOKENS)
+
+ private:
+  ~LabIdentityClearAllCachedAuthTokensFunction() override = default;
+  ResponseAction Run() override { return RespondNow(NoArguments()); }
+};
+
+class LabIdentityGetProfileUserInfoFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("identity.getProfileUserInfo", IDENTITY_GETPROFILEUSERINFO)
+
+ private:
+  ~LabIdentityGetProfileUserInfoFunction() override = default;
+  ResponseAction Run() override {
+    return RespondNow(WithArguments(base::DictValue().Set("email", "").Set("id", "")));
+  }
+};
+
+// browsingData.remove, limited to listed origins or hostnames and the site
+// storage, cookies and caches that Content can filter by origin.
+class LabBrowsingDataRemoveFunction final
+    : public ExtensionFunction, public content::BrowsingDataRemover::Observer {
+ public:
+  DECLARE_EXTENSION_FUNCTION("browsingData.remove", BROWSINGDATA_REMOVE)
+
+ private:
+  ~LabBrowsingDataRemoveFunction() override = default;
+
+  ResponseAction Run() override {
+    using Remover = content::BrowsingDataRemover;
+    auto* context = browser_context();
+    if (args().size() != 2 || !args()[0].is_dict() || !args()[1].is_dict())
+      return RespondNow(Error("Invalid removal options."));
+    if (!context || !extension() || context->IsOffTheRecord() ||
+        !extension()->permissions_data()->HasAPIPermission(
+            extensions::mojom::APIPermissionID::kBrowsingData)) {
+      return RespondNow(Error("The extension may not remove browsing data here."));
+    }
+    const auto& options = args()[0].GetDict();
+    if (options.contains("excludeOrigins"))
+      return RespondNow(Error("Zitter removes browsing data only for listed sites."));
+    std::set<url::Origin> origins;
+    if (const auto* list = options.FindList("origins")) {
+      for (const auto& value : *list) {
+        const GURL url(value.is_string() ? value.GetString() : std::string());
+        if (!url.SchemeIsHTTPOrHTTPS() || url.has_username() || url.has_password())
+          return RespondNow(Error("Invalid origin."));
+        origins.insert(url::Origin::Create(url));
+      }
+    }
+    if (const auto* list = options.FindList("hostnames")) {
+      for (const auto& value : *list) {
+        const auto* host = value.GetIfString();
+        const GURL url(host ? "https://" + *host + "/" : std::string());
+        if (!url.is_valid() || url.host() != *host || url.has_port())
+          return RespondNow(Error("Invalid hostname."));
+        origins.insert(url::Origin::Create(url));
+        origins.insert(url::Origin::Create(GURL("http://" + *host + "/")));
+      }
+    }
+    if (origins.empty() || origins.size() > 1000)
+      return RespondNow(Error("Zitter removes browsing data only for listed sites."));
+    static constexpr std::pair<std::string_view, uint64_t> kTypes[] = {
+        {"cache", Remover::DATA_TYPE_CACHE},
+        {"cacheStorage", Remover::DATA_TYPE_CACHE_STORAGE},
+        {"cookies", Remover::DATA_TYPE_COOKIES},
+        {"fileSystems", Remover::DATA_TYPE_FILE_SYSTEMS},
+        {"indexedDB", Remover::DATA_TYPE_INDEXED_DB},
+        {"localStorage", Remover::DATA_TYPE_LOCAL_STORAGE},
+        {"serviceWorkers", Remover::DATA_TYPE_SERVICE_WORKERS},
+        {"webSQL", 0},
+    };
+    uint64_t mask = 0;
+    for (const auto [name, value] : args()[1].GetDict()) {
+      if (!value.is_bool())
+        return RespondNow(Error("Invalid data type."));
+      if (!value.GetBool())
+        continue;
+      const auto type = std::ranges::find(kTypes, name, &std::pair<std::string_view, uint64_t>::first);
+      if (type == std::end(kTypes))
+        return RespondNow(Error("This data type can't be removed for listed sites."));
+      mask |= type->second;
+    }
+    if (!mask)
+      return RespondNow(NoArguments());
+    auto filter = content::BrowsingDataFilterBuilder::Create(
+        content::BrowsingDataFilterBuilder::Mode::kDelete);
+    for (const auto& origin : origins)
+      filter->AddOrigin(origin);
+    const auto since = options.FindDouble("since").value_or(0);
+    // The remover calls back exactly once; keep this function until then.
+    AddRef();
+    context->GetBrowsingDataRemover()->RemoveWithFilterAndReply(
+        since > 0 ? base::Time::FromMillisecondsSinceUnixEpoch(since) : base::Time(),
+        base::Time::Max(), mask,
+        Remover::ORIGIN_TYPE_UNPROTECTED_WEB | Remover::ORIGIN_TYPE_PROTECTED_WEB,
+        std::move(filter), this);
+    return RespondLater();
+  }
+
+  void OnBrowsingDataRemoverDone(uint64_t failed_data_types) override {
+    Respond(failed_data_types ? Error("Some data could not be removed.") : NoArguments());
+    Release();
+  }
+};
+
 class LabBrowserExtensionAPIProvider final
     : public extensions::ExtensionsBrowserAPIProvider {
  public:
@@ -2842,6 +2974,11 @@ class LabBrowserExtensionAPIProvider final
     registry->RegisterFunction<LabPrivacyGetFunction>();
     registry->RegisterFunction<LabPrivacySetFunction>();
     registry->RegisterFunction<LabPrivacyClearFunction>();
+    registry->RegisterFunction<LabIdentityGetAuthTokenFunction>();
+    registry->RegisterFunction<LabIdentityRemoveCachedAuthTokenFunction>();
+    registry->RegisterFunction<LabIdentityClearAllCachedAuthTokensFunction>();
+    registry->RegisterFunction<LabIdentityGetProfileUserInfoFunction>();
+    registry->RegisterFunction<LabBrowsingDataRemoveFunction>();
 #if BUILDFLAG(IS_MAC)
     RegisterExtensionNotificationFunctions(*registry);
 #endif

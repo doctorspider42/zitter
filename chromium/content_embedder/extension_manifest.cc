@@ -252,10 +252,27 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
                    .contexts = extensions::StaticSpan(kContexts)}};
     static const base::NoDestructor<extensions::SimpleFeature> privacy{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kPrivacyData)};
+    static constexpr std::string_view kIdentityDependencies[] = {"permission:identity"};
+    static constexpr extensions::SimpleFeatureData kIdentityData{
+        .feature = {.name = "identity"},
+        .config = {.dependencies = extensions::StaticSpan(kIdentityDependencies),
+                   .extension_types = extensions::StaticSpan(kTypes),
+                   .contexts = extensions::StaticSpan(kContexts)}};
+    static const base::NoDestructor<extensions::SimpleFeature> identity{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kIdentityData)};
+    static constexpr std::string_view kBrowsingDataDependencies[] = {"permission:browsingData"};
+    static constexpr extensions::SimpleFeatureData kBrowsingDataData{
+        .feature = {.name = "browsingData"},
+        .config = {.dependencies = extensions::StaticSpan(kBrowsingDataDependencies),
+                   .extension_types = extensions::StaticSpan(kTypes),
+                   .contexts = extensions::StaticSpan(kContexts)}};
+    static const base::NoDestructor<extensions::SimpleFeature> browsing_data{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kBrowsingDataData)};
     const extensions::Feature* features[] = {
 #if BUILDFLAG(IS_MAC)
         notifications.get(),
 #endif
+        identity.get(), browsing_data.get(),
         privacy.get(), tabs.get(), font_settings.get(), commands.get(), context_menus.get(), action.get(),
         navigation.get(), side_panel.get(), extension.get(), background_page.get(),
         windows.get()};
@@ -346,11 +363,21 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         .config = {.extension_types = extensions::StaticSpan(kTypes)}};
     static const base::NoDestructor<extensions::PermissionFeature> privacy{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kPrivacyData)};
+    static constexpr extensions::SimpleFeatureData kIdentityData{
+        .feature = {.name = "identity"},
+        .config = {.extension_types = extensions::StaticSpan(kTypes)}};
+    static const base::NoDestructor<extensions::PermissionFeature> identity{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kIdentityData)};
+    static constexpr extensions::SimpleFeatureData kBrowsingDataData{
+        .feature = {.name = "browsingData"},
+        .config = {.extension_types = extensions::StaticSpan(kTypes)}};
+    static const base::NoDestructor<extensions::PermissionFeature> browsing_data{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kBrowsingDataData)};
     const extensions::Feature* features[] = {
 #if BUILDFLAG(IS_MAC)
         notifications.get(),
 #endif
-        privacy.get(), tabs.get(), scripting.get(), font_settings.get(), context_menus.get(),
+        identity.get(), browsing_data.get(), privacy.get(), tabs.get(), scripting.get(), font_settings.get(), context_menus.get(),
         clipboard_read.get(), clipboard_write.get(), navigation.get(), side_panel.get()};
     provider->AddStaticFeatures(features);
   }
@@ -362,6 +389,9 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         {extensions::mojom::APIPermissionID::kNotifications, "notifications"},
 #endif
         {extensions::mojom::APIPermissionID::kPrivacy, "privacy"},
+        {extensions::mojom::APIPermissionID::kIdentity, "identity"},
+        {extensions::mojom::APIPermissionID::kBrowsingData, "browsingData",
+         extensions::APIPermissionInfo::kFlagRequiresManagementUIWarning},
         {extensions::mojom::APIPermissionID::kTab, "tabs",
          extensions::APIPermissionInfo::kFlagRequiresManagementUIWarning},
         {extensions::mojom::APIPermissionID::kScripting, "scripting",
@@ -379,7 +409,9 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
     return name == "extension" || name == "tabs" || name == "windows" ||
            name == "fontSettings" || name == "commands" ||
            name == "contextMenus" || name == "action" || name == "webNavigation" || name == "sidePanel" ||
-           name == "notifications" || name == "privacy" || name == "cookies" || CoreExtensionsAPIProvider::IsAPISchemaGenerated(name);
+           name == "notifications" || name == "privacy" || name == "cookies" ||
+           name == "identity" || name == "browsingData" ||
+           CoreExtensionsAPIProvider::IsAPISchemaGenerated(name);
   }
 
   std::string_view GetAPISchema(const std::string& name) override {
@@ -436,6 +468,62 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
       return
 #include "privacy_schema.inc"
           ;
+    }
+    // Zitter has no browser-wide Google account. These calls behave like
+    // Chrome when nobody is signed in, so callers take their fallback path.
+    if (name == "identity") {
+      return R"json({
+        "namespace":"identity",
+        "types":[
+          {"id":"identity.AccountInfo","type":"object","properties":{"id":{"type":"string"}}},
+          {"id":"identity.ProfileUserInfo","type":"object","properties":{
+            "email":{"type":"string"},"id":{"type":"string"}}}
+        ],
+        "functions":[
+          {"name":"getAuthToken","type":"function","parameters":[
+            {"name":"details","type":"object","optional":true,
+             "additionalProperties":{"type":"any"}}
+          ],"returns_async":{"name":"callback","optional":true,"parameters":[
+            {"name":"result","type":"object","additionalProperties":{"type":"any"}}
+          ]}},
+          {"name":"removeCachedAuthToken","type":"function","parameters":[
+            {"name":"details","type":"object","properties":{"token":{"type":"string"}}}
+          ],"returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"clearAllCachedAuthTokens","type":"function","parameters":[],
+           "returns_async":{"name":"callback","optional":true,"parameters":[]}},
+          {"name":"getProfileUserInfo","type":"function","parameters":[
+            {"name":"details","type":"object","optional":true,
+             "additionalProperties":{"type":"any"}}
+          ],"returns_async":{"name":"callback","parameters":[
+            {"name":"userInfo","$ref":"identity.ProfileUserInfo"}
+          ]}}
+        ],
+        "events":[
+          {"name":"onSignInChanged","type":"function","parameters":[
+            {"name":"account","$ref":"identity.AccountInfo"},
+            {"name":"signedIn","type":"boolean"}
+          ]}
+        ]
+      })json";
+    }
+    if (name == "browsingData") {
+      return R"json({
+        "namespace":"browsingData",
+        "functions":[
+          {"name":"remove","type":"function","parameters":[
+            {"name":"options","type":"object","properties":{
+              "since":{"type":"number","optional":true},
+              "origins":{"type":"array","items":{"type":"string"},"optional":true},
+              "hostnames":{"type":"array","items":{"type":"string"},"optional":true},
+              "excludeOrigins":{"type":"array","items":{"type":"string"},"optional":true},
+              "originTypes":{"type":"object","optional":true,
+                             "additionalProperties":{"type":"boolean"}}
+            }},
+            {"name":"dataToRemove","type":"object",
+             "additionalProperties":{"type":"boolean"}}
+          ],"returns_async":{"name":"callback","optional":true,"parameters":[]}}
+        ]
+      })json";
     }
     if (name == "notifications") {
       return
@@ -737,13 +825,22 @@ bool IsAllWebHosts(const URLPattern& pattern) {
   return text == "*://*/*" || text == "http://*/*" || text == "https://*/*";
 }
 
+// Sites that may message an extension (externally_connectable.matches) must
+// be named HTTPS hosts, optionally with their subdomains, and never the store.
+bool IsSupportedExternalPage(const URLPattern& pattern) {
+  return pattern.scheme() == "https" && !pattern.match_all_urls() &&
+         !pattern.host().empty() && pattern.host() != "*" &&
+         pattern.host().find('.') != std::string::npos &&
+         !extension_urls::IsWebstoreDomain(GURL("https://" + pattern.host()));
+}
+
 bool IsSupportedExtensionApi(std::string_view api) {
   static constexpr auto kSupportedApis = base::MakeFixedFlatSet<std::string_view>({
 #if BUILDFLAG(IS_MAC)
       "nativeMessaging", "notifications",
 #endif
-      "activeTab", "alarms", "clipboardRead", "clipboardWrite", "contextMenus", "cookies",
-      "declarativeNetRequest",
+      "activeTab", "alarms", "browsingData", "clipboardRead", "clipboardWrite", "contextMenus",
+      "cookies", "declarativeNetRequest", "identity",
       "fontSettings", "idle", "offscreen", "privacy", "scripting", "sidePanel",
       "storage", "tabs",
       "unlimitedStorage", "userScripts", "webNavigation", "webRequest",
@@ -792,7 +889,7 @@ constexpr auto kSupportedManifestKeys = base::MakeFixedFlatSet<std::string_view>
       "current_locale", "declarative_net_request", "default_locale", "description", "externally_connectable",
       "icons",
       "homepage_url", "host_permissions", "incognito", "key", "manifest_version",
-      "minimum_chrome_version", "name",
+      "minimum_chrome_version", "name", "oauth2",
       "optional_host_permissions", "optional_permissions", "options_page",
       "options_ui", "permissions", "sandbox",
       "short_name", "side_panel", "storage", "version", "version_name", "web_accessible_resources",
@@ -827,10 +924,6 @@ std::vector<std::string> UnsupportedManifestFeatures(const ExtractedExtensionFil
     // The store's update_url and omnibox are dropped before review.
     if (key != "update_url" && key != "omnibox" && !kSupportedManifestKeys.contains(key))
       add(key);
-  }
-  if (const auto* external = parsed->FindDict("externally_connectable");
-      external && external->FindList("matches") && !external->FindList("matches")->empty()) {
-    add("externally_connectable");
   }
   if (parsed->FindInt("manifest_version").value_or(0) != 3)
     add("Manifest V2");
@@ -900,8 +993,10 @@ bool SupportsExtensionManifest(const extensions::Extension& extension) {
     return false;
   }
   const auto* external = extensions::ExternallyConnectableInfo::Get(&extension);
-  if (external && (!external->matches.is_empty() || external->accepts_tls_channel_id))
+  if (external && (external->accepts_tls_channel_id ||
+                   !std::ranges::all_of(external->matches, IsSupportedExternalPage))) {
     return false;
+  }
 
   const auto supports_grants = [](const extensions::PermissionSet& permissions) {
     return std::ranges::all_of(permissions.explicit_hosts(), [](const auto& pattern) {
@@ -1405,6 +1500,10 @@ bool AllowsFixtureUpdate(const extensions::Extension& current,
        }))) {
     return false;
   }
+  if (next_senders && !next_senders->matches.is_empty() &&
+      (!previous_senders || !previous_senders->matches.Contains(next_senders->matches))) {
+    return false;
+  }
   // The aggregate permission set does not express per-script exclusions
   // and glob filters. An update must keep those restrictions.
   const auto& installed_scripts = extensions::ContentScriptsInfo::GetContentScripts(&current);
@@ -1472,6 +1571,8 @@ bool MatchesLegacyFixture(const base::DictValue& record,
     return false;
   }
   const auto* external = extensions::ExternallyConnectableInfo::Get(&extension);
+  if (external && !external->matches.is_empty())
+    return false;
   if (record.FindInt("version") == 2) {
     if (!external)
       return false;
@@ -1580,6 +1681,8 @@ base::DictValue BuildInstallReview(const extensions::Extension& extension,
               !external || external->all_ids
                   ? ReviewStrings(std::array<std::string_view, 1>{"*"})
                   : ReviewStrings(external->ids));
+  details.Set("external_web_matches",
+              external ? ReviewStrings(external->matches.ToStringVector()) : base::ListValue());
   details.Set("content_scripts", std::move(scripts));
   details.Set("background_service_worker", true);
   if (extensions::OptionsPageInfo::HasOptionsPage(&extension))

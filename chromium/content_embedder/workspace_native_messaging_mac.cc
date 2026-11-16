@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/files/file.h"
@@ -65,15 +66,30 @@ std::unique_ptr<LaunchState> LaunchHost(const base::FilePath& user_directory,
     return state;
   }
   const std::string manifest_name = name + ".json";
-  base::FilePath manifest;
+  // Native apps such as password managers and device agents register their
+  // hosts for Chrome only. Like other Chromium browsers, fall back to Chrome's
+  // directories after Zitter's own; each host still lists the extension IDs
+  // it accepts in allowed_origins.
+  std::vector<base::FilePath> directories;
   if (!user_directory.empty()) {
-    const auto user_manifest = user_directory.AppendASCII(manifest_name);
-    if (base::PathExists(user_manifest) || base::IsLink(user_manifest))
-      manifest = user_manifest;
+    directories.push_back(user_directory);
+    // Probes see only their own hosts.
+    if (system_directory) {
+      directories.push_back(base::GetHomeDir().Append(
+          "Library/Application Support/Google/Chrome/NativeMessagingHosts"));
+    }
   }
-  if (manifest.empty() && system_directory) {
-    manifest = base::FilePath("/Library/Application Support/Zitter/NativeMessagingHosts")
-                   .AppendASCII(manifest_name);
+  if (system_directory) {
+    directories.emplace_back("/Library/Application Support/Zitter/NativeMessagingHosts");
+    directories.emplace_back("/Library/Google/Chrome/NativeMessagingHosts");
+  }
+  base::FilePath manifest;
+  for (const auto& directory : directories) {
+    const auto candidate = directory.AppendASCII(manifest_name);
+    if (base::PathExists(candidate) || base::IsLink(candidate)) {
+      manifest = candidate;
+      break;
+    }
   }
   if (manifest.empty() || !base::PathExists(manifest)) {
     state->result = NativeProcessLauncher::RESULT_NOT_FOUND;

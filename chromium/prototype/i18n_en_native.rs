@@ -919,6 +919,8 @@ pub static EN: &[(&str, &str)] = &[
     ("i {} innych", "and {} more"),
     ("Odczytywać historię przeglądania", "Read your browsing history"),
     ("Blokować treści na stronach", "Block content on any page"),
+    ("Usuwać pliki cookie i dane stron", "Delete cookies and site data"),
+    ("Wymieniać wiadomości ze stronami: {}", "Exchange messages with: {}"),
     ("Odczytywać dane skopiowane do schowka", "Read data you copy and paste"),
     ("Zmieniać dane w schowku", "Modify data you copy and paste"),
     ("Wyświetlać powiadomienia", "Display notifications"),
