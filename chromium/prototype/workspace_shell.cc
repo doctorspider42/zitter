@@ -14618,6 +14618,27 @@ void WorkspaceShell::ConfirmDanger(views::Widget* parent, std::u16string title, 
   PreparePanelText(prompt->GetRootView());
   prompt->Show();
 }
+void WorkspaceShell::ShowNotice(views::Widget* parent, std::u16string title, std::u16string detail) {
+  if (!parent) parent = widget_;
+  if (!parent || !parent->IsVisible()) return;
+  if (danger_dialog_) danger_dialog_->CloseNow();
+  auto body = std::make_unique<views::View>();
+  body->AddChildView(std::make_unique<SceneParagraph>(std::move(detail), 0, false, kMuted));
+  SetSidebarPanelLayout(body.get(), true, gfx::Insets(), Metrics().space_3);
+  auto dialog = std::make_unique<SceneModalDialog>(std::move(body), false);
+  dialog->SetTitle(std::move(title));
+  dialog->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
+  dialog->SetButtonLabel(ui::mojom::DialogButton::kOk, u"OK");
+  danger_dialog_delegate_ = std::move(dialog);
+  auto* prompt = views::DialogDelegate::CreateDialogWidget(danger_dialog_delegate_.get(), parent->GetNativeWindow(), parent->GetNativeView());
+  danger_dialog_.reset(prompt);
+  prompt->MakeCloseSynchronous(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, views::Widget::ClosedReason) {
+    if (shell) { shell->danger_dialog_.reset(); shell->danger_dialog_delegate_.reset(); }
+  }, weak_factory_.GetWeakPtr()));
+  prompt->SetColorModeOverride(widget_->color_mode_override());
+  PreparePanelText(prompt->GetRootView());
+  prompt->Show();
+}
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 namespace {
 // Design: Pierwsze uruchomienie — `.zt-btn` in its four looks, 32 px tall.

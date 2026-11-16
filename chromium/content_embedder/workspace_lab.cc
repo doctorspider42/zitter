@@ -18401,15 +18401,21 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
     SetExtensionManagerStatus({});
     return;
   }
-  if (!review) {
-    SetExtensionManagerStatus(
-        prototype::T(u"Nie udało się zweryfikować tego rozszerzenia."), true);
-    // The store page only stops its spinner; say why on the page's window.
-    if (!store_id.empty()) {
-      shell_->ShowToast(prototype::T(
-          u"Nie udało się zainstalować rozszerzenia. Może używać funkcji, których Zitter jeszcze nie obsługuje."),
-          {}, {});
+  const auto* unsupported = review ? review->FindList("unsupported") : nullptr;
+  if (!review || unsupported) {
+    std::u16string names;
+    if (unsupported) {
+      for (const auto& name : *unsupported)
+        names += (names.empty() ? u"" : u", ") + base::UTF8ToUTF16(name.GetString());
     }
+    const auto reason = unsupported
+        ? prototype::TF(u"To rozszerzenie potrzebuje funkcji, których Zitter jeszcze nie obsługuje: {}.", {names})
+        : prototype::T(u"Nie udało się pobrać lub zweryfikować paczki ze sklepu. Spróbuj ponownie.");
+    SetExtensionManagerStatus(reason, true);
+    // The store page only stops its spinner; say why over it.
+    if (!store_id.empty())
+      shell_->ShowNotice(widget_.get(),
+                         prototype::T(u"Nie można zainstalować rozszerzenia"), reason);
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(kExtensionInstallUiProbe)) {
       LOG(ERROR) << "The Settings package review failed";
       Finish(false);

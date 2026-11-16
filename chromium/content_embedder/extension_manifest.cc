@@ -784,10 +784,9 @@ bool HasSupportedManifestPermissions(const base::DictValue& manifest) {
   return supported;
 }
 
-bool SupportsExtensionManifest(const extensions::Extension& extension) {
-  // Limit signed packages to capabilities implemented by this host. Chromium
-  // also parses manifest features that require a Chrome-side browser service.
-  static constexpr auto kSupportedKeys = base::MakeFixedFlatSet<std::string_view>({
+// Limit signed packages to capabilities implemented by this host. Chromium
+// also parses manifest features that require a Chrome-side browser service.
+constexpr auto kSupportedManifestKeys = base::MakeFixedFlatSet<std::string_view>({
       "action", "author", "background", "commands", "content_scripts", "content_security_policy",
       // Chromium adds current_locale when it localizes the signed manifest.
       "current_locale", "declarative_net_request", "default_locale", "description", "externally_connectable",
@@ -797,14 +796,61 @@ bool SupportsExtensionManifest(const extensions::Extension& extension) {
       "optional_host_permissions", "optional_permissions", "options_page",
       "options_ui", "permissions", "sandbox",
       "short_name", "side_panel", "storage", "version", "version_name", "web_accessible_resources",
-  });
+});
+
+// Names what a store package needs that this host lacks, read from its raw
+// manifest, so a refusal can say why. Empty when nothing obvious is missing.
+std::vector<std::string> UnsupportedManifestFeatures(const ExtractedExtensionFiles& files) {
+  std::vector<std::string> missing;
+  const auto file = files.find("manifest.json");
+  if (file == files.end())
+    return missing;
+  auto parsed = base::JSONReader::ReadDict(file->second, base::JSON_ALLOW_TRAILING_COMMAS);
+  if (!parsed)
+    return missing;
+  const auto add = [&](std::string name) {
+    if (!std::ranges::contains(missing, name))
+      missing.push_back(std::move(name));
+  };
+  for (const char* key : {"permissions", "optional_permissions"}) {
+    if (const auto* list = parsed->FindList(key)) {
+      for (const auto& value : *list) {
+        const auto* name = value.GetIfString();
+        if (name && !name->contains(':') && *name != "<all_urls>" &&
+            !IsSupportedExtensionApi(*name)) {
+          add(*name);
+        }
+      }
+    }
+  }
+  for (const auto [key, value] : *parsed) {
+    // The store's update_url and omnibox are dropped before review.
+    if (key != "update_url" && key != "omnibox" && !kSupportedManifestKeys.contains(key))
+      add(key);
+  }
+  if (const auto* external = parsed->FindDict("externally_connectable");
+      external && external->FindList("matches") && !external->FindList("matches")->empty()) {
+    add("externally_connectable");
+  }
+  if (parsed->FindInt("manifest_version").value_or(0) != 3)
+    add("Manifest V2");
+  else if (const auto* background = parsed->FindDict("background");
+           !background || !background->FindString("service_worker")) {
+    add("background page");
+  }
+  if (const auto* action = parsed->FindDict("action"); action && !action->FindString("default_popup"))
+    add("action without popup");
+  return missing;
+}
+
+bool SupportsExtensionManifest(const extensions::Extension& extension) {
   const auto& manifest = *extension.manifest()->value();
   if (!extension.is_extension() || extension.manifest_version() != 3 ||
       (manifest.contains("incognito") &&
        extensions::IncognitoInfo::IsIncognitoAllowed(&extension)) ||
       !extension.install_warnings().empty() ||
       !std::ranges::all_of(manifest, [](const auto& item) {
-        return kSupportedKeys.contains(item.first);
+        return kSupportedManifestKeys.contains(item.first);
       }) ||
       !extensions::BackgroundInfo::IsServiceWorkerBased(&extension)) {
     return false;
@@ -1948,6 +1994,7 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
       std::move(review_).Run(std::nullopt);
       return;
     }
+    unsupported_ = UnsupportedManifestFeatures(*files);
     fixture->files = std::move(*files);
     const auto current = std::ranges::find(installed_, fixture->id,
                                             &extensions::Extension::id);
@@ -1961,6 +2008,13 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
 
   void OnReviewed(std::optional<ReviewedFixture> reviewed) {
     reviewed_ = std::move(reviewed);
+    if (!reviewed_ && !unsupported_.empty()) {
+      base::ListValue names;
+      for (auto& name : unsupported_)
+        names.Append(std::move(name));
+      std::move(review_).Run(base::DictValue().Set("unsupported", std::move(names)));
+      return;
+    }
     std::move(review_).Run(reviewed_ ? std::optional(std::move(reviewed_->details))
                                     : std::nullopt);
   }
@@ -1972,6 +2026,7 @@ class SelectedExtensionInstall final : public WorkspaceExtensionInstall {
   std::unique_ptr<ExtensionArchiveExtraction> extraction_;
   std::optional<SignedFixture> verified_;
   std::optional<ReviewedFixture> reviewed_;
+  std::vector<std::string> unsupported_;
   base::WeakPtrFactory<SelectedExtensionInstall> weak_factory_{this};
 };
 
