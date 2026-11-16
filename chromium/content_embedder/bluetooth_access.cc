@@ -33,6 +33,13 @@
 namespace zitter::content_embedder {
 namespace {
 
+// The dialog's parent view: the browser window's widget (on Windows the same
+// window as GetTopLevelNativeWindow(); on macOS its content NSView).
+gfx::NativeView DialogParentView(content::WebContents& contents) {
+  auto* widget = views::Widget::GetWidgetForNativeWindow(contents.GetTopLevelNativeWindow());
+  return widget ? widget->GetNativeView() : contents.GetNativeView();
+}
+
 constexpr char kApi[] = "bluetooth";
 constexpr char kGuard[] = "bluetooth-guard";
 constexpr char kScanning[] = "bluetooth-scanning";
@@ -207,8 +214,9 @@ void LabBluetoothDelegate::ShowDevicePairPrompt(content::RenderFrameHost* frame,
   dialog->SetButtonLabel(ui::mojom::DialogButton::kCancel, prototype::T(u"Anuluj"));
   dialog->SetContentsView(std::make_unique<PairPromptView>(
       *dialog, device_identifier, pairing_kind, pin, std::move(callback)));
-  views::DialogDelegate::CreateDialogWidget(std::move(dialog), /*context=*/nullptr,
-                                            contents->GetTopLevelNativeWindow())
+  views::DialogDelegate::CreateDialogWidget(std::move(dialog),
+                                            /*context=*/gfx::NativeWindow(),
+                                            DialogParentView(*contents))
       ->Show();
 }
 

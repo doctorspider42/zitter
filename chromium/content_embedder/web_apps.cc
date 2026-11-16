@@ -263,7 +263,7 @@ std::unique_ptr<views::Label> TextLabel(std::u16string text, int style = views::
 void ShowDialog(std::unique_ptr<views::DialogDelegate> dialog, views::Widget* parent) {
   dialog->SetModalType(parent ? ui::mojom::ModalType::kWindow : ui::mojom::ModalType::kNone);
   auto* widget = views::DialogDelegate::CreateDialogWidget(
-      std::move(dialog), /*context=*/nullptr, parent ? parent->GetNativeView() : gfx::NativeView());
+      std::move(dialog), /*context=*/gfx::NativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
   widget->Show();
 }
 
@@ -1054,7 +1054,7 @@ void WorkspaceWebApps::ShowInstalledApps(const std::string& profile_id) {
   auto* parent = host_.main_window.Run();
   dialog->SetModalType(ui::mojom::ModalType::kNone);
   auto* widget = views::DialogDelegate::CreateDialogWidget(
-      std::move(dialog), /*context=*/nullptr, parent ? parent->GetNativeView() : gfx::NativeView());
+      std::move(dialog), /*context=*/gfx::NativeWindow(), parent ? parent->GetNativeView() : gfx::NativeView());
   installed_dialog_ = widget->GetWeakPtr();
   widget->Show();
 }

@@ -132,6 +132,13 @@ class FileAccessGrant final : public content::FileSystemAccessPermissionGrant {
 
 namespace {
 
+// The dialog's parent view: the browser window's widget (on Windows the same
+// window as GetTopLevelNativeWindow(); on macOS its content NSView).
+gfx::NativeView DialogParentView(content::WebContents& contents) {
+  auto* widget = views::Widget::GetWidgetForNativeWindow(contents.GetTopLevelNativeWindow());
+  return widget ? widget->GetNativeView() : contents.GetNativeView();
+}
+
 // Folders that hold the system, programs and app data: a site may neither
 // read nor write them, nor pick the home folder or a drive's root as a whole.
 bool IsSensitive(const base::FilePath& path, bool directory) {
@@ -188,8 +195,8 @@ void ShowSensitiveNotice(content::GlobalRenderFrameHostId frame_id, base::OnceCl
   label->SetMultiLine(true);
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   dialog->SetContentsView(std::move(label));
-  views::DialogDelegate::CreateDialogWidget(std::move(dialog), nullptr,
-                                            contents->GetTopLevelNativeWindow())
+  views::DialogDelegate::CreateDialogWidget(std::move(dialog), gfx::NativeWindow(),
+                                            DialogParentView(*contents))
       ->Show();
 }
 

@@ -23,6 +23,16 @@
 #include "url/origin.h"
 
 namespace zitter::content_embedder {
+namespace {
+
+// The dialog's parent view: the browser window's widget (on Windows the same
+// window as GetTopLevelNativeWindow(); on macOS its content NSView).
+gfx::NativeView DialogParentView(content::WebContents& contents) {
+  auto* widget = views::Widget::GetWidgetForNativeWindow(contents.GetTopLevelNativeWindow());
+  return widget ? widget->GetNativeView() : contents.GetNativeView();
+}
+
+}  // namespace
 
 class DeviceChooserView final : public views::View {
  public:
@@ -180,7 +190,7 @@ std::unique_ptr<DeviceChooser> DeviceChooser::Show(content::RenderFrameHost& fra
       std::make_unique<DeviceChooserView>(*dialog, site, std::move(done)));
   chooser->view_ = view->GetWeakPtr();
   auto* widget = views::DialogDelegate::CreateDialogWidget(
-      std::move(dialog), /*context=*/nullptr, contents->GetTopLevelNativeWindow());
+      std::move(dialog), /*context=*/gfx::NativeWindow(), DialogParentView(*contents));
   widget->Show();
   return chooser;
 }
