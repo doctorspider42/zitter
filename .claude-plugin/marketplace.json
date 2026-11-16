@@ -1,0 +1,14 @@
+{
+  "name": "zitter",
+  "description": "Claude Code plugins for developing Zitter.",
+  "owner": {
+    "name": "Zitter contributors"
+  },
+  "plugins": [
+    {
+      "name": "zitter-dev",
+      "source": "./tools/claude-plugins/zitter-dev",
+      "description": "Zitter development in Claude Code: dev build and run jobs on the shared build directory, a live build panel, and guards for the repository's rules (macOS and Windows)."
+    }
+  ]
+}

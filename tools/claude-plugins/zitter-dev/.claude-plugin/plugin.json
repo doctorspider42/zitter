@@ -1,0 +1,6 @@
+{
+  "name": "zitter-dev",
+  "version": "0.1.0",
+  "description": "Zitter development: build/run/test jobs on the shared build dir, a dev panel, and guards for the repo's hard rules",
+  "types": "./types/index.d.ts"
+}
