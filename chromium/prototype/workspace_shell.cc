@@ -13016,6 +13016,11 @@ void WorkspaceShell::CreateTabSwitcherPanel() {
     return shell && shell->workspace_animations_ && !gfx::Animation::PrefersReducedMotion();
   }, weak);
   host.modifier_down = base::BindRepeating(&ControlKeyDown);
+#if BUILDFLAG(IS_MAC)
+  host.show_backdrop = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    return shell && SetWorkspacePanelMaterial(shell->tab_switcher_widget_.get(), true);
+  }, weak);
+#endif
   host.done = base::BindRepeating(&WorkspaceShell::FinishTabSwitcher, weak);
   auto view = std::make_unique<TabSwitcherView>(std::move(host));
   tab_switcher_ = view.get();
@@ -13062,7 +13067,12 @@ void WorkspaceShell::SetTabSwitcherThumbnail(uint64_t id, const gfx::ImageSkia& 
 bool WorkspaceShell::tab_switcher_active() const { return tab_switcher_ && tab_switcher_->active(); }
 
 void WorkspaceShell::FinishTabSwitcher(std::optional<uint64_t> id) {
-  if (tab_switcher_widget_) tab_switcher_widget_->Hide();
+  if (tab_switcher_widget_) {
+    tab_switcher_widget_->Hide();
+#if BUILDFLAG(IS_MAC)
+    SetWorkspacePanelMaterial(tab_switcher_widget_.get(), false);
+#endif
+  }
   auto done = std::move(tab_switcher_done_);
   if (done) std::move(done).Run(id);
   else RestorePageFocus();

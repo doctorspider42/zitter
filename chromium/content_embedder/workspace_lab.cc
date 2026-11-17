@@ -4263,7 +4263,8 @@ bool WorkspaceLab::AcceleratorPressed(const ui::Accelerator& accelerator) {
     return true;
   }
 #endif
-  return RunShortcut(std::move(shortcut));
+  return RunShortcut(std::move(shortcut),
+                     accelerator.modifiers() & ui::EF_CONTROL_DOWN);
 }
 
 bool WorkspaceLab::CanHandleAccelerators() const {
@@ -4400,7 +4401,7 @@ bool WorkspaceLab::DispatchExtensionShortcut(const ui::Accelerator& accelerator)
   return true;
 }
 
-bool WorkspaceLab::RunShortcut(std::string id) {
+bool WorkspaceLab::RunShortcut(std::string id, bool show_tab_switcher) {
   if (smoke_)
     return false;
   if (id == "exit_fullscreen")
@@ -4555,7 +4556,7 @@ bool WorkspaceLab::RunShortcut(std::string id) {
     }
     if (tabs_[active_index_].size() < 2)
       return false;
-    OpenTabSwitcher(id == "previous_tab");
+    SwitchRecentTab(id == "previous_tab", show_tab_switcher);
   } else if (id.starts_with("tab") && id.size() == 4 &&
              id.back() >= '1' && id.back() <= '9') {
     const size_t index = id.back() - '1';
@@ -10776,7 +10777,7 @@ void WorkspaceLab::CaptureTabThumbnail(size_t index) {
       }, weak_factory_.GetWeakPtr(), tabs[index].id));
 }
 
-void WorkspaceLab::OpenTabSwitcher(bool backwards) {
+void WorkspaceLab::SwitchRecentTab(bool backwards, bool show_switcher) {
   NoteActiveTab();
   const auto& tabs = tabs_[active_index_];
   const size_t current = std::min(selected_[active_index_], tabs.size() - 1);
@@ -10790,6 +10791,12 @@ void WorkspaceLab::OpenTabSwitcher(bool backwards) {
   };
   std::ranges::stable_sort(order, [&](size_t a, size_t b) { return left(a) > left(b); });
   order.insert(order.begin(), current);
+  const size_t selected = backwards ? order.size() - 1 : 1;
+  // Menus and gestures have no held modifier to keep the overlay open.
+  if (!show_switcher) {
+    SelectTab(order[selected]);
+    return;
+  }
   std::vector<prototype::TabSwitcherView::Card> cards;
   for (size_t index : order) {
     const auto& tab = tabs[index];
@@ -10812,7 +10819,6 @@ void WorkspaceLab::OpenTabSwitcher(bool backwards) {
   }
   // The page as it is now, for the card of the current tab.
   CaptureTabThumbnail(current);
-  const int selected = backwards ? static_cast<int>(cards.size()) - 1 : 1;
   shell_->OpenTabSwitcher(std::move(cards), selected, base::BindOnce(
       [](base::WeakPtr<WorkspaceLab> lab, std::string workspace, std::optional<uint64_t> id) {
         if (!lab || lab->model_.active()->id != workspace)

@@ -1023,7 +1023,13 @@ class Driver final : public views::WidgetObserver {
       } else {
         base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(
-                           [](NSWindow* target, NSEvent* key) { [target sendEvent:key]; },
+                           [](NSWindow* target, NSEvent* key) {
+                             if (key.type == NSEventTypeKeyDown &&
+                                 [target performKeyEquivalent:key]) {
+                               return;
+                             }
+                             [target sendEvent:key];
+                           },
                            window, event));
       }
     }

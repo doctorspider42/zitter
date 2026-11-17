@@ -9,6 +9,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
@@ -235,6 +236,8 @@ void TabSwitcherView::Reveal() {
   if (!active_ || revealed_) return;
   revealed_ = true;
   reveal_timer_.Stop();
+  if (host_.show_backdrop)
+    SetBackdropBlurred(host_.show_backdrop.Run());
   // The stack appears already on the tab Ctrl's release would open; only
   // later steps move it.
   StopTicking();
@@ -248,6 +251,9 @@ void TabSwitcherView::Step(bool backwards) {
   const int count = static_cast<int>(cards_.size());
   if (!active_ || count == 0) return;
   Select((selected_ + (backwards ? count - 1 : 1)) % count);
+  // A second step is intentional cycling, so there is no need to wait out
+  // the delay that keeps a single quick shortcut from flashing the overlay.
+  Reveal();
 }
 
 void TabSwitcherView::Select(int index) {
@@ -433,11 +439,14 @@ std::u16string TabSwitcherView::When(int index) const {
 
 void TabSwitcherView::OnPaint(gfx::Canvas* canvas) {
   const auto p = palette();
-  // The workspace's void color over the window: translucent where the system
-  // blurs what lies beneath (lighter than the design's 84 % and 80 %, since
-  // Acrylic adds its own tint and noise), opaque where it can't, since sharp
-  // page text under the stack is noise.
-  canvas->DrawColor(backdrop_blurred_ ? SkColorSetA(p.bg_void, Dark(p) ? 0x9e : 0x8c) : p.bg_void);
+  // Let the native material supply most of the backdrop on macOS. Keep the
+  // workspace color opaque when there is no blur so page text stays hidden.
+#if BUILDFLAG(IS_MAC)
+  const int tint_alpha = Dark(p) ? 0x68 : 0x52;
+#else
+  const int tint_alpha = Dark(p) ? 0x9e : 0x8c;
+#endif
+  canvas->DrawColor(backdrop_blurred_ ? SkColorSetA(p.bg_void, tint_alpha) : p.bg_void);
   if (cards_.empty()) return;
   const float s = scale();
 

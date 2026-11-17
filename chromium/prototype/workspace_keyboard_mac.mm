@@ -13,6 +13,7 @@
 #include "components/remote_cocoa/common/native_widget_ns_window_host.mojom.h"
 #import "ui/base/cocoa/default_command_dispatcher_delegate.h"
 #include "ui/content_accelerators/accelerator_util.h"
+#include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 #import "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -43,6 +44,23 @@
               characters:event.characters
               charactersIgnoringModifiers:event.charactersIgnoringModifiers
               isARepeat:event.isARepeat keyCode:event.keyCode];
+        }
+        // AppKit uses Ctrl+Tab for key-view traversal. Give the registered
+        // workspace shortcut first chance, including when a web page has focus.
+        if (event.type == NSEventTypeKeyDown && weak_widget &&
+            (event.modifierFlags & NSEventModifierFlagControl) &&
+            ui::KeyboardCodeFromKeyCode(event.keyCode) == ui::VKEY_TAB) {
+          NSResponder* responder = target.firstResponder;
+          auto* focus = weak_widget->GetFocusManager();
+          if (focus && !([responder respondsToSelector:@selector(isKeyLocked:)] &&
+                         [(id)responder isKeyLocked:event])) {
+            input::NativeWebKeyboardEvent keyboard_event{
+                base::apple::OwnedNSEvent(event)};
+            if (focus->ProcessAccelerator(
+                    ui::GetAcceleratorFromNativeWebKeyboardEvent(keyboard_event))) {
+              return nil;
+            }
+          }
         }
         // Standalone workspace and panel windows need NSWindow's responder
         // path for plain text and matching keyups. Panel command equivalents

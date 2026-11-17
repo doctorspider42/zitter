@@ -301,7 +301,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void SelectTab(size_t index);
   // Ctrl+Tab: the switcher over the active workspace's tabs, most recently
   // used first (tab_switcher_view.h).
-  void OpenTabSwitcher(bool backwards);
+  void SwitchRecentTab(bool backwards, bool show_switcher);
   // Stamps the tab that was on screen when another one takes its place.
   void NoteActiveTab();
   // Keeps a picture of the tab's page for the switcher (asynchronously).
@@ -452,7 +452,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool ShowPageMenu(content::RenderFrameHost& frame,
                     const content::ContextMenuParams& params);
   bool Navigate(const GURL& url, bool new_tab);
-  bool RunShortcut(std::string id);
+  bool RunShortcut(std::string id, bool show_tab_switcher = false);
   std::optional<size_t> WorkspaceIndex(std::string_view id) const;
   size_t WorkspaceProfileIndex(size_t workspace) const;
   ProfileContext* WorkspaceProfile(size_t workspace) const;

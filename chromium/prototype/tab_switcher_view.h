@@ -53,8 +53,8 @@ class TabSwitcherView final : public views::View, public ui::CompositorAnimation
     base::RepeatingCallback<bool()> animations;
     // Whether Ctrl (the switcher's modifier) is still held.
     base::RepeatingCallback<bool()> modifier_down;
-    // The widget to show the overlay in, once the delay passes.
-    base::RepeatingClosure reveal;
+    // Enables the native backdrop when the overlay becomes visible.
+    base::RepeatingCallback<bool()> show_backdrop;
     // The chosen tab, or nullopt when the switcher was dismissed.
     base::RepeatingCallback<void(std::optional<uint64_t>)> done;
   };
@@ -77,7 +77,7 @@ class TabSwitcherView final : public views::View, public ui::CompositorAnimation
   // Shows the overlay now (the reveal delay passed or the modifier is held).
   void Reveal();
   void SetThumbnail(uint64_t id, const gfx::ImageSkia& image);
-  // Whether the system blurs the window under the switcher (Acrylic); without
+  // Whether the system blurs the window under the switcher; without
   // it the backdrop is opaque.
   void SetBackdropBlurred(bool blurred);
   bool backdrop_blurred() const { return backdrop_blurred_; }

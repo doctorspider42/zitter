@@ -59,9 +59,19 @@
 }
 @end
 
+@interface ZitterPanelMaterialView : NSVisualEffectView
+@end
+
+@implementation ZitterPanelMaterialView
+- (NSView*)hitTest:(NSPoint)point {
+  return nil;
+}
+@end
+
 namespace zitter::prototype {
 namespace {
 const void* const kWindowButtonsAlignerKey = &kWindowButtonsAlignerKey;
+const void* const kPanelMaterialKey = &kPanelMaterialKey;
 
 class WorkspaceNativeWidgetMac final : public views::NativeWidgetMac {
  public:
@@ -87,6 +97,30 @@ void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dar
   if (!dark) { if (window.appearance) window.appearance = nil; return; }
   NSString* name = *dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua;
   if (![window.appearance.name isEqualToString:name]) window.appearance = [NSAppearance appearanceNamed:name];
+}
+
+bool SetWorkspacePanelMaterial(views::Widget* widget, bool enabled) {
+  NSWindow* window = widget->GetNativeWindow().GetNativeNSWindow();
+  NSView* content = window.contentView;
+  if (!content)
+    return false;
+  ZitterPanelMaterialView* material =
+      objc_getAssociatedObject(content, kPanelMaterialKey);
+  if (!enabled || NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceTransparency) {
+    [material removeFromSuperview];
+    objc_setAssociatedObject(content, kPanelMaterialKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return false;
+  }
+  if (!material) {
+    material = [[ZitterPanelMaterialView alloc] initWithFrame:content.bounds];
+    material.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    material.material = NSVisualEffectMaterialHUDWindow;
+    material.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    material.state = NSVisualEffectStateActive;
+    [content addSubview:material positioned:NSWindowBelow relativeTo:nil];
+    objc_setAssociatedObject(content, kPanelMaterialKey, material, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+  return true;
 }
 
 views::NativeWidget* CreateWorkspaceNativeWidget(views::Widget* widget) {
