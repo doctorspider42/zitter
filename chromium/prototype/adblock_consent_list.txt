@@ -1,0 +1,19 @@
+[Adblock Plus 2.0]
+! Title: Ściany zgód (Zitter's consent walls)
+! Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
+! Description: Consent walls hidden without consenting. These rules never
+! click a button and never write a consent cookie or storage item, so the site
+! gets no consent at all: no TCF string, no purposes, no vendors. They hide
+! the wall, then give back scrolling and remove the blur, and only while the
+! wall is on the page. Use them where rejecting does not work: a "pay or OK"
+! wall, or a refusal that the site forgets on the next visit.
+! See docs/ad-blocking.md, "Built-in lists".
+!
+! Wirtualna Polska and its portals. The board asks for consent for the
+! publisher and about 1,900 partners. "Odrzucam" leads to a wall asking to pay
+! 5.75-7.50 zł a month or accept after all, and the board comes back on the
+! next visit. Class names are hashed on every deploy, so the rules anchor on
+! the modal dialog and its link to holding.wp.pl, the publisher's own page.
+wp.pl,o2.pl,money.pl,pudelek.pl,abczdrowie.pl,autokult.pl,benchmark.pl,dobreprogramy.pl,fotoblogia.pl,gadzetomania.pl,jastrzabpost.pl,komorkomania.pl,parenting.pl,polygamia.pl,pysznosci.pl,open.fm,kafeteria.pl,vibez.pl,totalmoney.pl,dailywrap.net,essanews.com##body > div:has(> div[role="dialog"][aria-modal="true"] a[href*="holding.wp.pl"])
+wp.pl,o2.pl,money.pl,pudelek.pl,abczdrowie.pl,autokult.pl,benchmark.pl,dobreprogramy.pl,fotoblogia.pl,gadzetomania.pl,jastrzabpost.pl,komorkomania.pl,parenting.pl,polygamia.pl,pysznosci.pl,open.fm,kafeteria.pl,vibez.pl,totalmoney.pl,dailywrap.net,essanews.com##body:has(> div > div[role="dialog"][aria-modal="true"] a[href*="holding.wp.pl"]):style(overflow: auto !important)
+wp.pl,o2.pl,money.pl,pudelek.pl,abczdrowie.pl,autokult.pl,benchmark.pl,dobreprogramy.pl,fotoblogia.pl,gadzetomania.pl,jastrzabpost.pl,komorkomania.pl,parenting.pl,polygamia.pl,pysznosci.pl,open.fm,kafeteria.pl,vibez.pl,totalmoney.pl,dailywrap.net,essanews.com##body:has(> div > div[role="dialog"][aria-modal="true"] a[href*="holding.wp.pl"]) > *:style(filter: none !important)

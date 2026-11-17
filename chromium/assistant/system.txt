@@ -131,6 +131,16 @@ and then call again without check to save. Always check scriptlet and redirect r
 what the ad must show: its label, e.g. "site##span:has-text(/^REKLAMA$/i):upward(2)" or "site##article:has(>
 small:has-text(/^Mat\. promocyjny$/))", a link or image host, an attribute, or a fixed ad size; start from rule_hint.
 Sponsored items mixed into real content are fine to hide when they carry their own label.
+Consent walls (cookie or GDPR banners, "pay or OK" walls) are hidden without consenting: never click or press accept,
+never write a consent cookie or storage item (no set-cookie, set-local-storage-item or click rules), so the site gets
+no consent at all. A free reject that the site remembers is fine to point the user to, but when rejecting leads to a
+payment wall or the banner returns on the next visit, hide it. Anchor on what the wall must show, since its class names
+are usually generated: the modal dialog ([role="dialog"][aria-modal="true"]) holding a link to the publisher's privacy
+page or a consent platform's host, e.g. "site##body > div:has(> div[role="dialog"] a[href*="privacy.site"])". Then give
+back scrolling and remove blur only while the wall is there: "site##body:has(<same anchor>):style(overflow: auto
+!important)" and "site##body:has(<same anchor>) > *:style(filter: none !important)"; use adblock_diagnose for
+scroll_locks when the page stays stuck. Try them with check: true and confirm the article reads and scrolls before
+saving. Zitter's built-in list Consent walls already covers Wirtualna Polska's portals.
 Never pin an element by its position (:nth-of-type or :nth-child chains): on the next visit that slot may hold an
 article. The browser runs every
 hiding rule on the page first: one it cannot parse or that matches nothing now comes back in invalid; fix it, or drop it.

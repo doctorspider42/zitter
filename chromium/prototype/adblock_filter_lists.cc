@@ -66,6 +66,7 @@ const std::vector<AdblockFilterList>& AdblockFilterListSources() {
           {"easylist", "EasyList", "https://easylist.to/easylist/easylist.txt"},
           {"easyprivacy", "EasyPrivacy", "https://easylist.to/easylist/easyprivacy.txt"},
           {"zitter", "Zamienniki Zittera", "", true, true, true},
+          {"consent", "Ściany zgód", "", true, true, true},
           {"antiadblock", "Adblock Warning Removal List",
            "https://easylist-downloads.adblockplus.org/antiadblockfilters.txt", true},
           {"ublock", "uBlock filters",
@@ -128,7 +129,7 @@ AdblockFilterLists::AdblockFilterLists(Wanted wanted, Factory factory,
   auto texts = std::make_shared<std::vector<std::string>>(lists_.size());
   for (size_t i = 0; i < lists_.size(); ++i) {
     if (lists_[i].builtin) {
-      (*texts)[i] = std::string(adblock::builtin_list());
+      (*texts)[i] = std::string(adblock::builtin_list(lists_[i].id));
       lists_[i].rules = adblock::count_rules((*texts)[i]);
     }
   }
@@ -378,7 +379,7 @@ void AdblockFilterLists::SetTextsForTesting(std::vector<std::string> texts) {
   texts.resize(lists_.size());
   for (size_t i = 0; i < lists_.size(); ++i) {
     if (lists_[i].builtin)
-      texts[i] = std::string(adblock::builtin_list());
+      texts[i] = std::string(adblock::builtin_list(lists_[i].id));
     lists_[i].rules = adblock::count_rules(texts[i]);
     lists_[i].updated = base::Time::Now();
   }

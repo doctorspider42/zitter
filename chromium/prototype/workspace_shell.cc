@@ -10833,6 +10833,7 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
     auto* labels=line->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(labels,true,gfx::Insets(),2);
     AddPreferenceCopy(labels,text(list,"name"),kInk,0,static_cast<int>(gfx::Font::Weight::NORMAL),false);
     if(id=="ublock")muted(labels,T(u"Więcej reguł przeciw wykrywaniu · około 2,5 MB"));
+    if(id=="consent")muted(labels,T(u"Ukrywa banery zgód, niczego nie akceptując"));
     const int rules=list.FindInt("rules").value_or(0);
     auto* count=muted(line,enabled&&rules?base::FormatNumber(rules):std::u16string(u"—"));
     if(auto* copy=views::AsViewClass<PreferenceCopy>(count))copy->SetTextStyle(8);
@@ -10853,7 +10854,7 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
       if(!shell)return;shell->ad_blocking_sources_open_=!shell->ad_blocking_sources_open_;shell->RefreshAdBlockingPreferences();},weak),
       ad_blocking_sources_open_?T(u"Ukryj źródła i licencje"):T(u"Źródła i licencje"));
     if(auto* button=views::AsViewClass<SceneTextButton>(sources))button->SetKind(6);
-    if(ad_blocking_sources_open_)muted(ad_blocking_list_,T(u"EasyList, EasyPrivacy i Adblock Warning Removal List: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. uBlock filters: © autorzy uBlock Origin, licencja GPLv3, pobierane z github.com/uBlockOrigin/uAssets. Zamienniki Zittera są częścią Zittera. Silnik: adblock-rust od Brave, licencja MPL-2.0."));
+    if(ad_blocking_sources_open_)muted(ad_blocking_list_,T(u"EasyList, EasyPrivacy i Adblock Warning Removal List: © autorzy EasyList, licencja GPLv3 lub CC BY-SA 3.0, pobierane z easylist.to. uBlock filters: © autorzy uBlock Origin, licencja GPLv3, pobierane z github.com/uBlockOrigin/uAssets. Zamienniki Zittera i Ściany zgód są częścią Zittera. Silnik: adblock-rust od Brave, licencja MPL-2.0."));
   }
   if(ad_blocking_update_)ad_blocking_update_->SetEnabled(!updating&&available);
 

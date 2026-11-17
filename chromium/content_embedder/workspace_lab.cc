@@ -8511,12 +8511,14 @@ base::DictValue WorkspaceLab::ReadAdBlocking() const {
     if (!AdblockLists() && !list.builtin)
       continue;
     const auto count = !AdblockLists() && list.builtin
-        ? adblock::count_rules(adblock::builtin_list()) : list.rules;
+        ? adblock::count_rules(adblock::builtin_list(list.id)) : list.rules;
     if (!list.builtin && list.updated > updated)
       updated = list.updated;
     lists.Append(base::DictValue()
                      .Set("id", list.id)
-                     .Set("name", list.builtin
+                     .Set("name", list.id == "consent"
+                        ? base::UTF16ToUTF8(prototype::T(u"Ściany zgód"))
+                        : list.builtin
                         ? base::UTF16ToUTF8(prototype::T(u"Zamienniki Zittera"))
                         : list.name)
                      .Set("rules", static_cast<int>(count))

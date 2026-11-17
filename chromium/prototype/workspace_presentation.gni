@@ -184,6 +184,7 @@ template("zitter_workspace_presentation") {
     inputs = [
       "chromium/prototype/adblock_resources.js",
       "chromium/prototype/adblock_zitter_list.txt",
+      "chromium/prototype/adblock_consent_list.txt",
     ]
     cxx_bindings = [ crate_root ]
     allow_unsafe = true

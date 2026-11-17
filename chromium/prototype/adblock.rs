@@ -53,9 +53,11 @@ mod ffi {
         // Whether `rule` only acts on pages of `site` (an eTLD+1, like "example.com").
         fn rule_in_scope(rule: &str, site: &str) -> bool;
         fn count_rules(list: &str) -> usize;
-        // Zitter's own list (adblock_zitter_list.txt): stand-ins for ad and
-        // analytics libraries the other lists block.
-        fn builtin_list() -> String;
+        // Zitter's own lists, by id: "zitter" (adblock_zitter_list.txt), stand-ins
+        // for ad and analytics libraries the other lists block; "consent"
+        // (adblock_consent_list.txt), consent walls hidden without consenting.
+        // Empty for any other id.
+        fn builtin_list(id: &str) -> String;
     }
 }
 
@@ -104,8 +106,16 @@ pub struct Engine {
 
 const RESOURCES: &str = include_str!("adblock_resources.js");
 const BUILTIN_LIST: &str = include_str!("adblock_zitter_list.txt");
+const CONSENT_LIST: &str = include_str!("adblock_consent_list.txt");
 
-fn builtin_list() -> String { BUILTIN_LIST.to_string() }
+fn builtin_list(id: &str) -> String {
+    match id {
+        "zitter" => BUILTIN_LIST,
+        "consent" => CONSENT_LIST,
+        _ => "",
+    }
+    .to_string()
+}
 
 /// What `!#if` sees: Zitter reads uBlock Origin's syntax on desktop Chromium,
 /// without HTML filtering. Everything else (mobile, Firefox, AdGuard, ABP) is false.
@@ -521,8 +531,26 @@ mod tests {
     }
 
     #[test]
+    fn consent_list_hides_walls_without_consenting() {
+        let list = builtin_list("consent");
+        let rules: Vec<&str> = list.lines().filter(|l| !is_comment(l)).collect();
+        assert!(!rules.is_empty());
+        assert!(rules.iter().all(|l| check_rule(l).kind != 0), "every line is a valid rule");
+        // Hiding only: no scriptlet may click or store a consent value.
+        assert!(rules.iter().all(|l| !l.contains("##+js(") && !l.contains("$")), "cosmetic rules only");
+        let e = new_engine(&vec![list.clone()]);
+        let wp = e.cosmetic_resources("https://wiadomosci.wp.pl/a-1");
+        assert!(wp.hide_selectors.iter().any(|s| s.contains("holding.wp.pl")), "{:?}", wp.hide_selectors);
+        assert_eq!(wp.procedural.iter().filter(|p| p.contains("\"style\"") || p.contains(":style")).count(), 2,
+                   "{:?}", wp.procedural);
+        let other = e.cosmetic_resources("https://news.test/");
+        assert!(other.hide_selectors.is_empty() && other.procedural.is_empty());
+        assert!(builtin_list("unknown").is_empty());
+    }
+
+    #[test]
     fn builtin_list_redirects_what_other_lists_block() {
-        let list = builtin_list();
+        let list = builtin_list("zitter");
         assert!(list.lines().filter(|l| !is_comment(l)).all(|l| check_rule(l).kind != 0), "every line is a valid rule");
         // Alone it blocks nothing; with a list that blocks adsbygoogle, the page gets the stand-in.
         let alone = new_engine(&vec![list.clone()]);
@@ -536,7 +564,7 @@ mod tests {
 
     #[test]
     fn adblock_analytics_stand_ins_apply_across_sites() {
-        let list = builtin_list();
+        let list = builtin_list("zitter");
         let alone = new_engine(&vec![list.clone()]);
         let e = new_engine(&vec!["||adblockanalytics.com^".into(), list]);
         let probes = [
@@ -564,7 +592,7 @@ mod tests {
         let other = "https://news.test/";
         let filters = "||googlesyndication.com^\n||doubleclick.net^\n\
                        ##.ad-banner-728x90\n##.AdvertContainer\n##.ad-container-300x250\n##.SponsoredLinksModule";
-        let e = new_engine(&vec![filters.into(), builtin_list()]);
+        let e = new_engine(&vec![filters.into(), builtin_list("zitter")]);
         let probes = [
             ("https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", "xmlhttprequest", "text/plain"),
             ("https://securepubads.g.doubleclick.net/tag/js/gpt.js", "xmlhttprequest", "text/plain"),

@@ -64,6 +64,7 @@ attribution:
 | EasyList | always on | https://easylist.to/easylist/easylist.txt, © The EasyList authors, GPLv3 / CC BY-SA 3.0 |
 | EasyPrivacy | always on | https://easylist.to/easylist/easyprivacy.txt, © The EasyList authors, GPLv3 / CC BY-SA 3.0 |
 | Zitter's stand-ins (Zamienniki Zittera) | on by default | built in, `chromium/prototype/adblock_zitter_list.txt`, part of Zitter (Apache-2.0) |
+| Consent walls (Ściany zgód) | on by default | built in, `chromium/prototype/adblock_consent_list.txt`, part of Zitter (Apache-2.0) |
 | Adblock Warning Removal List | on by default | https://easylist-downloads.adblockplus.org/antiadblockfilters.txt, © The EasyList authors, same license as EasyList |
 | uBlock filters | off by default | https://ublockorigin.github.io/uAssets/filters/filters.txt, © The uBlock Origin authors, GPLv3 |
 
@@ -90,6 +91,28 @@ already blocks, so an exception, a site switched off, or the list itself
 turned off still wins. Nothing extra is fetched; the request still never
 leaves the machine. adblock-rust returns a redirect even when nothing blocks
 the request, so the bridge answers with one only when `should_block()` holds.
+
+**Consent walls** hides consent walls without consenting. Its rules never
+click a button and never write a consent cookie or storage item, so the site
+gets no consent: no TCF string, no purposes, no vendors. Each site has three
+rules, all anchored on the wall itself: one hides the wall, and two `:style()`
+rules give back scrolling and remove the blur while the wall is on the page
+(`body:has(<wall>)`). It has a switch of its own in Settings, Ad blocking.
+
+It covers sites where rejecting does not work. Wirtualna Polska's portals
+(wp.pl, o2.pl, money.pl, pudelek.pl and the others with the same board) show a
+board asking for consent for about 1,900 partners. "Odrzucam" leads to a wall
+asking to pay 5.75–7.50 zł a month or accept after all, and the board comes back
+on the next visit. Their class names are hashed on every deploy, so the rules
+anchor on the modal dialog (`[role="dialog"][aria-modal="true"]`) and its link
+to `holding.wp.pl`.
+
+The cookie-notice lists of other blockers do not fit this. uBlock's Cookie
+Notices clicks through the board with `trusted-click-element`, and one of its
+wp.pl rules hits "Akceptuję": whichever click lands first decides, so the
+user may end up consenting. The Polish cookie list blocks
+`wpjslib-chunk-consent-form.js` by name, but WP now serves its scripts from
+obfuscated first-party paths, so that rule no longer matches.
 
 The **Adblock Warning Removal List** removes the "please turn off your ad
 blocker" messages and keeps bait elements visible on the sites it knows.
@@ -437,7 +460,12 @@ generated: its label, a link or image host, an attribute, a fixed size. It
 starts from `rule_hint`. Sponsored items mixed into real content may be hidden
 when they carry their own label. Anti-adblock walls are removed with
 `:remove()`, and scrolling comes back with `body:style(overflow: auto)` or
-`:remove-class()` on `<html>`/`<body>`. The model must never pin an element by
+`:remove-class()` on `<html>`/`<body>`. Consent walls are hidden without
+consenting, the way the built-in Consent walls list does it: never a click or a
+`set-cookie` / `set-local-storage-item` rule that stores consent; the wall is
+hidden by its modal dialog and its link to the publisher's privacy page or the
+consent platform's host, and scrolling and blur come back only while it is on
+the page. A free reject the site remembers is fine to suggest instead. The model must never pin an element by
 its position (`:nth-of-type` chains): on a front page that slot holds an article
 on the next visit.
 

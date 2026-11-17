@@ -39,7 +39,7 @@ An independent, open-source browser built on Chromium, with its own interface an
 | **Bring your Arc along** | On macOS, import Arc spaces, favorites, nested pins and emoji. Chrome, Edge and Brave imports are supported too. |
 | **Private browsing** | Open a temporary session with Command+Shift+N (macOS) or Ctrl+Shift+N (Windows). Private windows share isolated site data and discard it when the last one closes; private tabs are excluded from history and restore. See [behavior and privacy](docs/private-browsing.md). |
 | **Optional AI assistant** | A pinnable right panel with per-session models, explicit browser-data grants, tab mentions, browser actions and parallel web research. Supports native Codex CLI, Claude CLI, OpenAI API and local Ollama. See [setup and privacy](docs/ai-assistant.md). |
-| **Built-in ad blocking** | EasyList and EasyPrivacy through Brave's adblock-rust, with no extension: blocked requests never leave the browser, a toolbar shield counts them and switches a site off, and the assistant writes rules for sites the lists miss, with a preview and your consent. See [design and licenses](docs/ad-blocking.md). |
+| **Built-in ad blocking** | EasyList and EasyPrivacy through Brave's adblock-rust, with no extension: blocked requests never leave the browser, a toolbar shield counts them and switches a site off, consent walls disappear without you consenting to anything, and the assistant writes rules for sites the lists miss, with a preview and your consent. See [design and licenses](docs/ad-blocking.md). |
 
 Ctrl+T and Ctrl+K share the Command Center. When text is entered, the first result
 always opens the typed address or searches in a new tab; existing tabs and pins

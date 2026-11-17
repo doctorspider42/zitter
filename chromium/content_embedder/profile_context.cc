@@ -473,7 +473,7 @@ rust::Box<adblock::Engine> BuildAdblockEngine(
     if (texts && !(*texts)[i].empty())
       lists.emplace_back((*texts)[i]);
     else if (!texts && sources[i].builtin)
-      lists.emplace_back(std::string(adblock::builtin_list()));
+      lists.emplace_back(std::string(adblock::builtin_list(sources[i].id)));
   }
   if (!rules.empty())
     lists.emplace_back(base::JoinString(rules, "\n"));
