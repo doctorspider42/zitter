@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
@@ -106,6 +107,19 @@ class ProfileDownloadDelegate final : public content::DownloadManagerDelegate {
                                DownloadFileVerdict verdict);
   void CancelUnpublishableDownload(const std::string& guid);
   bool IsUserDownload(const download::DownloadItem& item) const;
+  bool AllowsInsecureDownloads() const;
+  bool AllowsDownloadTransport(const std::vector<GURL>& chain,
+                               const std::optional<url::Origin>& initiator) const;
+  bool NeedsAutomaticDownloadConsent(const download::DownloadItem& item) const;
+  void RequestAutomaticDownload(download::DownloadItem& item,
+                                base::OnceCallback<void(bool)> done);
+  void OnAutomaticDownloadDecided(std::string guid,
+                                  int64_t received_bytes,
+                                  download::DownloadTargetCallback callback,
+                                  bool allowed);
+  void CheckUserDownloadUrl(download::DownloadItem* item,
+                            int64_t received_bytes,
+                            download::DownloadTargetCallback callback);
   void OnUserUrlReputationChecked(std::string guid,
                                   int64_t received_bytes,
                                   download::DownloadTargetCallback callback,

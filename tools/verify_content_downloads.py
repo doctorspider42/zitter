@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import gzip
 from contextlib import closing
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -79,6 +80,34 @@ USER_FILE_TYPES = {
     "zip": ("application/zip", b"PK\x05\x06" + bytes(18)),
 }
 LARGE_USER_PAYLOAD = b"x" * (17 * 1024 * 1024)
+# Servers label the same file in many ways; the name decides its type.
+USER_MIME_ALIASES = {
+    "pdf": "application/x-pdf",
+    "wav": "audio/vnd.wave",
+    "csv": "application/vnd.ms-excel",
+}
+BLOB_PAYLOAD = b"Zitter blob download\n"
+DATA_PAYLOAD = b"Zitter data download\n"
+# Pages that start a download on their own, like Google Drive after zipping
+# a folder: no click reaches the download itself.
+GENERATED_PAGES = {
+    "/user-blob": (
+        "const a = document.createElement('a');"
+        "a.href = URL.createObjectURL(new Blob(['Zitter blob download\\n'], {type: 'text/plain'}));"
+        "a.download = 'download-probe.txt'; document.body.append(a); a.click();"
+    ),
+    "/user-data": (
+        "const a = document.createElement('a');"
+        "a.href = 'data:text/plain,Zitter%20data%20download%0A';"
+        "a.download = 'download-probe.txt'; document.body.append(a); a.click();"
+    ),
+    "/user-post": (
+        "const form = document.createElement('form'); form.method = 'post';"
+        "form.action = '/text'; document.body.append(form); form.submit();"
+    ),
+}
+# Bodies other than PAYLOAD that a user case saves, by the URL path it loads.
+USER_SAVED_BODIES = {"/user-empty": b"", "/user-blob": BLOB_PAYLOAD, "/user-data": DATA_PAYLOAD}
 
 
 def make_media_fixtures(ffmpeg, directory):
@@ -156,6 +185,27 @@ class DownloadFixture(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        script = GENERATED_PAGES.get(self.path)
+        if script:
+            body = f"<!doctype html><body><script>{script}</script>".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path in ("/user-gzip", "/user-empty"):
+            # A gzip body's Content-Length counts compressed bytes.
+            body = gzip.compress(PAYLOAD) if self.path == "/user-gzip" else b""
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Disposition", 'attachment; filename="download-probe.txt"')
+            if body:
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/user-anchor":
             body = b'<a href="/text" download>Save the text fixture</a>'
             self.send_response(200)
@@ -187,12 +237,14 @@ class DownloadFixture(BaseHTTPRequestHandler):
         if self.path.startswith("/user-file/") and user_type in user_file_types:
             disposition = f'attachment; filename="download-probe.{user_type}"'
             response = user_file_types[user_type]
-        if self.path == "/user-file/mismatched-pdf":
-            disposition = 'attachment; filename="download-probe.pdf"'
-            response = ("text/plain", PAYLOAD)
-        if self.path == "/user-file/mismatched-wav":
-            disposition = 'attachment; filename="download-probe.wav"'
-            response = ("text/plain", PAYLOAD)
+        alias = self.path.removeprefix("/user-file/alias-")
+        if self.path.startswith("/user-file/alias-") and alias in USER_MIME_ALIASES:
+            disposition = f'attachment; filename="download-probe.{alias}"'
+            response = (USER_MIME_ALIASES[alias], user_file_types[alias][1])
+        if self.path == "/user-file/dangerous":
+            # Safe Browsing rates .cfg dangerous on Windows; macOS has no such type.
+            disposition = 'attachment; filename="download-probe.cfg"'
+            response = ("application/octet-stream", b"[Shell]\n")
         resume = None
         if self.path == PUBLISH_RACE_PATH:
             response = ("text/plain", PUBLISH_RACE_PAYLOAD)
@@ -235,6 +287,21 @@ class DownloadFixture(BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError):
                     pass
             return
+        self.wfile.write(body)
+
+    def do_POST(self):
+        # A form that downloads, like a bank statement export.
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if self.path != "/text":
+            self.send_error(404)
+            return
+        self.server.requests.append(self.path)
+        mime, body = CASES["/text"]
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Disposition", 'attachment; filename="download-probe.txt"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
         self.wfile.write(body)
 
     def serve_reputation(self):
@@ -957,6 +1024,7 @@ def verify_transport(executable, http_server, root, options, windows):
         }
         http_server.navigation_pages = https_server.navigation_pages = {
             "/navigate": https + "/text",
+            "/navigate-http": http + "/text",
         }
         thread = threading.Thread(target=https_server.serve_forever, daemon=True)
         thread.start()
@@ -982,8 +1050,26 @@ def verify_transport(executable, http_server, root, options, windows):
                      [], ["/user-anchor", "/text"]),
                     ("user-save-link", https + "/user-anchor", https + "/text", None,
                      [], ["/user-anchor", "/text"]),
-                    ("user-anchor-passive", https + "/user-anchor", https + "/text", "request",
-                     [], ["/user-anchor"]),
+                    # A page may start one download without a click, as in Chrome.
+                    ("user-anchor-passive", https + "/user-anchor", https + "/text", None,
+                     [], ["/user-anchor", "/text"]),
+                    # Google Drive's zip: the page navigates to the file later.
+                    ("user-accept", https + "/navigate", https + "/text", None,
+                     [], ["/navigate", "/text"]),
+                    ("user-generated", https + "/user-blob", https + "/user-blob", None,
+                     [], ["/user-blob"]),
+                    ("user-generated", https + "/user-data", https + "/user-data", None,
+                     [], ["/user-data"]),
+                    ("user-accept", https + "/user-post", https + "/text", None,
+                     [], ["/user-post", "/text"]),
+                    ("user-accept", https + "/user-gzip", https + "/user-gzip", None,
+                     [], ["/user-gzip"]),
+                    ("user-accept", https + "/user-empty", https + "/user-empty", None,
+                     [], ["/user-empty"]),
+                    ("user-accept", http + "/text", http + "/text", None, ["/text"], []),
+                    # An HTTPS page cannot hand over a file by plain HTTP.
+                    ("user-blocked", https + "/navigate-http", http + "/text", "request",
+                     ["/text"], ["/navigate-http"]),
                     ("user-accept", https + "/user-stream", https + "/user-stream", None,
                      [], ["/user-stream"]),
                     ("user-auto", https + "/text", https + "/text", None, [], ["/text"]),
@@ -996,10 +1082,12 @@ def verify_transport(executable, http_server, root, options, windows):
                     ("user-wrong-type", https + "/text", https + "/text", "target", [], ["/text"]),
                     ("user-resume", https + "/resume", https + "/resume", None, [], ["/resume"] * 2),
                     ("user-resume", https + "/resume", https + "/resume", "resume", [], ["/resume"] * 2),
-                    ("user-blocked", https + "/user-file/mismatched-pdf",
-                     https + "/user-file/mismatched-pdf", "target", [], ["/user-file/mismatched-pdf"]),
-                    ("user-blocked", https + "/user-file/mismatched-wav",
-                     https + "/user-file/mismatched-wav", "target", [], ["/user-file/mismatched-wav"]),
+                    *((("user-blocked", https + "/user-file/dangerous",
+                        https + "/user-file/dangerous", "target", [], ["/user-file/dangerous"]),)
+                      if windows else ()),
+                    *((f"user-{kind}", f"{https}/user-file/alias-{kind}",
+                       f"{https}/user-file/alias-{kind}", None, [], [f"/user-file/alias-{kind}"])
+                      for kind in USER_MIME_ALIASES),
                     *((f"user-{kind}", f"{https}/user-file/{kind}", f"{https}/user-file/{kind}",
                        None, [], [f"/user-file/{kind}"])
                       for kind in user_file_types),
@@ -1075,6 +1163,9 @@ def verify_transport(executable, http_server, root, options, windows):
                         raise SystemExit(f"Unexpected HTTPS resume requests: {https_server.resume_requests}")
                     if name == "user-large":
                         expected = {saved: LARGE_USER_PAYLOAD}
+                    loaded = urlsplit(url).path
+                    if not denial and loaded in USER_SAVED_BODIES:
+                        expected = {saved: USER_SAVED_BODIES[loaded]}
                     if name == "user-auto":
                         # Without the prompt the file keeps its own name.
                         saved = "download-probe.txt"

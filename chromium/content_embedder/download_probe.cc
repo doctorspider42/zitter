@@ -205,7 +205,7 @@ std::unique_ptr<DownloadProbe> DownloadProbe::Create(const base::FilePath& root)
                           IsSaveProbeFileType(std::string_view(save_action).substr(5))) ||
                          save_action == "user-anchor" || save_action == "user-anchor-passive" ||
                          save_action == "user-large" || save_action == "user-save-link" ||
-                         save_action == "user-auto";
+                         save_action == "user-auto" || save_action == "user-generated";
   const bool expect_blocked =
       command_line.HasSwitch("zitter-content-expect-download-blocked");
   const bool expect_publish_collision = command_line.HasSwitch(kExpectPublishCollision);
@@ -226,7 +226,7 @@ std::unique_ptr<DownloadProbe> DownloadProbe::Create(const base::FilePath& root)
       (user_save && !transport_probe) ||
       (native_user_save && (url != target_url || url.path() != "/text" ||
                            expect_blocked != (save_action == "user-native-cancel"))) ||
-      ((save_action == "user-blocked" || save_action == "user-anchor-passive") && !expect_blocked) ||
+      (save_action == "user-blocked" && !expect_blocked) ||
       (transport_probe && ((command_line.HasSwitch(kSaveProbe) && !user_save) ||
                            expect_publish_collision)) ||
       base::IsLink(directory) || !base::DirectoryExists(directory) ||
@@ -371,11 +371,11 @@ void DownloadProbe::Start(content::WebContents& contents,
   if (save_action_.starts_with("user-anchor") || save_action_ == "user-save-link")
     Observe(&contents);
   if (!save_action_.empty() && !native_user_save() &&
-      save_action_ != "native" && save_action_ != "user-blocked" && save_action_ != "user-auto" &&
-      save_action_ != "user-anchor-passive") {
+      save_action_ != "native" && save_action_ != "user-blocked" && save_action_ != "user-auto") {
     const auto action = (save_action_.starts_with("user-delete") || save_action_ == "user-resume" ||
-                         save_action_ == "user-anchor" || save_action_ == "user-large" ||
-                         save_action_ == "user-save-link") ? "accept"
+                         save_action_.starts_with("user-anchor") || save_action_ == "user-large" ||
+                         save_action_ == "user-save-link" || save_action_ == "user-generated")
+        ? "accept"
         : save_action_.starts_with("user-") ? save_action_.substr(5) : save_action_;
     dialog_factory_ = std::make_unique<ui::ScopedSetSelectFileDialogFactory>(
         std::make_unique<SaveProbeDialogFactory>(
@@ -417,7 +417,10 @@ void DownloadProbe::OnDownloadCreated(content::DownloadManager*,
     Finish(false);
     return;
   }
-  if (item->GetURL() != target_url_ || item_.IsObserving()) {
+  // A page-built file has a URL only the page knows.
+  const bool generated = save_action_ == "user-generated" &&
+                         (item->GetURL().SchemeIsBlob() || item->GetURL().SchemeIs("data"));
+  if ((item->GetURL() != target_url_ && !generated) || item_.IsObserving()) {
     Finish(false);
     return;
   }
@@ -550,9 +553,14 @@ void DownloadProbe::OnDownloadUpdated(download::DownloadItem* item) {
     Finish(blocked);
     return;
   }
-  // Chromium maps an empty target path to a cancelled item.
+  // Chromium maps an empty target path to a cancelled item. A refused user
+  // download ends interrupted with FILE_BLOCKED so its row can say why.
   if (expected_result_ == ExpectedResult::kBlocked) {
-    const bool blocked = item->GetState() == download::DownloadItem::CANCELLED &&
+    const bool refused = item->GetState() == download::DownloadItem::INTERRUPTED &&
+                         item->GetLastReason() ==
+                             download::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED &&
+                         !item->CanResume();
+    const bool blocked = (item->GetState() == download::DownloadItem::CANCELLED || refused) &&
                          item->GetTargetFilePath().empty();
     if (blocked && !certificate_.empty())
       std::puts("Zitter Content rejected the download target");

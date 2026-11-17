@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/supports_user_data.h"
@@ -36,6 +37,8 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/storage_partition_config.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/web_contents_user_data.h"
 #include "crypto/hash.h"
 #include "net/base/filename_util.h"
 #include "net/http/http_response_headers.h"
@@ -109,10 +112,49 @@ bool IsHttpsDownloadUrl(const GURL& url) {
          !url.has_username() && !url.has_password();
 }
 
+bool IsHttpDownloadUrl(const GURL& url) {
+  return url.is_valid() && url.SchemeIs(url::kHttpScheme) && url.has_host() &&
+         !url.has_username() && !url.has_password();
+}
+
+// A file the page built itself: a blob: or data: URL. The bytes never cross
+// the network, so the page's own transport decides whether it is trusted.
+bool IsPageGeneratedDownloadUrl(const GURL& url) {
+  return url.is_valid() && (url.SchemeIsBlob() || url.SchemeIs(url::kDataScheme));
+}
+
 bool HasSecureInitiator(const std::optional<url::Origin>& initiator) {
   return !initiator ||
          (!initiator->opaque() && initiator->scheme() == url::kHttpsScheme);
 }
+
+// Chrome's download request limiter, per tab: a page may start one download
+// on its own after the person last pressed a key, clicked or loaded the page.
+// Further downloads follow Settings > Site permissions > Automatic downloads.
+class AutomaticDownloadState final
+    : public content::WebContentsObserver,
+      public content::WebContentsUserData<AutomaticDownloadState> {
+ public:
+  ~AutomaticDownloadState() override = default;
+
+  bool TakeAllowance() { return std::exchange(allow_one_, false); }
+
+ private:
+  friend class content::WebContentsUserData<AutomaticDownloadState>;
+  explicit AutomaticDownloadState(content::WebContents* contents)
+      : content::WebContentsObserver(contents),
+        content::WebContentsUserData<AutomaticDownloadState>(*contents) {}
+
+  void DidGetUserInteraction(const blink::WebInputEvent&) override {
+    allow_one_ = true;
+  }
+  void PrimaryPageChanged(content::Page&) override { allow_one_ = true; }
+
+  bool allow_one_ = true;
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
+};
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(AutomaticDownloadState);
 
 bool IsLowRiskDownloadName(const base::FilePath& name) {
   if (!net::IsSafePortablePathComponent(name))
@@ -145,52 +187,26 @@ bool IsUserDownloadName(const base::FilePath& name) {
          level == safe_browsing::DownloadFileType::ALLOW_ON_USER_GESTURE;
 }
 
-bool IsGenericDownloadMimeType(std::string_view mime) {
-  constexpr std::string_view types[] = {
-      "", "application/octet-stream", "binary/octet-stream", "application/download",
-      "application/x-download", "application/force-download"};
-  return std::ranges::find(types, mime) != std::end(types);
-}
-
-// Documents and media must not arrive under another declared type: a text
-// response does not become a .pdf. Other names accept any type.
-bool IsUserDownloadType(const base::FilePath& name, std::string_view mime) {
-  constexpr struct {
-    base::FilePath::StringViewType extension;
-    std::string_view mime;
-  } types[] = {
-      {FILE_PATH_LITERAL(".txt"), "text/plain"},
-      {FILE_PATH_LITERAL(".csv"), "text/plain"},
-      {FILE_PATH_LITERAL(".csv"), "text/csv"},
-      {FILE_PATH_LITERAL(".pdf"), "application/pdf"},
-      {FILE_PATH_LITERAL(".png"), "image/png"},
-      {FILE_PATH_LITERAL(".jpg"), "image/jpeg"},
-      {FILE_PATH_LITERAL(".jpeg"), "image/jpeg"},
-      {FILE_PATH_LITERAL(".gif"), "image/gif"},
-      {FILE_PATH_LITERAL(".webp"), "image/webp"},
-      {FILE_PATH_LITERAL(".mp3"), "audio/mpeg"},
-      {FILE_PATH_LITERAL(".mp4"), "video/mp4"},
-      {FILE_PATH_LITERAL(".m4a"), "audio/mp4"},
-      {FILE_PATH_LITERAL(".mov"), "video/quicktime"},
-      {FILE_PATH_LITERAL(".ogg"), "audio/ogg"},
-      {FILE_PATH_LITERAL(".wav"), "audio/wav"},
-      {FILE_PATH_LITERAL(".wav"), "audio/x-wav"},
-      {FILE_PATH_LITERAL(".webm"), "video/webm"},
-      {FILE_PATH_LITERAL(".webm"), "audio/webm"},
-  };
-  const bool known = std::ranges::any_of(types, [&](const auto& type) {
-    return name.MatchesFinalExtension(type.extension);
-  });
-  return IsUserDownloadName(name) &&
-         (!known || IsGenericDownloadMimeType(mime) ||
-          std::ranges::any_of(types, [&](const auto& type) {
-            return mime == type.mime && name.MatchesFinalExtension(type.extension);
-          }));
-}
+// The file's name decides its type, as in Chrome: servers label the same file
+// in many ways (audio/x-m4a, image/jpg, application/csv), so the declared
+// MIME type neither blocks nor changes a download.
 
 download::DownloadTargetInfo BlockedTarget() {
   download::DownloadTargetInfo target;
   target.interrupt_reason = download::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED;
+  return target;
+}
+
+// Chromium cancels a target without a path and leaves the row nameless. A
+// refused user download keeps a placeholder path instead, so the item ends
+// interrupted with FILE_BLOCKED and the Downloads panel can say why. The path
+// is never reserved or written: Chromium drops it with the interruption.
+download::DownloadTargetInfo RefusedTarget(const base::FilePath& directory,
+                                           const download::DownloadItem& item) {
+  auto target = BlockedTarget();
+  // A refused resumption keeps Chromium's cancellation of the partial file.
+  if (item.GetTargetFilePath().empty())
+    target.target_path = directory.AppendASCII("blocked-download");
   return target;
 }
 
@@ -303,19 +319,106 @@ bool ProfileDownloadDelegate::SaveLink(content::RenderFrameHost& frame,
   return true;
 }
 
+bool ProfileDownloadDelegate::AllowsInsecureDownloads() const {
+  return manager_ && !static_cast<ProfileContext*>(manager_->GetBrowserContext())
+                          ->site_permissions().BrowsingFlag("https_only");
+}
+
+// Which transfers a person may save, as in Chrome:
+// - HTTPS from an HTTPS page, a browser action or (without HTTPS-Only mode)
+//   an HTTP page;
+// - a blob: or data: file built by such a page;
+// - plain HTTP only without HTTPS-Only mode, never from an HTTPS page (mixed
+//   content) and never after an HTTPS hop (a downgrade).
+bool ProfileDownloadDelegate::AllowsDownloadTransport(
+    const std::vector<GURL>& chain,
+    const std::optional<url::Origin>& initiator) const {
+  if (chain.empty())
+    return false;
+  const bool insecure_allowed = AllowsInsecureDownloads();
+  const auto acceptable_origin = [&](const url::Origin& origin) {
+    return !origin.opaque() &&
+           (origin.scheme() == url::kHttpsScheme ||
+            (insecure_allowed && origin.scheme() == url::kHttpScheme));
+  };
+  if (initiator && !acceptable_origin(*initiator))
+    return false;
+  if (IsPageGeneratedDownloadUrl(chain.back())) {
+    // The page that built the file vouches for it: it needs one, and a blob
+    // belongs to the origin that created it.
+    return chain.size() == 1 && initiator &&
+           (!chain.back().SchemeIsBlob() ||
+            acceptable_origin(url::Origin::Create(chain.back())));
+  }
+  bool secure_hop = false;
+  for (const auto& url : chain) {
+    if (IsHttpsDownloadUrl(url)) {
+      secure_hop = true;
+    } else if (!IsHttpDownloadUrl(url) || !insecure_allowed || secure_hop ||
+               (initiator && initiator->scheme() == url::kHttpsScheme)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool ProfileDownloadDelegate::IsUserDownload(const download::DownloadItem& item) const {
-  const auto& chain = item.GetUrlChain();
-  const auto& initiator = item.GetRequestInitiator();
-  const bool typed = !initiator && ui::PageTransitionCoreTypeIs(
-      item.GetTransitionType(), ui::PAGE_TRANSITION_TYPED);
-  const auto* approved = static_cast<const ApprovedDownload*>(
-      item.GetUserData(kApprovedDownloadKey));
-  const bool approved_resume = approved && approved->MatchesResumableDownload(item);
-  return !user_download_directory_.empty() &&
-         (item.HasUserGesture() || typed || approved_resume) &&
-         item.GetForcedFilePath().empty() && !chain.empty() &&
-         std::ranges::all_of(chain, IsHttpsDownloadUrl) &&
-         HasSecureInitiator(initiator);
+  // The person's consent is settled once, when the target is chosen
+  // (NeedsAutomaticDownloadConsent); this checks what any stage may rely on.
+  return !user_download_directory_.empty() && item.GetForcedFilePath().empty() &&
+         AllowsDownloadTransport(item.GetUrlChain(), item.GetRequestInitiator());
+}
+
+bool ProfileDownloadDelegate::NeedsAutomaticDownloadConsent(
+    const download::DownloadItem& item) const {
+  // Browser actions (the address bar, a bookmark, Save Link As, an extension)
+  // carry no page initiator or come from Zitter itself.
+  const auto source = item.GetDownloadSource();
+  return item.GetRequestInitiator().has_value() &&
+         (source == download::DownloadSource::NAVIGATION ||
+          source == download::DownloadSource::FROM_RENDERER ||
+          source == download::DownloadSource::UNKNOWN);
+}
+
+void ProfileDownloadDelegate::RequestAutomaticDownload(
+    download::DownloadItem& item,
+    base::OnceCallback<void(bool)> done) {
+  auto* contents = content::DownloadItemUtils::GetWebContents(&item);
+  auto* frame = contents ? contents->GetPrimaryMainFrame() : nullptr;
+  if (!frame || !manager_) {
+    std::move(done).Run(false);
+    return;
+  }
+  const auto origin = frame->GetLastCommittedOrigin();
+  auto& permissions =
+      static_cast<ProfileContext*>(manager_->GetBrowserContext())->site_permissions();
+  // Site settings: 1 allow, 2 block, 3 ask (the default). As in Chrome they
+  // govern the downloads after the one a page may always start.
+  const int setting = origin.opaque() ? 2 : permissions.SiteSetting("automatic-downloads", origin);
+  AutomaticDownloadState::CreateForWebContents(contents);
+  auto* state = AutomaticDownloadState::FromWebContents(contents);
+  if (state->TakeAllowance() || setting == 1) {
+    std::move(done).Run(true);
+    return;
+  }
+  if (setting == 2) {
+    std::move(done).Run(false);
+    return;
+  }
+  permissions.RunSitePrompt(
+      *frame, "automatic-downloads",
+      base::BindOnce(
+          [](base::WeakPtr<content::BrowserContext> context, url::Origin origin,
+             base::OnceCallback<void(bool)> done, bool allowed, bool remember) {
+            // Without "always allow" only this download goes ahead.
+            if (context && (remember || !allowed)) {
+              static_cast<ProfileContext*>(context.get())
+                  ->site_permissions()
+                  .SetSiteRule("automatic-downloads", origin, allowed ? 1 : 2);
+            }
+            std::move(done).Run(allowed && context);
+          },
+          contents->GetBrowserContext()->GetWeakPtr(), origin, std::move(done)));
 }
 
 bool ProfileDownloadDelegate::CanRecoverInterruptedDownload(
@@ -329,7 +432,7 @@ bool ProfileDownloadDelegate::CanRecoverInterruptedDownload(
            row.received_bytes < row.total_bytes &&
            row.hash.size() == crypto::hash::kSha256Size &&
            row.download_slice_info.empty() && IsStrongEtag(row.etag) &&
-           IsUserDownloadType(row.target_path.BaseName(), row.mime_type) &&
+           IsUserDownloadName(row.target_path.BaseName()) &&
            row.current_path.DirName() == row.target_path.DirName() &&
            row.current_path.MatchesFinalExtension(FILE_PATH_LITERAL(".crdownload")) &&
            base::Uuid::ParseLowercase(
@@ -442,15 +545,15 @@ bool ProfileDownloadDelegate::DetermineDownloadTarget(
     // lookup. Validate Content-Range against the offset at target selection.
     const int64_t received_bytes = item->GetReceivedBytes();
     if (!IsUserDownload(*item)) {
-      std::move(*callback).Run(BlockedTarget());
-    } else if (url_reputation_) {
-      url_reputation_->Check(
-          item->GetUrlChain(),
-          base::BindOnce(&ProfileDownloadDelegate::OnUserUrlReputationChecked,
-                         weak_factory_.GetWeakPtr(), item->GetGuid(),
-                         received_bytes, std::move(*callback)));
+      std::move(*callback).Run(RefusedTarget(user_download_directory_, *item));
+    } else if (item->GetTargetFilePath().empty() && NeedsAutomaticDownloadConsent(*item)) {
+      // A resumed transfer already had its consent.
+      RequestAutomaticDownload(
+          *item, base::BindOnce(&ProfileDownloadDelegate::OnAutomaticDownloadDecided,
+                                weak_factory_.GetWeakPtr(), item->GetGuid(),
+                                received_bytes, std::move(*callback)));
     } else {
-      DetermineUserDownloadTarget(item, received_bytes, std::move(*callback));
+      CheckUserDownloadUrl(item, received_bytes, std::move(*callback));
     }
     return true;
   }
@@ -512,16 +615,51 @@ bool ProfileDownloadDelegate::DetermineDownloadTarget(
   return true;
 }
 
+void ProfileDownloadDelegate::OnAutomaticDownloadDecided(
+    std::string guid,
+    int64_t received_bytes,
+    download::DownloadTargetCallback callback,
+    bool allowed) {
+  auto* item = manager_ ? manager_->GetDownloadByGuid(guid) : nullptr;
+  if (!item || item->GetState() != download::DownloadItem::IN_PROGRESS) {
+    std::move(callback).Run(BlockedTarget());
+    return;
+  }
+  if (!allowed) {
+    std::move(callback).Run(RefusedTarget(user_download_directory_, *item));
+    return;
+  }
+  CheckUserDownloadUrl(item, received_bytes, std::move(callback));
+}
+
+void ProfileDownloadDelegate::CheckUserDownloadUrl(
+    download::DownloadItem* item,
+    int64_t received_bytes,
+    download::DownloadTargetCallback callback) {
+  // Safe Browsing has nothing to say about a file the page built itself.
+  if (url_reputation_ && !IsPageGeneratedDownloadUrl(item->GetURL())) {
+    url_reputation_->Check(
+        item->GetUrlChain(),
+        base::BindOnce(&ProfileDownloadDelegate::OnUserUrlReputationChecked,
+                       weak_factory_.GetWeakPtr(), item->GetGuid(),
+                       received_bytes, std::move(callback)));
+    return;
+  }
+  DetermineUserDownloadTarget(item, received_bytes, std::move(callback));
+}
+
 void ProfileDownloadDelegate::OnUserUrlReputationChecked(
     std::string guid,
     int64_t received_bytes,
     download::DownloadTargetCallback callback,
     DownloadUrlVerdict verdict) {
   auto* item = manager_ ? manager_->GetDownloadByGuid(guid) : nullptr;
-  if (verdict != DownloadUrlVerdict::kNoMatch || !item ||
-      item->GetState() != download::DownloadItem::IN_PROGRESS ||
-      !IsUserDownload(*item)) {
+  if (!item || item->GetState() != download::DownloadItem::IN_PROGRESS) {
     std::move(callback).Run(BlockedTarget());
+    return;
+  }
+  if (verdict != DownloadUrlVerdict::kNoMatch || !IsUserDownload(*item)) {
+    std::move(callback).Run(RefusedTarget(user_download_directory_, *item));
     return;
   }
   DetermineUserDownloadTarget(item, received_bytes, std::move(callback));
@@ -535,15 +673,21 @@ void ProfileDownloadDelegate::DetermineUserDownloadTarget(
     ResumeUserDownload(*item, received_bytes, std::move(callback));
     return;
   }
-  const auto name = net::GenerateFileName(
+  auto name = net::GenerateFileName(
       item->GetURL(), item->GetContentDisposition(), /*referrer_charset=*/"",
       item->GetSuggestedFilename(), /*mime_type=*/"", "download");
-  const auto headers = item->GetResponseHeaders();
-  const auto length = headers ? headers->GetInt64HeaderValue("Content-Length") : std::nullopt;
-  const int64_t size = length.value_or(std::max<int64_t>(0, item->GetTotalBytes()));
-  if ((headers && headers->HasHeader("Content-Length") && (!length || *length <= 0)) ||
-      !IsUserDownloadType(name, item->GetMimeType())) {
-    std::move(callback).Run(BlockedTarget());
+  // A name without an extension (a blob without a download attribute) takes
+  // one from its type. A declared extension stays as the server named it.
+  if (name.FinalExtension().empty() && !item->GetMimeType().empty()) {
+    name = net::GenerateFileName(item->GetURL(), item->GetContentDisposition(), "",
+                                 item->GetSuggestedFilename(), item->GetMimeType(),
+                                 "download");
+  }
+  // The network service reports the size only for an unencoded body. A
+  // gzip body's Content-Length counts compressed bytes, not the saved file.
+  const int64_t size = std::max<int64_t>(0, item->GetTotalBytes());
+  if (!IsUserDownloadName(name)) {
+    std::move(callback).Run(RefusedTarget(user_download_directory_, *item));
     return;
   }
   // Settings: "Ask where to save each file" off saves straight into the
@@ -634,8 +778,7 @@ void ProfileDownloadDelegate::ResumeUserDownload(
       : net::GenerateFileName(item.GetURL(), item.GetContentDisposition(), "",
                               item.GetSuggestedFilename(), "", "download");
   if (!name.MatchesFinalExtension(approved->target.FinalExtension()) ||
-      !IsUserDownloadName(name) ||
-      (headers->HasHeader("Content-Type") && !IsUserDownloadType(name, item.GetMimeType()))) {
+      !IsUserDownloadName(name)) {
     std::move(callback).Run(BlockedTarget());
     return;
   }
@@ -748,7 +891,7 @@ bool ProfileDownloadDelegate::ShouldCompleteDownload(
   const auto received = item->GetReceivedBytes();
   const bool user_download = IsUserDownload(*item) && approved &&
       approved->target == item->GetTargetFilePath() && approved->partial == item->GetFullPath() &&
-      received > 0 &&
+      received >= 0 &&
       (approved->size == 0 || received == approved->size) &&
       item->GetHash().size() == crypto::hash::kSha256Size;
   const bool fixture_download = !probe_directory_.empty() && item->GetURL() == probe_url_ &&
@@ -847,46 +990,14 @@ void ProfileDownloadDelegate::CheckDownloadAllowed(
   const bool secure_transport =
       IsHttpsDownloadUrl(url) && HasSecureInitiator(request_initiator);
   auto* page = contents ? contents.Run() : nullptr;
-  bool user_download = false;
-  if (page && !user_download_directory_.empty() && secure_transport && method == "GET") {
-    user_download = transition.has_value();
-    if (!user_download && content_initiated && !from_cross_origin_redirect &&
-        request_initiator && request_initiator->IsSameOriginWith(url) &&
-        page->GetVisibility() != content::Visibility::HIDDEN) {
-      auto* frame = page->GetPrimaryMainFrame();
-      user_download = frame && frame->IsActive() &&
-          frame->GetLastCommittedOrigin() == *request_initiator &&
-          frame->ConsumeTransientUserActivation();
-      // Settings > Site permissions > Automatic downloads: a page starting a
-      // download without a click.
-      if (!user_download && frame && frame->IsActive() &&
-          frame->GetLastCommittedOrigin() == *request_initiator) {
-        auto& permissions =
-            static_cast<ProfileContext*>(page->GetBrowserContext())->site_permissions();
-        const int setting = permissions.SiteSetting("automatic-downloads", *request_initiator);
-        if (setting == 3) {
-          permissions.RunSitePrompt(
-              *frame, "automatic-downloads",
-              base::BindOnce(
-                  [](base::WeakPtr<content::BrowserContext> context, url::Origin origin,
-                     content::CheckDownloadAllowedCallback callback, bool allowed,
-                     bool remember) {
-                    // Without "always allow" only this download goes ahead.
-                    if (context && (remember || !allowed)) {
-                      static_cast<ProfileContext*>(context.get())
-                          ->site_permissions()
-                          .SetSiteRule("automatic-downloads", origin, allowed ? 1 : 2);
-                    }
-                    std::move(callback).Run(allowed && context);
-                  },
-                  page->GetBrowserContext()->GetWeakPtr(), *request_initiator,
-                  std::move(callback)));
-          return;
-        }
-        user_download = setting == 1;
-      }
-    }
-  }
+  // A user download needs an acceptable transport here; whether the page may
+  // start it without the person is settled with its target (see
+  // NeedsAutomaticDownloadConsent), where navigations and page downloads
+  // meet. Forms may download with POST, as in Chrome.
+  const bool user_download =
+      page && !user_download_directory_.empty() &&
+      (method == "GET" || method == "POST") &&
+      AllowsDownloadTransport({url}, request_initiator);
   const bool fixture = (http_fixture || secure_transport) &&
                        !probe_directory_.empty() && url == probe_url_ &&
                        method == "GET" && !from_cross_origin_redirect &&

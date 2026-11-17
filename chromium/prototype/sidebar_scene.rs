@@ -155,7 +155,7 @@ mod ffi {
     struct FolderMenuState { ready: bool, busy: bool, workspace: String, folder: String }
     enum DownloadPhase { InProgress, Complete, Cancelled, Interrupted }
     // Byte quantities arrive pre-formatted by the platform locale service.
-    struct DownloadFacts { phase: DownloadPhase, blocked: bool, removed: bool, can_resume: bool, paused: bool, received: String, total: String, speed: String, remaining_seconds: i64, host: String }
+    struct DownloadFacts { phase: DownloadPhase, blocked: bool, refused: bool, removed: bool, can_resume: bool, paused: bool, received: String, total: String, speed: String, remaining_seconds: i64, host: String }
     // A downloads row (design: Downloads): the state as a symbol and a word in its
     // tone (0 none, 1 ok, 2 warn, 3 danger), then the muted facts.
     struct DownloadRow { tone: u8, state: String, meta: String }
@@ -1764,6 +1764,9 @@ fn download_row(f:&ffi::DownloadFacts)->ffi::DownloadRow{
     let row=|tone:u8,state:String,meta:String|ffi::DownloadRow{tone,state,meta};
     let sizes=||if f.total.is_empty(){f.received.clone()}else{format!("{} / {}",f.received,f.total)};
     if f.blocked{return row(3,format!("⚠ {}",t("Zablokowane")),t("Ochrona Chromium — plik nie jest gotowy do użycia").into());}
+    // Zitter refused to start it: an unsafe transport or name, or a page's
+    // automatic download the person declined.
+    if f.refused{return row(3,format!("⚠ {}",t("Zablokowano")),if f.host.is_empty(){t("Zitter nie pozwolił na to pobranie").into()}else{format!("{} · {}",t("Zitter nie pozwolił na to pobranie"),f.host)});}
     match f.phase {
         P::Cancelled=>row(3,format!("⚠ {}",t("Anulowano")),String::new()),
         P::Complete=>if f.removed{row(2,format!("⚠ {}",t("Plik przeniesiony lub usunięty")),String::new())}else{
@@ -5511,7 +5514,7 @@ mod tests {
         let p=palette_plan(&palette_input(">x",false,"",1,5));assert!(!p.commands_only);assert_eq!(palette_order(&p),vec![(0,0),(1,0)]);
         let p=palette_plan(&palette_input("ddg\tkot",true,"DuckDuckGo",0,1));assert!(p.keyword_search);assert_eq!(palette_order(&p),vec![(0,0),(2,0)]);
     }
-    fn download_facts(phase:ffi::DownloadPhase)->ffi::DownloadFacts{ffi::DownloadFacts{phase,blocked:false,removed:false,can_resume:true,paused:false,received:"5 MB".into(),total:"10 MB".into(),speed:"1 MB".into(),remaining_seconds:0,host:"example.com".into()}}
+    fn download_facts(phase:ffi::DownloadPhase)->ffi::DownloadFacts{ffi::DownloadFacts{phase,blocked:false,refused:false,removed:false,can_resume:true,paused:false,received:"5 MB".into(),total:"10 MB".into(),speed:"1 MB".into(),remaining_seconds:0,host:"example.com".into()}}
     #[test] fn download_rows_show_state_as_symbol_and_word_in_its_tone() {
         use ffi::DownloadPhase as P;let r=|f:&ffi::DownloadFacts|{let r=download_row(f);(r.tone,r.state,r.meta)};
         assert_eq!(r(&download_facts(P::InProgress)),(0,String::new(),"5 MB / 10 MB · 1 MB/s · 1 s".into()));
@@ -5519,7 +5522,7 @@ mod tests {
         let mut f=download_facts(P::InProgress);f.total.clear();f.speed.clear();f.remaining_seconds=-1;assert_eq!(r(&f).2,"5 MB");
         assert_eq!(r(&download_facts(P::Complete)),(1,"✓ Gotowe".into(),"5 MB · example.com".into()));
         let mut f=download_facts(P::Complete);f.removed=true;assert_eq!(r(&f).0,2);
-        assert_eq!(r(&download_facts(P::Cancelled)).1,"⚠ Anulowano");let mut f=download_facts(P::Interrupted);assert_eq!(r(&f).0,3);assert_eq!(r(&f).1,"⚠ Przerwano");f.can_resume=false;assert_eq!(r(&f).1,"⚠ Przerwano");
+        assert_eq!(r(&download_facts(P::Cancelled)).1,"⚠ Anulowano");{let mut f=download_facts(P::Interrupted);f.refused=true;assert_eq!(r(&f).0,3);assert_eq!(r(&f).1,"⚠ Zablokowano");assert!(r(&f).2.ends_with("example.com"));}let mut f=download_facts(P::Interrupted);assert_eq!(r(&f).0,3);assert_eq!(r(&f).1,"⚠ Przerwano");f.can_resume=false;assert_eq!(r(&f).1,"⚠ Przerwano");
         let mut f=download_facts(P::Complete);f.blocked=true;assert_eq!((r(&f).0,r(&f).1),(3,"⚠ Zablokowane".into()));
     }
     fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,assistant:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}

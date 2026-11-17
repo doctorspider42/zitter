@@ -26,6 +26,7 @@
 #include "components/vector_icons/vector_icons.h"
 #include "base/task/single_thread_task_runner.h"
 #include "content/public/browser/browser_context.h"
+#include "net/base/filename_util.h"
 #include "ui/base/text/bytes_formatting.h"
 #include "ui/display/screen.h"
 #include "ui/display/display.h"
@@ -81,6 +82,16 @@ std::u16string Files(size_t n) { return Count(n, T(u"plik"), T(u"pliki"), T(u"pl
 std::string Utf8Extension(Item* item) { return base::FilePath(item->GetFileNameToReportUser().Extension()).AsUTF8Unsafe(); }
 bool Active(Item* item) { return item->GetState() == Item::IN_PROGRESS; }
 bool Failed(Item* item) { return item->GetState() == Item::INTERRUPTED || item->GetState() == Item::CANCELLED; }
+// Zitter refused the download before it had a file name.
+bool Refused(Item* item) { return item->GetState() == Item::INTERRUPTED && item->GetLastReason() == download::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED; }
+// The name a row shows: the file's, or for a refused download the name the
+// server offered, so the row never stays „Przygotowywanie pliku…”.
+base::FilePath DisplayName(Item* item) {
+  auto file = item->GetFileNameToReportUser();
+  if (file.empty() && Failed(item))
+    file = net::GenerateFileName(item->GetURL(), item->GetContentDisposition(), "", item->GetSuggestedFilename(), item->GetMimeType(), "download");
+  return file;
+}
 bool OnDisk(Item* item) { return item->GetState() == Item::COMPLETE && !item->GetFileExternallyRemoved(); }
 std::u16string RevealLabel() {
 #if BUILDFLAG(IS_WIN)
@@ -115,7 +126,7 @@ sidebar::DownloadRow RustRow(Item* item) {
   sidebar::DownloadFacts facts{};
   facts.phase = item->GetState() == Item::COMPLETE ? sidebar::DownloadPhase::Complete : item->GetState() == Item::CANCELLED ? sidebar::DownloadPhase::Cancelled :
       item->GetState() == Item::INTERRUPTED ? sidebar::DownloadPhase::Interrupted : sidebar::DownloadPhase::InProgress;
-  facts.blocked = Unsafe(item); facts.removed = item->GetFileExternallyRemoved(); facts.can_resume = item->CanResume(); facts.paused = item->IsPaused();
+  facts.blocked = Unsafe(item); facts.refused = Refused(item); facts.removed = item->GetFileExternallyRemoved(); facts.can_resume = item->CanResume(); facts.paused = item->IsPaused();
   facts.received = base::UTF16ToUTF8(Bytes(item->GetReceivedBytes()));
   if (item->GetTotalBytes() > 0) facts.total = base::UTF16ToUTF8(Bytes(item->GetTotalBytes()));
   if (item->CurrentSpeed() > 0) facts.speed = base::UTF16ToUTF8(Bytes(item->CurrentSpeed()));
@@ -424,7 +435,7 @@ void DownloadPanel::Refresh() {
   auto weak = weak_factory_.GetWeakPtr();
   for (auto& row : rows_) {
     auto* item = items_.at(row.guid).get();
-    const auto file = item->GetFileNameToReportUser();
+    const auto file = DisplayName(item);
     auto name = file.LossyDisplayName();
     std::u16string extension = file.Extension().empty() ? std::u16string() : base::FilePath(file.Extension()).AsUTF16Unsafe().substr(1);
     scene_->SetFileTile(row.tile, extension.empty() ? u"—" : extension);

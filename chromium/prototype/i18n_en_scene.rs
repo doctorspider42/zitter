@@ -27,6 +27,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Akcja skrótu", "Shortcut action"),
     ("Animacje przestrzeni", "Space animations"),
     ("Anulowano", "Cancelled"),
+    ("Zablokowano", "Blocked"),
+    ("Zitter nie pozwolił na to pobranie", "Zitter didn't allow this download"),
     ("Anulowano. Karty i niezapisane zmiany pozostały otwarte.", "Cancelled. Tabs and unsaved changes are still open."),
     ("Automatyczne logowanie", "Automatic sign-in"),
     ("Automatyczny", "Automatic"),
