@@ -154,7 +154,8 @@ def main():
         script["matches"].pop()
         script["world"] = "MAIN"
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-        run(executable, root, "uses capabilities unsupported by the Content host", 1)
+        # MAIN is supported by the loader but does not match this isolated-world fixture.
+        run(executable, root, "did not match the permission fixture", 1)
 
         manifest_path.write_text("{", encoding="utf-8")
         run(executable, root, "Extension manifest rejected:", 1)

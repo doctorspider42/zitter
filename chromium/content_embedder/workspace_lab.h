@@ -250,6 +250,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PromptExtensionPermissions(content::BrowserContext& profile,
                                   const extensions::Extension& extension,
                                   const extensions::PermissionSet& permissions,
+                                  content::WebContents* source,
                                   base::OnceCallback<void(bool)> answer);
   void RemoveExtensionTabs(base::span<WorkspaceExtensionTab* const> targets,
                            base::OnceCallback<void(bool)> done);
@@ -666,10 +667,12 @@ class WorkspaceLab final : private WorkspaceRuntime,
   struct PrivateSession;
   struct ExtensionDnrNavigationProbe;
   bool OpenPrivateWindow();
+  bool OpenPrivateWindowForProfile(size_t source);
+  PrivateSession* PrivateSessionForProfile(size_t source) const;
   void InitializePrivateSession(size_t source,
                                 std::unique_ptr<PrivateSession> session);
-  void OpenPendingPrivateWindows();
-  void ClosePrivateWindow(WorkspaceLab* window);
+  void OpenPendingPrivateWindows(size_t source);
+  void ClosePrivateWindow(size_t source, WorkspaceLab* window);
   prototype::AdblockFilterLists* AdblockLists() const;
   void UpdateAdblockShield();
   void RefreshAdblockCount();
@@ -993,8 +996,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool startup_import_pending_ = false;
   const std::string startup_import_probe_;
   base::OnceCallback<void(bool, std::u16string)> welcome_import_done_;
-  std::unique_ptr<PrivateSession> private_session_;
-  size_t pending_private_windows_ = 0;
+  std::map<size_t, std::unique_ptr<PrivateSession>> private_sessions_;
+  std::map<size_t, size_t> pending_private_windows_;
+  size_t private_source_index_ = 0;
   base::RepeatingCallback<bool(std::string)> native_menu_probe_;
   WorkspaceModel model_;
   WorkspaceController controller_{model_, *this};

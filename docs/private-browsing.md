@@ -6,13 +6,13 @@ on Windows. A compact mask icon and dark violet appearance identify private
 windows, including when the sidebar is hidden. Hover over the icon for a brief
 explanation.
 
-All private windows in the running app share one temporary Chromium
-off-the-record profile. Its cookies, HTTP cache, local storage, IndexedDB,
-service workers and other site data are separate from the regular profiles.
-Closing a private window leaves this session available to the other private
-windows. Closing the last private window releases the profile and its temporary
-data; a subsequent private window starts a fresh session. Chromium may finish
-renderer teardown asynchronously, but a new session never reuses that context.
+Private windows opened from the same browser profile share a temporary Chromium
+off-the-record session. Different browser profiles have separate private
+sessions. Cookies, HTTP cache, local storage, IndexedDB, service workers and
+other site data stay separate from the regular profiles. Closing the last
+private window for a profile releases that session and its temporary data.
+Chromium may finish renderer teardown asynchronously. A new session always
+starts with a fresh context.
 
 Private URLs and titles are excluded from browsing history, history suggestions,
 Time Machine, recently closed tabs, saved workspace layouts and session restore.
@@ -27,9 +27,15 @@ you turn protection on or off for the shared private session. This setting is
 temporary and does not change the regular profile.
 
 The AI assistant, its background pages and scheduled tasks are disabled in
-private windows. Extensions are also disabled. Site permission choices and ad
-blocking exceptions made in private browsing use the temporary profile; they do
-not update the regular profile. Appearance and command usage changes in private
+private windows. Extensions are off in private windows by default. In the
+regular profile, open **Extensions → Details** and turn on **Allow in incognito**
+for an extension that supports private browsing. An allowed extension can
+observe pages in that profile's private windows within its permissions and may
+store information it collects in its own extension storage. The setting
+applies only to the profile where it was changed.
+
+Site permission choices and ad blocking exceptions made in private browsing
+use the temporary profile. Appearance and command usage changes in private
 windows are not saved to the regular Zitter configuration.
 
 Private browsing does not provide network anonymity. Websites, network operators,

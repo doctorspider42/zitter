@@ -41,6 +41,7 @@
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
@@ -190,6 +191,7 @@
 #include "extensions/common/extension_resource.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/file_util.h"
+#include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/manifest_handlers/content_scripts_handler.h"
 #include "extensions/common/api/permissions.h"
@@ -336,6 +338,24 @@ class ExtensionViewDestination : public base::SupportsUserData::Data {
 constexpr char kSidePanelDestination = 0;
 constexpr char kNightShiftSettingsDestination = 0;
 
+
+constexpr char kPopupTabContext = 0;
+class PopupTabContext : public base::SupportsUserData::Data {
+ public:
+  explicit PopupTabContext(BrowserContext& context) : context(context) {}
+  const raw_ref<BrowserContext> context;
+};
+
+BrowserContext* TabContextForExtensionFunction(ExtensionFunction& function) {
+  auto* page = function.GetSenderWebContents();
+  const auto* popup = page ? static_cast<PopupTabContext*>(
+      page->GetUserData(&kPopupTabContext)) : nullptr;
+  if (popup && function.extension() &&
+      CanLoadExtensionProbeResources(*popup->context, function.extension()->id())) {
+    return &*popup->context;
+  }
+  return function.browser_context();
+}
 
 void ClearTabActionState(BrowserContext& context, int tab_id);
 
@@ -575,7 +595,7 @@ class WorkspaceExtensionTab final : public content::WebContentsObserver {
         .Set("id", id_)
         .Set("index", index_)
         .Set("windowId", kWorkspaceExtensionWindowId)
-        .Set("incognito", false)
+        .Set("incognito", context_->IsOffTheRecord())
         .Set("active", active_)
         .Set("highlighted", highlighted_)
         .Set("selected", active_)
@@ -608,7 +628,7 @@ class WorkspaceExtensionTab final : public content::WebContentsObserver {
 
   static std::vector<WorkspaceExtensionTab*> InProfile(BrowserContext* context) {
     std::vector<WorkspaceExtensionTab*> result;
-    if (!context || context->IsOffTheRecord())
+    if (!context)
       return result;
     for (const auto& [id, tab] : Tabs()) {
       if (tab->context_ == context && tab->published_)
@@ -644,8 +664,7 @@ class WorkspaceExtensionTab final : public content::WebContentsObserver {
 
  private:
   bool ExposeNavigation(content::NavigationHandle& navigation) const {
-    if (!published_ || context_->IsOffTheRecord() ||
-        navigation.IsInFencedFrameTree() || !navigation.GetURL().SchemeIsHTTPOrHTTPS()) {
+    if (!published_ || navigation.IsInFencedFrameTree() || !navigation.GetURL().SchemeIsHTTPOrHTTPS()) {
       return false;
     }
     auto* parent = navigation.GetParentFrameOrOuterDocument();
@@ -739,7 +758,7 @@ class WorkspaceExtensionTab final : public content::WebContentsObserver {
   void DidFailLoad(content::RenderFrameHost* frame,
                    const GURL& url,
                    int error_code) override {
-    if (!published_ || context_->IsOffTheRecord() || frame->IsErrorDocument() ||
+    if (!published_ || frame->IsErrorDocument() ||
         !CanExposeNavigationFrame(*frame, *web_contents()) ||
         !frame->GetLastCommittedURL().EqualsIgnoringRef(url)) {
       return;
@@ -757,7 +776,7 @@ class WorkspaceExtensionTab final : public content::WebContentsObserver {
   void DispatchLoadEvent(content::RenderFrameHost* frame,
                          extensions::events::HistogramValue type,
                          std::string_view name) {
-    if (!published_ || context_->IsOffTheRecord() || frame->IsErrorDocument() ||
+    if (!published_ || frame->IsErrorDocument() ||
         !CanExposeNavigationFrame(*frame, *web_contents())) {
       return;
     }
@@ -864,8 +883,10 @@ class WorkspaceExtensionTab final : public content::WebContentsObserver {
                 extensions::Event::WillDispatchCallback scrub = {},
                 const GURL& filter_url = {}) {
     if (context_->ShutdownStarted() ||
-        !user_prefs::UserPrefs::IsInitialized(context_))
+        (!user_prefs::UserPrefs::IsInitialized(context_) &&
+         !CanLoadExtensionProbeResources(*context_))) {
       return;
+    }
     auto* router = extensions::EventRouter::Get(context_);
     if (!router || !router->HasEventListener(std::string(name)))
       return;
@@ -1331,7 +1352,7 @@ class LabTabsQueryFunction final : public ExtensionFunction {
 
     const auto* title = query.FindString("title");
     const auto* status = query.FindString("status");
-    for (auto* tab : WorkspaceExtensionTab::InProfile(browser_context())) {
+    for (auto* tab : WorkspaceExtensionTab::InProfile(TabContextForExtensionFunction(*this))) {
       if (!matches("active", tab->active()) ||
           !matches("highlighted", tab->highlighted()) ||
           !matches("pinned", tab->pinned()) || !matches("audible", tab->audible()) ||
@@ -1445,9 +1466,9 @@ class LabTabsUpdateFunction final : public ExtensionFunction {
     WorkspaceExtensionTab* target = nullptr;
     if (args().size() == 2 && !args()[0].is_none()) {
       EXTENSION_FUNCTION_VALIDATE(args()[0].is_int());
-      target = WorkspaceExtensionTab::FindTab(browser_context(), args()[0].GetInt());
+      target = WorkspaceExtensionTab::FindTab(TabContextForExtensionFunction(*this), args()[0].GetInt());
     } else {
-      target = WorkspaceExtensionTab::ActiveInProfile(browser_context());
+      target = WorkspaceExtensionTab::ActiveInProfile(TabContextForExtensionFunction(*this));
     }
     if (!target)
       return RespondNow(Error("No matching tab in this profile."));
@@ -1580,8 +1601,8 @@ class LabTabsReloadFunction final : public ExtensionFunction {
       EXTENSION_FUNCTION_VALIDATE(args()[1].is_dict());
       options = &args()[1].GetDict();
     }
-    auto* target = tab_id ? WorkspaceExtensionTab::FindTab(browser_context(), *tab_id)
-                          : WorkspaceExtensionTab::ActiveInProfile(browser_context());
+    auto* target = tab_id ? WorkspaceExtensionTab::FindTab(TabContextForExtensionFunction(*this), *tab_id)
+                          : WorkspaceExtensionTab::ActiveInProfile(TabContextForExtensionFunction(*this));
     if (!target)
       return RespondNow(Error("No matching tab in this profile."));
     const bool bypass_cache = options && options->FindBool("bypassCache").value_or(false);
@@ -1664,7 +1685,7 @@ class LabTabsGetFunction final : public ExtensionFunction {
 
   ResponseAction Run() override {
     EXTENSION_FUNCTION_VALIDATE(extension() && args().size() == 1 && args()[0].is_int());
-    const auto* tab = WorkspaceExtensionTab::FindTab(browser_context(), args()[0].GetInt());
+    const auto* tab = WorkspaceExtensionTab::FindTab(TabContextForExtensionFunction(*this), args()[0].GetInt());
     return tab ? RespondNow(WithArguments(tab->MetadataFor(*extension())))
                : RespondNow(Error("No matching tab in this profile."));
   }
@@ -1822,6 +1843,21 @@ void RestoreOptionalGrants(BrowserContext& context,
     data->SetPermissions(std::move(active), data->withheld_permissions().Clone());
 }
 
+class LabIsAllowedIncognitoAccessFunction final : public ExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("extension.isAllowedIncognitoAccess",
+                             EXTENSION_ISALLOWEDINCOGNITOACCESS)
+
+ private:
+  ~LabIsAllowedIncognitoAccessFunction() override = default;
+
+  ResponseAction Run() override {
+    return RespondNow(WithArguments(
+        extensions::ExtensionsBrowserClient::Get()->IsExtensionIncognitoEnabled(
+            extension(), browser_context())));
+  }
+};
+
 class LabPermissionsRequestFunction final : public ExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("permissions.request", PERMISSIONS_REQUEST)
@@ -1868,7 +1904,7 @@ class LabPermissionsRequestFunction final : public ExtensionFunction {
       return RespondNow(WithArguments(false));
     auto* permissions = pending.get();
     tabs.front()->workspace().PromptExtensionPermissions(
-        *browser_context(), *extension(), *permissions,
+        *browser_context(), *extension(), *permissions, GetSenderWebContents(),
         base::BindOnce(&LabPermissionsRequestFunction::OnDecision, this,
                        std::move(pending)));
     return did_respond() ? AlreadyResponded() : RespondLater();
@@ -1907,6 +1943,8 @@ class LabPermissionsRemoveFunction final : public ExtensionFunction {
   ~LabPermissionsRemoveFunction() override = default;
 
   ResponseAction Run() override {
+    if (browser_context()->IsOffTheRecord())
+      return RespondNow(Error("Change optional permissions in the regular profile."));
     using extensions::PermissionSet;
     using extensions::PermissionsParser;
     auto params = extensions::api::permissions::Remove::Params::Create(args());
@@ -2109,7 +2147,7 @@ base::DictValue WorkspaceExtensionWindow(
   auto result = base::DictValue()
                     .Set("id", kWorkspaceExtensionWindowId)
                     .Set("focused", tabs.front()->workspace().IsExtensionWindowFocused(context))
-                    .Set("incognito", false)
+                    .Set("incognito", context.IsOffTheRecord())
                     .Set("alwaysOnTop", false)
                     .Set("type", "normal")
                     .Set("state", "normal");
@@ -3698,6 +3736,7 @@ class LabBrowserExtensionAPIProvider final
     registry->RegisterFunction<extensions::AlarmsClearFunction>();
     registry->RegisterFunction<extensions::AlarmsClearAllFunction>();
     registry->RegisterFunction<extensions::PermissionsContainsFunction>();
+    registry->RegisterFunction<LabIsAllowedIncognitoAccessFunction>();
     registry->RegisterFunction<extensions::PermissionsGetAllFunction>();
     registry->RegisterFunction<LabPermissionsRequestFunction>();
     registry->RegisterFunction<LabPermissionsRemoveFunction>();
@@ -3816,7 +3855,7 @@ class LabExtensionSystemFactory final : public extensions::ExtensionSystemProvid
   }
 
   BrowserContext* GetBrowserContextToUse(BrowserContext* context) const override {
-    return extensions::ExtensionsBrowserClient::Get()->GetContextForOriginalOnly(
+    return extensions::ExtensionsBrowserClient::Get()->GetContextRedirectedToOriginal(
         context);
   }
 };
@@ -3857,7 +3896,7 @@ class LabExtensionsBrowserClient final
   bool RegisterInstalled(BrowserContext& context,
                          scoped_refptr<const extensions::Extension> extension);
   bool ConfigureNightShift(const base::FilePath& directory);
-  void Register(BrowserContext& context);
+  void Register(BrowserContext& context, BrowserContext* private_source);
   void Unregister(BrowserContext& context);
   void RegisterProcess(content::RenderProcessHost& process,
                        const extensions::Extension& extension);
@@ -3872,7 +3911,8 @@ class LabExtensionsBrowserClient final
   const extensions::Extension* EnabledFixture(BrowserContext& context,
                                               const std::string& id);
   bool HasFixturePreferences(BrowserContext& context) {
-    return fixture_prefs_.contains(&context) &&
+    auto* original = GetOriginalContext(&context);
+    return original && fixture_prefs_.contains(original) &&
            (fixture(context) || night_shift_.contains(&context));
   }
   bool HasIsolatedStorage(const extensions::ExtensionId& id,
@@ -3880,9 +3920,11 @@ class LabExtensionsBrowserClient final
 
   bool IsValidTabId(BrowserContext* context, int id, bool include_incognito,
                     content::WebContents** page) const override {
-    auto* target = context && !context->IsOffTheRecord()
-                       ? WorkspaceExtensionTab::Find(context, id)
-                       : nullptr;
+    auto* target = context ? WorkspaceExtensionTab::Find(context, id) : nullptr;
+    if (!target && context && include_incognito) {
+      target = WorkspaceExtensionTab::Find(
+          FindPrivateContext(context), id);
+    }
     if (page)
       *page = target;
     return target != nullptr;
@@ -3903,9 +3945,11 @@ class LabExtensionsBrowserClient final
   bool AreExtensionsDisabledForContext(BrowserContext*) override { return true; }
   bool IsValidContext(void* context) override;
   bool IsSameContext(BrowserContext* first, BrowserContext* second) override;
-  bool HasOffTheRecordContext(BrowserContext*) override { return false; }
-  BrowserContext* GetOffTheRecordContext(BrowserContext*) override {
-    return nullptr;
+  bool HasOffTheRecordContext(BrowserContext* context) override {
+    return GetOffTheRecordContext(context) != nullptr;
+  }
+  BrowserContext* GetOffTheRecordContext(BrowserContext* context) override {
+    return FindPrivateContext(context);
   }
   BrowserContext* GetOriginalContext(BrowserContext* context) override;
   BrowserContext* GetContextRedirectedToOriginal(BrowserContext* context) override;
@@ -3914,18 +3958,34 @@ class LabExtensionsBrowserClient final
   BrowserContext* GetContextOwnInstance(BrowserContext* context) override;
   BrowserContext* GetContextForOriginalOnly(BrowserContext* context) override;
   bool IsGuestSession(BrowserContext*) const override { return false; }
-  bool IsExtensionIncognitoEnabled(const extensions::ExtensionId&,
-                                   BrowserContext*) const override {
-    return false;
+  bool IsExtensionIncognitoEnabled(const extensions::ExtensionId& id,
+                                   BrowserContext* context) const override {
+    auto* registry = extensions::ExtensionRegistry::Get(context);
+    return registry && IsExtensionIncognitoEnabled(
+        registry->enabled_extensions().GetByID(id), context);
   }
-  bool IsExtensionIncognitoEnabled(const extensions::Extension*,
-                                   BrowserContext*) const override {
-    return false;
+  bool IsExtensionIncognitoEnabled(const extensions::Extension* extension,
+                                   BrowserContext* context) const override {
+    return extension && extensions::util::CanBeIncognitoEnabled(extension) &&
+           IsManagedExtensionSession() && IsManagedPackage(*extension, context) &&
+           extensions::ExtensionPrefs::Get(context)->IsIncognitoEnabled(extension->id());
   }
-  bool CanExtensionCrossIncognito(const extensions::Extension*,
-                                  BrowserContext*) const override {
-    return false;
+  bool CanExtensionCrossIncognito(const extensions::Extension* extension,
+                                  BrowserContext* context) const override {
+    return IsExtensionIncognitoEnabled(extension, context) &&
+           extensions::IncognitoInfo::IsSpanningMode(extension);
   }
+
+  bool IsManagedPackage(const extensions::Extension& extension,
+                        BrowserContext* context) const {
+    if (const auto owner = private_contexts_.find(context); owner != private_contexts_.end())
+      context = owner->second;
+    return extension.path().DirName().DirName() ==
+        context->GetPath().AppendASCII(extensions::kInstallDirectoryName);
+  }
+
+  void UpdateIncognitoAccess(BrowserContext& context,
+                             const extensions::Extension& extension, bool allowed);
   extensions::BrowserContextLifetimeTracker* GetBrowserContextLifetimeTracker()
       override {
     return nullptr;
@@ -3946,7 +4006,7 @@ class LabExtensionsBrowserClient final
       ui::PageTransition, content::ChildProcessId child_id, bool incognito,
       const extensions::Extension* extension, const extensions::ExtensionSet& enabled,
       const extensions::ProcessMap& process_map, const GURL& upstream_url) override {
-    if (incognito || child_id.is_null() || process_map.Contains(child_id) ||
+    if (child_id.is_null() || process_map.Contains(child_id) ||
         !extension || enabled.GetByID(extension->id()) != extension ||
         !request.request_initiator) {
       return false;
@@ -4035,6 +4095,7 @@ class LabExtensionsBrowserClient final
   std::string GetApplicationLocale() override { return "en-US"; }
 
  private:
+  BrowserContext* FindPrivateContext(BrowserContext* original) const;
   void RenderProcessHostDestroyed(content::RenderProcessHost* host) override;
 
   LabKioskDelegate kiosk_delegate_;
@@ -4044,6 +4105,7 @@ class LabExtensionsBrowserClient final
   std::optional<base::DictValue> night_shift_manifest_;
   std::map<BrowserContext*, ExtensionProbeFixture> night_shift_;
   std::set<void*> contexts_;
+  std::map<BrowserContext*, BrowserContext*> private_contexts_;
   struct FixturePreferences {
     std::unique_ptr<PrefService> service;
     std::unique_ptr<ExtensionRuntimePreferences> runtime;
@@ -4099,8 +4161,13 @@ bool LabExtensionsBrowserClient::ConfigureNightShift(
   return true;
 }
 
-void LabExtensionsBrowserClient::Register(BrowserContext& context) {
+void LabExtensionsBrowserClient::Register(BrowserContext& context,
+                                          BrowserContext* private_source) {
   CHECK(contexts_.insert(&context).second);
+  if (context.IsOffTheRecord() && private_source && IsManagedExtensionSession()) {
+    CHECK(!private_source->IsOffTheRecord());
+    private_contexts_.emplace(&context, private_source);
+  }
   if (!context.IsOffTheRecord()) {
     if (night_shift_manifest_) {
       std::u16string error;
@@ -4115,6 +4182,14 @@ void LabExtensionsBrowserClient::Register(BrowserContext& context) {
   }
   BrowserContextDependencyManager::GetInstance()->CreateBrowserContextServices(
       &context);
+  if (private_contexts_.contains(&context)) {
+    for (const auto& extension : ConfiguredExtensions(context)) {
+      if (EnabledFixture(context, extension->id()) &&
+          extensions::IncognitoInfo::IsSplitMode(extension.get())) {
+        extensions::ServiceWorkerTaskQueue::Get(&context)->ActivateExtension(extension.get());
+      }
+    }
+  }
   if (auto entry = night_shift_.find(&context); entry != night_shift_.end()) {
     const auto& extension = entry->second.extension;
     CHECK(extensions::ExtensionRegistry::Get(&context)->AddEnabled(extension));
@@ -4266,6 +4341,7 @@ class ExtensionRuntimePreferences final
       for (const auto key : {kDnrKeepAllocationPref, kDnrBadgePref,
                              kDnrRecoveryMarkerPref,
                              kManagerPinPref,
+                             "incognito",
                              extensions::UserScriptManager::kUserScriptsAllowedPref.name}) {
         if (const auto enabled = entry.FindBool(key))
           selected.Set(key, *enabled);
@@ -4319,6 +4395,7 @@ void LabExtensionsBrowserClient::Unregister(BrowserContext& context) {
   RevokeProcesses(context);
   BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
       &context);
+  private_contexts_.erase(&context);
   CHECK_EQ(contexts_.erase(&context), 1u);
   night_shift_.erase(&context);
   auto stored = fixture_prefs_.extract(&context);
@@ -4371,16 +4448,19 @@ void LabExtensionsBrowserClient::SetFixtureContext(BrowserContext& context) {
 
 const ExtensionProbeFixture* LabExtensionsBrowserClient::fixture(
     BrowserContext& context, const std::string& id) {
-  if (!GetOriginalContext(&context))
+  auto* original = GetOriginalContext(&context);
+  if (!original)
     return nullptr;
   if (id == kNightShiftId) {
     auto entry = night_shift_.find(&context);
     if (entry != night_shift_.end())
       return &entry->second;
   }
-  const auto [first, last] = fixtures_.equal_range(context.GetPath());
+  const auto [first, last] = fixtures_.equal_range(original->GetPath());
   const auto entry = std::find_if(first, last, [&](const auto& item) {
-    return id.empty() || item.second.extension->id() == id;
+    return (id.empty() || item.second.extension->id() == id) &&
+           (!context.IsOffTheRecord() ||
+            IsExtensionIncognitoEnabled(item.second.extension.get(), &context));
   });
   return entry == last ? nullptr : &entry->second;
 }
@@ -4388,10 +4468,14 @@ const ExtensionProbeFixture* LabExtensionsBrowserClient::fixture(
 std::vector<scoped_refptr<const extensions::Extension>>
 LabExtensionsBrowserClient::ConfiguredExtensions(BrowserContext& context) {
   std::vector<scoped_refptr<const extensions::Extension>> extensions;
-  if (GetOriginalContext(&context)) {
-    const auto [first, last] = fixtures_.equal_range(context.GetPath());
-    for (auto item = first; item != last; ++item)
-      extensions.push_back(item->second.extension);
+  if (auto* original = GetOriginalContext(&context)) {
+    const auto [first, last] = fixtures_.equal_range(original->GetPath());
+    for (auto item = first; item != last; ++item) {
+      if (!context.IsOffTheRecord() ||
+          IsExtensionIncognitoEnabled(item->second.extension.get(), &context)) {
+        extensions.push_back(item->second.extension);
+      }
+    }
   }
   return extensions;
 }
@@ -4410,7 +4494,7 @@ const extensions::Extension* LabExtensionsBrowserClient::EnabledFixture(
 bool LabExtensionsBrowserClient::HasIsolatedStorage(
     const extensions::ExtensionId& id,
     BrowserContext* context) {
-  if (id.empty() || !fixture_prefs_.contains(context))
+  if (id.empty() || !GetOriginalContext(context))
     return false;
   return fixture(*context, id) != nullptr;
 }
@@ -4446,6 +4530,12 @@ bool LabExtensionsBrowserClient::DisableFixture(BrowserContext& context,
   extensions::ServiceWorkerTaskQueue::Get(&context)
       ->DeactivateExtension(extension.get());
   RevokeProcesses(context, id);
+  if (auto* private_context = GetOffTheRecordContext(&context);
+      private_context && IsExtensionIncognitoEnabled(extension.get(), &context)) {
+    if (extensions::IncognitoInfo::IsSplitMode(extension.get()))
+      extensions::ServiceWorkerTaskQueue::Get(private_context)->DeactivateExtension(extension.get());
+    RevokeProcesses(*private_context, id);
+  }
   return true;
 }
 
@@ -4513,13 +4603,25 @@ bool LabExtensionsBrowserClient::IsValidContext(void* context) {
 
 bool LabExtensionsBrowserClient::IsSameContext(BrowserContext* first,
                                                 BrowserContext* second) {
-  return first == second && IsValidContext(first);
+  auto* original = GetOriginalContext(first);
+  return original && original == GetOriginalContext(second);
 }
 
-BrowserContext* LabExtensionsBrowserClient::GetOriginalContext(
-    BrowserContext* context) {
-  return IsValidContext(context) && !context->IsOffTheRecord() ? context
-                                                              : nullptr;
+BrowserContext* LabExtensionsBrowserClient::FindPrivateContext(
+    BrowserContext* context) const {
+  const auto entry = std::ranges::find_if(private_contexts_, [context](const auto& pair) {
+    return pair.second == context;
+  });
+  return entry == private_contexts_.end() ? nullptr : entry->first;
+}
+
+BrowserContext* LabExtensionsBrowserClient::GetOriginalContext(BrowserContext* context) {
+  if (!IsValidContext(context))
+    return nullptr;
+  const auto private_entry = private_contexts_.find(context);
+  if (private_entry != private_contexts_.end())
+    return private_entry->second;
+  return context->IsOffTheRecord() ? nullptr : context;
 }
 
 BrowserContext* LabExtensionsBrowserClient::GetContextRedirectedToOriginal(
@@ -4535,12 +4637,49 @@ LabExtensionsBrowserClient::GetContextRedirectedToOriginalWithoutAshInternals(
 
 BrowserContext* LabExtensionsBrowserClient::GetContextOwnInstance(
     BrowserContext* context) {
-  return GetOriginalContext(context);
+  return GetOriginalContext(context) ? context : nullptr;
 }
 
 BrowserContext* LabExtensionsBrowserClient::GetContextForOriginalOnly(
     BrowserContext* context) {
-  return GetOriginalContext(context);
+  return IsValidContext(context) && !context->IsOffTheRecord() ? context : nullptr;
+}
+
+void LabExtensionsBrowserClient::UpdateIncognitoAccess(
+    BrowserContext& context, const extensions::Extension& extension, bool allowed) {
+  auto* registry = extensions::ExtensionRegistry::Get(&context);
+  auto* prefs = extensions::ExtensionPrefs::Get(&context);
+  if (!registry->enabled_extensions().Contains(extension.id())) {
+    prefs->SetIsIncognitoEnabled(extension.id(), allowed);
+    return;
+  }
+
+  // Reload the extension so existing renderer bindings, user scripts and
+  // worker listeners pick up the new incognito setting together.
+  auto* renderer = extensions::RendererStartupHelperFactory::GetForBrowserContext(&context);
+  auto* regular_workers = extensions::ServiceWorkerTaskQueue::Get(&context);
+  auto* private_context = GetOffTheRecordContext(&context);
+  auto* private_workers = private_context && extensions::IncognitoInfo::IsSplitMode(&extension)
+      ? extensions::ServiceWorkerTaskQueue::Get(private_context) : nullptr;
+  CHECK(registry->RemoveEnabled(extension.id()));
+  registry->TriggerOnUnloaded(&extension, extensions::UnloadedExtensionReason::UPDATE);
+  renderer->OnExtensionUnloaded(extension);
+  regular_workers->DeactivateExtension(&extension);
+  // The private worker's partition is still addressable before revocation.
+  if (private_workers && !allowed)
+    private_workers->DeactivateExtension(&extension);
+  prefs->SetIsIncognitoEnabled(extension.id(), allowed);
+  CHECK(registry->AddEnabled(&extension));
+  regular_workers->ActivateExtension(&extension);
+  if (private_workers && allowed)
+    private_workers->ActivateExtension(&extension);
+  if (private_context && !allowed)
+    RevokeProcesses(*private_context, extension.id());
+
+  renderer->OnExtensionLoaded(extension);
+  registry->TriggerOnLoaded(&extension);
+  CHECK(registry->AddReady(&extension));
+  registry->TriggerOnReady(&extension);
 }
 
 LabExtensionsBrowserClient* GetClient() {
@@ -4623,7 +4762,7 @@ void GrantWorkspaceExtensionActiveTab(content::WebContents& page,
   auto* client = GetClient();
   const auto* extension = client ? client->EnabledFixture(*profile, id) : nullptr;
   const auto& url = page.GetLastCommittedURL();
-  if (!tab || !tab->highlighted() || profile->IsOffTheRecord() ||
+  if (!tab || !tab->highlighted() ||
       !extension || !extension->permissions_data()->HasAPIPermission(
                         extensions::mojom::APIPermissionID::kActiveTab) ||
       !url.SchemeIsHTTPOrHTTPS() || extension_urls::IsWebstoreDomain(url) ||
@@ -4643,8 +4782,9 @@ void GrantWorkspaceExtensionActiveTab(content::WebContents& page,
 
 void DispatchWorkspaceExtensionWindowEvent(BrowserContext& context,
                                           bool focused, bool removed) {
-  if (context.IsOffTheRecord() || context.ShutdownStarted() ||
-      !user_prefs::UserPrefs::IsInitialized(&context)) {
+  if (context.ShutdownStarted() ||
+      (!user_prefs::UserPrefs::IsInitialized(&context) &&
+       !CanLoadExtensionProbeResources(context))) {
     return;
   }
   auto* router = extensions::EventRouter::Get(&context);
@@ -4670,6 +4810,22 @@ GURL WorkspaceExtensionPopupUrl(BrowserContext& context, const std::string& id,
     return {};
   const GURL url = action->GetPopupUrl(tab_id);
   return url.is_valid() && url::Origin::Create(url) == extension->origin() ? url : GURL();
+}
+
+BrowserContext* WorkspaceExtensionPopupContext(BrowserContext& context,
+                                              const std::string& id) {
+  auto* client = GetClient();
+  const auto* extension = client ? client->EnabledFixture(context, id) : nullptr;
+  if (!extension)
+    return nullptr;
+  if (context.IsOffTheRecord() && extensions::IncognitoInfo::IsSpanningMode(extension))
+    return client->GetOriginalContext(&context);
+  return &context;
+}
+
+void SetWorkspaceExtensionPopupTabContext(content::WebContents& popup,
+                                          BrowserContext& context) {
+  popup.SetUserData(&kPopupTabContext, std::make_unique<PopupTabContext>(context));
 }
 
 void DispatchWorkspaceExtensionActionClicked(BrowserContext& context, const std::string& id,
@@ -4873,7 +5029,7 @@ bool VerifyExtensionRulePreferencesForTesting(content::BrowserContext& context,
 
 extensions::WebRequestAPI* WorkspaceExtensionRequestProxy(
     content::BrowserContext& context) {
-  if (context.IsOffTheRecord() || !CanRegisterExtensionWorkerFactory(context))
+  if (!CanRegisterExtensionWorkerFactory(context))
     return nullptr;
   return extensions::BrowserContextKeyedAPIFactory<
       extensions::WebRequestAPI>::GetIfExists(&context);
@@ -4941,9 +5097,9 @@ void ApplyBundledNightShift(BrowserContext& context,
       }));
 }
 
-void RegisterExtensionContext(BrowserContext& context) {
+void RegisterExtensionContext(BrowserContext& context, BrowserContext* private_source) {
   if (auto* client = GetClient())
-    client->Register(context);
+    client->Register(context, private_source);
 }
 
 scoped_refptr<PrefStore> GetWorkspaceExtensionPreferenceStore(BrowserContext& context) {
@@ -5140,7 +5296,7 @@ class ExtensionProbeThrottle final : public content::NavigationThrottle {
     auto& context = *navigation->GetWebContents()->GetBrowserContext();
     auto* parent = navigation->GetParentFrame();
     if (!url.SchemeIs(extensions::kExtensionScheme) || !parent ||
-        context.IsOffTheRecord() ||
+        !CanLoadExtensionProbeResources(context) ||
         navigation->GetInitiatorOrigin() != parent->GetLastCommittedOrigin()) {
       return nullptr;
     }
@@ -5257,7 +5413,7 @@ bool HasWorkspaceExtensionClipboardPermission(content::RenderFrameHost* frame,
     return false;
   auto& context = *frame->GetBrowserContext();
   const auto& origin = frame->GetLastCommittedOrigin();
-  if (context.IsOffTheRecord() || origin.scheme() != extensions::kExtensionScheme)
+  if (origin.scheme() != extensions::kExtensionScheme)
     return false;
   const auto* extension = client->EnabledFixture(context, origin.host());
   auto* process_map = extensions::ProcessMap::Get(&context);
@@ -5313,7 +5469,8 @@ bool CanUseExtensionProbeWorker(BrowserContext& context,
   auto* client = GetClient();
   const auto* fixture =
       client ? client->EnabledFixture(context, scope.GetHost()) : nullptr;
-  if (!fixture)
+  if (!fixture || (context.IsOffTheRecord() &&
+                   !extensions::IncognitoInfo::IsSplitMode(fixture)))
     return false;
   if (storage_key != blink::StorageKey::CreateFirstParty(fixture->origin()))
     return false;
@@ -5346,7 +5503,7 @@ void RegisterExtensionProbeProcess(content::SiteInstance& site) {
   const auto& principal = site.GetSecurityPrincipal();
   auto* client = GetClient();
   auto& context = *site.GetBrowserContext();
-  if (client && !context.IsOffTheRecord() && !principal.IsGuest() &&
+  if (client && !principal.IsGuest() &&
       (principal.SchemeIs("http") || principal.SchemeIs("https"))) {
     for (const auto& extension : client->ConfiguredExtensions(context)) {
       if (client->EnabledFixture(context, extension->id())) {
@@ -5372,8 +5529,7 @@ bool CanLoadExtensionProbeSubresources(content::RenderFrameHost& frame,
   auto* client = GetClient();
   const auto* fixture =
       client ? client->EnabledFixture(*context, initiator.host()) : nullptr;
-  return !context->IsOffTheRecord() &&
-         frame.GetSiteInstance()->RequiresDedicatedProcess() &&
+  return frame.GetSiteInstance()->RequiresDedicatedProcess() &&
          fixture && initiator == fixture->origin() &&
          extensions::ProcessMap::Get(context)->Contains(
              fixture->id(), frame.GetProcess()->GetID());
@@ -5383,7 +5539,7 @@ bool CanLoadWebAccessibleExtensionResource(content::BrowserContext& context,
                                            const GURL& url,
                                            const url::Origin& initiator) {
   auto* client = GetClient();
-  if (!client || context.IsOffTheRecord() ||
+  if (!client || !CanLoadExtensionProbeResources(context) ||
       !url.SchemeIs(extensions::kExtensionScheme)) {
     return false;
   }
@@ -5399,7 +5555,7 @@ bool CanLoadSandboxedExtensionSubresource(content::RenderFrameHost& frame,
   const auto& page = frame.GetLastCommittedURL();
   const auto& origin = frame.GetLastCommittedOrigin();
   auto* client = GetClient();
-  const auto* extension = client && !context.IsOffTheRecord()
+  const auto* extension = client
       ? client->EnabledFixture(context, page.GetHost())
       : nullptr;
   return extension && origin.opaque() && page.SchemeIs(extensions::kExtensionScheme) &&
@@ -5490,6 +5646,11 @@ static void ActivateFixture(BrowserContext& context,
   auto* renderer =
       extensions::RendererStartupHelperFactory::GetForBrowserContext(&context);
   extensions::ServiceWorkerTaskQueue::Get(&context)->ActivateExtension(&extension);
+  if (auto* private_context = GetClient()->GetOffTheRecordContext(&context);
+      private_context && GetClient()->IsExtensionIncognitoEnabled(&extension, &context) &&
+      extensions::IncognitoInfo::IsSplitMode(&extension)) {
+    extensions::ServiceWorkerTaskQueue::Get(private_context)->ActivateExtension(&extension);
+  }
   if (extension.permissions_data()->HasAPIPermission(
           extensions::mojom::APIPermissionID::kWebRequest)) {
     extensions::BrowserContextKeyedAPIFactory<extensions::WebRequestAPI>::Get(&context);
@@ -5543,6 +5704,62 @@ bool ManagedExtension::SetUserScriptsAllowed(bool allowed) {
       ->user_script_manager()
       ->SetUserScriptPrefEnabled(extension_id_, allowed);
   changed_.Run();
+  return true;
+}
+
+std::optional<bool> ManagedExtension::OptionalClipboardWriteAllowed() const {
+  constexpr auto permission = extensions::mojom::APIPermissionID::kClipboardWrite;
+  using extensions::PermissionsParser;
+  if (!extension_ ||
+      !PermissionsParser::GetOptionalPermissions(extension_.get()).HasAPIPermission(permission) ||
+      PermissionsParser::GetRequiredPermissions(extension_.get()).HasAPIPermission(permission)) {
+    return std::nullopt;
+  }
+  return extension_->permissions_data()->HasAPIPermission(permission);
+}
+
+bool ManagedExtension::SetOptionalClipboardWriteAllowed(bool allowed) {
+  const auto current = OptionalClipboardWriteAllowed();
+  if (!editable() || !enabled() || uninstalling() || !current)
+    return false;
+  if (*current == allowed)
+    return true;
+
+  extensions::APIPermissionSet apis;
+  apis.insert(extensions::mojom::APIPermissionID::kClipboardWrite);
+  const extensions::PermissionSet clipboard(std::move(apis), {}, {}, {});
+  const auto& active = extension_->permissions_data()->active_permissions();
+  const auto updated = allowed
+      ? extensions::PermissionSet::CreateUnion(active, clipboard)
+      : extensions::PermissionSet::CreateDifference(active, clipboard);
+  if (!SaveOptionalGrants(*owner_, *extension_, *updated))
+    return false;
+
+  extensions::PermissionsUpdater updater(&*owner_);
+  if (allowed) {
+    updater.GrantOptionalPermissions(*extension_, clipboard, base::DoNothing());
+  } else {
+    updater.RevokeOptionalPermissions(*extension_, clipboard,
+        extensions::PermissionsUpdater::RemoveType::kHard, base::DoNothing());
+  }
+  return true;
+}
+
+std::optional<bool> ManagedExtension::IncognitoAllowed() const {
+  auto* client = GetClient();
+  if (!extension_ || !extensions::util::CanBeIncognitoEnabled(extension_.get()) ||
+      !client->IsManagedPackage(*extension_, &*owner_)) {
+    return std::nullopt;
+  }
+  return extensions::ExtensionPrefs::Get(&*owner_)->IsIncognitoEnabled(extension_id_);
+}
+
+bool ManagedExtension::SetIncognitoAllowed(bool allowed) {
+  const auto current = IncognitoAllowed();
+  if (!editable() || uninstalling() || !current)
+    return false;
+  if (*current != allowed)
+    GetClient()->UpdateIncognitoAccess(*owner_, *extension_, allowed);
   return true;
 }
 

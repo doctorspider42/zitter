@@ -1726,7 +1726,8 @@ ProfileContext::ProfileContext(
     std::optional<url::Origin> storage_probe_origin,
     os_crypt_async::OSCryptAsync* os_crypt,
     std::optional<bool> password_saving_default,
-    base::FilePath separate_network_path)
+    base::FilePath separate_network_path,
+    ProfileContext* private_source)
     : path_(std::move(path)),
       separate_network_path_(std::move(separate_network_path)),
       mode_(mode),
@@ -1735,7 +1736,7 @@ ProfileContext::ProfileContext(
           std::make_unique<ProfileDownloadDelegate>(GURL(), base::FilePath())),
       permissions_(std::make_unique<ProfilePermissionController>(
           *this, std::move(storage_probe_origin))) {
-  RegisterExtensionContext(*this);
+  RegisterExtensionContext(*this, private_source);
   if (IsOffTheRecord() || !os_crypt_)
     return;
 

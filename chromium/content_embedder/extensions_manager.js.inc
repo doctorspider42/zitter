@@ -209,6 +209,24 @@ function renderDetail() {
     detailRow(t('Dostęp do witryn', 'Site access'), item.hosts.join(', ') || noAccess),
     detailRow(t('Uprawnienia', 'Permissions'), item.permissions.join(', ') || noAccess),
   ];
+  if (typeof item.clipboardWrite === 'boolean') {
+    const row = element('div', 'row');
+    const control = toggle(t('Zezwalaj na zapis w schowku', 'Allow writing to the clipboard'),
+        item.clipboardWrite, item.enabled && item.editable,
+        value => request('clipboardWrite', {id: item.id, value}));
+    control.firstChild.dataset.focus = 'clipboard-write-' + item.id;
+    row.append(control);
+    nodes.push(row);
+  }
+  if (typeof item.incognito === 'boolean') {
+    const row = element('div', 'row');
+    const control = toggle(t('Zezwalaj w incognito', 'Allow in incognito'),
+        item.incognito, item.editable,
+        value => request('incognito', {id: item.id, value}));
+    control.firstChild.dataset.focus = 'incognito-' + item.id;
+    row.append(control);
+    nodes.push(row);
+  }
   if (typeof item.scripts === 'boolean') {
     const row = element('div', 'row');
     row.append(toggle(t('Zezwalaj na skrypty użytkownika', 'Allow user scripts'), item.scripts,

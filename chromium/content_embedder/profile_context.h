@@ -52,7 +52,8 @@ class ProfileContext final : public content::BrowserContext {
                  std::optional<url::Origin> storage_probe_origin = std::nullopt,
                  os_crypt_async::OSCryptAsync* os_crypt = nullptr,
                  std::optional<bool> password_saving_default = true,
-                 base::FilePath separate_network_path = {});
+                 base::FilePath separate_network_path = {},
+                 ProfileContext* private_source = nullptr);
   ~ProfileContext() override;
 
   static void AttachPage(content::WebContents& contents);

@@ -1636,8 +1636,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (!message?.offscreenProbe || sender.id !== chrome.runtime.id)
     return;
   (async () => {
-    if (chrome.runtime.getManifest().incognito !== 'not_allowed')
-      throw Error('Private extension mode was not disabled');
+    if (chrome.runtime.getManifest().incognito !== 'split' ||
+        chrome.extension.inIncognitoContext ||
+        await chrome.extension.isAllowedIncognitoAccess()) {
+      throw Error('The extension received private access without opt-in');
+    }
     const self = await chrome.management.getSelf();
     if (self.id !== chrome.runtime.id || self.version !== chrome.runtime.getManifest().version ||
         !self.enabled || self.type !== 'extension' || self.installType !== 'normal' ||

@@ -454,6 +454,14 @@ class FingerprintStateReceiver final : public mojom::FingerprintState {
 
 class LabExtensionHooksDelegate final : public extensions::APIBindingHooksDelegate {
  public:
+  void InitializeTemplate(v8::Isolate* isolate,
+                          v8::Local<v8::ObjectTemplate> object_template,
+                          const extensions::APITypeReferenceMap&) override {
+    object_template->Set(isolate, "inIncognitoContext",
+        v8::Boolean::New(isolate,
+            extensions::ExtensionsRendererClient::Get()->IsIncognitoProcess()));
+  }
+
   extensions::APIBindingHooks::RequestResult HandleRequest(
       const std::string& method_name,
       const extensions::APISignature*,
@@ -901,7 +909,7 @@ void LabBrowserClientBase::ExposeInterfacesToRenderer(
     service_manager::BinderRegistry*,
     blink::AssociatedInterfaceRegistry* registry,
     content::RenderProcessHost* process) {
-  if (!IsWorkspaceExtensionRuntime() || process->GetBrowserContext()->IsOffTheRecord())
+  if (!IsWorkspaceExtensionRuntime())
     return;
   registry->AddInterface<extensions::mojom::WebRequestHost>(base::BindRepeating(
       [](content::ChildProcessId process_id,
@@ -941,8 +949,9 @@ void LabBrowserClientBase::RegisterNonNetworkSubresourceURLLoaderFactories(
     const bool sandbox = initiator->opaque() &&
         initiator->GetTupleOrPrecursorTupleIfOpaque().scheme() == extensions::kExtensionScheme;
     if (frame && (initiator->GetURL().SchemeIsHTTPOrHTTPS() || sandbox) &&
-        !frame->GetBrowserContext()->IsOffTheRecord() &&
-        IsWorkspaceExtensionRuntime()) {
+        IsWorkspaceExtensionRuntime() &&
+        (!frame->GetBrowserContext()->IsOffTheRecord() ||
+         CanLoadExtensionProbeResources(*frame->GetBrowserContext()))) {
       auto target = extensions::CreateExtensionURLLoaderFactory(
           process->GetID(), render_frame_id);
       if (!target)
@@ -1163,7 +1172,7 @@ void LabBrowserClientBase::RegisterAssociatedInterfaceBindersForRenderFrameHost(
                 std::move(receiver), frame);
           }, &frame));
 #endif
-  if (IsWorkspaceExtensionRuntime() && !frame.GetBrowserContext()->IsOffTheRecord()) {
+  if (IsWorkspaceExtensionRuntime()) {
     registry.AddInterface<extensions::mojom::LocalFrameHost>(base::BindRepeating(
         [](content::RenderFrameHost* frame,
            mojo::PendingAssociatedReceiver<extensions::mojom::LocalFrameHost> receiver) {
@@ -1312,7 +1321,7 @@ void LabBrowserClientBase::OverrideURLLoaderFactoryParams(
     bool is_for_isolated_world,
     bool is_for_service_worker,
     network::mojom::URLLoaderFactoryParams* params) {
-  if (!context || context->IsOffTheRecord() || is_for_isolated_world ||
+  if (!context || is_for_isolated_world ||
       origin.scheme() != extensions::kExtensionScheme ||
       !CanLoadExtensionProbeResources(*context, origin.host())) {
     return;

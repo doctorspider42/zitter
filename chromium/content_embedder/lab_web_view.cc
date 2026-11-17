@@ -8,11 +8,16 @@
 #include "page_file_chooser.h"
 #include "picture_in_picture.h"
 #include "printing/buildflags/buildflags.h"
+#include "ui/base/metadata/metadata_impl_macros.h"
 
+#if BUILDFLAG(IS_MAC)
+#include "components/input/native_web_keyboard_event.h"
+#include "content/public/browser/web_contents.h"
+#include "ui/content_accelerators/accelerator_util.h"
+#endif
 #if BUILDFLAG(ENABLE_PRINTING)
 #include "components/printing/browser/print_composite_client.h"
 #endif
-#include "ui/base/metadata/metadata_impl_macros.h"
 
 namespace zitter::content_embedder {
 
@@ -68,6 +73,32 @@ content::PictureInPictureResult LabWebView::EnterPictureInPicture(
 void LabWebView::ExitPictureInPicture() {
   PictureInPicture::Get().Exit(web_contents());
 }
+
+#if BUILDFLAG(IS_MAC)
+bool LabWebView::HandleKeyboardEvent(
+    content::WebContents* source,
+    const input::NativeWebKeyboardEvent& event) {
+  // AppKit's key equivalent has already been consumed even if the page
+  // declines the shortcut. Apply the edit to the focused WebView.
+  using Type = blink::WebInputEvent::Type;
+  if (!event.skip_if_unhandled && source && source == web_contents() &&
+      IsDrawn() && HasFocus() &&
+      (event.GetType() == Type::kRawKeyDown || event.GetType() == Type::kKeyDown)) {
+    const auto accelerator = ui::GetAcceleratorFromNativeWebKeyboardEvent(event);
+    if (accelerator.modifiers() == ui::EF_COMMAND_DOWN) {
+      if (accelerator.key_code() == ui::VKEY_C) {
+        source->Copy();
+        return true;
+      }
+      if (accelerator.key_code() == ui::VKEY_V) {
+        source->Paste();
+        return true;
+      }
+    }
+  }
+  return WebView::HandleKeyboardEvent(source, event);
+}
+#endif
 
 BEGIN_METADATA(LabWebView)
 END_METADATA

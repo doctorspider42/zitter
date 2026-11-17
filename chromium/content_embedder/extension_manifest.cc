@@ -167,10 +167,13 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
                    .contexts = extensions::StaticSpan(kContexts)}};
     static const base::NoDestructor<extensions::SimpleFeature> windows{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kWindowsData)};
+    static constexpr auto kExtensionContexts = std::to_array({
+        extensions::mojom::ContextType::kPrivilegedExtension,
+        extensions::mojom::ContextType::kContentScript});
     static constexpr extensions::SimpleFeatureData kExtensionData{
         .feature = {.name = "extension"},
         .config = {.extension_types = extensions::StaticSpan(kTypes),
-                   .contexts = extensions::StaticSpan(kContexts),
+                   .contexts = extensions::StaticSpan(kExtensionContexts),
                    .min_manifest_version = 3}};
     static constexpr extensions::SimpleFeatureData kBackgroundPageData{
         .feature = {.name = "extension.getBackgroundPage"},
@@ -182,6 +185,13 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kExtensionData)};
     static const base::NoDestructor<extensions::SimpleFeature> background_page{
         extensions::StaticFeatureData<extensions::SimpleFeatureData>(kBackgroundPageData)};
+    static constexpr extensions::SimpleFeatureData kAllowedIncognitoAccessData{
+        .feature = {.name = "extension.isAllowedIncognitoAccess"},
+        .config = {.extension_types = extensions::StaticSpan(kTypes),
+                   .contexts = extensions::StaticSpan(kContexts),
+                   .min_manifest_version = 3}};
+    static const base::NoDestructor<extensions::SimpleFeature> allowed_incognito_access{
+        extensions::StaticFeatureData<extensions::SimpleFeatureData>(kAllowedIncognitoAccessData)};
     static constexpr auto kFontSettingsDependencies =
         std::to_array<std::string_view>({"permission:fontSettings"});
     static constexpr extensions::SimpleFeatureData kFontSettingsData{
@@ -279,7 +289,7 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
         identity.get(), browsing_data.get(), downloads.get(),
         privacy.get(), tabs.get(), font_settings.get(), commands.get(), context_menus.get(), action.get(),
         navigation.get(), side_panel.get(), extension.get(), background_page.get(),
-        windows.get()};
+        allowed_incognito_access.get(), windows.get()};
     provider->AddStaticFeatures(features);
   }
 
@@ -488,9 +498,14 @@ class LabExtensionAPIProvider final : public extensions::CoreExtensionsAPIProvid
       })json";
     }
     if (name == "extension") {
-      return R"json({"namespace":"extension","functions":[{
+      return R"json({"namespace":"extension",
+      "properties":{"inIncognitoContext":{"type":"boolean"}},
+      "functions":[{
         "name":"getBackgroundPage","type":"function","parameters":[],
         "returns":{"name":"backgroundPage","type":"object","optional":true}
+      },{
+        "name":"isAllowedIncognitoAccess","type":"function","parameters":[],
+        "returns_async":{"name":"callback","parameters":[{"name":"allowed","type":"boolean"}]}
       }]})json";
     }
     if (name == "cookies") {
@@ -1110,8 +1125,6 @@ std::vector<std::string> UnsupportedManifestFeatures(const ExtractedExtensionFil
 bool SupportsExtensionManifest(const extensions::Extension& extension) {
   const auto& manifest = *extension.manifest()->value();
   if (!extension.is_extension() || extension.manifest_version() != 3 ||
-      (manifest.contains("incognito") &&
-       extensions::IncognitoInfo::IsIncognitoAllowed(&extension)) ||
       !extension.install_warnings().empty() ||
       !std::ranges::all_of(manifest, [](const auto& item) {
         return kSupportedManifestKeys.contains(item.first);
@@ -1404,14 +1417,6 @@ scoped_refptr<extensions::Extension> LoadFixture(const base::FilePath& path,
       manifest->Remove(key);
     }
     flags |= extensions::Extension::FROM_WEBSTORE;
-  }
-
-  // Content never grants extensions access to private profiles. Keep
-  // publisher packages usable in regular profiles even when they advertise
-  // an incognito mode. The signed manifest on disk retains the original mode.
-  if (const auto* mode = manifest->FindString("incognito");
-      mode && (*mode == "split" || *mode == "spanning")) {
-    manifest->Set("incognito", "not_allowed");
   }
 
   // Chromium's <all_urls> also covers non-web schemes. Compile broad grants
