@@ -5793,8 +5793,8 @@ void WorkspaceLab::CheckSitePermissionProbe() {
       if (site_permission_probe_phase_.ends_with("-switch")) {
         auto previous = page->GetWeakPtr();
         SelectWorkspace(std::string(kWorkspaceIds[1]));
-        CheckStoppedMediaProbe(std::move(previous),
-                               base::TimeTicks::Now() + base::Seconds(5));
+        CheckSwitchedMediaProbe(std::move(previous),
+                                base::TimeTicks::Now() + base::Seconds(5));
         return;
       }
       if (!media_access_->StopForTesting()) {
@@ -5806,6 +5806,7 @@ void WorkspaceLab::CheckSitePermissionProbe() {
     if (media && (page->GetTitle() == u"Zitter media ended" ||
                   page->GetTitle() == u"Zitter media denied")) {
       const bool expect_ended = site_permission_probe_phase_.ends_with("-allow") ||
+          site_permission_probe_phase_ == "media-switch" ||
           site_permission_probe_phase_.starts_with("media-tab-other-");
       const bool valid = expect_ended
           ? site_permission_prompt_shown_ && site_permission_media_started_ &&
@@ -5934,8 +5935,21 @@ void WorkspaceLab::ClickSitePermissionProbe(base::TimeTicks deadline) {
       base::Milliseconds(250));
 }
 
-void WorkspaceLab::CheckStoppedMediaProbe(
+void WorkspaceLab::CheckSwitchedMediaProbe(
     base::WeakPtr<content::WebContents> previous, base::TimeTicks deadline) {
+  if (site_permission_probe_phase_ == "media-switch") {
+    if (!previous || active_index_ != 1 || !media_access_->IsCapturing(previous.get())) {
+      LOG(ERROR) << "Camera or microphone stopped after switching profiles";
+      Finish(false);
+      return;
+    }
+    SelectWorkspace(std::string(kWorkspaceIds[0]));
+    if (web_contents() != previous.get() || !media_access_->StopForTesting()) {
+      LOG(ERROR) << "The original capture was not live on return to its profile";
+      Finish(false);
+    }
+    return;
+  }
   if (!previous || active_index_ != 1 || base::TimeTicks::Now() >= deadline) {
     LOG(ERROR) << "Capture did not stop after switching profiles";
     Finish(false);
@@ -5947,7 +5961,7 @@ void WorkspaceLab::CheckStoppedMediaProbe(
     return;
   }
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE, base::BindOnce(&WorkspaceLab::CheckStoppedMediaProbe,
+      FROM_HERE, base::BindOnce(&WorkspaceLab::CheckSwitchedMediaProbe,
                                weak_factory_.GetWeakPtr(), std::move(previous),
                                deadline),
       base::Milliseconds(50));
@@ -10219,8 +10233,15 @@ bool WorkspaceLab::FocusExtensionWindow(content::BrowserContext& context) {
 }
 
 void WorkspaceLab::OnWidgetActivationChanged(views::Widget* widget, bool active) {
-  if (widget == widget_.get() && !private_owner_ && IsWorkspaceExtensionRuntime() &&
-      model_.active()) {
+  if (widget != widget_.get())
+    return;
+  if (active && !widget->IsMinimized() && web_contents()) {
+    // The window can regain focus before its native views report visibility.
+    // Retire the active tab's automatic PiP before another tab hides it again.
+    PictureInPicture::Get().OnTabVisibilityChanged(
+        *web_contents(), content::Visibility::VISIBLE, /*capturing=*/false);
+  }
+  if (!private_owner_ && IsWorkspaceExtensionRuntime() && model_.active()) {
     DispatchWorkspaceExtensionWindowEvent(*WorkspaceProfile(active_index_), active);
   }
 }

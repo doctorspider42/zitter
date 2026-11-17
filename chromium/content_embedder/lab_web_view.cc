@@ -66,7 +66,7 @@ content::PictureInPictureResult LabWebView::EnterPictureInPicture(
 }
 
 void LabWebView::ExitPictureInPicture() {
-  PictureInPicture::Get().Exit();
+  PictureInPicture::Get().Exit(web_contents());
 }
 
 BEGIN_METADATA(LabWebView)

@@ -513,7 +513,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void LoadSitePermissionProbe();
   void CheckSitePermissionProbe();
   void ClickSitePermissionProbe(base::TimeTicks deadline);
-  void CheckStoppedMediaProbe(base::WeakPtr<content::WebContents> previous,
+  void CheckSwitchedMediaProbe(base::WeakPtr<content::WebContents> previous,
                               base::TimeTicks deadline);
   void RunClipboardPromptProbe();
   void RequestClipboardPromptProbe(base::TimeTicks deadline, bool activation_sent);

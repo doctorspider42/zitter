@@ -63,7 +63,7 @@ class WorkspaceMediaAccess {
   void SetDesktopProbe(DesktopProbe probe) { desktop_probe_ = probe; }
   void Stop();
   bool IsCapturing(content::WebContents* page) const;
-  // Ends captures from other profiles and any open prompt.
+  // Cancels pending requests and ends display sharing from other profiles.
   void StopOutside(content::BrowserContext* context);
   void CancelPending();
   bool StopForTesting();

@@ -44,8 +44,8 @@ class PictureInPicture final {
 
   // WebContentsDelegate::EnterPictureInPicture for a video in `page`.
   content::PictureInPictureResult EnterVideo(content::WebContents* page);
-  // WebContentsDelegate::ExitPictureInPicture: closes the open window.
-  void Exit();
+  // WebContentsDelegate::ExitPictureInPicture: closes the page's window.
+  void Exit(content::WebContents* page);
   // WebContentsDelegate::AddNewContents with NEW_PICTURE_IN_PICTURE: shows
   // `child` in a floating window. Returns `child`, or null when refused.
   content::WebContents* OpenDocument(content::WebContents* opener,

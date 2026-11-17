@@ -696,7 +696,10 @@ void WorkspaceMediaAccess::StopOutside(content::BrowserContext* context) {
   if (pending_)
     Reject(Result::PERMISSION_DENIED);
   for (const auto& stream : streams_) {
-    if (stream && stream->GetBrowserContext() != context)
+    // Device capture belongs to the authorized document and can continue
+    // while another profile is selected. Display sharing remains profile-bound.
+    if (stream && !stream->IsDeviceCapture() &&
+        stream->GetBrowserContext() != context)
       stream->Stop();
   }
 }

@@ -995,8 +995,9 @@ content::PictureInPictureResult PictureInPicture::EnterVideo(content::WebContent
   return content::PictureInPictureResult::kSuccess;
 }
 
-void PictureInPicture::Exit() {
-  CloseWindowInternal();
+void PictureInPicture::Exit(content::WebContents* page) {
+  if (page && controller_ && controller_->GetWebContents() == page)
+    CloseWindowInternal();
 }
 
 content::WebContents* PictureInPicture::OpenDocument(
@@ -1118,8 +1119,9 @@ void PictureInPicture::DestroyDocumentWindowSoon() {
 void PictureInPicture::OnDocumentWindowClosed(DocumentPictureInPictureWindow* window) {
   if (document_.get() != window)
     return;
-  // Destroying the page tells its controller, which then calls Exit().
-  DestroyDocumentWindowSoon();
+  // Free the active slot before another tab requests PiP. The widget and its
+  // WebContents can be destroyed later, outside the current callback.
+  CloseWindowInternal();
 }
 
 void PictureInPicture::OnOpenerDestroyed() {
@@ -1192,12 +1194,14 @@ void PictureInPicture::MaybeEnterAutomatically(base::WeakPtr<content::WebContent
 
 void PictureInPicture::MaybeExitAutomatically(base::WeakPtr<content::WebContents> page) {
   auto* contents = page.get();
-  if (!contents || contents->GetVisibility() != content::Visibility::VISIBLE)
+  if (!contents)
     return;
+  // Honor the return to the tab even if it was hidden again before this task
+  // ran. The subsequent hide can then open a new window.
   if (pending_page_.get() == contents)
     pending_page_ = nullptr;
   if (automatic_page_.get() == contents)
-    Exit();
+    CloseWindowInternal();
 }
 
 std::unique_ptr<content::VideoOverlayWindow> CreateVideoOverlayWindow(
