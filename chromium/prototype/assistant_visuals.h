@@ -18,7 +18,9 @@ inline constexpr char kAssistantSparkIcon[] = "M8 1Q9 7 15 8Q9 9 8 15Q7 9 1 8Q7 
 void PaintAssistantSpark(gfx::Canvas* canvas, const gfx::RectF& box, SkColor color);
 enum class AssistantGlyph { kSpark, kPlus, kHistory, kPin, kClose, kArrow, kStop, kAt, kSearch, kShield, kPage, kChevron, kRevoke,
                             kLayers, kCheck, kGear, kCopy, kTrash, kLock, kEye, kExpand, kGlobe, kCalendar, kRepeat, kBack };
-std::unique_ptr<views::Background> CreateAssistantBackground();
+inline constexpr int kAssistantPanelRadius = 20;
+std::unique_ptr<views::Background> CreateAssistantBackground(
+    std::optional<SkColor> workspace_accent = std::nullopt);
 std::unique_ptr<views::View> CreateAssistantIdentity();
 std::unique_ptr<views::View> CreateAssistantIcon(base::RepeatingClosure action, AssistantGlyph glyph, std::u16string name, bool primary = false);
 std::unique_ptr<views::View> CreateAssistantChip(base::RepeatingClosure action, AssistantGlyph glyph, std::u16string text);

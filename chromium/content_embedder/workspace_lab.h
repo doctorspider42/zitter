@@ -1094,6 +1094,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::unique_ptr<prototype::AdblockFilterLists> adblock_filter_lists_;
   bool waiting_for_adblock_cache_ = false;
   bool close_after_workspace_start_ = false;
+  bool ready_for_external_urls_ = false;
   std::vector<GURL> startup_external_urls_;
   std::unique_ptr<prototype::AdBlockingRulesPanel> ad_blocking_rules_panel_;
   std::unique_ptr<prototype::HistoryPanel> history_panel_;

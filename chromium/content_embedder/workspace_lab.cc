@@ -1097,6 +1097,32 @@ class WorkspaceWebView final : public LabWebView {
     return LabWebView::PreHandleKeyboardEvent(source, event);
   }
 
+#if BUILDFLAG(IS_MAC)
+  bool HandleKeyboardEvent(
+      content::WebContents* source,
+      const input::NativeWebKeyboardEvent& event) override {
+    // AppKit offers key equivalents to the page first. Its view has already
+    // consumed the native event even when the renderer declines the shortcut.
+    using Type = blink::WebInputEvent::Type;
+    if (!event.skip_if_unhandled && source && source == web_contents() &&
+        IsDrawn() && HasFocus() &&
+        (event.GetType() == Type::kRawKeyDown || event.GetType() == Type::kKeyDown)) {
+      const auto accelerator = ui::GetAcceleratorFromNativeWebKeyboardEvent(event);
+      if (accelerator.modifiers() == ui::EF_COMMAND_DOWN) {
+        if (accelerator.key_code() == ui::VKEY_C) {
+          source->Copy();
+          return true;
+        }
+        if (accelerator.key_code() == ui::VKEY_V) {
+          source->Paste();
+          return true;
+        }
+      }
+    }
+    return LabWebView::HandleKeyboardEvent(source, event);
+  }
+#endif
+
   void SetNavigationChangedCallback(
       base::RepeatingCallback<void(content::WebContents*)> callback) {
     navigation_changed_ = std::move(callback);
@@ -2458,6 +2484,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                   permission_probe.starts_with("media-"));
   widget_ = std::make_unique<views::Widget>();
 #if BUILDFLAG(IS_MAC)
+  params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
   params.native_widget = prototype::CreateWorkspaceNativeWidget(widget_.get());
 #elif BUILDFLAG(IS_WIN)
   prototype::ConfigureWorkspaceNativeWidget(widget_.get(), params, {});
@@ -4144,6 +4171,7 @@ void WorkspaceLab::StartWorkspace() {
     RequestClose();
     return;
   }
+  ready_for_external_urls_ = true;
   for (auto& url : std::exchange(startup_external_urls_, {}))
     OpenExternalUrl(std::move(url));
   if (restore_extensions) {
@@ -7439,6 +7467,27 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
           }, weak_factory_.GetWeakPtr(), page->GetWeakPtr()),
       .copy_image = prototype::MakeCopyImageAction(frame, params),
       .image_url = prototype::PageMenuImageUrl(params)};
+  const auto edit_action = [&frame](void (content::WebContents::*run)()) {
+    return base::BindRepeating(
+        [](const content::WeakDocumentPtr& document,
+           void (content::WebContents::*run)()) {
+          auto* frame = document.AsRenderFrameHostIfValid();
+          if (!frame || !frame->IsActive())
+            return;
+          auto* page = content::WebContents::FromRenderFrameHost(frame);
+          if (!page)
+            return;
+          auto* focused = page->GetFocusedFrame();
+          if (!focused)
+            focused = page->GetPrimaryMainFrame();
+          if (focused == frame)
+            (page->*run)();
+        }, frame.GetWeakDocumentPtr(), run);
+  };
+  if (!params.is_editable && !params.selection_text.empty() &&
+      (params.edit_flags & blink::kCanCopy)) {
+    navigation.copy_selection = edit_action(&content::WebContents::Copy);
+  }
   if (params.is_editable) {
     const auto document = frame.GetWeakDocumentPtr();
     if (ui::IsEmojiPanelSupported()) {
@@ -7497,14 +7546,7 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
         navigation.editing_items.push_back({.separator = true});
       navigation.editing_items.push_back({
           .title = prototype::T(command.label),
-          .run = base::BindRepeating(
-              [](const content::WeakDocumentPtr& document,
-                 void (content::WebContents::*run)()) {
-                auto* frame = document.AsRenderFrameHostIfValid();
-                auto* page = frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
-                if (frame && frame->IsActive() && page && page->GetFocusedFrame() == frame)
-                  (page->*run)();
-              }, document, command.run),
+          .run = edit_action(command.run),
           .enabled = (params.edit_flags & command.flag) != 0,
           .accelerator = ui::Accelerator(command.key, modifier | command.extra_modifiers)});
     }
@@ -7658,7 +7700,7 @@ void WorkspaceLab::OpenExternalUrl(GURL url) {
   if (smoke_ || private_owner_ || !prototype::IsExternalOpenUrl(url)) {
     return;
   }
-  if (!model_.active()) {
+  if (!ready_for_external_urls_) {
     if (startup_external_urls_.size() < 32)
       startup_external_urls_.push_back(std::move(url));
     return;

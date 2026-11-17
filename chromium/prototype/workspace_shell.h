@@ -116,6 +116,7 @@ struct PageMenuNavigation {
   GURL image_url;
   std::vector<PageMenuItem> editing_items;
   std::vector<PageMenuItem> extension_items;
+  base::RepeatingClosure copy_selection;
 };
 
 base::RepeatingClosure MakeCopyImageAction(
@@ -1494,7 +1495,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::WidgetDelegate> peek_delegate_;
   std::unique_ptr<views::Widget> peek_widget_;
   std::vector<std::unique_ptr<ui::SimpleMenuModel>> extension_page_menus_;
-  std::map<int, base::RepeatingClosure> extension_page_actions_;
+  std::map<int, base::RepeatingClosure> page_menu_actions_;
   std::set<int> checked_page_menu_commands_;
   std::map<int, ui::Accelerator> page_menu_accelerators_;
   std::unique_ptr<ui::SimpleMenuModel> link_menu_;

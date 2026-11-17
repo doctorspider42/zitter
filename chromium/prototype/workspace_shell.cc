@@ -100,6 +100,7 @@
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/menu_model_adapter.h"
+#include "ui/views/controls/menu/menu_scroll_view_container.h"
 #include "ui/views/controls/menu/submenu_view.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/color/color_provider.h"
@@ -156,6 +157,7 @@
 #include "ui/views/controls/throbber.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
+#include "third_party/skia/include/core/SkRRect.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "chromium/prototype/arc_importer.h"
 #include "ui/views/border.h"
@@ -173,6 +175,7 @@
 
 #include "chromium/prototype/sidebar_scene.rs.h"
 #if BUILDFLAG(IS_MAC)
+#include "base/scoped_multi_source_observation.h"
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #include "chromium/prototype/workspace_frame_mac.h"
 #elif BUILDFLAG(IS_WIN)
@@ -591,6 +594,64 @@ END_METADATA
 constexpr int32_t kZitterMenuRun = views::MenuRunner::NO_FLAGS;
 // The panel's `radius-md`, passed to every context-menu run.
 gfx::RoundedCornersF ZitterMenuCorners() { return gfx::RoundedCornersF(12); }
+#if BUILDFLAG(IS_MAC)
+class PageMenuMaterial final : public views::ViewObserver {
+ public:
+  PageMenuMaterial(views::MenuItemView& root, SkColor workspace_color)
+      : workspace_color_(workspace_color) {
+    ObserveSubmenus(root);
+  }
+
+ private:
+  void ObserveSubmenus(views::MenuItemView& item) {
+    auto* submenu = item.GetSubmenu();
+    if (!submenu)
+      return;
+    observations_.AddObservation(submenu);
+    for (auto* child : submenu->GetMenuItems())
+      ObserveSubmenus(*child);
+  }
+
+  void OnViewAddedToWidget(views::View* view) override {
+    auto* submenu = views::AsViewClass<views::SubmenuView>(view);
+    if (!submenu)
+      return;
+    auto* container = submenu->GetScrollViewContainer();
+    if (!observations_.IsObservingSource(container))
+      observations_.AddObservation(container);
+    ApplyMaterial(*container);
+  }
+
+  void OnViewThemeChanged(views::View* view) override {
+    auto* container = views::AsViewClass<views::MenuScrollViewContainer>(view);
+    if (container && container->GetWidget())
+      ApplyMaterial(*container);
+  }
+
+  void OnViewIsDeleting(views::View* view) override {
+    observations_.RemoveObservation(view);
+  }
+
+  void ApplyMaterial(views::MenuScrollViewContainer& container) {
+    const auto corners = ZitterMenuCorners();
+    const auto insets = container.outside_border_insets();
+    auto* widget = container.GetWidget();
+    if (!SetWorkspaceMenuMaterial(widget, insets, corners.upper_left()))
+      return;
+    SetWorkspaceNativeAppearance(widget, IsDark(&container));
+    const auto palette = Palette(&container, workspace_color_);
+    const auto tint = color_utils::AlphaBlend(palette.accent, palette.bg_raised,
+                                              0.14f);
+    container.SetBackground(views::CreateRoundedRectBackground(
+        SkColorSetA(tint, 178), corners, insets));
+  }
+
+  const SkColor workspace_color_;
+  base::ScopedMultiSourceObservation<views::View, views::ViewObserver>
+      observations_{this};
+};
+#endif
+
 // Destructive commands read in `danger` (ContextMenu): close tab (10), close the
 // split (12), remove a space (30), delete a folder (38).
 class DesignMenuModel final : public ui::SimpleMenuModel {
@@ -600,6 +661,11 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
     view_adapter_ = std::make_unique<views::MenuModelAdapter>(this);
     return view_adapter_->CreateMenu();
   }
+#if BUILDFLAG(IS_MAC)
+  void EnablePageMaterial(views::MenuItemView& menu, SkColor workspace_color) {
+    page_material_ = std::make_unique<PageMenuMaterial>(menu, workspace_color);
+  }
+#endif
   std::optional<ui::ColorId> GetForegroundColorId(size_t index) override {
     static constexpr std::array<int, 4> kDanger = {10, 12, 30, 38};
     return std::ranges::contains(kDanger, GetCommandIdAt(index)) ? std::optional<ui::ColorId>(ui::kColorAlertHighSeverity) : std::nullopt;
@@ -607,6 +673,9 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
 
  private:
   std::unique_ptr<views::MenuModelAdapter> view_adapter_;
+#if BUILDFLAG(IS_MAC)
+  std::unique_ptr<PageMenuMaterial> page_material_;
+#endif
 };
 
 ui::ImageModel MenuIcon(const gfx::VectorIcon& icon,
@@ -4318,6 +4387,59 @@ class ShellRoot final : public views::View {
   ShellRoot() = default;
   raw_ptr<views::View> site_settings = nullptr;
   gfx::Size GetMinimumSize() const override { return gfx::Size(560, 560); }
+#if BUILDFLAG(IS_MAC)
+  void OnPaintBackground(gfx::Canvas* canvas) override {
+    gfx::ScopedCanvas scoped(canvas);
+    const auto leave_clear = [&](const gfx::Rect& bounds, int radius) {
+      canvas->sk_canvas()->clipRRect(
+          SkRRect::MakeRectXY(gfx::RectToSkRect(bounds), radius, radius),
+          SkClipOp::kDifference, true);
+    };
+    if (sidebar_material && sidebar_visible && pinned && !content_fullscreen) {
+      const auto bounds = sidebar::shell_layout(width(), height(), sidebar_width, true).sidebar;
+      leave_clear(gfx::Rect(bounds.x, bounds.y, bounds.width, bounds.height),
+                  ZitterMenuCorners().upper_left());
+    }
+    if (!assistant_material_bounds_.IsEmpty())
+      leave_clear(assistant_material_bounds_, kAssistantPanelRadius);
+    views::View::OnPaintBackground(canvas);
+  }
+
+  void UpdateAssistantMaterial() {
+    const bool blur = assistant && assistant->GetVisible() && !content_fullscreen &&
+                      WorkspaceAllowsTransparency();
+    const auto bounds = blur && assistant_pinned ? assistant->bounds() : gfx::Rect();
+    if (bounds != assistant_material_bounds_) {
+      const auto insets = gfx::Insets::TLBR(
+          bounds.y(), bounds.x(), height() - bounds.bottom(), width() - bounds.right());
+      const bool material = SetWorkspaceAssistantMaterial(
+          GetWidget(), !bounds.IsEmpty(), insets, kAssistantPanelRadius);
+      assistant_material_bounds_ = material ? bounds : gfx::Rect();
+      SchedulePaint();
+    }
+    if (!assistant || !assistant->layer())
+      return;
+    const bool floating = blur && !assistant_pinned;
+    auto* layer = assistant->layer();
+    layer->SetBackgroundBlur(floating ? 18.f : 0.f);
+    if (floating) {
+      layer->SetBackdropFilterBounds(gfx::RRectF(
+          gfx::RectF(assistant->GetLocalBounds()), kAssistantPanelRadius));
+    }
+    const std::optional<SkColor> accent =
+        floating || !assistant_material_bounds_.IsEmpty()
+            ? std::optional<SkColor>(Palette(this).accent)
+            : std::nullopt;
+    if (assistant_material_accent != accent) {
+      assistant_material_accent = accent;
+      assistant->SetBackground(CreateAssistantBackground(accent));
+    }
+  }
+
+  bool sidebar_material = false;
+  bool sidebar_visible = false;
+  std::optional<SkColor> assistant_material_accent;
+#endif
   void Layout(PassKey) override {
     if (content_fullscreen) {
       if (developer) developer->SetVisible(false);
@@ -4325,6 +4447,9 @@ class ShellRoot final : public views::View {
       content->SetBoundsRect(GetLocalBounds());
       edge->SetVisible(false);
       if (assistant_edge) assistant_edge->SetVisible(false);
+#if BUILDFLAG(IS_MAC)
+      UpdateAssistantMaterial();
+#endif
       LayoutSuperclass<views::View>(this);
       return;
     }
@@ -4377,6 +4502,9 @@ class ShellRoot final : public views::View {
       // A pinned assistant always reserves page space, including narrow windows.
       if (assistant_pinned) page.set_width(std::max(0, assistant->x() - kGap - page.x()));
     }
+#if BUILDFLAG(IS_MAC)
+    UpdateAssistantMaterial();
+#endif
     content->SetBoundsRect(page);
     if (site_settings) site_settings->SetBoundsRect(page);
     auto page_bounds = content->bounds();
@@ -4449,6 +4577,11 @@ class ShellRoot final : public views::View {
   bool pinned = true;
   bool content_fullscreen = false;
   int sidebar_width = kSidebarWidth;
+
+ private:
+#if BUILDFLAG(IS_MAC)
+  gfx::Rect assistant_material_bounds_;
+#endif
 };
 BEGIN_METADATA(ShellRoot)
 END_METADATA
@@ -4691,6 +4824,9 @@ void WorkspaceShell::SetAssistantView(views::View* view) {
     root->assistant = root->AddChildView(std::unique_ptr<views::View>(view));
     root->ReorderChildView(root->assistant_edge, root->children().size() - 1);
   }
+#if BUILDFLAG(IS_MAC)
+  root->assistant_material_accent.reset();
+#endif
   root->InvalidateLayout();
 }
 void WorkspaceShell::SetAssistantActivity(bool active) {
@@ -6815,16 +6951,22 @@ void WorkspaceShell::UpdateMetalSidebar() {
     }
   }
   const SkColor tint = FrameTint(workspace_color(state_.workspace_id), root_);
+  SkColor background = pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70);
+#if BUILDFLAG(IS_MAC)
+  // The sidebar's Views layer paints the tint once beneath both Metal surfaces.
+  if (static_cast<ShellRoot*>(root_.get())->sidebar_material)
+    background = SK_ColorTRANSPARENT;
+#endif
   auto* sidebar=static_cast<SidebarView*>(sidebar_root_.get());auto* grip=sidebar->grip.get();auto* handle=sidebar->grip_handle.get();
   if(!metal_sidebar_grip_)metal_sidebar_grip_=CreateSidebarMetal();
   if(metal_sidebar_grip_) {
     const bool before=metal_sidebar_grip_->visible();auto frame=grip->GetBoundsInScreen();frame.Inset(gfx::Insets::TLBR(8,3,8,1));
     sidebar::Item item{};item.kind=11;item.x=-3;item.y=-8;item.width=grip->width();item.height=grip->height();item.clip={0,0,float(frame.width()),float(frame.height())};
     item.active=handle->active();item.hovered=handle->hovered();item.ink=SkColorSetA(Tone(grip,kInk),item.active?0x40:0x26);
-    metal_sidebar_grip_->Update(sidebar_widget_->GetNativeWindow(),frame,{item},pinned_?tint:Mix(tint,Tone(root_,kCard),70));
+    metal_sidebar_grip_->Update(sidebar_widget_->GetNativeWindow(),frame,{item},background);
     if(before!=metal_sidebar_grip_->visible())grip->SchedulePaint();
   }
-  metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70));
+  metal_sidebar_->Update(sidebar_widget_->GetNativeWindow(), bounds, items, background);
   // The initial native paint record can contain fallback text. Re-record it
   // once when GPU presentation takes ownership, then the control paint gate
   // keeps it empty until fallback is needed again.
@@ -7461,6 +7603,7 @@ constexpr int kOpenImageInNewTab = 218;
 constexpr int kCopyImageAddress = 219;
 constexpr int kAllSiteSettings = 220;
 constexpr int kPinTab = 221;
+constexpr int kCopySelection = 222;
 constexpr int kMoveTabBase = 2000;
 constexpr int kRouteBase = 1000;
 constexpr int kNewFolder = 36;
@@ -7694,7 +7837,7 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
                                    const PageMenuNavigation* page) {
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset();
   extension_page_menus_.clear();
-  extension_page_actions_.clear();
+  page_menu_actions_.clear();
   checked_page_menu_commands_.clear();
   page_menu_accelerators_.clear();
   context_url_ = std::move(url); link_source_workspace_ = std::move(source_workspace);
@@ -7710,6 +7853,18 @@ void WorkspaceShell::BuildLinkMenu(GURL url, std::string source_workspace,
   // share one icon row; a link gets its own section under a header.
   if (page) {
     link_menu_->AddItem(kPageNavigation, {});
+    if (page->copy_selection) {
+      link_menu_->AddItemWithIcon(kCopySelection, T(u"Kopiuj"),
+                                  MenuIcon(vector_icons::kContentCopyIcon));
+      page_menu_actions_.emplace(kCopySelection, page->copy_selection);
+#if BUILDFLAG(IS_MAC)
+      constexpr int modifier = ui::EF_COMMAND_DOWN;
+#else
+      constexpr int modifier = ui::EF_CONTROL_DOWN;
+#endif
+      page_menu_accelerators_.emplace(kCopySelection,
+                                      ui::Accelerator(ui::VKEY_C, modifier));
+    }
     if (context_url_.is_empty() && CleanUrlForCopy(page_menu_url_)) {
       link_menu_->AddItemWithIcon(kCopyCleanPageAddress, T(u"Kopiuj bez trackerów"),
                                   MenuIcon(vector_icons::kLinkIcon));
@@ -7815,7 +7970,7 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
       if (item.checked.value_or(false))
         checked_page_menu_commands_.insert(id);
       if (item.enabled)
-        extension_page_actions_.emplace(id, item.run);
+        page_menu_actions_.emplace(id, item.run);
       if (item.accelerator)
         page_menu_accelerators_.emplace(id, *item.accelerator);
     }
@@ -7844,8 +7999,9 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
         add_item(add_item, *link_menu_, item);
     }
   }
-  if (navigation && !editing) {
-    auto menu = static_cast<DesignMenuModel*>(link_menu_.get())->CreateViewMenu();
+  auto* model = static_cast<DesignMenuModel*>(link_menu_.get());
+  auto menu = navigation ? model->CreateViewMenu() : nullptr;
+  if (menu && !editing) {
     menu->GetSubmenu()->set_minimum_preferred_width(264);
     auto* item = menu->GetMenuItemByID(kPageNavigation);
     // One 32 px icon row instead of a full-height menu item.
@@ -7880,6 +8036,11 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
         }, weak_factory_.GetWeakPtr()), vector_icons::kLinkIcon, T(u"Kopiuj adres strony")));
     copy->SetEnabled(IsWorkspaceTabUrl(page_menu_url_));
     layout->SetFlexForView(copy, 1);
+  }
+  if (menu) {
+#if BUILDFLAG(IS_MAC)
+    model->EnablePageMaterial(*menu, WindowWorkspaceColor(root_));
+#endif
     link_menu_runner_ = std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
   } else {
     link_menu_runner_ = std::make_unique<views::MenuRunner>(link_menu_.get(), kZitterMenuRun);
@@ -9346,8 +9507,8 @@ void WorkspaceShell::ExecuteCommand(int command_id, int) {
         }, weak_factory_.GetWeakPtr()));
     return;
   }
-  if (const auto action = extension_page_actions_.find(command_id);
-      action != extension_page_actions_.end() && action->second) {
+  if (const auto action = page_menu_actions_.find(command_id);
+      action != page_menu_actions_.end() && action->second) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(action->second));
     return;
@@ -11562,11 +11723,23 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
     site_settings_page_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
   const auto tint = FrameTint(color, root_);
   root_->SchedulePaint();
+  SkColor sidebar_background = pinned_ ? tint : Mix(tint, Tone(root_, kCard), 70);
+#if BUILDFLAG(IS_MAC)
+  auto* shell_root = static_cast<ShellRoot*>(root_.get());
+  shell_root->sidebar_material = SetWorkspaceSidebarMaterial(sidebar_widget_.get());
+  if (shell_root->sidebar_material) {
+    sidebar_background = SkColorSetA(
+        color_utils::AlphaBlend(Palette(root_).accent, sidebar_background, 0.10f), 170);
+    if (sidebar_slide_timer_.IsRunning())
+      SetWorkspaceSidebarMaterialOffset(
+          sidebar_widget_.get(), -sidebar_root_->width() * (1 - sidebar_slide_value_));
+  }
+#endif
   if (pinned_) {
-    sidebar_root_->SetBackground(views::CreateSolidBackground(tint));
+    sidebar_root_->SetBackground(views::CreateSolidBackground(sidebar_background));
     sidebar_root_->SetBorder(nullptr);
   } else {
-    sidebar_root_->SetBackground(views::CreateRoundedRectBackground(Mix(tint, Tone(root_, kCard), 70), 12));
+    sidebar_root_->SetBackground(views::CreateRoundedRectBackground(sidebar_background, 12));
     sidebar_root_->SetBorder(views::CreatePaddedBorder(
         views::CreateRoundedRectBorder(1, 12, Hairline(root_)), gfx::Insets(6)));
   }
@@ -14048,6 +14221,9 @@ void WorkspaceShell::AnimateSidebar(bool show) {
     ++sidebar_slide_generation_;
     sidebar_root_->layer()->GetAnimator()->StopAnimating();
     sidebar_root_->SetTransform(gfx::Transform());
+#if BUILDFLAG(IS_MAC)
+    SetWorkspaceSidebarMaterialOffset(sidebar_widget_.get(), 0);
+#endif
     if (!show) sidebar_widget_->Hide();
     return;
   }
@@ -14117,9 +14293,13 @@ void WorkspaceShell::StepSidebarAnimation() {
                               kSidebarSlide.InMillisecondsF(), 0.0, 1.0);
   const double eased = 1 - std::pow(1 - t, 3);
   sidebar_slide_value_ = sidebar_slide_from_ + ((sidebar_slide_show_ ? 1.0 : 0.0) - sidebar_slide_from_) * eased;
+  const double offset = -sidebar_root_->width() * (1 - sidebar_slide_value_);
   gfx::Transform slide;
-  slide.Translate(-sidebar_root_->width() * (1 - sidebar_slide_value_), 0);
+  slide.Translate(offset, 0);
   sidebar_root_->SetTransform(slide);
+#if BUILDFLAG(IS_MAC)
+  SetWorkspaceSidebarMaterialOffset(sidebar_widget_.get(), offset);
+#endif
   ScheduleMetalSidebar();
   if (t < 1) return;
   sidebar_slide_timer_.Stop();
@@ -17835,6 +18015,12 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
   if (widget == address_widget_.get()) VLOG(1) << "Palette visibility=" << visible;
+#if BUILDFLAG(IS_MAC)
+  if (widget == sidebar_widget_.get()) {
+    static_cast<ShellRoot*>(root_.get())->sidebar_visible = visible;
+    root_->SchedulePaint();
+  }
+#endif
   if (widget == sidebar_widget_.get() && !visible) {
     if (site_panel_) CloseSitePanel();
     FinishSidebarRename(false);
