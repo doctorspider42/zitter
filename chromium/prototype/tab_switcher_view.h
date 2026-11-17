@@ -77,6 +77,10 @@ class TabSwitcherView final : public views::View, public ui::CompositorAnimation
   // Shows the overlay now (the reveal delay passed or the modifier is held).
   void Reveal();
   void SetThumbnail(uint64_t id, const gfx::ImageSkia& image);
+  // Whether the system blurs the window under the switcher (Acrylic); without
+  // it the backdrop is opaque.
+  void SetBackdropBlurred(bool blurred);
+  bool backdrop_blurred() const { return backdrop_blurred_; }
 
   bool active() const { return active_; }
   bool revealed() const { return revealed_; }
@@ -130,6 +134,7 @@ class TabSwitcherView final : public views::View, public ui::CompositorAnimation
   int pressed_card_ = -1;
   bool active_ = false;
   bool revealed_ = false;
+  bool backdrop_blurred_ = false;
   // The stack's position (fractional while it moves) and the spring's speed.
   float position_ = 0, velocity_ = 0;
   base::Time opened_at_;

@@ -13039,6 +13039,13 @@ void WorkspaceShell::OpenTabSwitcher(std::vector<TabSwitcherView::Card> cards, i
   // The panel takes the keyboard at once, transparent, so Ctrl's release lands
   // on it; it shows itself only once the key is held past the tap delay.
   tab_switcher_->Open(std::move(cards), selected);
+#if BUILDFLAG(IS_WIN)
+  {
+    const auto p = Palette(tab_switcher_.get());
+    tab_switcher_->SetBackdropBlurred(SetWorkspaceAcrylicBackdrop(
+        tab_switcher_widget_.get(), true, IsDark(tab_switcher_.get()), SkColorSetA(p.bg_void, 0x40)));
+  }
+#endif
   tab_switcher_widget_->Show(); tab_switcher_widget_->Activate();
   tab_switcher_widget_->StackAtTop();
   tab_switcher_->RequestFocus();

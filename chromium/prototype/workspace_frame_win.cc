@@ -7,11 +7,13 @@
 #include <dwmapi.h>
 #include <shellapi.h>
 
+#include <algorithm>
 #include <set>
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/no_destructor.h"
 #include "base/win/registry.h"
@@ -29,6 +31,53 @@ namespace zitter::prototype {
 namespace {
 // DWMWA_USE_IMMERSIVE_DARK_MODE; Windows 10 20H1 and later.
 constexpr DWORD kImmersiveDarkMode = 20;
+// DWMWA_SYSTEMBACKDROP_TYPE with DWMSBT_NONE / DWMSBT_TRANSIENTWINDOW (Acrylic);
+// Windows 11 22H2 (build 22621) and later.
+constexpr DWORD kSystemBackdropType = 38;
+constexpr int kBackdropNone = 1, kBackdropAcrylic = 3;
+
+// SetWindowCompositionAttribute's accent policy (user32, undocumented): the
+// Acrylic blur behind a window on Windows 10 1803 and later.
+struct AccentPolicy {
+  int state;
+  DWORD flags;
+  DWORD gradient;  // 0xAABBGGRR
+  DWORD animation;
+};
+struct CompositionAttributeData {
+  DWORD attribute;
+  // A Win32 ABI struct passed straight to user32.
+  RAW_PTR_EXCLUSION void* data;
+  SIZE_T size;
+};
+constexpr DWORD kAccentPolicyAttribute = 19;  // WCA_ACCENT_POLICY
+constexpr int kAccentDisabled = 0, kAccentAcrylic = 4;
+using SetCompositionAttribute = BOOL(WINAPI*)(HWND, CompositionAttributeData*);
+
+bool UseSystemBackdrop() {
+  static const bool use = base::win::OSInfo::GetInstance()->version_number().build >= 22621;
+  return use;
+}
+
+// Settings › Personalization › Colors › Transparency effects.
+bool TransparencyEffectsEnabled() {
+  base::win::RegKey key(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", KEY_READ);
+  DWORD value = 1;
+  if (!key.Valid() || key.ReadValueDW(L"EnableTransparency", &value) != ERROR_SUCCESS) return true;
+  return value != 0;
+}
+
+bool SetAccent(HWND hwnd, int state, SkColor tint) {
+  static const auto set = reinterpret_cast<SetCompositionAttribute>(
+      ::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute"));
+  if (!set) return false;
+  // A fully transparent gradient makes Windows 10 drop the blur.
+  const DWORD gradient = (std::max<DWORD>(1, SkColorGetA(tint)) << 24) | (SkColorGetB(tint) << 16) |
+                         (SkColorGetG(tint) << 8) | SkColorGetR(tint);
+  AccentPolicy policy{state, 2, gradient, 0};
+  CompositionAttributeData data{kAccentPolicyAttribute, &policy, sizeof(policy)};
+  return set(hwnd, &data) != FALSE;
+}
 
 // Snap Layouts on Windows 10, for checking the non-client path there: it
 // shows no flyout, but hover, press and click run as on Windows 11.
@@ -204,6 +253,21 @@ void ConfigureNonActivatingPanel(views::Widget* widget, views::Widget::InitParam
   auto* native_widget = new views::DesktopNativeWidgetAura(widget);
   params.native_widget = native_widget;
   params.desktop_window_tree_host = new NonActivatingPanelHost(widget, native_widget);
+}
+
+bool SetWorkspaceAcrylicBackdrop(views::Widget* widget, bool enabled, bool dark, SkColor tint) {
+  if (!widget || !widget->GetNativeWindow()) return false;
+  HWND hwnd = views::HWNDForWidget(widget);
+  if (!hwnd) return false;
+  enabled = enabled && TransparencyEffectsEnabled();
+  if (UseSystemBackdrop()) {
+    // The system tints its Acrylic by the window's light or dark mode.
+    BOOL dark_mode = dark;
+    ::DwmSetWindowAttribute(hwnd, kImmersiveDarkMode, &dark_mode, sizeof(dark_mode));
+    const int type = enabled ? kBackdropAcrylic : kBackdropNone;
+    return SUCCEEDED(::DwmSetWindowAttribute(hwnd, kSystemBackdropType, &type, sizeof(type))) && enabled;
+  }
+  return SetAccent(hwnd, enabled ? kAccentAcrylic : kAccentDisabled, tint) && enabled;
 }
 
 void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dark) {

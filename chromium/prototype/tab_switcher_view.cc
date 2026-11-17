@@ -18,7 +18,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
-#include "ui/compositor/scoped_layer_animation_settings.h"
+#include "ui/compositor/layer_animator.h"
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
@@ -235,21 +235,12 @@ void TabSwitcherView::Reveal() {
   if (!active_ || revealed_) return;
   revealed_ = true;
   reveal_timer_.Stop();
-  const bool motion = host_.animations && host_.animations.Run();
-  if (motion) {
-    // The stack slides one step back in time as it appears.
-    position_ = std::max(0, selected_ - 1);
-    PlaceCards();
-    ui::ScopedLayerAnimationSettings settings(layer()->GetAnimator());
-    settings.SetTransitionDuration(base::Milliseconds(220));
-    settings.SetTweenType(gfx::Tween::EASE_OUT);
-    layer()->SetOpacity(1);
-    Animate();
-  } else {
-    position_ = selected_;
-    PlaceCards();
-    layer()->SetOpacity(1);
-  }
+  // The stack appears already on the tab Ctrl's release would open; only
+  // later steps move it.
+  StopTicking();
+  position_ = selected_; velocity_ = 0;
+  PlaceCards();
+  layer()->SetOpacity(1);
   if (selected_ < static_cast<int>(views_.size())) views_[selected_]->RequestFocus();
 }
 
@@ -301,6 +292,12 @@ void TabSwitcherView::SetThumbnail(uint64_t id, const gfx::ImageSkia& image) {
     cards_[i].thumbnail = image;
     if (i < views_.size()) views_[i]->SchedulePaint();
   }
+}
+
+void TabSwitcherView::SetBackdropBlurred(bool blurred) {
+  if (backdrop_blurred_ == blurred) return;
+  backdrop_blurred_ = blurred;
+  SchedulePaint();
 }
 
 void TabSwitcherView::Layout(PassKey) {
@@ -436,9 +433,11 @@ std::u16string TabSwitcherView::When(int index) const {
 
 void TabSwitcherView::OnPaint(gfx::Canvas* canvas) {
   const auto p = palette();
-  // The workspace's void color covers the window: a window cannot blur what
-  // other windows draw, and on Windows a translucent fill lets page text through.
-  canvas->DrawColor(p.bg_void);
+  // The workspace's void color over the window: translucent where the system
+  // blurs what lies beneath (lighter than the design's 84 % and 80 %, since
+  // Acrylic adds its own tint and noise), opaque where it can't, since sharp
+  // page text under the stack is noise.
+  canvas->DrawColor(backdrop_blurred_ ? SkColorSetA(p.bg_void, Dark(p) ? 0x9e : 0x8c) : p.bg_void);
   if (cards_.empty()) return;
   const float s = scale();
 

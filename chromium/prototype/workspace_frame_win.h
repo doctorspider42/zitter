@@ -6,6 +6,7 @@
 #include <string>
 
 #include "base/functional/callback.h"
+#include "third_party/skia/include/core/SkColor.h"
 
 #include "ui/views/controls/button/button.h"
 #include "ui/views/widget/widget.h"
@@ -25,6 +26,13 @@ void ConfigureNonActivatingPanel(views::Widget* widget, views::Widget::InitParam
 // Dark or light window border (Windows 11) and system menus; nullopt follows
 // the system.
 void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dark);
+// Blurs what lies under a translucent panel, as Windows' own transient surfaces
+// do: Acrylic from DWM on Windows 11 22H2 and later, the accent policy on
+// Windows 10. `tint` colors the blur where the system takes a color (Windows
+// 10). False, with the blur off, when `enabled` is false, the user turned
+// transparency effects off or the system refused: the panel then paints an
+// opaque backdrop of its own.
+bool SetWorkspaceAcrylicBackdrop(views::Widget* widget, bool enabled, bool dark, SkColor tint);
 // Width of the invisible resize band the system frame would put above the
 // client area; the header answers HTTOP there while the window is restored.
 int WorkspaceResizeBorderThickness(const views::Widget* widget);
