@@ -19,6 +19,7 @@
 #include "ui/compositor/layer.h"
 #include "ui/color/color_provider.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_utils.h"
@@ -130,10 +131,22 @@ void Glyph(gfx::Canvas* canvas, AssistantGlyph glyph, float x, float y, SkColor 
 }
 class AssistantBackground final : public views::Background {
  public:
+  explicit AssistantBackground(std::optional<SkColor> accent) : accent_(accent) {}
+
   void Paint(gfx::Canvas* canvas, views::View* view) const override {
-    const auto c=Theme(view); Round(canvas,gfx::RectF(view->GetLocalBounds()),20,c.bg);
-    auto edge=gfx::RectF(view->GetLocalBounds());edge.Inset(.5f);Round(canvas,edge,20,c.line,1);
+    const auto c = Theme(view);
+    const auto tint = accent_
+        ? SkColorSetA(color_utils::AlphaBlend(*accent_, c.bg, 0.14f), 196)
+        : c.bg;
+    const gfx::RectF bounds(view->GetLocalBounds());
+    Round(canvas, bounds, kAssistantPanelRadius, tint);
+    auto edge = bounds;
+    edge.Inset(.5f);
+    Round(canvas, edge, kAssistantPanelRadius, c.line, 1);
   }
+
+ private:
+  const std::optional<SkColor> accent_;
 };
 class Identity final : public views::View {
   METADATA_HEADER(Identity,views::View)
@@ -1010,7 +1023,10 @@ std::unique_ptr<views::View> CreateAssistantTaskRow(AssistantMark mark,std::u16s
 std::unique_ptr<views::View> CreateAssistantCapsule(std::u16string text,base::RepeatingClosure action,bool animate){return std::make_unique<Capsule>(std::move(text),std::move(action),animate);}
 std::unique_ptr<views::View> CreateAssistantConsentBubble(std::u16string title,std::u16string detail,base::RepeatingClosure allow,base::RepeatingClosure skip,base::RepeatingClosure allow_all){return std::make_unique<ConsentBubble>(std::move(title),std::move(detail),std::move(allow),std::move(skip),std::move(allow_all));}
 views::View* AssistantConsentAllowButton(views::View* bubble){auto* b=views::AsViewClass<ConsentBubble>(bubble);return b?b->allow():nullptr;}
-std::unique_ptr<views::Background> CreateAssistantBackground(){return std::make_unique<AssistantBackground>();}
+std::unique_ptr<views::Background> CreateAssistantBackground(
+    std::optional<SkColor> workspace_accent) {
+  return std::make_unique<AssistantBackground>(workspace_accent);
+}
 std::unique_ptr<views::View> CreateAssistantIdentity(){return std::make_unique<Identity>();}
 std::unique_ptr<views::View> CreateAssistantIcon(base::RepeatingClosure cb,AssistantGlyph glyph,std::u16string name,bool primary){return std::make_unique<Action>(std::move(cb),glyph,std::move(name),primary,false);}
 std::unique_ptr<views::View> CreateAssistantChip(base::RepeatingClosure cb,AssistantGlyph glyph,std::u16string text){return std::make_unique<Action>(std::move(cb),glyph,std::move(text),false,true);}

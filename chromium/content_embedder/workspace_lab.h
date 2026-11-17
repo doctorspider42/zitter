@@ -1094,6 +1094,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::unique_ptr<prototype::AdblockFilterLists> adblock_filter_lists_;
   bool waiting_for_adblock_cache_ = false;
   bool close_after_workspace_start_ = false;
+  bool ready_for_external_urls_ = false;
   std::vector<GURL> startup_external_urls_;
   std::unique_ptr<prototype::AdBlockingRulesPanel> ad_blocking_rules_panel_;
   std::unique_ptr<prototype::HistoryPanel> history_panel_;
@@ -1117,7 +1118,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
     base::CancelableTaskTracker::TaskId task = base::CancelableTaskTracker::kBadTaskId;
     std::vector<uint32_t> pixels;
   };
-  std::string favicon_profile_;
   std::pair<std::string, std::string> favicon_refresh_scope_;
   class FaviconDecoderObserver;
   std::unique_ptr<content::WebContents> favicon_refresh_page_;
@@ -1133,8 +1133,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PumpImportedFavicons();
   void StartImportedFaviconRefresh(std::string profile, std::set<GURL> urls, bool loaded);
   void FinishImportedFaviconRefresh();
-  std::map<GURL, CachedFavicon> cached_favicons_;
+  std::map<std::string, std::map<GURL, CachedFavicon>> cached_favicons_;
   base::CancelableTaskTracker favicon_tasks_;
+  base::OneShotTimer favicon_refresh_timer_;
   base::CancelableTaskTracker address_history_tasks_;
   base::CancelableTaskTracker assistant_history_tasks_;
   base::CancelableTaskTracker history_removal_tasks_;

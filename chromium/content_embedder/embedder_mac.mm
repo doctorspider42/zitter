@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <dlfcn.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
 #include <memory>
 #include <optional>
 #include <string>
@@ -127,7 +128,6 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
                      NSMenuItemValidation, NSApplicationDelegate>
 - (void)setWorkspaceQuitClosure:(base::RepeatingClosure)quit;
 - (void)setExternalUrlHandler:(base::RepeatingCallback<void(GURL)>)handler;
-- (void)installExternalUrlEvents;
 - (void)setWorkspaceMenuAction:(WorkspaceMenuAction)action;
 - (bool)activateWorkspaceMenuForTesting:(const std::string&)command;
 @end
@@ -147,16 +147,6 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 - (void)setWorkspaceQuitClosure:(base::RepeatingClosure)quit {
   _workspaceQuit = std::move(quit);
 }
-- (void)installExternalUrlEvents {
-  [[NSAppleEventManager sharedAppleEventManager]
-      setEventHandler:self
-          andSelector:@selector(handleExternalUrlEvent:reply:)
-        forEventClass:kInternetEventClass
-           andEventID:kAEGetURL];
-}
-- (void)applicationWillFinishLaunching:(NSNotification*)notification {
-  [self installExternalUrlEvents];
-}
 - (void)finishLaunching {
   [super finishLaunching];
   NSURL* iconURL = [NSBundle.mainBundle URLForResource:@"Zitter" withExtension:@"icns"];
@@ -173,20 +163,9 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
     LSRegisterURL((__bridge CFURLRef)bundle.bundleURL, true);
     [NSWorkspace.sharedWorkspace noteFileSystemChanged:bundle.bundlePath];
   }
-  if (self.delegate == self)
-    [self installExternalUrlEvents];
-}
-- (void)handleExternalUrlEvent:(NSAppleEventDescriptor*)event
-                         reply:(NSAppleEventDescriptor*)reply {
-  NSString* spec = [event paramDescriptorForKeyword:keyDirectObject].stringValue;
-  NSURL* url = spec ? [NSURL URLWithString:spec] : nil;
-  if (url)
-    [self application:self openURLs:@[ url ]];
 }
 - (void)setExternalUrlHandler:(base::RepeatingCallback<void(GURL)>)handler {
   _externalUrlHandler = std::move(handler);
-  if (_externalUrlHandler)
-    [self installExternalUrlEvents];
   for (auto& url : std::exchange(_pendingExternalUrls, {})) {
     if (_externalUrlHandler)
       _externalUrlHandler.Run(std::move(url));
@@ -748,6 +727,15 @@ std::unique_ptr<StagedMacUpdate> StageMacUpdate(const MacInstaller& installer,
         ![bundle.bundleIdentifier isEqualToString:@"dev.zitter.browser"]) {
       return nullptr;
     }
+    // The download can pass its quarantine metadata to the app mounted from
+    // the DMG. Once Gatekeeper and the installed app's signing requirement
+    // have verified the update, keep that metadata off the installed bundle.
+    // Otherwise Launch Services may open external URLs in a translocated copy.
+    if (removexattr(update->app.value().c_str(), "com.apple.quarantine", 0) != 0 &&
+        errno != ENOATTR) {
+      PLOG(ERROR) << "Could not prepare the verified update for installation";
+      return nullptr;
+    }
     return update;
   }
 }
@@ -1241,11 +1229,11 @@ class LabMainParts final : public content::BrowserMainParts,
     if (directory_.IsValid())
       (void)directory_.Delete();
     if (!restart.empty()) {
-      // Launch the executable of the verified installed bundle. Launch Services
-      // can translocate the quarantined bundle out of Applications.
-      const auto executable =
-          restart.AppendASCII("Contents").AppendASCII("MacOS").AppendASCII("Zitter Content Lab");
-      if (!base::LaunchProcess({executable.value()}, {}).IsValid())
+      // Launch Services must associate the new process with the installed
+      // bundle so later open-URL requests reach it. The old process is still
+      // exiting, so ask for a new application instance explicitly.
+      std::string output;
+      if (!base::GetAppOutput({"/usr/bin/open", "-n", "-a", restart.value()}, &output))
         LOG(ERROR) << "Could not relaunch Zitter after the update";
     }
   }

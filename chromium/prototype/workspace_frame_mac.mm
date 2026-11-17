@@ -1,9 +1,13 @@
 #include "chromium/prototype/workspace_frame_mac.h"
 
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 
+#include <algorithm>
+
 #include "components/remote_cocoa/common/native_widget_ns_window.mojom.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget.h"
@@ -99,14 +103,17 @@ void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dar
   if (![window.appearance.name isEqualToString:name]) window.appearance = [NSAppearance appearanceNamed:name];
 }
 
-bool SetWorkspacePanelMaterial(views::Widget* widget, bool enabled) {
+namespace {
+bool SetWorkspaceMaterial(views::Widget* widget, bool enabled,
+                          NSVisualEffectMaterial effect,
+                          const gfx::Insets& insets, int corner_radius) {
   NSWindow* window = widget->GetNativeWindow().GetNativeNSWindow();
   NSView* content = window.contentView;
   if (!content)
     return false;
   ZitterPanelMaterialView* material =
       objc_getAssociatedObject(content, kPanelMaterialKey);
-  if (!enabled || NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceTransparency) {
+  if (!enabled || !WorkspaceAllowsTransparency()) {
     [material removeFromSuperview];
     objc_setAssociatedObject(content, kPanelMaterialKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     return false;
@@ -114,13 +121,60 @@ bool SetWorkspacePanelMaterial(views::Widget* widget, bool enabled) {
   if (!material) {
     material = [[ZitterPanelMaterialView alloc] initWithFrame:content.bounds];
     material.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    material.material = NSVisualEffectMaterialHUDWindow;
     material.blendingMode = NSVisualEffectBlendingModeBehindWindow;
     material.state = NSVisualEffectStateActive;
     [content addSubview:material positioned:NSWindowBelow relativeTo:nil];
     objc_setAssociatedObject(content, kPanelMaterialKey, material, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
   }
+  material.material = effect;
+  const NSRect bounds = content.bounds;
+  material.frame = NSMakeRect(NSMinX(bounds) + insets.left(),
+                             NSMinY(bounds) + insets.bottom(),
+                             std::max<CGFloat>(0, NSWidth(bounds) - insets.width()),
+                             std::max<CGFloat>(0, NSHeight(bounds) - insets.height()));
+  if (corner_radius) {
+    material.wantsLayer = YES;
+    material.layer.cornerRadius = corner_radius;
+    material.layer.masksToBounds = YES;
+  }
   return true;
+}
+}  // namespace
+
+bool SetWorkspacePanelMaterial(views::Widget* widget, bool enabled) {
+  return SetWorkspaceMaterial(widget, enabled, NSVisualEffectMaterialHUDWindow,
+                              {}, 0);
+}
+
+bool SetWorkspaceMenuMaterial(views::Widget* widget, const gfx::Insets& insets,
+                              int corner_radius) {
+  return SetWorkspaceMaterial(widget, true, NSVisualEffectMaterialMenu, insets,
+                              corner_radius);
+}
+
+bool WorkspaceAllowsTransparency() {
+  return !NSWorkspace.sharedWorkspace.accessibilityDisplayShouldReduceTransparency;
+}
+
+bool SetWorkspaceSidebarMaterial(views::Widget* widget) {
+  return SetWorkspaceMaterial(widget, true, NSVisualEffectMaterialSidebar,
+                              {}, 12);
+}
+
+void SetWorkspaceSidebarMaterialOffset(views::Widget* widget, double offset) {
+  NSWindow* window = widget->GetNativeWindow().GetNativeNSWindow();
+  NSView* material = objc_getAssociatedObject(window.contentView, kPanelMaterialKey);
+  if (material) {
+    NSPoint origin = material.frame.origin;
+    origin.x = NSMinX(material.superview.bounds) + offset;
+    [material setFrameOrigin:origin];
+  }
+}
+
+bool SetWorkspaceAssistantMaterial(views::Widget* widget, bool enabled,
+                                   const gfx::Insets& insets, int corner_radius) {
+  return SetWorkspaceMaterial(widget, enabled, NSVisualEffectMaterialSidebar,
+                              insets, corner_radius);
 }
 
 views::NativeWidget* CreateWorkspaceNativeWidget(views::Widget* widget) {

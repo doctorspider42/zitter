@@ -4,6 +4,7 @@
 #include <optional>
 
 namespace gfx {
+class Insets;
 class Rect;
 }
 
@@ -18,6 +19,13 @@ namespace zitter::prototype {
 void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dark);
 // Install the native material behind the panel's composited contents.
 bool SetWorkspacePanelMaterial(views::Widget* widget, bool enabled);
+bool SetWorkspaceMenuMaterial(views::Widget* widget, const gfx::Insets& insets,
+                              int corner_radius);
+bool WorkspaceAllowsTransparency();
+bool SetWorkspaceSidebarMaterial(views::Widget* widget);
+void SetWorkspaceSidebarMaterialOffset(views::Widget* widget, double offset);
+bool SetWorkspaceAssistantMaterial(views::Widget* widget, bool enabled,
+                                   const gfx::Insets& insets, int corner_radius);
 views::NativeWidget* CreateWorkspaceNativeWidget(views::Widget* widget);
 // Centers the native traffic lights |center_y| points below the window top
 // and keeps them there across AppKit titlebar relayouts. Returns their union
