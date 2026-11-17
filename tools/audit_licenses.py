@@ -139,7 +139,7 @@ def main():
     parser.add_argument('--destination', type=Path, default=ROOT / 'build/license-audit/current')
     args = parser.parse_args()
     out, app, dest = args.out.resolve(), args.app.resolve(), args.destination.resolve()
-    src = ROOT / '.chromium/src'
+    src = (ROOT / '.chromium/src').resolve()
     dest.mkdir(parents=True, exist_ok=True)
     links = link_records(out)
     with tempfile.TemporaryDirectory(prefix='zitter-package-') as unpacked:
