@@ -1118,7 +1118,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
     base::CancelableTaskTracker::TaskId task = base::CancelableTaskTracker::kBadTaskId;
     std::vector<uint32_t> pixels;
   };
-  std::string favicon_profile_;
   std::pair<std::string, std::string> favicon_refresh_scope_;
   class FaviconDecoderObserver;
   std::unique_ptr<content::WebContents> favicon_refresh_page_;
@@ -1134,8 +1133,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PumpImportedFavicons();
   void StartImportedFaviconRefresh(std::string profile, std::set<GURL> urls, bool loaded);
   void FinishImportedFaviconRefresh();
-  std::map<GURL, CachedFavicon> cached_favicons_;
+  std::string favicon_cache_profile_;
+  std::map<std::string, std::map<GURL, CachedFavicon>> cached_favicons_;
   base::CancelableTaskTracker favicon_tasks_;
+  base::OneShotTimer favicon_refresh_timer_;
   base::CancelableTaskTracker address_history_tasks_;
   base::CancelableTaskTracker assistant_history_tasks_;
   base::CancelableTaskTracker history_removal_tasks_;

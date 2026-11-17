@@ -11580,14 +11580,18 @@ void WorkspaceLab::StartImportedFaviconRefresh(std::string profile,
               return;
             if (auto* service = lab->contexts_[owner - lab->profiles_.begin()]->GetFaviconService())
               service->SetFavicons({page}, icon, favicon_base::IconType::kFavicon, image);
-            if (lab->favicon_profile_ == profile) {
-              if (auto cached = lab->cached_favicons_.find(page); cached != lab->cached_favicons_.end()) {
-                lab->favicon_tasks_.TryCancel(cached->second.task);
+            if (auto cache = lab->cached_favicons_.find(profile);
+                cache != lab->cached_favicons_.end()) {
+              if (auto cached = cache->second.find(page);
+                  cached != cache->second.end()) {
+                if (cached->second.task != base::CancelableTaskTracker::kBadTaskId)
+                  lab->favicon_tasks_.TryCancel(cached->second.task);
                 cached->second.task = base::CancelableTaskTracker::kBadTaskId;
                 cached->second.pixels = FaviconPixels(image);
               }
-              lab->RefreshShell();
             }
+            if (lab->model_.active() && lab->model_.active()->profile_id == profile)
+              lab->RefreshShell();
           }, weak_factory_.GetWeakPtr(), std::move(profile)),
       base::BindPostTaskToCurrentDefault(base::BindOnce(
           &WorkspaceLab::FinishImportedFaviconRefresh, weak_factory_.GetWeakPtr())));
@@ -11684,7 +11688,7 @@ void WorkspaceLab::PublishWorkspaceFavicon(const GURL& url, const GURL& icon,
   }
   if (auto* service = WorkspaceProfile(active_index_)->GetFaviconService())
     service->SetFavicons({url}, icon, favicon_base::IconType::kFavicon, image);
-  auto& cached = cached_favicons_[url];
+  auto& cached = cached_favicons_[model_.active()->profile_id][url];
   if (cached.task != base::CancelableTaskTracker::kBadTaskId)
     favicon_tasks_.TryCancel(cached.task);
   cached.task = base::CancelableTaskTracker::kBadTaskId;
@@ -11698,12 +11702,24 @@ void WorkspaceLab::ReadCachedFavicons(prototype::ShellState& state,
       favicon_refresh_scope_ != std::pair(state.workspace_id, state.profile_id)) {
     FinishWorkspaceFaviconRefresh();
   }
-  if (favicon_profile_ != state.profile_id) {
-    favicon_tasks_.TryCancelAll();
-    cached_favicons_.clear();
-    favicon_profile_ = state.profile_id;
+  // Keep the last viewed workspace's icons in the two most recent profiles
+  // so switching back is immediate and inactive icons have a bounded cost.
+  if (favicon_cache_profile_ != state.profile_id) {
+    std::erase_if(cached_favicons_, [&](const auto& profile) {
+      if (profile.first == state.profile_id ||
+          profile.first == favicon_cache_profile_) {
+        return false;
+      }
+      for (const auto& [url, favicon] : profile.second) {
+        if (favicon.task != base::CancelableTaskTracker::kBadTaskId)
+          favicon_tasks_.TryCancel(favicon.task);
+      }
+      return true;
+    });
+    favicon_cache_profile_ = state.profile_id;
   }
-  std::erase_if(cached_favicons_, [&](const auto& entry) {
+  auto& cache = cached_favicons_[state.profile_id];
+  std::erase_if(cache, [&](const auto& entry) {
     if (urls.contains(entry.first) && !state.favicons.contains(entry.first.spec()))
       return false;
     if (entry.second.task != base::CancelableTaskTracker::kBadTaskId)
@@ -11716,7 +11732,7 @@ void WorkspaceLab::ReadCachedFavicons(prototype::ShellState& state,
   for (const auto& url : urls) {
     if (state.favicons.contains(url.spec()))
       continue;
-    auto [cached, created] = cached_favicons_.try_emplace(url);
+    auto [cached, created] = cache.try_emplace(url);
     if (!created) {
       if (!cached->second.pixels.empty())
         state.favicons[url.spec()] = cached->second.pixels;
@@ -11728,17 +11744,27 @@ void WorkspaceLab::ReadCachedFavicons(prototype::ShellState& state,
         url, base::BindOnce(
             [](base::WeakPtr<WorkspaceLab> lab, const std::string& profile,
                const GURL& url, const favicon_base::FaviconImageResult& result) {
-              if (!lab || lab->favicon_profile_ != profile)
+              if (!lab)
                 return;
-              auto cached = lab->cached_favicons_.find(url);
-              if (cached == lab->cached_favicons_.end())
+              auto cache = lab->cached_favicons_.find(profile);
+              if (cache == lab->cached_favicons_.end())
+                return;
+              auto cached = cache->second.find(url);
+              if (cached == cache->second.end())
                 return;
               cached->second.task = base::CancelableTaskTracker::kBadTaskId;
               cached->second.pixels = FaviconPixels(result.image);
-              if (!cached->second.pixels.empty())
-                lab->RefreshShell();
+              // History can return a burst of icons for deferred tabs and
+              // closed pins. Publish them in one shell update per frame.
+              if (!cached->second.pixels.empty() && lab->model_.active() &&
+                  lab->model_.active()->profile_id == profile &&
+                  !lab->favicon_refresh_timer_.IsRunning()) {
+                lab->favicon_refresh_timer_.Start(
+                    FROM_HERE, base::Milliseconds(16), lab.get(),
+                    &WorkspaceLab::RefreshShell);
+              }
             },
-            weak_factory_.GetWeakPtr(), favicon_profile_, url),
+            weak_factory_.GetWeakPtr(), state.profile_id, url),
         &favicon_tasks_);
   }
 }
@@ -11830,9 +11856,16 @@ bool WorkspaceLab::RunExternalCommand(std::string command) {
 }
 
 void WorkspaceLab::RefreshShell() {
-  NoteActiveTab();
   if (!web_contents() || !model_.active())
     return;
+  // Showing a deferred tab can synchronously notify DidStartLoading while
+  // WorkspaceController::Activate is still committing the model selection.
+  // Wait for the caller's refresh to publish the new tab and pin tree under
+  // the correct workspace ID.
+  if (model_.active()->id != model_.workspaces()[active_index_].id)
+    return;
+  NoteActiveTab();
+  favicon_refresh_timer_.Stop();
 #if BUILDFLAG(IS_WIN)
   if (!private_owner_ && !session_path_.empty()) {
     std::vector<std::pair<std::string, std::string>> listed;
@@ -13367,7 +13400,14 @@ void WorkspaceLab::AdvanceSessionProbe() {
       return;
     }
     if (!sleep_probe) {
+      const auto pin_builds = shell_->pinned_list_build_count();
       SelectWorkspace(std::string(kWorkspaceIds[0]));
+      if (command->GetSwitchValueASCII("zitter-content-favicon-probe") ==
+              "cached" &&
+          shell_->pinned_list_build_count() != pin_builds + 1) {
+        LOG(ERROR) << "The first Work activation rebuilt Personal's pin tree";
+        Finish(false);
+      }
     } else if (!SubmitProbeCommand(u"> wake Work", "select_space", kWorkspaceIds[0])) {
       LOG(ERROR) << "Command Center could not wake Work";
       Finish(false);
@@ -20358,6 +20398,23 @@ void WorkspaceLab::CheckFaviconProbe(size_t profile, base::TimeTicks deadline,
       CheckFaviconProbe(1, deadline);
       return;
     } else {
+      if (!phase.empty()) {
+        // The same URL has a different icon in each profile. Both icons
+        // must be available immediately when returning to a warmed profile.
+        const uint32_t work_color =
+            phase == "refresh" || phase == "refreshed" ? 0xff707070u : kColors[0];
+        SelectWorkspace(std::string(kWorkspaceIds[0]));
+        const bool work_cached =
+            active_index_ == 0 &&
+            shell_->favicon_pixel_for_testing(pin_url.spec()) == work_color;
+        SelectWorkspace(std::string(kWorkspaceIds[1]));
+        if (!work_cached || active_index_ != 1 ||
+            shell_->favicon_pixel_for_testing(pin_url.spec()) != kColors[1]) {
+          LOG(ERROR) << "Changing profiles dropped or mixed cached pin favicons";
+          Finish(false);
+          return;
+        }
+      }
       std::puts("Zitter Content verified profile tab favicons");
       RequestClose();
       return;
