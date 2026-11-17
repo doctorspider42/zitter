@@ -15,6 +15,8 @@ void UpdateWorkspaceMenuShortcuts(const std::vector<Shortcut>& shortcuts);
 void InstallWorkspaceKeyboardRouting(views::Widget* widget, bool panel = false);
 // Opens the system Emoji & Symbols viewer; it types into the focused field.
 void ShowCharacterPalette();
+// Whether Control is held right now (NSEvent.modifierFlags).
+bool WorkspaceControlKeyDown();
 }
 
 #endif

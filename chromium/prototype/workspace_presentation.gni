@@ -49,6 +49,8 @@ workspace_presentation_sources = [
   "chromium/prototype/sidebar_raster.cc",
   "chromium/prototype/sidebar_tree.cc",
   "chromium/prototype/sidebar_tree.h",
+  "chromium/prototype/tab_switcher_view.cc",
+  "chromium/prototype/tab_switcher_view.h",
   "chromium/prototype/time_machine_view.cc",
   "chromium/prototype/time_machine_view.h",
   "chromium/prototype/toolbar_menu.cc",

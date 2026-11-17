@@ -299,6 +299,13 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool WorkspaceHasCapture(size_t workspace) const;
   struct Tab;
   void SelectTab(size_t index);
+  // Ctrl+Tab: the switcher over the active workspace's tabs, most recently
+  // used first (tab_switcher_view.h).
+  void OpenTabSwitcher(bool backwards);
+  // Stamps the tab that was on screen when another one takes its place.
+  void NoteActiveTab();
+  // Keeps a picture of the tab's page for the switcher (asynchronously).
+  void CaptureTabThumbnail(size_t index);
   bool DuplicateTab(size_t index);
   bool TabMuted(size_t index) const;
   void SetTabMuted(size_t index, bool muted);
@@ -1255,6 +1262,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
   base::OnceCallback<void(bool)> pending_extension_tab_removal_;
   base::ProcessId work_renderer_ = base::kNullProcessId;
   base::OnceCallback<void(bool)> done_;
+  // When each tab (by id) was last left, and the page as it looked then.
+  std::map<uint64_t, base::Time> tab_left_at_;
+  std::map<uint64_t, gfx::ImageSkia> tab_thumbnails_;
+  uint64_t shown_tab_id_ = 0;
   base::WeakPtrFactory<WorkspaceLab> weak_factory_{this};
 };
 

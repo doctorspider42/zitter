@@ -15,6 +15,7 @@
 #include "chromium/prototype/sidebar_layout.h"
 #include "chromium/prototype/browser_tools.h"
 #include "chromium/prototype/print_options.h"
+#include "chromium/prototype/tab_switcher_view.h"
 #include <optional>
 #include <string>
 #include <string_view>
@@ -594,6 +595,16 @@ class WorkspaceShell final : public ui::EventHandler,
   bool time_machine_enabled() const { return time_machine_enabled_; }
   // The full-window Time Machine view of the active workspace.
   void OpenTimeMachine();
+  // Ctrl+Tab: a switch over `cards` (the current tab first, then the most
+  // recently used) starting at `selected`. `done` gets the chosen tab id, or
+  // nullopt when the switch was dismissed.
+  void OpenTabSwitcher(std::vector<TabSwitcherView::Card> cards, int selected,
+                       base::OnceCallback<void(std::optional<uint64_t>)> done);
+  void StepTabSwitcher(bool backwards);
+  void SetTabSwitcherThumbnail(uint64_t id, const gfx::ImageSkia& image);
+  bool tab_switcher_active() const;
+  TabSwitcherView* tab_switcher_for_testing() const { return tab_switcher_; }
+  views::Widget* tab_switcher_widget_for_testing() const { return tab_switcher_widget_.get(); }
   bool time_machine_visible() const;
   TimeMachineView* time_machine_for_testing() const { return time_machine_; }
   void SetWorkspaceNames(bool shown);
@@ -987,6 +998,8 @@ class WorkspaceShell final : public ui::EventHandler,
                          std::u16string title,
                          bool activatable = true);
   void CreateTimeMachinePanel();
+  void CreateTabSwitcherPanel();
+  void FinishTabSwitcher(std::optional<uint64_t> id);
   void CreateToolsPanel();
   void PositionPanels();
   void PositionPreferencesTab();
@@ -1467,6 +1480,10 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<TimeMachineView> time_machine_ = nullptr;
   std::unique_ptr<views::WidgetDelegate> time_machine_delegate_;
   std::unique_ptr<views::Widget> time_machine_widget_;
+  raw_ptr<TabSwitcherView> tab_switcher_ = nullptr;
+  std::unique_ptr<views::WidgetDelegate> tab_switcher_delegate_;
+  std::unique_ptr<views::Widget> tab_switcher_widget_;
+  base::OnceCallback<void(std::optional<uint64_t>)> tab_switcher_done_;
   bool workspace_names_ = true;
   bool folders_collapsed_ = true;
   std::set<std::string> general_dirty_;

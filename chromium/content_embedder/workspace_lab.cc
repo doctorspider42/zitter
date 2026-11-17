@@ -163,6 +163,7 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_service_factory.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "content/public/browser/network_service_instance.h"
 #include "net/dns/public/dns_over_https_config.h"
 #include "net/dns/public/insecure_dns_mode.h"
@@ -4547,11 +4548,14 @@ bool WorkspaceLab::RunShortcut(std::string id) {
     else
       CloseTab(selected_[active_index_]);
   } else if (id == "next_tab" || id == "previous_tab") {
-    const size_t count = tabs_[active_index_].size();
-    if (count < 2)
+    // Held Ctrl keeps the switcher open: each Tab moves its selection.
+    if (shell_->tab_switcher_active()) {
+      shell_->StepTabSwitcher(id == "previous_tab");
+      return true;
+    }
+    if (tabs_[active_index_].size() < 2)
       return false;
-    SelectTab(shell_->CycleSidebarTab(selected_[active_index_], count,
-                                      id == "previous_tab"));
+    OpenTabSwitcher(id == "previous_tab");
   } else if (id.starts_with("tab") && id.size() == 4 &&
              id.back() >= '1' && id.back() <= '9') {
     const size_t index = id.back() - '1';
@@ -10718,11 +10722,110 @@ void WorkspaceLab::SelectTab(size_t index) {
     return;
   if (selected_[active_index_] != index) {
     ExitPageFullscreen();
+    CaptureTabThumbnail(selected_[active_index_]);
     selected_[active_index_] = index;
     ShowTab();
   }
   RefreshShell();
   if (!shell_->FocusPreferencesTab()) tabs[index].view->RequestFocus();
+}
+
+void WorkspaceLab::NoteActiveTab() {
+  const auto& tabs = tabs_[active_index_];
+  if (tabs.empty())
+    return;
+  const uint64_t id = tabs[std::min(selected_[active_index_], tabs.size() - 1)].id;
+  if (id == shown_tab_id_)
+    return;
+  const base::Time now = base::Time::Now();
+  if (shown_tab_id_)
+    tab_left_at_[shown_tab_id_] = now;
+  shown_tab_id_ = id;
+  tab_left_at_[id] = now;
+}
+
+void WorkspaceLab::CaptureTabThumbnail(size_t index) {
+  const auto& tabs = tabs_[active_index_];
+  if (smoke_ || index >= tabs.size() || !tabs[index].view->GetVisible())
+    return;
+  auto* page = tabs[index].view->web_contents();
+  auto* view = page ? page->GetRenderWidgetHostView() : nullptr;
+  if (!view)
+    return;
+  const gfx::Size size = view->GetViewBounds().size();
+  if (size.IsEmpty())
+    return;
+  // Enough pixels for the front card on a large, dense screen.
+  const int width = std::min(1200, static_cast<int>(size.width() * view->GetDeviceScaleFactor()));
+  const gfx::Size output(width, std::max(1, size.height() * width / size.width()));
+  view->CopyFromSurface(gfx::Rect(), output, base::Seconds(2), base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab, uint64_t id, const content::CopyFromSurfaceResult& result) {
+        if (!lab || !result.has_value() || result->bitmap.drawsNothing())
+          return;
+        auto image = gfx::ImageSkia::CreateFrom1xBitmap(result->bitmap);
+        lab->tab_thumbnails_[id] = image;
+        lab->shell_->SetTabSwitcherThumbnail(id, image);
+        // Forget the pictures of tabs that are gone.
+        if (lab->tab_thumbnails_.size() > 48) {
+          std::set<uint64_t> open;
+          for (const auto& workspace : lab->tabs_)
+            for (const auto& tab : workspace) open.insert(tab.id);
+          std::erase_if(lab->tab_thumbnails_, [&](const auto& item) { return !open.contains(item.first); });
+          std::erase_if(lab->tab_left_at_, [&](const auto& item) { return !open.contains(item.first); });
+        }
+      }, weak_factory_.GetWeakPtr(), tabs[index].id));
+}
+
+void WorkspaceLab::OpenTabSwitcher(bool backwards) {
+  NoteActiveTab();
+  const auto& tabs = tabs_[active_index_];
+  const size_t current = std::min(selected_[active_index_], tabs.size() - 1);
+  std::vector<size_t> order;
+  for (size_t index = 0; index < tabs.size(); ++index)
+    if (index != current) order.push_back(index);
+  // Most recently left first; tabs never shown keep their sidebar order after them.
+  auto left = [&](size_t index) {
+    const auto it = tab_left_at_.find(tabs[index].id);
+    return it == tab_left_at_.end() ? base::Time() : it->second;
+  };
+  std::ranges::stable_sort(order, [&](size_t a, size_t b) { return left(a) > left(b); });
+  order.insert(order.begin(), current);
+  std::vector<prototype::TabSwitcherView::Card> cards;
+  for (size_t index : order) {
+    const auto& tab = tabs[index];
+    auto* page = tab.view->web_contents();
+    prototype::TabSwitcherView::Card card;
+    card.id = tab.id;
+    card.url = TabUrl(index, {});
+    card.title = !tab.custom_title.empty() ? tab.custom_title
+        : prototype::IsSettingsTabUrl(card.url) ? prototype::T(u"Preferencje")
+        : prototype::IsRssTabUrl(card.url) ? prototype::T(u"Czytnik RSS")
+        : page && !page->GetTitle().empty() ? page->GetTitle()
+                                          : tab.deferred_title;
+    if (card.title.empty() && card.url.host().empty())
+      card.title = prototype::T(u"Nowa karta");
+    if (const auto it = tab_thumbnails_.find(tab.id); it != tab_thumbnails_.end())
+      card.thumbnail = it->second;
+    if (index != current)
+      card.used = left(index);
+    cards.push_back(std::move(card));
+  }
+  // The page as it is now, for the card of the current tab.
+  CaptureTabThumbnail(current);
+  const int selected = backwards ? static_cast<int>(cards.size()) - 1 : 1;
+  shell_->OpenTabSwitcher(std::move(cards), selected, base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab, std::string workspace, std::optional<uint64_t> id) {
+        if (!lab || lab->model_.active()->id != workspace)
+          return;
+        const auto& tabs = lab->tabs_[lab->active_index_];
+        size_t index = lab->selected_[lab->active_index_];
+        if (id) {
+          const auto it = std::ranges::find(tabs, *id, &Tab::id);
+          if (it != tabs.end())
+            index = it - tabs.begin();
+        }
+        lab->SelectTab(index);
+      }, weak_factory_.GetWeakPtr(), model_.active()->id));
 }
 
 bool WorkspaceLab::TabMuted(size_t index) const {
@@ -11679,6 +11782,7 @@ bool WorkspaceLab::RunExternalCommand(std::string command) {
 }
 
 void WorkspaceLab::RefreshShell() {
+  NoteActiveTab();
   if (!web_contents() || !model_.active())
     return;
 #if BUILDFLAG(IS_WIN)

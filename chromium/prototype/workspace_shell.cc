@@ -18,6 +18,7 @@
 #include "url/origin.h"
 #include "chromium/prototype/assistant_providers.h"
 #include "chromium/prototype/assistant_visuals.h"
+#include "chromium/prototype/tab_switcher_view.h"
 #include "chromium/prototype/time_machine_view.h"
 #include "chromium/prototype/i18n.h"
 
@@ -175,6 +176,8 @@
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #include "chromium/prototype/workspace_frame_mac.h"
 #elif BUILDFLAG(IS_WIN)
+#include <windows.h>
+
 #include "base/win/windows_version.h"
 #include "chromium/prototype/workspace_frame_win.h"
 #endif
@@ -5598,7 +5601,7 @@ void WorkspaceShell::Detach() {
   accelerator_target_ = nullptr;
   ResetToolsForm();
   widget_->RemoveObserver(this);
-  for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()})
+  for (auto* panel : {sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get(), tab_switcher_widget_.get()})
     if (panel) panel->RemoveObserver(this);
   search_timer_.Stop();
   ResetOnlineSuggestions();
@@ -5703,6 +5706,7 @@ void WorkspaceShell::Detach() {
   theme_picker_ = nullptr; search_engine_picker_ = nullptr;
   time_machine_check_ = nullptr; time_machine_days_picker_ = nullptr; time_machine_ = nullptr;
   time_machine_widget_.reset(); time_machine_delegate_.reset();
+  tab_switcher_ = nullptr; tab_switcher_widget_.reset(); tab_switcher_delegate_.reset();
   sidebar_check_ = nullptr; animations_check_ = nullptr; workspace_names_check_ = nullptr; folders_collapsed_check_ = nullptr; language_picker_ = nullptr;
   shortcut_search_ = nullptr; shortcut_list_ = nullptr; tools_tabs_ = nullptr; tools_toolbar_ = nullptr; tools_footer_ = nullptr; tools_footer_action_ = nullptr;
   shortcut_keycaps_.clear(); shortcut_chips_.clear(); gesture_pickers_.clear();
@@ -9901,7 +9905,7 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
   if (theme_mode_ != ThemeMode::kSystem) mode = theme_mode_ == ThemeMode::kDark
       ? ui::ColorProviderKey::ColorMode::kDark : ui::ColorProviderKey::ColorMode::kLight;
   for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(),
-       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get(), pin_url_dialog_.get(), about_dialog_.get()}) {
+       profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get(), tab_switcher_widget_.get(), pin_url_dialog_.get(), about_dialog_.get()}) {
     if (!panel) continue;
     if (panel->color_mode_override() != mode) {
       panel->SetColorModeOverride(mode);
@@ -12554,6 +12558,7 @@ void WorkspaceShell::PositionPanels() {
   SetWidgetBounds(sidebar_widget_.get(),sidebar_bounds);
   if(scrim_widget_)SetWidgetBounds(scrim_widget_.get(),bounds);
   if(time_machine_widget_)SetWidgetBounds(time_machine_widget_.get(),bounds);
+  if(tab_switcher_widget_)SetWidgetBounds(tab_switcher_widget_.get(),bounds);
   if(toast_widget_&&toast_widget_->IsVisible())PositionToast();
   if (web_notification_widget_ && web_notification_widget_->IsVisible())
     PositionWebNotifications();
@@ -12631,7 +12636,7 @@ void WorkspaceShell::RefreshKeyRegistrations() {
 #if BUILDFLAG(IS_MAC)
   UpdateWorkspaceMenuShortcuts(tools_.shortcuts);
 #endif
-  for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get()}) {
+  for (auto* panel : {widget_.get(), sidebar_widget_.get(), address_widget_.get(), settings_widget_.get(), profiles_widget_.get(), import_widget_.get(), peek_widget_.get(), general_widget_.get(), tools_widget_.get(), time_machine_widget_.get(), tab_switcher_widget_.get()}) {
     if (!panel) continue;
     panel->GetFocusManager()->UnregisterAccelerators(accelerator_target_);
     RegisterKeys(panel, accelerator_target_, tools_, panel != widget_, false);
@@ -12986,6 +12991,76 @@ void WorkspaceShell::OpenTimeMachine() {
   if (sidebar_visible()) time_machine_widget_->StackAboveWidget(sidebar_widget_.get());
   time_machine_->axis_for_testing()->RequestFocus();
 }
+namespace {
+// Whether Ctrl is held right now, read from the system rather than from events:
+// the switcher may take the keyboard after a quick tap was already released.
+bool ControlKeyDown() {
+#if BUILDFLAG(IS_WIN)
+  return (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+#elif BUILDFLAG(IS_MAC)
+  return WorkspaceControlKeyDown();
+#else
+  return true;
+#endif
+}
+}  // namespace
+
+void WorkspaceShell::CreateTabSwitcherPanel() {
+  auto weak = weak_factory_.GetWeakPtr();
+  TabSwitcherView::Host host;
+  host.palette = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    return shell && shell->tab_switcher_ ? Palette(shell->tab_switcher_.get())
+                                         : sidebar::design_palette(true, kDefaultWorkspaceColor);
+  }, weak);
+  host.animations = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    return shell && shell->workspace_animations_ && !gfx::Animation::PrefersReducedMotion();
+  }, weak);
+  host.modifier_down = base::BindRepeating(&ControlKeyDown);
+  host.done = base::BindRepeating(&WorkspaceShell::FinishTabSwitcher, weak);
+  auto view = std::make_unique<TabSwitcherView>(std::move(host));
+  tab_switcher_ = view.get();
+  CreatePanelWidget(std::move(view), tab_switcher_delegate_, tab_switcher_widget_,
+                    T(u"Zitter — przełączanie kart"));
+}
+
+void WorkspaceShell::OpenTabSwitcher(std::vector<TabSwitcherView::Card> cards, int selected,
+                                     base::OnceCallback<void(std::optional<uint64_t>)> done) {
+  if (!widget_ || cards.size() < 2) { std::move(done).Run(std::nullopt); return; }
+  if (tab_switcher_active()) tab_switcher_->Cancel();
+  CloseOverlays(true);
+  if (!tab_switcher_widget_) CreateTabSwitcherPanel();
+  tab_switcher_done_ = std::move(done);
+  for (auto& card : cards) {
+    if (!card.favicon.empty()) continue;
+    if (const auto icon = state_.favicons.find(card.url.spec()); icon != state_.favicons.end())
+      card.favicon = icon->second;
+  }
+  PositionPanels(); ApplyTheme();
+  // The panel takes the keyboard at once, transparent, so Ctrl's release lands
+  // on it; it shows itself only once the key is held past the tap delay.
+  tab_switcher_->Open(std::move(cards), selected);
+  tab_switcher_widget_->Show(); tab_switcher_widget_->Activate();
+  tab_switcher_widget_->StackAtTop();
+  tab_switcher_->RequestFocus();
+}
+
+void WorkspaceShell::StepTabSwitcher(bool backwards) {
+  if (tab_switcher_active()) tab_switcher_->Step(backwards);
+}
+
+void WorkspaceShell::SetTabSwitcherThumbnail(uint64_t id, const gfx::ImageSkia& image) {
+  if (tab_switcher_) tab_switcher_->SetThumbnail(id, image);
+}
+
+bool WorkspaceShell::tab_switcher_active() const { return tab_switcher_ && tab_switcher_->active(); }
+
+void WorkspaceShell::FinishTabSwitcher(std::optional<uint64_t> id) {
+  if (tab_switcher_widget_) tab_switcher_widget_->Hide();
+  auto done = std::move(tab_switcher_done_);
+  if (done) std::move(done).Run(id);
+  else RestorePageFocus();
+}
+
 bool WorkspaceShell::time_machine_visible() const { return time_machine_widget_ && time_machine_widget_->IsVisible(); }
 void WorkspaceShell::OpenTools(int page, bool return_to_settings) {
   if (page == 0) { OpenTimeMachine(); return; }
@@ -14208,6 +14283,7 @@ bool WorkspaceShell::CloseOverlays(bool keep_sidebar) {
   CloseSitePanel();
   if (tools_widget_) tools_widget_->Hide();
   if (time_machine_widget_) time_machine_widget_->Hide();
+  if (tab_switcher_active()) tab_switcher_->Cancel();
   SetShortcutRecording(false);
   if (!callbacks_.open_preferences_tab && general_widget_) general_widget_->Hide();
   if (profiles_widget_) profiles_widget_->Hide();
@@ -17725,6 +17801,14 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
         }, weak_factory_.GetWeakPtr()));
   }
   if (widget == settings_widget_.get()) settings_widget_->Hide();
+  // Leaving the switcher for another app or window keeps the tab you were on.
+  if (widget == tab_switcher_widget_.get() && tab_switcher_active()) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
+        base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+          if (shell && shell->tab_switcher_active() && !shell->tab_switcher_widget_->IsActive())
+            shell->tab_switcher_->Cancel();
+        }, weak_factory_.GetWeakPtr()));
+  }
   if(widget==sidebar_widget_.get()) {
     if (web_drawer_ || (site_panel_ && site_panel_->IsVisible())) return;
     bool hide=!pinned_&&!settings_visible();
@@ -17762,6 +17846,7 @@ void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visib
     if (general_widget_) general_widget_->Hide();
     if (tools_widget_) tools_widget_->Hide();
     if (time_machine_widget_) time_machine_widget_->Hide();
+    if (tab_switcher_active()) tab_switcher_->Cancel();
   } else if (widget == widget_ && visible && pinned_) ShowSidebar();
 }
 // The workspace color of `view`'s window, for panels built outside this file.

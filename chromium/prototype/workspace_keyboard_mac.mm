@@ -164,5 +164,8 @@ void InstallWorkspaceKeyboardRouting(views::Widget* widget, bool panel) {
 void ShowCharacterPalette() {
   [NSApp orderFrontCharacterPalette:nil];
 }
+bool WorkspaceControlKeyDown() {
+  return (NSEvent.modifierFlags & NSEventModifierFlagControl) != 0;
+}
 
 }
