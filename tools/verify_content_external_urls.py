@@ -15,6 +15,7 @@ from threading import Event, Thread
 import time
 
 from content_file_keychain_fixture import compile_file_keychain_fixture, file_keychain_environment
+from forget_dev_apps import forget_copy
 from notarize_app import verify_nested_signatures
 from macos_signing import BUNDLE_ID
 from package_dmg import verify_app
@@ -297,8 +298,11 @@ def main():
                 )
                 path.write_bytes(plistlib.dumps(info))
         seal_local_copy(app)
-        verify_urls(app, profile, staging, compile_file_keychain_fixture(staging),
-                    arguments=args.arguments, apple_event=args.apple_event, https=args.https)
+        try:
+            verify_urls(app, profile, staging, compile_file_keychain_fixture(staging),
+                        arguments=args.arguments, apple_event=args.apple_event, https=args.https)
+        finally:
+            forget_copy(app)
 
 
 if __name__ == "__main__":

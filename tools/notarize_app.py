@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 
+from forget_dev_apps import forget_copy
 from macos_signing import BUNDLE_ID, sign_bundle, signing_identity
 
 
@@ -329,6 +330,9 @@ def main():
     source, destination = args.app.resolve(), args.destination.resolve()
     if destination == source or source in destination.parents or destination in source.parents:
         parser.error("Source app and working destination must not contain each other")
+    name = "Zitter.app" if args.content_release or not (
+        args.content_version or args.submit_content_candidate) else CONTENT_APP_NAME
+    candidate = destination / "work" / name
     try:
         state_path = destination / "notarization-state.json"
         if state_path.exists():
@@ -358,8 +362,7 @@ def main():
             state["submission_id"] = args.submission_id
             save(state_path, state)
         if args.prepare_only:
-            name = CONTENT_APP_NAME if args.content_version is not None and not args.content_release else "Zitter.app"
-            print(f"Prepared Hardened Runtime app: {destination / 'work' / name}")
+            print(f"Prepared Hardened Runtime app: {candidate}")
             return 0
         if state["status"] == "Complete":
             output = destination / state["artifact"]
@@ -373,6 +376,10 @@ def main():
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr, file=sys.stderr)
         return 1
+    finally:
+        # Signing and Gatekeeper checks can register the staged browser.
+        if candidate.is_dir() and not candidate.is_symlink():
+            forget_copy(candidate)
 
 
 if __name__ == "__main__":

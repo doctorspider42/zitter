@@ -193,7 +193,8 @@ development markers, signs all nested code with Hardened Runtime and a timestamp
 then writes `submission.zip` and `notarization-state.json`. The source must
 already include its license notices. Use `--sign-identity` only to deliberately
 select another configured certificate. No signing credentials are written to
-the state file.
+the state file. The tool unregisters the staged bundle from Launch Services
+when it exits so the copy does not appear in the default browser picker.
 
 Every physical Mach-O path is signed and checked for Developer ID, secure
 timestamp and Hardened Runtime, including duplicate hard-linked library copies.

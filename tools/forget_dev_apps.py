@@ -30,6 +30,13 @@ def registered_copies(dump):
     return sorted(copies)
 
 
+def forget_copy(path):
+    """Unregister a staged bundle without changing its files or signature."""
+    if str(path) in KEEP:
+        return
+    subprocess.run([LSREGISTER, "-u", path], capture_output=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="List the copies without removing them")
@@ -43,7 +50,7 @@ def main():
         if options.dry_run:
             print(path)
         else:
-            subprocess.run([LSREGISTER, "-u", path], capture_output=True)
+            forget_copy(path)
     if not options.dry_run and copies:
         print(f"Removed {len(copies)} development copies of Zitter from Launch Services")
     return 0
