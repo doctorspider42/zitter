@@ -12118,13 +12118,15 @@ void WorkspaceShell::BuildSitePage(){
         views::Button::PressedCallback()));
     site_body_->AddChildView(std::make_unique<SceneHairline>());
     PanelText(site_body_, T(u"Dane witryny"), kTitleText, kInk);
-    for (bool cookies : {true, false}) {
+    {
       auto* row = site_body_->AddChildView(std::make_unique<views::View>());
-      auto* label = PanelText(row, cookies ? T(u"Ciasteczka") : u"Local storage",
-                              kBodyText, kInk);
+      auto* label = PanelText(
+          row, TF(u"Ciasteczka, pamięć i pamięć podręczna {} oraz jej subdomen",
+                  {site_handlers_.data_domain}),
+          kBodyText, kInk);
       row->AddChildView(std::make_unique<SceneDangerPill>(
-          base::BindRepeating(&WorkspaceShell::ConfirmSiteStorageClear, weak, cookies),
-          T(u"Wyczyść"), cookies ? T(u"Wyczyść ciasteczka") : T(u"Wyczyść local storage")));
+          base::BindRepeating(&WorkspaceShell::ConfirmSiteStorageClear, weak),
+          T(u"Wyczyść"), TF(u"Wyczyść dane {}", {site_handlers_.data_domain})));
       SetSidebarPanelLayout(row, false, gfx::Insets(), 12, label, true);
     }
     site_body_->AddChildView(std::make_unique<SceneHairline>());
@@ -12218,27 +12220,27 @@ void WorkspaceShell::SwitchSiteSettings(bool full) {
           }, weak_factory_.GetWeakPtr(), site_generation_, full));
 }
 
-void WorkspaceShell::ConfirmSiteStorageClear(bool cookies) {
+void WorkspaceShell::ConfirmSiteStorageClear() {
   if (!site_settings_page_ || !site_handlers_.clear_storage)
     return;
   ConfirmDanger(
-      widget_, cookies ? T(u"Wyczyścić ciasteczka?") : T(u"Wyczyścić local storage?"),
+      widget_, TF(u"Wyczyścić dane {}?", {site_handlers_.data_domain}),
       TF(u"{} · Profil: {}", {site_summary_.host, site_handlers_.profile_name}),
-      cookies ? T(u"Usunięcie ciasteczek może Cię wylogować.")
-              : T(u"Witryna może utracić lokalne dane i preferencje."),
+      TF(u"Usuniesz ciasteczka, pamięć stron i pamięć podręczną {} oraz wszystkich jej subdomen. Witryna może Cię wylogować i zapomnieć Twoje wybory.",
+         {site_handlers_.data_domain}),
       T(u"Wyczyść"),
       base::BindOnce(
-          [](base::WeakPtr<WorkspaceShell> shell, uint64_t generation, bool cookies, bool accepted) {
+          [](base::WeakPtr<WorkspaceShell> shell, uint64_t generation, bool accepted) {
             if (!accepted || !shell || !shell->site_settings_page_ ||
                 shell->site_generation_ != generation)
               return;
             auto clear = shell->site_handlers_.clear_storage;
-            clear.Run(cookies, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
+            clear.Run(base::BindOnce([](base::WeakPtr<WorkspaceShell> shell, bool ok) {
               if (shell)
                 shell->ShowToast(ok ? T(u"Dane witryny wyczyszczone")
                                     : T(u"Nie udało się wyczyścić danych witryny"), {}, {});
             }, shell));
-          }, weak_factory_.GetWeakPtr(), site_generation_, cookies));
+          }, weak_factory_.GetWeakPtr(), site_generation_));
 }
 
 void WorkspaceShell::ShowSiteData(bool data){

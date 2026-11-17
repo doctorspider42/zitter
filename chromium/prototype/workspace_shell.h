@@ -854,7 +854,9 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<void(SiteClearChoice)> clear;
     base::RepeatingCallback<void(SiteCookie)> delete_cookie;
     std::u16string profile_name;
-    base::RepeatingCallback<void(bool, base::OnceCallback<void(bool)>)> clear_storage;
+    // The site whose data clear_storage removes, with all its subdomains.
+    std::u16string data_domain;
+    base::RepeatingCallback<void(base::OnceCallback<void(bool)>)> clear_storage;
   };
   void ToggleSitePanel();
   void ShowSitePanel(SiteSummary summary, SiteHandlers handlers, bool full = false);
@@ -1554,7 +1556,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void BuildSitePage();
   void PlaceSitePanel();
   void SwitchSiteSettings(bool full);
-  void ConfirmSiteStorageClear(bool cookies);
+  void ConfirmSiteStorageClear();
   raw_ptr<views::View> site_settings_page_ = nullptr;
   void ApplySiteFacts(const SiteDataFacts& facts);
   void OpenSitePermissionMenu(size_t row);

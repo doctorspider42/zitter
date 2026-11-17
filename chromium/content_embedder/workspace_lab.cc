@@ -66,6 +66,7 @@
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
+#include "base/scoped_observation.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/strcat.h"
@@ -114,6 +115,8 @@
 #include "components/crx_file/id_util.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browsing_data_filter_builder.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/context_menu_params.h"
 #include "third_party/blink/public/common/context_menu_data/edit_flags.h"
@@ -1677,6 +1680,62 @@ namespace {
 constexpr std::u16string_view kUnfilteredDnrProbeTitle =
     u"allow,allow,allow,allow,allow,original,original/original,allow,allow,"
     u"original,original/original";
+
+// Answers the remover's one reply, then deletes itself. The remover only
+// notifies registered observers, so it registers before the task starts.
+class SiteStorageReply final : public content::BrowsingDataRemover::Observer {
+ public:
+  SiteStorageReply(content::BrowsingDataRemover* remover,
+                   base::OnceCallback<void(bool)> done)
+      : done_(std::move(done)) {
+    observation_.Observe(remover);
+  }
+  void OnBrowsingDataRemoverDone(uint64_t failed_data_types) override {
+    auto done = std::move(done_);
+    delete this;
+    std::move(done).Run(!failed_data_types);
+  }
+
+ private:
+  base::OnceCallback<void(bool)> done_;
+  base::ScopedObservation<content::BrowsingDataRemover,
+                          content::BrowsingDataRemover::Observer>
+      observation_{this};
+};
+
+// Clears everything the page's site keeps in its storage partition: cookies,
+// local storage, IndexedDB, Cache Storage, service workers, the HTTP cache and
+// media licenses, for the registrable domain and every subdomain, plus what
+// other sites stored while embedded in it.
+void ClearSiteStorage(const content::WeakDocumentPtr& document,
+                      base::OnceCallback<void(bool)> done) {
+  using Remover = content::BrowsingDataRemover;
+  auto* frame = document.AsRenderFrameHostIfValid();
+  if (!frame || !frame->IsActive() || !frame->IsInPrimaryMainFrame() ||
+      !frame->GetLastCommittedOrigin().GetURL().SchemeIsHTTPOrHTTPS()) {
+    std::move(done).Run(false);
+    return;
+  }
+  auto filter = content::BrowsingDataFilterBuilder::Create(
+      content::BrowsingDataFilterBuilder::Mode::kDelete);
+  filter->AddRegisterableDomain(
+      prototype::SiteDataDomain(frame->GetLastCommittedOrigin()));
+  uint64_t mask = Remover::DATA_TYPE_COOKIES | Remover::DATA_TYPE_DOM_STORAGE |
+                  Remover::DATA_TYPE_CACHE | Remover::DATA_TYPE_MEDIA_LICENSES |
+                  Remover::DATA_TYPE_DEVICE_BOUND_SESSIONS;
+  // The remover reaches a non-default partition only when told to, and then
+  // only for the types kept in that partition.
+  if (const auto config = frame->GetStoragePartition()->GetConfig();
+      !config.is_default()) {
+    filter->SetStoragePartitionConfig(config);
+    mask &= Remover::DATA_TYPE_ON_STORAGE_PARTITION;
+  }
+  auto* remover = frame->GetBrowserContext()->GetBrowsingDataRemover();
+  remover->RemoveWithFilterAndReply(
+      base::Time(), base::Time::Max(), mask,
+      Remover::ORIGIN_TYPE_UNPROTECTED_WEB | Remover::ORIGIN_TYPE_PROTECTED_WEB,
+      std::move(filter), new SiteStorageReply(remover, std::move(done)));
+}
 
 }  // namespace
 
@@ -5296,15 +5355,16 @@ void WorkspaceLab::OpenSitePanel() {
       },
       resolve, origin);
   handlers.profile_name = base::UTF8ToUTF16(WorkspaceProfileName(active_index_));
+  handlers.data_domain =
+      base::UTF8ToUTF16(prototype::SiteDataDomain(frame->GetLastCommittedOrigin()));
   handlers.clear_storage = base::BindRepeating(
       [](base::RepeatingCallback<Permissions*()> resolve,
-         content::WeakDocumentPtr document, bool cookies,
-         base::OnceCallback<void(bool)> done) {
+         content::WeakDocumentPtr document, base::OnceCallback<void(bool)> done) {
         if (!resolve.Run()) {
           std::move(done).Run(false);
           return;
         }
-        prototype::ClearSiteStorage(document, std::move(done), cookies, !cookies);
+        ClearSiteStorage(document, std::move(done));
       }, resolve, frame->GetWeakDocumentPtr());
   auto summary = handlers.read.Run(false);
   shell_->ShowSitePanel(std::move(summary), std::move(handlers));
