@@ -4006,10 +4006,10 @@ if (location.pathname === '/extension-content/live-install') {
                 sign_archive_size_fixture(signer, package, private_key, name,
                                           files=("manifest.json",), **limits)
                 for name, limits in (
-                    ("archive-limit.crx", {"stored_sizes": (16, 16)}),
-                    ("file-limit.crx", {"deflated_sizes": (17,)}),
-                    ("expanded-limit.crx", {"deflated_sizes": (16,) * 6 + (1,)}),
-                    ("entry-limit.crx", {"empty_files": 2048}),
+                    ("archive-limit.crx", {"stored_sizes": (32, 32, 32)}),
+                    ("file-limit.crx", {"deflated_sizes": (33,)}),
+                    ("expanded-limit.crx", {"deflated_sizes": (32,) * 7}),
+                    ("entry-limit.crx", {"empty_files": 16384}),
                 )
             ]
             keyless_manifest = {key: value for key, value in manifest.items() if key != "key"}
@@ -5629,12 +5629,13 @@ for index in 0..<document.pageCount {
                     *((path, trust_flag, "Content extension CRX3 verification failed")
                       for path in collision_archives),
                 ):
-                    require_rejection(
-                        launch(executable, root, origin, [
-                            f"{EXTENSION_REGISTRY_SWITCH}={path}", pin, *extension_profile_flags,
-                        ]),
-                        error,
-                    )
+                    result = launch(executable, root, origin, [
+                        f"{EXTENSION_REGISTRY_SWITCH}={path}", pin, *extension_profile_flags,
+                    ])
+                    if result.returncode != 1 or error not in result.stderr:
+                        raise SystemExit(
+                            f"{path.name}: expected exit 1 and {error!r}, got {result.returncode}.\n"
+                            f"{result.stdout}\n{result.stderr}")
                     if install_root.exists() or other_install_root.exists() or server.requests:
                         raise SystemExit("A rejected package published files or loaded a workspace tab")
 
@@ -5705,7 +5706,7 @@ for index in 0..<document.pageCount {
                     "include_globs": script.get("include_globs", []),
                     "exclude_globs": script.get("exclude_globs", []),
                 } for script in manifest["content_scripts"]]
-                if (review != {
+                expected_review = {
                     "review_version": 7,
                     "name": manifest["name"],
                     "version": manifest["version"],
@@ -5726,6 +5727,7 @@ for index in 0..<document.pageCount {
                         *review_hosts, "https://scope.example.com/*",
                     ],
                     "external_extension_ids": sorted(manifest["externally_connectable"]["ids"]),
+                    "external_web_matches": [],
                     "content_scripts": expected_scripts,
                     "background_service_worker": True,
                     "file_access_blocked": True,
@@ -5742,8 +5744,15 @@ for index in 0..<document.pageCount {
                         "matches": ["<all_urls>"],
                         "use_dynamic_url": True,
                     }],
-                } or len(approval) != 64):
-                    raise SystemExit(f"Unexpected extension review: {review}")
+                }
+                if review != expected_review or len(approval) != 64:
+                    mismatches = {
+                        key: {"expected": expected_review.get(key), "actual": review.get(key)}
+                        for key in review.keys() | expected_review.keys()
+                        if review.get(key) != expected_review.get(key)
+                    }
+                    raise SystemExit(
+                        f"Unexpected extension review: {mismatches}; approval length {len(approval)}")
                 approved_flag = f"{EXTENSION_REVIEW_SWITCH}={approval}"
                 for flags in (
                     [f"{EXTENSION_REGISTRY_SWITCH}={replaced_archive}", *extension_profile_flags],
