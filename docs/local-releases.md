@@ -248,8 +248,9 @@ python3 tools/verify_content_bundle.py --content-release --preserve-signature \
 
 This command validates the source app and its ticket, copies it without changing
 the signature, adds an `Applications` shortcut, renders the window background
-(`tools/render_dmg_background.swift`, the "Papier" design with the version and
-architecture in its footer) and the volume icon, lets Finder save the window
+(`tools/render_dmg_background.swift`, the "Papier" design with the version
+below the installation heading and the architecture in the footer) and the
+volume icon, lets Finder save the window
 layout, creates a compressed read-only disk image, signs it with Developer ID, and
 submits the DMG itself to Apple. It uses the same submission/resume logic as app
 notarization. `--prepare-only` stops before submission; `--submission-id` recovers

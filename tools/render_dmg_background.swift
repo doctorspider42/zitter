@@ -3,7 +3,7 @@
 // The light theme is deliberate: Finder draws icon labels in black over a
 // background picture, even in Dark Mode, so a dark background hides them.
 //
-// Usage: swift render_dmg_background.swift FONTS_DIR VERSION FOOTER OUTPUT_DIR
+// Usage: swift render_dmg_background.swift FONTS_DIR VERSION PLATFORM OUTPUT_DIR
 // Writes OUTPUT_DIR/background.png (720x432) and OUTPUT_DIR/background@2x.png.
 // Finder draws the icons and their labels; package_dmg.py places them at
 // (200, 236) and (520, 236), the centres this artwork leaves room for.
@@ -15,12 +15,12 @@ let width: CGFloat = 720
 let height: CGFloat = 432
 
 guard CommandLine.arguments.count == 5 else {
-    fputs("usage: render_dmg_background.swift FONTS_DIR VERSION FOOTER OUTPUT_DIR\n", stderr)
+    fputs("usage: render_dmg_background.swift FONTS_DIR VERSION PLATFORM OUTPUT_DIR\n", stderr)
     exit(2)
 }
 let fonts = URL(fileURLWithPath: CommandLine.arguments[1])
 let version = CommandLine.arguments[2]
-let footer = CommandLine.arguments[3]
+let platform = CommandLine.arguments[3]
 let output = URL(fileURLWithPath: CommandLine.arguments[4])
 
 func color(_ hex: UInt32) -> CGColor {
@@ -32,7 +32,6 @@ func color(_ hex: UInt32) -> CGColor {
 let void = color(0xebe8e1)      // bg-void
 let ink = color(0x16141c)       // ink
 let inkMuted = color(0x5a5566)  // ink-muted
-let inkFaint = color(0x5a5566)  // ink-muted: the middle dot stays legible on ivory
 let particle = color(0x4b40d9)  // ket: zing would vanish on ivory
 
 func font(_ file: String, size: CGFloat, weight: CGFloat? = nil) -> CTFont {
@@ -51,6 +50,7 @@ func font(_ file: String, size: CGFloat, weight: CGFloat? = nil) -> CTFont {
 
 let eyebrowFont = font("SchibstedGrotesk-Variable.ttf", size: 11, weight: 600)
 let displayFont = font("InstrumentSerif-Italic.ttf", size: 40)
+let versionFont = font("JetBrainsMono-Variable.ttf", size: 13, weight: 500)
 let monoFont = font("JetBrainsMono-Variable.ttf", size: 11, weight: 400)
 
 func line(_ text: String, _ font: CTFont, _ fill: CGColor, kern: CGFloat = 0) -> CTLine {
@@ -96,9 +96,10 @@ func render(scale: CGFloat, to url: URL) throws {
     context.setFillColor(void)
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
 
-    // Eyebrow and italic display title.
+    // Keep the version next to the installation instruction, above the icons.
     centered(line("INSTALACJA", eyebrowFont, inkMuted, kern: 11 * 0.12), top: 40, lineHeight: 14, in: context)
     centered(line("Przeciągnij do Aplikacji", displayFont, ink, kern: -0.4), top: 62, lineHeight: 40, in: context)
+    centered(line("Zitter \(version)", versionFont, ink, kern: 0.15), top: 116, lineHeight: 18, in: context)
 
     // The trembling path between the two icons, ending in a chevron.
     let wave = CGMutablePath()
@@ -124,19 +125,7 @@ func render(scale: CGFloat, to url: URL) throws {
     context.setFillColor(particle)
     context.fillEllipse(in: CGRect(x: 292, y: 232, width: 8, height: 8))
 
-    // Footer: version and platform, separated by faint middle dots.
-    var parts: [CTLine] = []
-    for (index, text) in ["v\(version)", footer].enumerated() {
-        if index > 0 { parts.append(line("·", monoFont, inkFaint)) }
-        parts.append(line(text, monoFont, inkMuted))
-    }
-    let gap: CGFloat = 16
-    let total = parts.map(advance).reduce(0, +) + gap * CGFloat(parts.count - 1)
-    var cursor = ((width - total) / 2).rounded()
-    for part in parts {
-        draw(part, x: cursor, top: height - 20 - 16, lineHeight: 16, in: context)
-        cursor += advance(part) + gap
-    }
+    centered(line(platform, monoFont, inkMuted), top: height - 36, lineHeight: 16, in: context)
 
     guard let image = context.makeImage() else { throw NSError(domain: "dmg", code: 2) }
     let bitmap = NSBitmapImageRep(cgImage: image)

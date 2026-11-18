@@ -20,6 +20,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/bind_post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/version.h"
 #include "base/win/registry.h"
@@ -54,7 +55,8 @@ std::optional<std::pair<base::FilePath, bool>> Installation() {
 // WinHTTP uses the system proxy and certificate checks. Its default redirect
 // policy refuses HTTPS-to-HTTP downgrades (GitHub assets use HTTPS redirects).
 bool Fetch(const std::string& address, int64_t limit, std::string* text,
-           base::File* destination = nullptr) {
+           base::File* destination = nullptr,
+           base::RepeatingCallback<void(double)> progress = {}) {
   GURL url(address);
   if (!url.SchemeIs("https") || url.has_username() || url.has_password()) return false;
   Http session(WinHttpOpen(L"Zitter/" ZITTER_VERSION_SHORT, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
@@ -74,6 +76,7 @@ bool Fetch(const std::string& address, int64_t limit, std::string* text,
   if (!WinHttpQueryHeaders(request.get(), WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
       WINHTTP_HEADER_NAME_BY_INDEX, &status, &length, WINHTTP_NO_HEADER_INDEX) || status != 200) return false;
   int64_t total = 0;
+  int last_percent = 0;
   std::array<char, 64 * 1024> buffer;
   for (;;) {
     DWORD received = 0;
@@ -84,6 +87,11 @@ bool Fetch(const std::string& address, int64_t limit, std::string* text,
     auto bytes = base::span(buffer).first(received);
     if (destination) {
       if (!destination->WriteAtCurrentPosAndCheck(base::as_byte_span(bytes))) return false;
+      const int percent = static_cast<int>(100 * total / limit);
+      if (progress && percent != last_percent) {
+        last_percent = percent;
+        progress.Run(static_cast<double>(total) / limit);
+      }
     } else {
       text->append(bytes.data(), bytes.size());
     }
@@ -103,7 +111,8 @@ base::File OpenVerifiedInstaller(const base::FilePath& path, const updates::Rele
   return file;
 }
 
-updates::CheckResult Download(const base::FilePath& cache, std::string_view current_version, bool download) {
+updates::CheckResult Download(const base::FilePath& cache, std::string_view current_version,
+                              bool download, WindowsUpdater::ProgressCallback progress = {}) {
   using updates::CheckStatus;
   std::string json;
   if (!Fetch(kLatest, 2 * 1024 * 1024, &json)) return {CheckStatus::kFailed};
@@ -118,19 +127,24 @@ updates::CheckResult Download(const base::FilePath& cache, std::string_view curr
   if (updates::VerifyInstaller(installer, *release))
     return {CheckStatus::kReady, std::move(release)};
   if (!download) return {CheckStatus::kAvailable, std::move(release)};
-  if (!base::CreateDirectory(cache)) return {CheckStatus::kFailed};
+  if (!base::CreateDirectory(cache)) return {CheckStatus::kFailed, std::move(release)};
+  base::RepeatingCallback<void(double)> report;
+  if (progress) {
+    report = base::BindRepeating(progress, release->version);
+    report.Run(0);
+  }
   const auto partial = installer.AddExtension(FILE_PATH_LITERAL("partial"));
   {
     base::File file(partial, base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
-    if (!file.IsValid() || !Fetch(release->url, release->size, nullptr, &file) || !file.Flush()) {
+    if (!file.IsValid() || !Fetch(release->url, release->size, nullptr, &file, report) || !file.Flush()) {
       file.Close();
       base::DeleteFile(partial);
-      return {CheckStatus::kFailed};
+      return {CheckStatus::kFailed, std::move(release)};
     }
   }
   if (!updates::VerifyInstaller(partial, *release) || !base::ReplaceFile(partial, installer, nullptr)) {
     base::DeleteFile(partial);
-    return {CheckStatus::kFailed};
+    return {CheckStatus::kFailed, std::move(release)};
   }
   return {CheckStatus::kReady, std::move(release)};
 }
@@ -183,8 +197,8 @@ bool VerifyInstaller(const base::FilePath& path, const Release& release) {
 }
 }  // namespace updates
 
-WindowsUpdater::WindowsUpdater(const base::FilePath& user_data)
-    : cache_(user_data.AppendASCII("Updates")) {}
+WindowsUpdater::WindowsUpdater(const base::FilePath& user_data, ProgressCallback progress)
+    : cache_(user_data.AppendASCII("Updates")), progress_(std::move(progress)) {}
 WindowsUpdater::~WindowsUpdater() = default;
 
 bool WindowsUpdater::Start() {
@@ -217,9 +231,10 @@ void WindowsUpdater::Check(bool download) {
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
       {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
        base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-      base::BindOnce([](base::FilePath cache, bool download) {
-        return Download(cache, base::WideToUTF8(ZITTER_VERSION_SHORT), download);
-      }, cache_, download),
+      base::BindOnce([](base::FilePath cache, bool download, ProgressCallback progress) {
+        return Download(cache, base::WideToUTF8(ZITTER_VERSION_SHORT), download,
+                        std::move(progress));
+      }, cache_, download, base::BindPostTaskToCurrentDefault(progress_)),
       base::BindOnce(&WindowsUpdater::Checked, weak_factory_.GetWeakPtr()));
 }
 

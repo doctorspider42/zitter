@@ -554,12 +554,18 @@ class Window : public AccessibilityHost {
     target_->BeginDraw();
     target_->Clear(kVoid);
     // Header: the eyebrow and the close button (design: zw-tool).
+    const bool removing = page_ == Page::kRemove || (page_ == Page::kWorking && removing_);
     const wchar_t* eyebrow = page_ == Page::kExisting ? text_.eyebrow_found
-                             : page_ == Page::kRemove || (page_ == Page::kWorking && removing_) ? text_.eyebrow_remove
-                                                                                                : text_.eyebrow_install;
+                             : removing ? text_.eyebrow_remove : text_.eyebrow_install;
     std::wstring upper(eyebrow);
     CharUpperBuffW(upper.data(), static_cast<DWORD>(upper.size()));
     Print(upper, kEyebrow, {16, 12, 400, kHead}, kMuted);
+    if (!removing) {
+      const std::wstring version = L"v" + PayloadVersion();
+      const D2D1_RECT_F box{kWidth - 180, 11, kWidth - 56, kHead};
+      Print(version, kPlatform, box, kInk, DWRITE_TEXT_ALIGNMENT_TRAILING);
+      Say(box, version);
+    }
     const D2D1_RECT_F close{kWidth - 46, 0, kWidth, kHead};
     if (page_ != Page::kWorking) {
       Register(close, kClose, Role::kButton, text_.close);

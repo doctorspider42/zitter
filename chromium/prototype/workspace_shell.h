@@ -458,7 +458,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetUpdateCheckCallback(base::RepeatingCallback<void(UpdateCheckDone)> check,
                               base::RepeatingCallback<void(bool, bool)> configure = {});
   void DownloadUpdate(base::OnceCallback<void(UpdateCheckDone)> download);
-  void SetUpdateDownloadPending(bool pending);
+  void SetUpdateDownloadPending(bool pending, std::string version = {});
   // The installer download's progress, 0–1; negative while the size is unknown.
   void SetUpdateDownloadProgress(double fraction);
   void ShowUpdateOffer(std::string version, std::u16string message,
@@ -1671,6 +1671,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void FinishUpdateCheck(std::u16string message, GURL release_url);
   void RunUpdateAction();
   void RefreshUpdateControls();
+  void RefreshSidebarUpdate();
   void SetAutomaticUpdates();
   bool UpdatePreferencesVisible() const;
   std::u16string UpdateStatus() const;
@@ -1682,6 +1683,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::u16string update_check_message_;
   std::u16string update_offer_message_;
   std::u16string update_offer_label_;
+  raw_ptr<views::View> sidebar_update_ = nullptr;
   raw_ptr<views::View> update_preferences_status_ = nullptr;
   raw_ptr<views::Throbber> update_preferences_spinner_ = nullptr;
   raw_ptr<views::View> update_preferences_progress_ = nullptr;

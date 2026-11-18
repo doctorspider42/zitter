@@ -3282,6 +3282,73 @@ class SceneProgress final : public views::View {
 };
 BEGIN_METADATA(SceneProgress)
 END_METADATA
+
+class SidebarUpdateCard final : public views::View {
+  METADATA_HEADER(SidebarUpdateCard, views::View)
+ public:
+  SidebarUpdateCard(base::RepeatingClosure action,
+                    base::RepeatingClosure changed,
+                    base::RepeatingCallback<bool()> metal_visible) {
+    SetLayoutManager(CreateSidebarColumnLayout());
+    surface_ = AddChildView(std::make_unique<PreferenceSurface>(
+        false, changed, metal_visible));
+    SetSidebarPanelLayout(surface_, true, gfx::Insets(8), 4);
+    auto add_copy = [&](std::u16string text, SkColor tone, int delta,
+                        gfx::Font::Weight weight) {
+      return surface_->AddChildView(std::make_unique<PreferenceCopy>(
+          std::move(text), tone, delta, weight, true, changed, metal_visible));
+    };
+    add_copy(T(u"Aktualizacja Zittera"), kInk, 0, gfx::Font::Weight::MEDIUM);
+    status_ = add_copy({}, kMuted, -1, gfx::Font::Weight::NORMAL);
+    progress_ = surface_->AddChildView(
+        std::make_unique<SceneProgress>(changed, metal_visible));
+    progress_->GetViewAccessibility().SetName(T(u"Postęp pobierania aktualizacji"));
+    actions_ = surface_->AddChildView(std::make_unique<SceneActionGroup>(false, 0));
+    actions_->Share(metal_visible, changed);
+    action_ = views::AsViewClass<SceneTextButton>(
+        actions_->AddAction(std::move(action), {}, ui::ButtonStyle::kProminent));
+    SetVisible(false);
+  }
+
+  void Refresh(std::u16string status, std::u16string action, double progress) {
+    SetVisible(!status.empty());
+    status_->SetText(std::move(status));
+    progress_->SetVisible(progress >= 0);
+    progress_->SetValue(progress);
+    actions_->SetVisible(!action.empty());
+    action_->SetText(std::move(action));
+  }
+
+  void Append(std::vector<sidebar::Item>& items, gfx::Point scene_origin) const {
+    auto rect = [scene_origin](const views::View* view) {
+      auto bounds = view->GetBoundsInScreen();
+      bounds.Offset(-scene_origin.x(), -scene_origin.y());
+      return bounds;
+    };
+    const auto clip = rect(surface_);
+    items.push_back(surface_->Scene(gfx::RectF(clip), gfx::RectF(clip)));
+    for (const auto& child : surface_->children()) {
+      if (!child->GetVisible()) continue;
+      const auto bounds = rect(child.get());
+      if (auto* copy = views::AsViewClass<PreferenceCopy>(child.get()))
+        copy->Append(items, bounds.origin(), clip);
+      else if (child.get() == progress_)
+        items.push_back(progress_->Scene(bounds, clip));
+      else if (child.get() == actions_)
+        actions_->Append(items, bounds.origin(), clip);
+    }
+  }
+
+ private:
+  raw_ptr<PreferenceSurface> surface_ = nullptr;
+  raw_ptr<PreferenceCopy> status_ = nullptr;
+  raw_ptr<SceneProgress> progress_ = nullptr;
+  raw_ptr<SceneActionGroup> actions_ = nullptr;
+  raw_ptr<SceneTextButton> action_ = nullptr;
+};
+BEGIN_METADATA(SidebarUpdateCard)
+END_METADATA
+
 class PreferenceChromeRenderer : public views::WidgetObserver {
  public:
   explicit PreferenceChromeRenderer(views::View* root):root_(root){}
@@ -5207,6 +5274,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
 
   notification_slot_ = sidebar->AddChildView(std::make_unique<views::View>());
   notification_slot_->SetVisible(false);
+  sidebar_update_ = sidebar->AddChildView(std::make_unique<SidebarUpdateCard>(
+      base::BindRepeating(&WorkspaceShell::RunUpdateAction, weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak),
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        return shell && shell->metal_sidebar_visible();
+      }, weak)));
   auto* footer = sidebar->AddChildView(std::make_unique<views::View>());
   sidebar_footer_=footer;
   auto footer_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
@@ -5692,7 +5765,27 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                 else if (panel == "menu") {shell->context_tab_=shell->state_.active_tab;shell->context_pin_.clear();shell->ShowTabMenu(shell->widget_->GetWindowBoundsInScreen().origin()+gfx::Vector2d(80,140),ui::mojom::MenuSourceType::kMouse);}
                 else if (panel == "app-menu" && shell->root_) shell->ShowAppMenu(static_cast<ShellRoot*>(shell->root_.get())->app_menu);
                 else if (panel == "toast") shell->ShowToast(T(u"Usunięto folder "), u"Projekty", base::DoNothing());
-                else if (panel == "update") shell->ShowUpdateReady("0.3.1");
+                else if (panel == "update" || panel == "update-about") {
+                  shell->ShowSidebar();
+                  shell->ShowUpdateOffer("99.0.0",
+                      TF(u"Dostępna jest wersja {}.", {u"99.0.0"}),
+                      T(u"Pobierz aktualizację"),
+                      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+                        if (!shell) return;
+                        shell->SetUpdateDownloadPending(true, "99.0.0");
+                        shell->SetUpdateDownloadProgress(0.42);
+                        base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+                            FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
+                              if (shell) shell->ShowUpdateReady("99.0.0", base::DoNothing());
+                            }, shell), base::Seconds(10));
+                      }, shell));
+                  if (panel == "update-about") {
+                    shell->SetUpdateCheckCallback(base::BindRepeating([](UpdateCheckDone done) {
+                      std::move(done).Run({}, GURL());
+                    }));
+                    shell->ShowAbout();
+                  }
+                }
               }, shell->weak_factory_.GetWeakPtr(), panel),
               base::Seconds(1));
       }, weak));
@@ -5790,7 +5883,7 @@ void WorkspaceShell::Detach() {
   nav_buttons_.fill(nullptr);
   copy_url_button_ = nullptr; password_key_ = nullptr; permission_chip_ = nullptr; capture_chip_ = nullptr;
   workspace_buttons_.clear();
-  notification_slot_ = nullptr; notifications_button_ = nullptr;
+  notification_slot_ = nullptr; notifications_button_ = nullptr; sidebar_update_ = nullptr;
   workspace_dots_ = nullptr; add_button_ = nullptr; downloads_button_ = nullptr; sidebar_footer_=nullptr; workspace_scroll_=nullptr;
   tab_lists_.clear();
   profile_picker_ = nullptr;
@@ -6754,7 +6847,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const bool was_visible = metal_sidebar_->visible();
   if (!sidebar_visible() || swipe_overlay_ || workspace_animation_running() || sidebar_slide_timer_.IsRunning()) {
     metal_sidebar_->Hide();HideMetalSidebarGrip();
-    if (was_visible) { tab_list_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); if (drag_overlay_) drag_overlay_->SchedulePaint(); }
+    if (was_visible) { tab_list_->SchedulePaint(); url_pill_->SchedulePaint(); workspace_name_->SchedulePaint(); tab_scroll_->vertical_scroll_bar()->SchedulePaint(); sidebar_footer_->SchedulePaint(); sidebar_update_->SchedulePaint(); if (drag_overlay_) drag_overlay_->SchedulePaint(); }
     return;
   }
   // Invalidations can reach Metal before the next native compositor paint.
@@ -6767,6 +6860,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
       viewport_frame.x(), workspace_name_->y(), viewport_frame.width(), workspace_name_->height())));
   const auto scroller=GetSidebarScrollBarSnapshot(tab_scroll_->vertical_scroll_bar());
   auto bounds = list_bounds;
+  if (sidebar_update_->IsDrawn()) bounds.Union(sidebar_update_->GetBoundsInScreen());
   if (scroller.visible) bounds.Union(scroller.bounds);
   if (sidebar_footer_->IsDrawn()) bounds.Union(sidebar_footer_->GetBoundsInScreen());
   if (url_pill_->IsDrawn()) bounds.Union(url_pill_->parent()->GetBoundsInScreen());
@@ -6876,6 +6970,8 @@ void WorkspaceShell::UpdateMetalSidebar() {
   auto local_rect=[&](views::View* view) {
     auto rect=gfx::RectF(view->GetBoundsInScreen()); rect.Offset(-bounds.x(),-bounds.y()); return rect;
   };
+  if (sidebar_update_->IsDrawn())
+    static_cast<SidebarUpdateCard*>(sidebar_update_.get())->Append(items, bounds.origin());
   if (auto* button=add_button_.get()) {
     const auto rect=local_rect(button); append_glyph(button,rect,rect);
   }
@@ -6978,6 +7074,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
     workspace_name_->SchedulePaint();
     tab_scroll_->vertical_scroll_bar()->SchedulePaint();
     sidebar_footer_->SchedulePaint();
+    sidebar_update_->SchedulePaint();
     if (drag_overlay_) drag_overlay_->SchedulePaint();
   }
 }
@@ -14392,11 +14489,11 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
     commands.push_back({action});
     chord(action);
   };
-  if (install_update_ && !update_download_pending_) {
+  if (install_update_ && !update_download_pending_ && !update_check_pending_) {
     const auto version = base::UTF8ToUTF16(update_version_);
     add("install_update", update_offer_label_ == T(u"Pobierz aktualizację")
         ? TF(u"Pobierz aktualizację {}…", {version})
-        : TF(u"Zainstaluj aktualizację {}…", {version}), kMenuDownloadsIcon);
+        : update_offer_label_, kMenuDownloadsIcon);
     model->AddSeparator(ui::NORMAL_SEPARATOR);
   }
   add("new_tab", T(u"Command Center…"), kMenuNewTabIcon);
@@ -16019,7 +16116,8 @@ void WorkspaceShell::FinishUpdateCheck(std::u16string message, GURL release_url)
   update_check_message_ = std::move(message);
   update_release_url_ = std::move(release_url);
   RefreshUpdateControls();
-  if (!about_dialog_ && !UpdatePreferencesVisible() && !update_check_message_.empty())
+  if (!update_download_pending_ && !about_dialog_ && !UpdatePreferencesVisible() &&
+      !update_check_message_.empty())
     ShowToast(update_check_message_, {}, {});
 }
 
@@ -16048,18 +16146,31 @@ void WorkspaceShell::ShowUpdateOffer(std::string version, std::u16string message
   RefreshUpdateControls();
 #if !BUILDFLAG(IS_MAC)
   if (root_) if (auto* button = views::AsViewClass<AppMenuButton>(static_cast<ShellRoot*>(root_.get())->app_menu))
-    button->SetUpdateAvailable(true);
+    button->SetUpdateAvailable(bool(install_update_));
 #endif
-  if ((changed || notify_again) && !about_dialog_ && !UpdatePreferencesVisible()) {
+  if ((changed || notify_again) && install_update_ &&
+      !about_dialog_ && !UpdatePreferencesVisible()) {
     ShowToast(update_offer_message_, {},
-        base::BindOnce([](base::RepeatingClosure action) { if (action) action.Run(); },
-                       install_update_), update_offer_label_);
+              base::BindOnce(&WorkspaceShell::ShowSidebar, weak_factory_.GetWeakPtr()),
+              T(u"Pokaż"));
   }
 }
 
-void WorkspaceShell::SetUpdateDownloadPending(bool pending) {
+void WorkspaceShell::SetUpdateDownloadPending(bool pending, std::string version) {
+  const bool new_version = !version.empty() && version != update_version_;
+  if (pending == update_download_pending_ && !new_version) return;
+  if (new_version) {
+    update_version_ = std::move(version);
+    update_offer_message_.clear();
+    update_offer_label_.clear();
+    install_update_.Reset();
+  }
   update_download_pending_ = pending;
   update_download_progress_ = -1;
+  if (pending && update_check_pending_ && about_dialog_) {
+    about_dialog_->Close();
+    ShowSidebar();
+  }
   RefreshUpdateControls();
 }
 
@@ -16083,7 +16194,7 @@ std::u16string WorkspaceShell::UpdateStatus() const {
 }
 
 std::u16string WorkspaceShell::UpdateActionLabel() const {
-  if (update_download_pending_) return {};
+  if (update_download_pending_ || update_check_pending_) return {};
   if (install_update_) return update_offer_label_;
   return update_release_url_.is_valid() ? T(u"Otwórz stronę wydania") : std::u16string();
 }
@@ -16092,9 +16203,12 @@ void WorkspaceShell::RunUpdateAction() {
   // Some actions close a widget that contains the button.
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
       base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) {
-        if (!shell || shell->update_download_pending_) return;
-        if (shell->about_dialog_ && shell->update_offer_label_ != T(u"Pobierz aktualizację"))
+        if (!shell || shell->update_download_pending_ || shell->update_check_pending_) return;
+        const bool download = shell->update_offer_label_ == T(u"Pobierz aktualizację") ||
+                              shell->update_offer_label_ == T(u"Ponów pobieranie");
+        if (shell->about_dialog_)
           shell->about_dialog_->Close();
+        if (download) shell->ShowSidebar();
         if (shell->install_update_) {
           auto action = shell->install_update_;
           action.Run();
@@ -16105,7 +16219,27 @@ void WorkspaceShell::RunUpdateAction() {
       }, weak_factory_.GetWeakPtr()));
 }
 
+void WorkspaceShell::RefreshSidebarUpdate() {
+  if (!sidebar_update_) return;
+  std::u16string status;
+  std::u16string action;
+  if (update_download_pending_) {
+    status = update_download_progress_ < 0
+                 ? T(u"Pobieranie w tle…")
+                 : TF(u"Pobieranie w tle · {}", {
+                       base::FormatPercent(static_cast<int>(update_download_progress_ * 100))});
+  } else if (!update_version_.empty()) {
+    status = update_offer_message_;
+    if (!update_check_pending_) action = update_offer_label_;
+    if (action == T(u"Pobierz aktualizację")) action = T(u"Pobierz w tle");
+  }
+  static_cast<SidebarUpdateCard*>(sidebar_update_.get())->Refresh(
+      std::move(status), std::move(action),
+      update_download_pending_ ? update_download_progress_ : -1);
+}
+
 void WorkspaceShell::RefreshUpdateControls() {
+  RefreshSidebarUpdate();
   const auto status = UpdateStatus();
   const auto label = UpdateActionLabel();
   const bool busy = update_check_pending_ || update_download_pending_;

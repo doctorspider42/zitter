@@ -41,7 +41,8 @@ CheckResult DownloadLatest(const base::FilePath& cache,
 class WindowsUpdater {
  public:
   using CheckedCallback = base::OnceCallback<void(const updates::CheckResult&)>;
-  explicit WindowsUpdater(const base::FilePath& user_data);
+  using ProgressCallback = base::RepeatingCallback<void(const std::string&, double)>;
+  WindowsUpdater(const base::FilePath& user_data, ProgressCallback progress);
   ~WindowsUpdater();
   bool Start();
   void CheckNow(bool download, CheckedCallback done);
@@ -58,6 +59,7 @@ class WindowsUpdater {
   bool download_requested_ = false;
   std::vector<CheckedCallback> checks_;
   std::optional<updates::Release> pending_;
+  ProgressCallback progress_;
   base::WeakPtrFactory<WindowsUpdater> weak_factory_{this};
 };
 }  // namespace zitter

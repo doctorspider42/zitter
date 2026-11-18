@@ -162,7 +162,7 @@ void MacUpdater::PrepareMacInstaller(MacInstaller installer, bool requested) {
     return;
   installer_requested_ = requested;
   preparing_mac_installer_ = true;
-  shell_->SetUpdateDownloadPending(true);
+  shell_->SetUpdateDownloadPending(true, installer.version);
   auto verify = base::BindOnce(&VerifyMacInstaller, installer.path, installer.size, installer.digest);
   base::ThreadPool::PostTaskAndReplyWithResult(FROM_HERE,
       {base::MayBlock(), base::TaskPriority::BEST_EFFORT}, std::move(verify),
@@ -230,12 +230,15 @@ void MacUpdater::MacInstallerReady(MacInstaller installer, bool verified) {
   preparing_mac_installer_ = false;
   const bool requested = std::exchange(installer_requested_, false);
   if (!verified || (!auto_download_updates_ && !requested)) {
-    if (requested)
-      ShowReleaseOffer(installer.version,
-                       prototype::T(u"Nie udało się zweryfikować pobranego instalatora."),
-                       GURL("https://github.com/doctorspider42/zitter/releases/tag/v" + installer.version));
-    else
+    if (requested || auto_download_updates_) {
+      auto retry = base::BindRepeating(
+          &MacUpdater::PrepareMacInstaller, weak_factory_.GetWeakPtr(), installer, true);
+      shell_->ShowUpdateOffer(
+          installer.version, prototype::T(u"Nie udało się pobrać aktualizacji."),
+          prototype::T(u"Ponów pobieranie"), std::move(retry));
+    } else {
       shell_->SetUpdateDownloadPending(false);
+    }
     return;
   }
   downloaded_mac_version_ = installer.version;
