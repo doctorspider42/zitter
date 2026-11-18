@@ -197,6 +197,12 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
       content::WebContents* web_contents,
       content::SiteInstance& main_frame_site,
       blink::web_pref::WebPreferences* prefs) override;
+  content::mojom::AlternativeErrorPageOverrideInfoPtr
+  GetAlternativeErrorPageOverrideInfo(
+      content::NavigationHandle& navigation,
+      content::RenderFrameHost* frame,
+      content::BrowserContext* browser_context,
+      int32_t error_code) override;
   void RegisterBrowserInterfaceBindersForFrame(
       content::RenderFrameHost* frame,
       mojo::BinderMapWithContext<content::RenderFrameHost*>* map) override;

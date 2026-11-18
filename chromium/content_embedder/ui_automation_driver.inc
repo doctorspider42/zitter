@@ -88,6 +88,7 @@
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/view.h"
 #include "ui/views/view_utils.h"
+#include "ui/views/widget/root_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -755,6 +756,12 @@ class Driver final : public views::WidgetObserver {
                          flags, changed);
     if (clicks)
       event.SetClickCount(clicks);
+    // Synthetic presses have no native mouse capture. RootView still
+    // remembers the Views target of the press for the duration of the drag.
+    if (type == ui::EventType::kMouseDragged) {
+      static_cast<views::internal::RootView*>(widget->GetRootView())->OnMouseDragged(event);
+      return;
+    }
     widget->OnMouseEvent(&event);
   }
 

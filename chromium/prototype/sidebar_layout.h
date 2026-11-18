@@ -67,6 +67,7 @@ WorkspaceSwipeLayout SidebarSwipeLayout(double position,int count,int width);
 // measurement, accessibility and input delivery.
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing = 0);
 std::unique_ptr<views::LayoutManager> CreateProfileFavoritesLayout();
+std::vector<gfx::Rect> ProfileFavoriteTileBounds(int width, int count);
 // Install a start/stretch panel with a single optional flexible child; Rust
 // owns allocation.
 void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,int spacing,views::View* flex = nullptr,bool center = false);

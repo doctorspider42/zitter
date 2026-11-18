@@ -145,8 +145,9 @@ uR"ZOOM(
 
     let timer;
     let recent = false;
+    let atDefaultZoom = true;
     function hideIfIdle() {
-      if (!recent && controls.hidden && !host.matches(':hover') &&
+      if (atDefaultZoom && !recent && controls.hidden && !host.matches(':hover') &&
           !shadow.activeElement) {
         chip.hidden = true;
       }
@@ -203,15 +204,18 @@ uR"ZOOM(
       chip.setAttribute('aria-label', announcement.textContent);
       zoomOut.disabled = !canZoomOut;
       zoomIn.disabled = !canZoomIn;
-      reset.disabled = percent === 100;
-      recent = true;
+      atDefaultZoom = percent === 100;
+      reset.disabled = atDefaultZoom;
+      recent = atDefaultZoom;
       position();
       chip.hidden = false;
       clearTimeout(timer);
-      timer = setTimeout(() => {
-        recent = false;
-        hideIfIdle();
-      }, 2600);
+      if (recent) {
+        timer = setTimeout(() => {
+          recent = false;
+          hideIfIdle();
+        }, 2600);
+      }
     };
   }
 })();

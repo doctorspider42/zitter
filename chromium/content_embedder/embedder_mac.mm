@@ -285,6 +285,11 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
   command(view, u"Wstecz", @"back");
   command(view, u"Dalej", @"forward");
   command(view, u"Odśwież stronę", @"reload");
+  [view addItem:NSMenuItem.separatorItem];
+  command(view, u"Powiększ stronę", @"page_zoom_in");
+  command(view, u"Zmniejsz stronę", @"page_zoom_out");
+  command(view, u"Domyślne powiększenie", @"page_zoom_reset");
+  [view addItem:NSMenuItem.separatorItem];
   command(view, u"Przełącz pełny ekran", @"toggle_window_fullscreen");
 
   NSMenu* developer = submenu(u"Narzędzia developerskie");

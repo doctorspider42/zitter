@@ -419,6 +419,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ResizeSplit(size_t divider, double ratio, bool done);
   void SetSplitVertical(bool vertical);
   GURL TabUrl(std::optional<size_t> tab, std::string_view pin) const;
+  GURL WorkspaceTabUrl(size_t workspace, size_t index) const;
   bool OpenLink(const GURL& url, std::string source, bool new_tab, bool split);
   bool OpenPeek(const GURL& url, std::string source);
   bool PromotePeek(bool split);
@@ -712,6 +713,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void OnFindResultAvailable(content::WebContents* contents) override;
   void OnFindTabHelperDestroyed(find_in_page::FindTabHelper* helper) override;
   void RefreshShell();
+  void PopulateSidebarState(size_t workspace, prototype::ShellState& state,
+                            bool refresh_icons);
   void ReadCachedFavicons(prototype::ShellState& state, const std::set<GURL>& urls);
   bool RefreshWorkspaceFavicons();
   void PublishWorkspaceFavicon(const GURL& page, const GURL& icon,

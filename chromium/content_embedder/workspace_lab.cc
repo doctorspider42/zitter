@@ -985,8 +985,11 @@ constexpr int kPageZoomWebModifier = blink::WebInputEvent::kControlKey;
 #endif
 
 std::optional<int> PageZoomStep(const ui::Accelerator& accelerator) {
-  if (accelerator.modifiers() != kPageZoomModifier)
+  if (accelerator.modifiers() != kPageZoomModifier &&
+      !(accelerator.key_code() == ui::VKEY_OEM_PLUS &&
+        accelerator.modifiers() == (kPageZoomModifier | ui::EF_SHIFT_DOWN))) {
     return std::nullopt;
+  }
   switch (accelerator.key_code()) {
     case ui::VKEY_OEM_PLUS:
     case ui::VKEY_ADD:
@@ -1002,12 +1005,13 @@ std::optional<int> PageZoomStep(const ui::Accelerator& accelerator) {
   }
 }
 
-void ZoomWorkspacePage(content::WebContents& page, int step) {
+int ZoomWorkspacePage(content::WebContents& page, int step) {
   auto* map = content::HostZoomMap::GetForWebContents(&page);
   if (step == 0) {
     content::HostZoomMap::SetZoomLevel(&page, map->GetDefaultZoomLevel());
     page.SetPageScale(1.f);
-    return;
+    return std::lround(blink::ZoomLevelToZoomFactor(
+        content::HostZoomMap::GetZoomLevel(&page)) * 100);
   }
   const int current = std::lround(
       blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(&page)) * 100);
@@ -1023,6 +1027,7 @@ void ZoomWorkspacePage(content::WebContents& page, int step) {
   }
   if (next != current)
     content::HostZoomMap::SetZoomLevel(&page, blink::ZoomFactorToZoomLevel(next / 100.0));
+  return next;
 }
 
 class ExtensionPopupWebView final : public LabWebView {
@@ -1076,9 +1081,19 @@ class WorkspaceWebView final : public LabWebView {
     page_zoom_shortcut_filter_ = std::move(filter);
   }
 
+  void SetPageZoomFeedback(base::RepeatingCallback<void(int, gfx::Rect)> feedback) {
+    page_zoom_feedback_ = std::move(feedback);
+  }
+
+  void ApplyPageZoom(content::WebContents& page, int step) {
+    const int percent = ZoomWorkspacePage(page, step);
+    if (page_zoom_feedback_)
+      page_zoom_feedback_.Run(percent, page.GetContainerBounds());
+  }
+
   void ContentsZoomChange(bool zoom_in) override {
     if (auto* page = web_contents(); page && GetVisible())
-      ZoomWorkspacePage(*page, zoom_in ? 1 : -1);
+      ApplyPageZoom(*page, zoom_in ? 1 : -1);
   }
 
   content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
@@ -1102,7 +1117,7 @@ class WorkspaceWebView final : public LabWebView {
           GetVisible() && page_zoom_shortcut_filter_.Run(accelerator)) {
         page_zoom_keys_.insert(key);
         suppress_page_zoom_char_ = true;
-        ZoomWorkspacePage(*source, *step);
+        ApplyPageZoom(*source, *step);
         return Result::HANDLED;
       }
     }
@@ -1522,6 +1537,7 @@ class WorkspaceWebView final : public LabWebView {
   base::RepeatingClosure presentation_changed_;
   base::RepeatingCallback<void(content::WebContents*)> activate_page_;
   base::RepeatingCallback<bool(const ui::Accelerator&)> page_zoom_shortcut_filter_;
+  base::RepeatingCallback<void(int, gfx::Rect)> page_zoom_feedback_;
   std::set<ui::KeyboardCode> page_zoom_keys_;
   bool suppress_page_zoom_char_ = false;
 };
@@ -1995,6 +2011,15 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   }
   callbacks.select_workspace =
       base::BindRepeating(&WorkspaceLab::SelectWorkspace, weak);
+  callbacks.workspace_preview = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, std::string_view id) {
+        prototype::ShellState preview;
+        if (lab) {
+          if (const auto workspace = lab->WorkspaceIndex(id))
+            lab->PopulateSidebarState(*workspace, preview, false);
+        }
+        return preview;
+      }, weak);
   callbacks.add_workspace = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string name, std::string profile) {
         return lab && lab->AddWorkspace(std::move(name), std::move(profile));
@@ -4855,6 +4880,19 @@ bool WorkspaceLab::HandleNativeMenuCommand(gfx::NativeWindow key,
         target->tabs_[target->active_index_].size() >= prototype::kMaxWorkspaceSessionTabs) {
       return false;
     }
+  }
+  if (command == "page_zoom_in" || command == "page_zoom_out" ||
+      command == "page_zoom_reset") {
+    auto* page = target->PageForNavigationCommand();
+    if (!page || !page->GetController().GetLastCommittedEntry())
+      return false;
+    if (!validate) {
+      const int step = command == "page_zoom_in" ? 1 :
+                       command == "page_zoom_out" ? -1 : 0;
+      const int percent = ZoomWorkspacePage(*page, step);
+      target->shell_->ShowPageZoomLevel(percent, page->GetContainerBounds());
+    }
+    return true;
   }
   if (command == "reload" || command == "hard_reload") {
     auto* page = target->PageForNavigationCommand();
@@ -9493,6 +9531,11 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View& host) {
   view->SetImagePreviews(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab) { return lab && lab->image_link_previews_; },
       weak_factory_.GetWeakPtr()));
+  view->SetPageZoomFeedback(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, int percent, gfx::Rect bounds) {
+        if (lab)
+          lab->shell_->ShowPageZoomLevel(percent, bounds);
+      }, weak_factory_.GetWeakPtr()));
   view->SetPageZoomShortcutFilter(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, const ui::Accelerator& accelerator) {
         return lab && lab->CanEditWorkspace() &&
@@ -11069,11 +11112,11 @@ bool WorkspaceLab::CommitTabMove(size_t source_workspace, size_t index,
     moved.pin.clear();
     tabs_[target].push_back(std::move(moved));
   }
-  sleeping_[target] = false;
-  RefreshShell();
+  selected_[target] = tabs_[target].size() - 1;
   NotifyWorkspaceExtensionTabMoved(extension_tab, extension_index);
-  if (source_workspace == active_index_)
-    tabs_[active_index_][selected_[active_index_]].view->RequestFocus();
+  SelectWorkspace(model_.workspaces()[target].id);
+  if (active_index_ != target)
+    RefreshShell();
   RecordTimeline(true);
   if (timeline_dirty_)
     PersistTimeline();
@@ -11535,15 +11578,19 @@ std::vector<WorkspaceLab::Tab> WorkspaceLab::DetachTabs(
 }
 
 GURL WorkspaceLab::TabUrl(std::optional<size_t> tab, std::string_view pin) const {
-  const auto& tabs = tabs_[active_index_];
   if (!pin.empty()) {
     const auto pins = WorkspacePins(active_index_);
     const auto item = std::ranges::find(pins, pin, &prototype::PinnedItem::id);
     return item == pins.end() || item->folder ? GURL() : item->url;
   }
-  if (!tab || *tab >= tabs.size())
+  return tab ? WorkspaceTabUrl(active_index_, *tab) : GURL();
+}
+
+GURL WorkspaceLab::WorkspaceTabUrl(size_t workspace, size_t index) const {
+  const auto& tabs = tabs_[workspace];
+  if (index >= tabs.size())
     return {};
-  const auto& entry = tabs[*tab];
+  const auto& entry = tabs[index];
   auto* page = entry.view->web_contents();
   if (prototype::IsSettingsTabUrl(entry.deferred_url) &&
       (!page || page->GetController().IsInitialNavigation()))
@@ -11985,12 +12032,26 @@ void WorkspaceLab::RefreshShell() {
   state.can_go_back = web_contents()->GetController().CanGoBack();
   state.can_go_forward = web_contents()->GetController().CanGoForward();
   state.loading = web_contents()->IsLoading();
-  state.active_tab = selected_[active_index_];
-  state.pins = WorkspacePins(active_index_);
-  state.active_pin = tabs_[active_index_][state.active_tab].pin;
-  const auto& split = splits_[active_index_];
+  PopulateSidebarState(active_index_, state, true);
+  const GURL developer_url = state.url;
+  shell_->Update(std::move(state));
+  shell_->SetDeveloperPage(developer_url);
+  RefreshExtensionShortcuts();
+  RefreshExtensionActionAppearance();
+  UpdateAdblockShield();
+  UpdateFingerprintToolbar();
+}
+
+void WorkspaceLab::PopulateSidebarState(size_t workspace,
+                                        prototype::ShellState& state,
+                                        bool refresh_icons) {
+  state.profile_id = model_.workspaces()[workspace].profile_id;
+  state.active_tab = selected_[workspace];
+  state.pins = WorkspacePins(workspace);
+  state.active_pin = tabs_[workspace][state.active_tab].pin;
+  const auto& split = splits_[workspace];
   state.split = !split.tabs.empty();
-  state.split_visible = SplitShown();
+  state.split_visible = std::ranges::contains(split.tabs, state.active_tab);
   state.split_vertical = split.vertical;
   state.split_tabs = split.tabs;
   if (state.split_visible) {
@@ -12008,10 +12069,10 @@ void WorkspaceLab::RefreshShell() {
     if (pin.url.SchemeIsHTTPOrHTTPS())
       cached_icon_urls.insert(pin.url);
   }
-  const auto& tabs = tabs_[active_index_];
+  const auto& tabs = tabs_[workspace];
   for (size_t index = 0; index < tabs.size(); ++index) {
     auto* page = tabs[index].view->web_contents();
-    const GURL url = TabUrl(index, {});
+    const GURL url = WorkspaceTabUrl(workspace, index);
     const auto pinned = pinned_urls.find(tabs[index].pin);
     if (pinned != pinned_urls.end() && !url.is_empty() && url != *pinned->second)
       state.departed_pins.insert(tabs[index].pin);
@@ -12020,7 +12081,7 @@ void WorkspaceLab::RefreshShell() {
         : page && !page->GetTitle().empty() ? page->GetTitle()
                                           : tabs[index].deferred_title;
     if (smoke_)
-      title = base::UTF8ToUTF16(kTitles[active_index_]);
+      title = base::UTF8ToUTF16(kTitles[workspace]);
     auto* driver = page ? favicon::ContentFaviconDriver::FromWebContents(page)
                         : nullptr;
     if (driver && driver->FaviconIsValid() && url.SchemeIsHTTPOrHTTPS() &&
@@ -12037,7 +12098,7 @@ void WorkspaceLab::RefreshShell() {
     prototype::ShellTab row{untitled ? u"New tab" : std::move(title),
                             url, index, tabs[index].pin, {tabs[index].id, 1},
                             page && page->IsCurrentlyAudible(), 0,
-                            !tabs[index].custom_title.empty(), TabMuted(index)};
+                            !tabs[index].custom_title.empty(), refresh_icons && TabMuted(index)};
     // An open profile favorite is shown by its tile, as in the Chrome-backed
     // shell; only a split lists it as a tab row.
     if (profile_favorites.contains(row.pin_id) &&
@@ -12049,14 +12110,16 @@ void WorkspaceLab::RefreshShell() {
     }
     state.tabs.push_back(std::move(row));
   }
-  ReadCachedFavicons(state, cached_icon_urls);
-  const GURL developer_url = state.url;
-  shell_->Update(std::move(state));
-  shell_->SetDeveloperPage(developer_url);
-  RefreshExtensionShortcuts();
-  RefreshExtensionActionAppearance();
-  UpdateAdblockShield();
-  UpdateFingerprintToolbar();
+  if (refresh_icons) {
+    ReadCachedFavicons(state, cached_icon_urls);
+  } else if (const auto cached = cached_favicons_.find(state.profile_id);
+             cached != cached_favicons_.end()) {
+    for (const auto& url : cached_icon_urls) {
+      const auto icon = cached->second.find(url);
+      if (icon != cached->second.end() && !icon->second.pixels.empty())
+        state.favicons.try_emplace(url.spec(), icon->second.pixels);
+    }
+  }
 }
 
 void WorkspaceLab::DidStartNavigation(content::NavigationHandle* navigation) {
@@ -15651,18 +15714,9 @@ void WorkspaceLab::CheckLinkRoutingProbe(
     LOG(ERROR) << "Link routing probe failed in phase " << static_cast<int>(phase);
     Finish(false);
   };
-  auto activate_link_item = [this, &target](std::u16string_view label,
-                                             bool in_submenu) {
+  auto activate_link_item = [this, &target](std::u16string_view label) {
     shell_->BuildLinkMenu(target, model_.active()->id);
     ui::MenuModel* menu = shell_->link_menu();
-    if (in_submenu) {
-      for (size_t i = 0; i < menu->GetItemCount(); ++i) {
-        if (menu->GetTypeAt(i) == ui::MenuModel::TYPE_SUBMENU) {
-          menu = menu->GetSubmenuModelAt(i);
-          break;
-        }
-      }
-    }
     for (size_t i = 0; i < menu->GetItemCount(); ++i) {
       if (menu->GetLabelAt(i) == label && menu->IsEnabledAt(i)) {
         menu->ActivatedAt(i);
@@ -15676,7 +15730,7 @@ void WorkspaceLab::CheckLinkRoutingProbe(
     return;
   }
   if (phase == Phase::kSaveRule) {
-    if (!activate_link_item(u"Personal · Personal", true)) {
+    if (!SetLinkRule(target, "personal")) {
       fail();
       return;
     }
@@ -15717,7 +15771,7 @@ void WorkspaceLab::CheckLinkRoutingProbe(
     return;
   } else if (phase == Phase::kSplit) {
     if (!rule || *rule != "personal" ||
-        !activate_link_item(prototype::T(u"Otwórz obok w Split View"), false)) {
+        !activate_link_item(prototype::T(u"Otwórz obok w Split View"))) {
       fail();
       return;
     }
@@ -15728,7 +15782,7 @@ void WorkspaceLab::CheckLinkRoutingProbe(
       if (!saving_catalogue_ &&
           (!SplitShown() || splits_[1].tabs != std::vector<size_t>{0, 2} ||
            !activate_link_item(prototype::TF(u"Wyłącz automatyczny wybór przestrzeni dla {}",
-                                         {base::UTF8ToUTF16(target.host())}), true))) {
+                                         {base::UTF8ToUTF16(target.host())})))) {
         fail();
         return;
       }
@@ -16107,12 +16161,10 @@ void WorkspaceLab::CheckTabCommandsProbe(
     phase = Phase::kSameProfileMove;
   } else if (phase == Phase::kSameProfileMove && tabs_[0].size() == 3 && tabs_[2].size() == 1) {
     if (tabs_[0].back().view->web_contents() != duplicate.get() ||
-        selected_[0] != kProbeSelection[0]) {
+        active_index_ != 0 || selected_[0] != 2) {
       Finish(false);
       return;
     }
-    SelectWorkspace("work");
-    SelectTab(2);
     if (!duplicate || web_contents() != duplicate.get() ||
         !web_contents()->GetController().CanGoBack()) {
       Finish(false);
@@ -16148,14 +16200,11 @@ void WorkspaceLab::CheckTabCommandsProbe(
     phase = Phase::kAcceptMove;
   } else if (phase == Phase::kCrossProfileMove &&
              tabs_[0].size() == 2 && tabs_[1].size() == 3) {
-    if (duplicate || tabs_[1].back().view->web_contents() ||
-        tabs_[1].back().deferred_url != session_probe_url_.Resolve("/tab-commands") ||
-        selected_[1] != kProbeSelection[1]) {
+    if (duplicate || active_index_ != 1 || selected_[1] != 2 ||
+        web_contents() != tabs_[1].back().view->web_contents()) {
       Finish(false);
       return;
     }
-    SelectWorkspace("personal");
-    SelectTab(2);
     phase = Phase::kDestination;
   } else if (phase == Phase::kDestination &&
              web_contents()->GetTitle() == u"Zitter tab commands personal") {
@@ -16167,15 +16216,12 @@ void WorkspaceLab::CheckTabCommandsProbe(
     SelectWorkspace(research);
     auto* last_page = web_contents();
     if (!MoveSidebarTab(0, "work") || tabs_[2].size() != 1 ||
-        web_contents() == last_page || tabs_[0].back().view->web_contents() != last_page ||
+        active_index_ != 0 || selected_[0] != 2 || web_contents() != last_page ||
         !tabs_[2][0].deferred_url.is_empty()) {
       Finish(false);
       return;
     }
-    SelectWorkspace("work");
-    SelectTab(2);
-    if (web_contents() != last_page ||
-        !last_page->GetController().CanGoBack() ||
+    if (!last_page->GetController().CanGoBack() ||
         !RunProbePaletteCommand(u"> copy tab Personal", "copy_tab", "personal") ||
         active_index_ != 1 || tabs_[0].size() != 3 ||
         tabs_[0].back().view->web_contents() != last_page ||

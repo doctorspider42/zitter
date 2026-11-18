@@ -455,32 +455,39 @@ class WorkspaceDevTools::Window final
     const double current = blink::ZoomLevelToZoomFactor(
         content::HostZoomMap::GetZoomLevel(contents_.get()));
     const auto factors = blink::kPresetBrowserZoomFactors;
-    double next = 1.0;
+    double next = current;
     if (action == ZoomAction::kIn) {
       const auto larger = std::ranges::find_if(factors, [current](double factor) {
         return factor > current && !blink::ZoomValuesEqual(factor, current);
       });
-      if (larger == factors.end())
-        return;
-      next = *larger;
+      if (larger != factors.end())
+        next = *larger;
     } else if (action == ZoomAction::kOut) {
       const auto smaller = std::ranges::find_if(
           base::Reversed(factors), [current](double factor) {
             return factor < current && !blink::ZoomValuesEqual(factor, current);
           });
-      if (smaller == factors.rend())
-        return;
-      next = *smaller;
+      if (smaller != factors.rend())
+        next = *smaller;
+    } else {
+      next = 1.0;
     }
-    if (blink::ZoomValuesEqual(next, current))
-      return;
-    content::HostZoomMap::SetZoomLevel(contents_.get(),
-                                      blink::ZoomFactorToZoomLevel(next));
+    if (!blink::ZoomValuesEqual(next, current)) {
+      content::HostZoomMap::SetZoomLevel(contents_.get(),
+                                        blink::ZoomFactorToZoomLevel(next));
+    }
+    ShowFrontendZoom(next);
+  }
+
+  void ShowFrontendZoom(double factor) {
+    const auto factors = blink::kPresetBrowserZoomFactors;
     CallFrontend(u"zitterShowZoom",
                  base::ListValue()
-                     .Append(static_cast<int>(std::lround(next * 100)))
-                     .Append(next > factors.front())
-                     .Append(next < factors.back()));
+                     .Append(static_cast<int>(std::lround(factor * 100)))
+                     .Append(factor > factors.front() &&
+                             !blink::ZoomValuesEqual(factor, factors.front()))
+                     .Append(factor < factors.back() &&
+                             !blink::ZoomValuesEqual(factor, factors.back())));
   }
 
   void SetPageBounds(const base::DictValue& bounds) {
@@ -599,6 +606,10 @@ class WorkspaceDevTools::Window final
       CallFrontend(u"setUseSoftMenu", base::ListValue().Append(true));
       contents_->GetPrimaryMainFrame()->ExecuteJavaScript(kZoomIndicatorScript,
                                                          {});
+      const double factor = blink::ZoomLevelToZoomFactor(
+          content::HostZoomMap::GetZoomLevel(contents_.get()));
+      if (!blink::ZoomValuesEqual(factor, 1.0))
+        ShowFrontendZoom(factor);
       if (ready_ && agent_) {
         SendProbeCommand(kTargetProbeId, "Target.getTargetInfo");
         SendProbeCommand(kIsolationProbeId, "Target.getTargets");

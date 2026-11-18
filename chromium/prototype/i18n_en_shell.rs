@@ -3,6 +3,10 @@
 // One entry per distinct Polish string, written exactly as in the source
 // (same escapes); `{}` placeholders keep their order.
 pub static EN: &[(&str, &str)] = &[
+    ("Powiększenie strony", "Page zoom"),
+    ("Powiększenie strony: {}", "Page zoom: {}"),
+    ("Zmniejsz stronę", "Zoom out"),
+    ("Powiększ stronę", "Zoom in"),
     ("Narzędzia developerskie", "Developer tools"),
     ("Otwórz DevTools", "Open DevTools"),
     ("Otwórz konsolę", "Open console"),

@@ -215,6 +215,7 @@ class WorkspaceShell final : public ui::EventHandler,
     Callbacks& operator=(Callbacks&&);
     ~Callbacks();
     base::RepeatingCallback<void(std::string)> select_workspace;
+    base::RepeatingCallback<ShellState(std::string_view)> workspace_preview;
     base::RepeatingCallback<bool(std::string, std::string)> add_workspace;
     base::RepeatingCallback<bool(std::string, std::string)> edit_workspace;
     base::RepeatingCallback<bool(std::string)> remove_workspace;
@@ -383,6 +384,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point,
                     base::RepeatingClosure inspect,
                     std::optional<PageMenuNavigation> navigation, bool from_address);
+  void ShowPageZoomLevel(int percent, gfx::Rect page_bounds);
   void SetDeveloperPage(GURL url, bool allowed = true, bool compare = true);
   void SetDeveloperMode(std::string mode);
   void ShowDeveloperMenu();
@@ -1102,6 +1104,10 @@ class WorkspaceShell final : public ui::EventHandler,
   void RefreshToolsChoiceFields();
   void SetShortcutRecording(bool recording);
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
+  std::unique_ptr<views::WidgetDelegate> zoom_feedback_delegate_;
+  std::unique_ptr<views::Widget> zoom_feedback_widget_;
+  raw_ptr<views::Label> zoom_feedback_label_ = nullptr;
+  base::OneShotTimer zoom_feedback_timer_;
   std::unique_ptr<views::WidgetDelegate> toast_delegate_;
   std::unique_ptr<views::Widget> toast_widget_;
   std::unique_ptr<views::WidgetDelegate> scrim_delegate_;
@@ -1252,7 +1258,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfigureSidebarTabActions(views::View* row, const std::string& pin,
                                   bool favorite);
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;
-  void HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
+  void HandleSidebarDrop(std::string workspace,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
   // Where a row dragged within the sidebar would land, in screen coordinates.
   struct SidebarReorder {
     gfx::Rect indicator;
@@ -1363,6 +1369,11 @@ class WorkspaceShell final : public ui::EventHandler,
   void OnOnlineSuggestions(std::string query, std::optional<std::string> body);
   void AddressEdited();
   void ApplyAppearance(bool refresh_theme = true);
+  SkColor WorkspaceSidebarBackground(SkColor base, SkColor card, SkColor accent) const;
+  void SetWorkspaceSidebarBackground(SkColor color);
+#if BUILDFLAG(IS_WIN)
+  bool sidebar_acrylic_ = false;
+#endif
   bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
   void RefreshWorkspaceHeading();
   void RestorePageFocus(std::optional<size_t> pane = std::nullopt);
@@ -1654,9 +1665,13 @@ class WorkspaceShell final : public ui::EventHandler,
   std::string swipe_source_, swipe_commit_target_;
   std::vector<std::string> swipe_workspace_ids_;
   raw_ptr<views::View> swipe_overlay_ = nullptr;
-  base::OneShotTimer swipe_idle_timer_, swipe_settle_timer_;
+  base::OneShotTimer swipe_idle_timer_;
+  base::RepeatingTimer swipe_settle_timer_;
+  std::optional<SkColor> swipe_frame_color_, swipe_sidebar_color_;
   void UpdateWorkspaceSwipePreview();
+  void PaintWorkspaceSwipe(double position);
   void FinishWorkspaceSwipe();
+  void CommitWorkspaceSwipe();
   void CancelWorkspaceSwipe(bool reset_state = true);
   size_t workspace_animation_generation_ = 0;
   bool workspace_animation_pending_ = false;

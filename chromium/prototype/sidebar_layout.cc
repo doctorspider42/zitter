@@ -387,17 +387,24 @@ std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
 class ProfileFavoritesLayout final : public views::LayoutManager {
  public:
   void Layout(views::View* host) override {
-    const auto grid = Measure(host->width(), VisibleCount(host));
+    const auto bounds = Bounds(host->width(), VisibleCount(host));
     int index = 0;
     for (const auto& child : host->children()) {
       if (!child->GetVisible()) continue;
+      child->SetBoundsRect(bounds[index++]);
+    }
+  }
+  static std::vector<gfx::Rect> Bounds(int width, int count) {
+    const auto grid = Measure(width, count);
+    std::vector<gfx::Rect> bounds;
+    bounds.reserve(count);
+    for (int index = 0; index < count; ++index) {
       const int column = index % grid.columns;
       const int x = column * (grid.cell_width + kGap) + std::min(column, grid.remainder);
-      const int width = grid.cell_width + (column < grid.remainder ? 1 : 0);
-      child->SetBounds(x, (index / grid.columns) * (grid.cell_height + kGap),
-                       width, grid.cell_height);
-      ++index;
+      bounds.emplace_back(x, (index / grid.columns) * (grid.cell_height + kGap),
+                          grid.cell_width + (column < grid.remainder), grid.cell_height);
     }
+    return bounds;
   }
   gfx::Size GetPreferredSize(const views::View* host) const override {
     return gfx::Size(kPreferredWidth, GetPreferredHeightForWidth(host, kPreferredWidth));
@@ -443,6 +450,9 @@ class ProfileFavoritesLayout final : public views::LayoutManager {
   }
 };
 std::unique_ptr<views::LayoutManager> CreateProfileFavoritesLayout(){return std::make_unique<ProfileFavoritesLayout>();}
+std::vector<gfx::Rect> ProfileFavoriteTileBounds(int width, int count) {
+  return ProfileFavoritesLayout::Bounds(width, count);
+}
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {
   return std::make_unique<RustColumnLayout>(spacing);
 }
