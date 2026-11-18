@@ -18679,8 +18679,21 @@ content::WebContents* WorkspaceLab::ShowExtensionBubble(
   auto* context = WorkspaceExtensionPopupContext(profile, url.GetHost());
   if (!context)
     return nullptr;
+  // Match Chromium's extension popup limits and account for the anchor.
+  constexpr gfx::Size kMinPopupSize(25, 25);
+  gfx::Size max_popup_size(800, 600);
+  const gfx::Rect work_area = display::Screen::Get()
+                                  ->GetDisplayNearestPoint(anchor.CenterPoint())
+                                  .work_area();
+  const int available_height = std::max(work_area.bottom() - anchor.bottom(),
+                                        anchor.y() - work_area.y());
+  max_popup_size.SetToMin(gfx::Size(work_area.width(), available_height));
+  max_popup_size.SetToMax(kMinPopupSize);
   auto view = std::make_unique<ExtensionPopupWebView>(context);
-  view->SetPreferredSize(gfx::Size(380, 420));
+  gfx::Size initial_size(380, 420);
+  initial_size.SetToMin(max_popup_size);
+  view->SetPreferredSize(initial_size);
+  view->EnableSizingFromWebContents(kMinPopupSize, max_popup_size);
   auto* contents = view->GetWebContents(url);
   extensions::SetViewType(contents, extensions::mojom::ViewType::kExtensionPopup);
   if (context != &profile)
@@ -18691,7 +18704,8 @@ content::WebContents* WorkspaceLab::ShowExtensionBubble(
   fingerprint_toolbar_->Close();
   shell_->CloseOverlays(true);
   extension_popup_delegate_ = std::make_unique<views::BubbleDialogDelegate>(
-      extensions_toolbar_button_, views::BubbleBorder::TOP_RIGHT);
+      extensions_toolbar_button_, views::BubbleBorder::TOP_RIGHT,
+      views::BubbleBorder::DIALOG_SHADOW, /*autosize=*/true);
   auto& bubble = *extension_popup_delegate_;
   // Pinned buttons can be recreated while the extension updates its icon.
   // Use a screen rect and parent the bubble to the stable browser window.

@@ -23,6 +23,7 @@
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "net/http/http_response_headers.h"
+#include "net/url_request/redirect_info.h"
 
 #include <optional>
 #include <utility>
@@ -89,6 +90,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/service_worker_version_base_info.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/storage_partition_config.h"
 #include "content/public/browser/web_authentication_delegate.h"
 #include "content/public/browser/web_contents.h"
@@ -105,6 +107,7 @@
 #include "extensions/browser/api/web_request/web_request_api.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_protocols.h"
+#include "extensions/browser/extension_registry.h"
 #include "ipc/constants.mojom.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extension_web_contents_observer.h"
@@ -117,6 +120,7 @@
 #include "extensions/common/mojom/renderer_host.mojom.h"
 #include "extensions/common/mojom/service_worker_host.mojom.h"
 #include "extensions/common/mojom/web_request_host.mojom.h"
+#include "extensions/common/permissions/permissions_data.h"
 #include "extensions/renderer/api/core_extensions_renderer_api_provider.h"
 #include "extensions/renderer/dispatcher.h"
 #include "extensions/renderer/extension_frame_helper.h"
@@ -145,12 +149,17 @@
 #include "sandbox/policy/switches.h"
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
 #include "services/network/public/cpp/network_switches.h"
+#include "services/network/public/cpp/originating_process_id.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/self_deleting_url_loader_factory.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
+#include "services/network/public/cpp/url_loader_factory_builder.h"
 #include "services/network/public/mojom/cert_verifier_service_updater.mojom.h"
+#include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/ip_address_space.mojom-shared.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/platform/web_url_error.h"
 #include "ui/views/widget/widget.h"
@@ -175,6 +184,184 @@ std::vector<mojom::SpellingMatchPtr> CheckSystemSpelling(
     const std::u16string& selected);
 #endif
 namespace {
+
+constexpr char kJumpCloudGoId[] = "jdoahkhfkeipblhbhppmcbdgapeoaopa";
+
+const extensions::Extension* EnabledJumpCloudGo(content::BrowserContext& context) {
+  if (context.IsOffTheRecord() || context.ShutdownStarted())
+    return nullptr;
+  const auto* registry = extensions::ExtensionRegistry::Get(&context);
+  const auto* extension = registry ? registry->enabled_extensions().GetByID(kJumpCloudGoId)
+                                   : nullptr;
+  return extension && extension->from_webstore() ? extension : nullptr;
+}
+
+bool IsJumpCloudHttpsEndpoint(const GURL& url, std::string_view host) {
+  return url.SchemeIs("https") && url.host() == host &&
+         url.EffectiveIntPort() == 443 && !url.has_username() && !url.has_password();
+}
+
+bool IsJumpCloudPortalSessionRequest(const GURL& url) {
+  if (!IsJumpCloudHttpsEndpoint(url, "console.jumpcloud.com"))
+    return false;
+  const auto path = url.path();
+  return path == "/userconsole/xsrf" || path == "/userconsole/api/self" ||
+         path == "/userconsole/api/featureFlags" ||
+         path == "/userconsole/api/password-vault/users/self";
+}
+
+bool IsJumpCloudAuthorizationRequest(const GURL& url) {
+  return IsJumpCloudHttpsEndpoint(url, "oauth.jumpcloud.com") &&
+         url.path() == "/oauth2/auth";
+}
+
+bool IsJumpCloudAuthorizationRedirect(const GURL& url) {
+  // The authorization server chooses the route based on the account's session.
+  return IsJumpCloudHttpsEndpoint(url, "oauth.jumpcloud.com") ||
+         IsJumpCloudHttpsEndpoint(url, "login.jumpcloud.com") ||
+         IsJumpCloudHttpsEndpoint(url, "console.jumpcloud.com");
+}
+
+class JumpCloudAuthorizationLoader final : public network::mojom::URLLoader,
+                                          public network::mojom::URLLoaderClient {
+ public:
+  JumpCloudAuthorizationLoader(
+      base::WeakPtr<content::BrowserContext> context,
+      mojo::PendingReceiver<network::mojom::URLLoader> receiver,
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client)
+      : context_(std::move(context)),
+        receiver_(this, std::move(receiver)),
+        client_(std::move(client)) {
+    receiver_.set_disconnect_handler(base::BindOnce(
+        &JumpCloudAuthorizationLoader::Cancel, base::Unretained(this)));
+  }
+
+  mojo::PendingReceiver<network::mojom::URLLoader> BindLoader() {
+    return upstream_.BindNewPipeAndPassReceiver();
+  }
+
+ private:
+  void Cancel() { upstream_.reset(); }
+
+  void FollowRedirect(network::HttpRequestHeadersUpdateParams headers,
+                      const std::optional<GURL>& new_url) override {
+    // The renderer can accept the checked target but cannot replace it.
+    if (new_url) {
+      OnComplete(network::URLLoaderCompletionStatus(net::ERR_UNSAFE_REDIRECT));
+      Cancel();
+      return;
+    }
+    if (upstream_.is_bound())
+      upstream_->FollowRedirect(std::move(headers), std::nullopt);
+  }
+
+  void SetPriority(net::RequestPriority priority, int32_t intra_priority) override {
+    if (upstream_.is_bound())
+      upstream_->SetPriority(priority, intra_priority);
+  }
+
+  void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr hints) override {
+    client_->OnReceiveEarlyHints(std::move(hints));
+  }
+
+  void OnReceiveResponse(network::mojom::URLResponseHeadPtr head,
+                         mojo::ScopedDataPipeConsumerHandle body,
+                         std::optional<mojo_base::BigBuffer> metadata) override {
+    client_->OnReceiveResponse(std::move(head), std::move(body), std::move(metadata));
+  }
+
+  void OnReceiveRedirect(const net::RedirectInfo& redirect,
+                         network::mojom::URLResponseHeadPtr head) override {
+    const auto* extension = context_ ? EnabledJumpCloudGo(*context_) : nullptr;
+    if (!extension || redirect.new_method != "GET" ||
+        !IsJumpCloudAuthorizationRedirect(redirect.new_url) ||
+        !extension->permissions_data()->HasHostPermission(redirect.new_url)) {
+      OnComplete(network::URLLoaderCompletionStatus(net::ERR_UNSAFE_REDIRECT));
+      Cancel();
+      return;
+    }
+    client_->OnReceiveRedirect(redirect, std::move(head));
+  }
+
+  void OnUploadProgress(int64_t current, int64_t total,
+                        OnUploadProgressCallback callback) override {
+    client_->OnUploadProgress(current, total, std::move(callback));
+  }
+
+  void OnTransferSizeUpdated(int32_t size) override {
+    client_->OnTransferSizeUpdated(size);
+  }
+
+  void OnComplete(const network::URLLoaderCompletionStatus& status) override {
+    if (client_) {
+      client_->OnComplete(status);
+      client_.reset();
+    }
+  }
+
+  const base::WeakPtr<content::BrowserContext> context_;
+  mojo::Receiver<network::mojom::URLLoader> receiver_;
+  mojo::Remote<network::mojom::URLLoader> upstream_;
+  mojo::Remote<network::mojom::URLLoaderClient> client_;
+};
+
+class JumpCloudPortalLoaderFactory final
+    : public network::SelfDeletingURLLoaderFactory {
+ public:
+  JumpCloudPortalLoaderFactory(
+      base::WeakPtr<content::BrowserContext> context,
+      url::Origin origin,
+      mojo::PendingRemote<network::mojom::URLLoaderFactory> isolated,
+      mojo::PendingRemote<network::mojom::URLLoaderFactory> portal,
+      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
+      base::SelfDeletingPassKey key)
+      : SelfDeletingURLLoaderFactory(std::move(receiver), key),
+        context_(std::move(context)),
+        origin_(std::move(origin)),
+        isolated_(std::move(isolated)),
+        portal_(std::move(portal)) {}
+
+ private:
+  ~JumpCloudPortalLoaderFactory() override = default;
+
+  void CreateLoaderAndStart(
+      mojo::PendingReceiver<network::mojom::URLLoader> loader,
+      int32_t request_id, uint32_t options,
+      const network::ResourceRequest& request,
+      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
+      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) override {
+    const auto* extension = context_ ? EnabledJumpCloudGo(*context_) : nullptr;
+    const bool authorization = IsJumpCloudAuthorizationRequest(request.url);
+    if (!extension || request.request_initiator != origin_ ||
+        request.method != "GET" || request.request_body || request.trusted_params ||
+        (!authorization && !IsJumpCloudPortalSessionRequest(request.url)) ||
+        !extension->permissions_data()->HasHostPermission(request.url)) {
+      isolated_->CreateLoaderAndStart(std::move(loader), request_id, options,
+                                      request, std::move(client), traffic_annotation);
+      return;
+    }
+    if (authorization) {
+      auto forwarding = std::make_unique<JumpCloudAuthorizationLoader>(
+          context_, std::move(loader), std::move(client));
+      auto upstream = forwarding->BindLoader();
+      mojo::PendingRemote<network::mojom::URLLoaderClient> response;
+      mojo::MakeSelfOwnedReceiver<network::mojom::URLLoaderClient>(
+          std::move(forwarding), response.InitWithNewPipeAndPassReceiver());
+      portal_->CreateLoaderAndStart(std::move(upstream), request_id, options,
+                                    request, std::move(response), traffic_annotation);
+      return;
+    }
+    auto portal_request = request;
+    portal_request.redirect_mode = network::mojom::RedirectMode::kError;
+    portal_->CreateLoaderAndStart(std::move(loader), request_id, options,
+                                  portal_request, std::move(client), traffic_annotation);
+  }
+
+  const base::WeakPtr<content::BrowserContext> context_;
+  const url::Origin origin_;
+  mojo::Remote<network::mojom::URLLoaderFactory> isolated_;
+  mojo::Remote<network::mojom::URLLoaderFactory> portal_;
+};
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 class LocalSpellingHost final : public mojom::LocalSpelling {
@@ -1357,6 +1544,28 @@ void LabBrowserClientBase::WillCreateURLLoaderFactory(
         browser_context, frame, render_process_id, type, navigation_id, source_id,
         builder, header_client, std::move(navigation_response_task_runner),
         request_initiator);
+  }
+  if (type == URLLoaderFactoryType::kServiceWorkerSubResource &&
+      request_initiator.scheme() == extensions::kExtensionScheme &&
+      request_initiator.host() == kJumpCloudGoId &&
+      EnabledJumpCloudGo(*browser_context)) {
+    // JumpCloud Go checks the existing portal session from its service worker.
+    // Route only those checks to the profile's web network context.
+    auto params = network::mojom::URLLoaderFactoryParams::New();
+    params->process_id = network::OriginatingProcessId::renderer(
+        network::RendererProcessId(render_process_id));
+    params->request_initiator_origin_lock = request_initiator;
+    params->isolation_info = isolation;
+    OverrideURLLoaderFactoryParams(browser_context, request_initiator,
+                                   /*is_for_isolated_world=*/false,
+                                   /*is_for_service_worker=*/true, params.get());
+    mojo::PendingRemote<network::mojom::URLLoaderFactory> portal;
+    browser_context->GetDefaultStoragePartition()->GetNetworkContext()
+        ->CreateURLLoaderFactory(portal.InitWithNewPipeAndPassReceiver(), std::move(params));
+    auto [receiver, isolated] = builder.Append();
+    base::MakeSelfDeleting<JumpCloudPortalLoaderFactory>(
+        browser_context->GetWeakPtr(), request_initiator, std::move(isolated),
+        std::move(portal), std::move(receiver));
   }
   const GURL page = prototype::AdblockTopLevelPage(frame, type, isolation);
   if (!page.is_empty()) {

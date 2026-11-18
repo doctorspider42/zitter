@@ -5197,9 +5197,15 @@ class ExtensionProbeThrottle final : public content::NavigationThrottle {
       if (parent == extension->origin()) {
         if (!sandboxed)
           return BLOCK_REQUEST;
-      } else if ((!sandboxed && url.host() != extension->guid()) ||
-                 !IsWebAccessibleExtensionResource(*extension, url, parent, GURL())) {
-        return BLOCK_REQUEST;
+      } else {
+        // Chrome Web Store packages may declare public frames on the stable
+        // extension host. Chromium still checks the resource's URL mode and
+        // the embedding origin against the manifest.
+        if ((!sandboxed && !extension->from_webstore() &&
+             url.host() != extension->guid()) ||
+            !IsWebAccessibleExtensionResource(*extension, url, parent, GURL())) {
+          return BLOCK_REQUEST;
+        }
       }
       if (url.host() == extension->guid())
         dynamic_frame_url_ = url;
@@ -5486,10 +5492,11 @@ bool CanUseExtensionProbeWorker(BrowserContext& context,
                  fixture);
 }
 
-void GrantSandboxedExtensionNavigationRequests(
+void GrantExtensionFrameNavigationRequests(
     content::RenderProcessHost& process, const extensions::Extension& extension) {
-  if (extensions::SandboxedPageInfo::GetPages(&extension).is_empty() ||
-      !extensions::WebAccessibleResourcesInfo::HasWebAccessibleResources(&extension)) {
+  if (!extensions::WebAccessibleResourcesInfo::HasWebAccessibleResources(&extension) ||
+      (!extension.from_webstore() &&
+       extensions::SandboxedPageInfo::GetPages(&extension).is_empty())) {
     return;
   }
   // Let the renderer submit the URL to the browser throttle. This grant
@@ -5511,7 +5518,7 @@ void RegisterExtensionProbeProcess(content::SiteInstance& site) {
       (principal.SchemeIs("http") || principal.SchemeIs("https"))) {
     for (const auto& extension : client->ConfiguredExtensions(context)) {
       if (client->EnabledFixture(context, extension->id())) {
-        GrantSandboxedExtensionNavigationRequests(*site.GetProcess(), *extension);
+        GrantExtensionFrameNavigationRequests(*site.GetProcess(), *extension);
       }
     }
   }
@@ -5666,7 +5673,7 @@ static void ActivateFixture(BrowserContext& context,
     if (process->GetBrowserContext() == &context &&
         process->IsInitializedAndNotDead() && process->GetChannel()) {
       renderer->InitializeProcess(process);
-      GrantSandboxedExtensionNavigationRequests(*process, extension);
+      GrantExtensionFrameNavigationRequests(*process, extension);
     }
   }
   if (extension.permissions_data()->HasAPIPermission(
