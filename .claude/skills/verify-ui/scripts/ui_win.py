@@ -13,7 +13,7 @@ The sidebar, palette and panels are translucent windows that PrintWindow leaves
 blank, so shot brings the app forward and copies that window's area of the
 screen, never more. Coordinates are physical pixels (this process is DPI aware).
 """
-import argparse, ctypes, json, os, shutil, subprocess, sys, tempfile, time
+import argparse, ctypes, json, os, runpy, subprocess, sys, tempfile, time
 from ctypes import wintypes
 from pathlib import Path
 
@@ -36,7 +36,8 @@ def processes():
     out = subprocess.run(["powershell", "-NoProfile", "-Command",
                           f"Get-CimInstance Win32_Process -Filter \"{query}\" | "
                           "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"],
-                         capture_output=True, text=True).stdout
+                         capture_output=True, text=True,
+                         creationflags=subprocess.CREATE_NO_WINDOW).stdout
     pids = []
     for line in out.splitlines():
         pid, _, command = line.partition("\t")
@@ -77,19 +78,10 @@ def find(name):
     return next((w for w in windows() if w["title"] in titles.get(name, ()) or str(w["id"]) == name), None)
 
 
-def wait(predicate, timeout=20.0):
-    end = time.time() + timeout
-    while time.time() < end:
-        if (value := predicate()):
-            return value
-        time.sleep(0.3)
-    return None
-
-
 def activate():
     w = main_window()
     if not w:
-        return
+        sys.exit("No Zitter window on the working desktop. Use `ui.py launch --front` for physical input.")
     # Windows lets a process move another window forward only after input; an
     # Alt press counts. SW_RESTORE first, in case it is minimized.
     user32.keybd_event(0x12, 0, 0, 0)
@@ -99,32 +91,8 @@ def activate():
     time.sleep(0.6)
 
 
-def launch(a):
-    if not EXE.exists():
-        sys.exit(f"No build at {EXE}; build zitter_content first (build_app_win.ps1).")
-    for pid in processes():
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
-    wait(lambda: not processes(), 10)
-    if a.fresh and PROFILE.exists():
-        shutil.rmtree(PROFILE)
-    PROFILE.mkdir(exist_ok=True)
-    command = [str(EXE), "--zitter-content-workspace", f"--zitter-content-workspace-root={PROFILE}"]
-    if a.open_panel:
-        command.append(f"--zitter-open-panel={a.open_panel}")
-    if a.scale:
-        command.append(f"--force-device-scale-factor={a.scale:g}")
-    if a.theme:
-        command.append(f"--zitter-content-workspace-theme={a.theme}")
-    LOG.parent.mkdir(exist_ok=True)
-    log = open(LOG, "w", encoding="utf-8")
-    subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log,
-                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-    w = wait(lambda: (m := main_window()) and m["width"] > 600 and m)
-    if not w:
-        sys.exit(f"The app did not show a window; see {LOG}")
-    activate()
-    time.sleep(2)  # first paint and the sidebar
-    print(json.dumps(main_window()))
+def launch(_):
+    runpy.run_path(str(Path(__file__).with_name("ui.py")), run_name="__main__")
 
 
 def click(a, button):
@@ -161,6 +129,7 @@ def main():
     l.add_argument("--scale", type=float, help="force a device scale factor, as 1.25 or 1.5 (HiDPI)")
     l.add_argument("--theme", choices=["dark", "light"], help="Noc (dark) or Papier (light)")
     l.add_argument("--fresh", action="store_true", help="start from an empty workspace root")
+    l.add_argument("--front", action="store_true", help="use the working desktop")
     l.set_defaults(run=launch)
     sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
     for name, button in (("click", "left"), ("rightclick", "right")):

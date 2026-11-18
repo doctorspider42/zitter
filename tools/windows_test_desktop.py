@@ -1,5 +1,6 @@
-"""Start a Windows test runner on a desktop that never receives user input."""
+"""Run a command on a separate Windows desktop without switching to it."""
 
+import argparse
 import ctypes
 from ctypes import wintypes
 from pathlib import Path
@@ -141,3 +142,26 @@ def run_on_test_desktop(script, arguments):
             kernel.CloseHandle(process.hProcess)
     finally:
         user.CloseDesktop(desktop)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", nargs=argparse.REMAINDER,
+                        help="Executable and arguments, separated from launcher options by --")
+    args = parse_probe_args(parser, __file__)
+    command = args.command
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        parser.error("provide an executable after --")
+    if sys.platform != "win32":
+        parser.error("the desktop launcher requires Windows")
+    try:
+        return subprocess.call(command, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+    except OSError as error:
+        raise SystemExit(str(error)) from error
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

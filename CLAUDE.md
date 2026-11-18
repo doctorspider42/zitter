@@ -29,9 +29,9 @@ the packaged app, screenshot the changed view, compare it with its design, fix w
 differs, and only then hand over the final screenshot.
 
 To click, type, scroll or capture animations in the running app, use the
-`drive-zitter` skill (`.claude/skills/drive-zitter/`). On macOS it never moves the
-user's mouse, and the app stays in the background, so it needs no consent the way
-the screen-taking checks do.
+`drive-zitter` skill (`.claude/skills/drive-zitter/`). On Windows `ui.py launch`
+uses a separate desktop. Follow the background-launch guidance in `AGENTS.md`
+for other Windows programs and helpers.
 
 ## Shared build directory
 

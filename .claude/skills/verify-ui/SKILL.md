@@ -106,7 +106,7 @@ user's mouse, and the app stays in the background.
 
 ## Windows
 
-Run the same `ui.py` commands on Windows. The app uses a local named pipe and returns compositor screenshots. `ui_win.py` backs the explicit `--cursor` and `--screen` fallbacks.
+Run the same `ui.py` commands on Windows. `ui.py launch` uses a separate desktop by default. The app uses a local named pipe and returns compositor screenshots. Use `ui_win.py` only for the explicit `--cursor` and `--screen` fallbacks with an instance launched using `--front`.
 
 1. **Build:** `powershell -File .claude/skills/verify-ui/scripts/build_app_win.ps1`
    stages the Content embedder and builds `zitter_content` (`zitter.exe` and

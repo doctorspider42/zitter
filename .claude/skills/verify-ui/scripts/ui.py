@@ -187,7 +187,8 @@ def launch(a):
         if not binary.is_file():
             sys.exit(f"No build at {binary}; build zitter_content first (build_app_win.ps1).")
         for pid in running():
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
     else:
         if not (APP / "Contents/Info.plist").is_file():
             sys.exit(f"No packaged app at {APP}; build and package first (build_app.sh).")
@@ -218,10 +219,15 @@ def launch(a):
         command.append(f"--zitter-rust-raster={a.raster}")
     if a.scale:
         command.append(f"--force-device-scale-factor={a.scale:g}")
+    launch_options = {"start_new_session": True}
+    if os.name == "nt":
+        launch_options = {"creationflags": subprocess.CREATE_NO_WINDOW}
+        if not a.front:
+            command = [sys.executable, str(ROOT / "tools/windows_test_desktop.py"), "--", *command]
     log_path = ui_win.LOG if os.name == "nt" else BIN.with_suffix(".log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log:
-        subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, start_new_session=True)
+        subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log, **launch_options)
     if not wait(automation_ready, 30):
         sys.exit(f"The app did not open its automation socket; see {log_path}")
     w = wait(lambda: (m := main_window()) and m["width"] > 600 and m)
@@ -341,7 +347,7 @@ l.add_argument("--raster", choices=["compositor", "metal"], help="Rust UI painti
 l.add_argument("--scale", type=float, help="force a device scale factor (HiDPI checks)")
 l.add_argument("--fresh", action="store_true", help="start from an empty workspace root")
 l.add_argument("--front", action="store_true",
-    help="let the app come to the front (by default it stays behind your own app)")
+    help="let the app come to the front (Windows defaults to a separate desktop)")
 l.set_defaults(run=launch)
 sub.add_parser("windows").set_defaults(run=lambda _: print("\n".join(map(json.dumps, windows()))))
 

@@ -16,8 +16,10 @@ The app has an automation channel for agents. `ui.py launch` starts it with
   shows the app as a person sees it, even while other windows cover it.
 
 So you can run as many interactions as you need without asking the user first.
-`--cursor`, `shot --screen`, and foreground `verify_content_*` runs use the
-working desktop. Windows verification scripts use a separate desktop by default.
+On Windows, `ui.py launch` and verification scripts use a separate desktop by
+default. Keep it that way for agent work. `--cursor` and `shot --screen` require
+an instance launched with `--front` on the working desktop. Ask before using
+those fallbacks if the user has not requested interactive operation.
 
 All commands: `python3 .claude/skills/verify-ui/scripts/ui.py <command>`, run from
 the repository root (written `ui.py` below).
@@ -29,8 +31,9 @@ python3 .claude/skills/verify-ui/scripts/ui.py launch            # keeps its wor
 python3 .claude/skills/verify-ui/scripts/ui.py launch --fresh    # empty spaces, tabs, settings
 ```
 
-- `launch` runs `build/ZitterContentLab.app` in `$TMPDIR/zitter-content-probe-ui`,
-  never in the user's own profile.
+- `launch` uses a disposable workspace root under the system temporary directory.
+  On macOS it runs `build/ZitterContentLab.app`. On Windows it runs the Content
+  build on a separate desktop and uses its named pipe for input and screenshots.
 - If you changed code, build first: use the `zitter-dev` build job if this session
   has it, else `.claude/skills/verify-ui/scripts/build_app.sh`. See CLAUDE.md on
   the shared build directory. An app built before the automation channel (before

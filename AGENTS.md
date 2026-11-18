@@ -19,11 +19,18 @@ Review UI changes in light and dark themes across the affected renderers
 
 ## Checking the running app
 
+On Windows, keep agent-started programs off the working desktop by default.
+Run CLI tools in the current terminal and start separate console helpers with
+`Start-Process -WindowStyle Hidden` or `subprocess.CREATE_NO_WINDOW`. Use the
+tool's background mode for GUI work, or run a standalone GUI command with
+`python tools/windows_test_desktop.py -- <executable> <arguments...>`.
+Use the working desktop when the user asks to watch or interact, or consents to
+an interactive step.
+
 To exercise or look at Zitter's UI (clicks, typing, scrolling, screenshots,
-animation frames), follow `.agents/skills/drive-zitter/SKILL.md`. On macOS it
-drives the app through its automation socket: the user's mouse never moves and
-the app stays in the background, so it needs no permission to take over the
-screen.
+animation frames), follow `.agents/skills/drive-zitter/SKILL.md`. Start Zitter
+with `ui.py launch`, which uses a separate desktop on Windows and drives the app
+through its automation socket on both platforms.
 
 ## Build directories and disk space
 
