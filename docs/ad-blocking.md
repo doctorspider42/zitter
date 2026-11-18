@@ -43,9 +43,9 @@ How it is embedded:
   writes `third_party/rust/BUILD.gn` with `cargo_crate` targets. No build
   scripts run: the two crates that have one (`flatbuffers`, `thiserror`) only
   probe for nightly features we do not use.
-- The vendored files are not modified, so MPL-2.0 asks only for the notice and
-  for its source to stay available; both are in this repository
-  (`third_party/rust/adblock/LICENSE`).
+- The vendor script applies one patch to `adblock-rust` so disk caches always
+  pass structural validation before they are used. The modified source and
+  MPL-2.0 license are available in `third_party/rust/adblock/`.
 - `adblock` is built with `default-features = false`: no `embedded-domain-resolver`
   (Chromium's `net::registry_controlled_domains` resolves eTLD+1 instead, through
   a cxx callback), no CSS validation, no resource assembler, no object pooling.
@@ -366,6 +366,10 @@ Differences from the design:
 
 ### List updates
 
+- Each persistent profile caches its compiled engine on disk, keyed by the
+  active filter texts and custom rules. Zitter rebuilds a missing, invalid or
+  stale cache from the original rules and writes the replacement in the
+  background. Private profiles keep their engine in memory.
 - At startup the service reads the files. A list some loaded profile has on,
   missing or older than four days, is downloaded 30 s after startup (so it
   never competes with the first page), through the system network context: no

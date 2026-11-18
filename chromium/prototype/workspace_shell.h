@@ -1007,6 +1007,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void PositionPanels();
   void PositionPreferencesTab();
   void SyncPreferencesTab();
+  void EnsurePreferencesTab();
   void ApplySidebarWidth(int width,bool done);
   void FitInitialSidebarWidth();
   void HideMetalSidebarGrip();

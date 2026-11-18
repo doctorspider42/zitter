@@ -19936,8 +19936,7 @@ void WorkspaceLab::CheckExtensionTabDiscard(size_t source, int tab_id,
     const auto show_options = [&] {
       auto title = base::UTF8ToUTF16((*manager)->name());
       base::i18n::SanitizeUserSuppliedString(&title);
-      shell_->preferences_search()->SetText(title);
-      shell_->OpenGeneralSettings();
+      shell_->OpenGeneralSettings(title);
       return shell_->extension_options_for_testing((*manager)->id());
     };
     for (const auto& workspace : model_.workspaces()) {
@@ -20110,7 +20109,7 @@ void WorkspaceLab::CheckActiveTabActionProbe(
       return;
     }
     const ui::Accelerator action_key(ui::VKEY_Z, ui::EF_ALT_DOWN | ui::EF_SHIFT_DOWN);
-    if (shell_->general_widget()->IsVisible() ||
+    if ((shell_->general_widget() && shell_->general_widget()->IsVisible()) ||
         !extension_shortcuts_.contains(action_key) ||
         !DispatchExtensionShortcut(action_key) || !extension_popup_view_) {
       LOG(ERROR) << "The extension action shortcut did not open its popup";

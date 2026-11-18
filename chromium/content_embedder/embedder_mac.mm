@@ -1053,6 +1053,15 @@ class LabMainParts final : public content::BrowserMainParts,
       return;
     }
     if (!workspace_root_.empty()) {
+      if (ordinary_prepared_startup_ && !install_file_keychain_fixture_) {
+        // Read the policy while the Keychain and encrypted stores are being
+        // checked. Both results must be ready before any page can navigate.
+        base::ThreadPool::PostTaskAndReplyWithResult(
+            FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+            base::BindOnce(&zitter::LoadSafeBrowsingKeyFile),
+            base::BindOnce(&LabMainParts::DownloadPolicyReady,
+                           weak_factory_.GetWeakPtr()));
+      }
       std::move(check_encryption_).Run(
           base::BindOnce(
               [](base::WeakPtr<LabMainParts> self, bool verified) {
@@ -1342,6 +1351,18 @@ class LabMainParts final : public content::BrowserMainParts,
     StartWorkspace();
   }
 
+  void DownloadPolicyReady(std::string key) {
+    startup_safe_browsing_key_ = std::move(key);
+    StartWorkspaceWhenReady();
+  }
+
+  void StartWorkspaceWhenReady() {
+    if (workspace_encryption_ready_ && startup_safe_browsing_key_) {
+      auto key = std::exchange(startup_safe_browsing_key_, std::nullopt);
+      StartWorkspaceWithDownloadPolicy(std::move(*key));
+    }
+  }
+
   bool WorkspaceEncryptionReady(bool verified) {
     if (!verified) {
       LOG(ERROR) << (workspace_legacy_keychain_
@@ -1387,11 +1408,8 @@ class LabMainParts final : public content::BrowserMainParts,
       }
     }
     if (ordinary_prepared_startup_ && !install_file_keychain_fixture_) {
-      base::ThreadPool::PostTaskAndReplyWithResult(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-          base::BindOnce(&zitter::LoadSafeBrowsingKeyFile),
-          base::BindOnce(&LabMainParts::StartWorkspaceWithDownloadPolicy,
-                         weak_factory_.GetWeakPtr()));
+      workspace_encryption_ready_ = true;
+      StartWorkspaceWhenReady();
     } else {
       StartWorkspaceWithDownloadPolicy({});
     }
@@ -2167,6 +2185,8 @@ class LabMainParts final : public content::BrowserMainParts,
   base::DictValue workspace_session_;
   std::unique_ptr<prototype::TimelineStore> workspace_timeline_;
   const bool ordinary_prepared_startup_;
+  bool workspace_encryption_ready_ = false;
+  std::optional<std::string> startup_safe_browsing_key_;
   bool fresh_startup_ = false;
   std::string startup_import_probe_;
   GURL workspace_probe_url_;

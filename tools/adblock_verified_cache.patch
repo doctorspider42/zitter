@@ -1,0 +1,32 @@
+diff --git a/third_party/rust/adblock/src/engine.rs b/third_party/rust/adblock/src/engine.rs
+index e0852a2..67feb51 100644
+--- a/third_party/rust/adblock/src/engine.rs
++++ b/third_party/rust/adblock/src/engine.rs
+@@ -448,9 +448,26 @@ impl Engine {
+     /// no guarantee that later versions of the format will be deserializable across minor versions
+     /// of adblock-rust; the format is provided only as a caching optimization.
+     pub fn deserialize(&mut self, serialized: &[u8]) -> Result<(), DeserializationError> {
++        self.deserialize_impl(serialized, false)
++    }
++
++    /// Reload a cache from disk with structural validation even when the
++    /// producer reports the same crate version.
++    pub fn deserialize_verified(&mut self, serialized: &[u8]) -> Result<(), DeserializationError> {
++        self.deserialize_impl(serialized, true)
++    }
++
++    fn deserialize_impl(
++        &mut self,
++        serialized: &[u8],
++        verify: bool,
++    ) -> Result<(), DeserializationError> {
+         let current_tags = self.blocker.tags_enabled();
+
+-        let payload = deserialize_dat_file(serialized)?;
++        let mut payload = deserialize_dat_file(serialized)?;
++        if verify {
++            payload.crate_version_matches = false;
++        }
+         let memory = load_flatbuffer_memory(payload)?;
+
+         let context = FilterDataContext::new(memory);

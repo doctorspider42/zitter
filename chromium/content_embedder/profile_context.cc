@@ -8,6 +8,7 @@
 #include "federated_identity.h"
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -17,6 +18,7 @@
 #include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
+#include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
@@ -27,6 +29,7 @@
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
@@ -65,6 +68,7 @@
 #include "components/sync/model/wipe_model_upon_sync_disabled_behavior.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/version_info/channel.h"
+#include "crypto/hash.h"
 #include "build/build_config.h"
 #include "content/public/browser/platform_notification_service.h"
 #if BUILDFLAG(IS_WIN)
@@ -462,9 +466,53 @@ scoped_refptr<user_prefs::PrefRegistrySyncable> AdblockPrefRegistry() {
   return registry;
 }
 
+rust::Box<adblock::Engine> LoadOrBuildAdblockEngine(
+    const base::FilePath& cache_path,
+    const rust::Vec<rust::String>& lists) {
+  constexpr size_t kMaxCacheSize = 64 * 1024 * 1024;
+  // Bump this when changes to list preprocessing or the engine build options
+  // can change the compiled rules without changing the input text.
+  crypto::hash::Hasher hasher(crypto::hash::kSha256);
+  hasher.Update("Zitter adblock engine v1");
+  for (const auto& list : lists) {
+    hasher.Update(base::NumberToString(list.size()));
+    hasher.Update(":");
+    hasher.Update(static_cast<std::string_view>(list));
+  }
+  std::array<uint8_t, crypto::hash::kSha256Size> digest;
+  hasher.Finish(digest);
+  const std::string_view key = base::as_string_view(digest);
+
+  std::string cache;
+  rust::Slice<const uint8_t> payload;
+  if (!base::IsLink(cache_path) &&
+      base::ReadFileToStringWithMaxSize(cache_path, &cache, kMaxCacheSize) &&
+      cache.starts_with(key)) {
+    const auto bytes = base::as_byte_span(cache).subspan(key.size());
+    payload = rust::Slice<const uint8_t>(bytes.data(), bytes.size());
+  }
+  rust::Vec<uint8_t> rebuilt;
+  auto engine = adblock::new_cached_engine(lists, payload, rebuilt);
+  if (!rebuilt.empty() && rebuilt.size() <= kMaxCacheSize - key.size()) {
+    // Return the usable engine before flushing its disposable cache to disk.
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::FilePath path, std::string data, rust::Vec<uint8_t> engine) {
+              if (base::IsLink(path))
+                return;
+              data.append(reinterpret_cast<const char*>(engine.data()),
+                          engine.size());
+              base::ImportantFileWriter::WriteFileAtomically(path, data);
+            },
+            cache_path, std::string(key), std::move(rebuilt)));
+  }
+  return engine;
+}
+
 rust::Box<adblock::Engine> BuildAdblockEngine(
     prototype::AdblockFilterLists::Texts texts, std::vector<bool> enabled,
-    std::vector<std::string> rules) {
+    std::vector<std::string> rules, const base::FilePath& cache_path) {
   rust::Vec<rust::String> lists;
   const auto& sources = prototype::AdblockFilterListSources();
   for (size_t i = 0; i < sources.size(); ++i) {
@@ -477,7 +525,8 @@ rust::Box<adblock::Engine> BuildAdblockEngine(
   }
   if (!rules.empty())
     lists.emplace_back(base::JoinString(rules, "\n"));
-  return adblock::new_engine(lists);
+  return cache_path.empty() ? adblock::new_engine(lists)
+                            : LoadOrBuildAdblockEngine(cache_path, lists);
 }
 
 }  // namespace
@@ -499,9 +548,14 @@ class ProfileContext::AdblockState {
       : origin_(std::move(origin)), engine_(std::move(engine)) {}
 
   explicit AdblockState(
-      std::unique_ptr<AdblockPreferences> preferences)
+      std::unique_ptr<AdblockPreferences> preferences,
+      base::FilePath cache_path = {})
       : preferences_(std::move(preferences)),
-        engine_(BuildAdblockEngine({}, EnabledLists(), ReadRules())) {
+        cache_path_(std::move(cache_path)),
+        cache_runner_(cache_path_.empty() ? nullptr :
+            base::ThreadPool::CreateSequencedTaskRunner(
+                {base::MayBlock(), base::TaskPriority::USER_VISIBLE})),
+        engine_(BuildAdblockEngine({}, EnabledLists(), ReadRules(), {})) {
     UpdateAllowedSites();
     registrar_.Init(&prefs());
     const auto switches = base::BindRepeating(
@@ -615,7 +669,8 @@ class ProfileContext::AdblockState {
                  std::make_move_iterator(additions.end()));
     base::ThreadPool::PostTaskAndReplyWithResult(
         FROM_HERE, {base::TaskPriority::USER_VISIBLE},
-        base::BindOnce(&BuildAdblockEngine, texts_, EnabledLists(), std::move(rules)),
+        base::BindOnce(&BuildAdblockEngine, texts_, EnabledLists(),
+                       std::move(rules), base::FilePath()),
         std::move(done));
   }
 
@@ -661,17 +716,16 @@ class ProfileContext::AdblockState {
   void Rebuild(base::OnceClosure ready) {
     const size_t generation = ++generation_;
     if (!texts_) {
-      engine_ = BuildAdblockEngine({}, EnabledLists(), ReadRules());
+      engine_ = BuildAdblockEngine({}, EnabledLists(), ReadRules(), {});
       built_ = generation;
       changed_.Notify();
       if (ready)
         std::move(ready).Run();
       return;
     }
-    base::ThreadPool::PostTaskAndReplyWithResult(
-        FROM_HERE, {base::TaskPriority::USER_VISIBLE},
-        base::BindOnce(&BuildAdblockEngine, texts_, EnabledLists(), ReadRules()),
-        base::BindOnce([](base::WeakPtr<AdblockState> state, size_t generation,
+    auto build = base::BindOnce(&BuildAdblockEngine, texts_, EnabledLists(),
+                                ReadRules(), cache_path_);
+    auto done = base::BindOnce([](base::WeakPtr<AdblockState> state, size_t generation,
                           base::OnceClosure ready, rust::Box<adblock::Engine> engine) {
           if (state && state->generation_ == generation) {
             state->engine_ = std::move(engine);
@@ -680,7 +734,15 @@ class ProfileContext::AdblockState {
           }
           if (ready)
             std::move(ready).Run();
-        }, weak_factory_.GetWeakPtr(), generation, std::move(ready)));
+        }, weak_factory_.GetWeakPtr(), generation, std::move(ready));
+    if (cache_runner_) {
+      cache_runner_->PostTaskAndReplyWithResult(FROM_HERE, std::move(build),
+                                                std::move(done));
+    } else {
+      base::ThreadPool::PostTaskAndReplyWithResult(
+          FROM_HERE, {base::TaskPriority::USER_VISIBLE}, std::move(build),
+          std::move(done));
+    }
   }
 
   void UpdateAllowedSites() {
@@ -691,6 +753,8 @@ class ProfileContext::AdblockState {
 
   const std::optional<url::Origin> origin_;
   const std::unique_ptr<AdblockPreferences> preferences_;
+  const base::FilePath cache_path_;
+  const scoped_refptr<base::SequencedTaskRunner> cache_runner_;
   PrefChangeRegistrar registrar_;
   rust::Box<adblock::Engine> engine_;
   prototype::AdblockFilterLists::Texts texts_;
@@ -1127,7 +1191,8 @@ void ProfileContext::SetAdblockPreferences(
     std::unique_ptr<AdblockPreferences> prefs) {
   CHECK(prefs && !adblock_ && !IsOffTheRecord());
   prototype::ConfigureAdblockDomainResolver();
-  adblock_ = std::make_unique<AdblockState>(std::move(prefs));
+  adblock_ = std::make_unique<AdblockState>(
+      std::move(prefs), path_.AppendASCII("Zitter Adblock Engine"));
 }
 
 void ProfileContext::InitializePrivateAdblock(ProfileContext* parent) {

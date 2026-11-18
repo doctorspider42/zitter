@@ -1,6 +1,6 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 //! Zitter's bridge to Brave's adblock-rust (MPL-2.0, vendored unmodified in
-//! third_party/rust/adblock): parse filter lists, match requests, return
+//! third_party/rust/adblock with verified cache loading): parse filter lists, match requests, return
 //! cosmetic selectors and check single rules the assistant proposes. Its
 //! scriptlets and `$redirect` bodies are Zitter's own (adblock_resources.js).
 //! Every call runs on whichever thread owns the engine; nothing here blocks.
@@ -43,6 +43,7 @@ mod ffi {
         type Engine;
         // Every list text (EasyList, EasyPrivacy, the profile's own rules) in one engine.
         fn new_engine(lists: &Vec<String>) -> Box<Engine>;
+        fn new_cached_engine(lists: &Vec<String>, cached: &[u8], rebuilt: &mut Vec<u8>) -> Box<Engine>;
         fn rule_count(self: &Engine) -> usize;
         fn check_request(self: &Engine, url: &str, source_url: &str, request_type: &str) -> RequestCheck;
         fn cosmetic_resources(self: &Engine, url: &str) -> CosmeticResources;
@@ -247,17 +248,43 @@ fn script_hosts(list: &str, hosts: &mut BTreeSet<String>) {
 }
 
 fn new_engine(lists: &Vec<String>) -> Box<Engine> {
+    build_engine(lists, None, None)
+}
+
+fn new_cached_engine(lists: &Vec<String>, cached: &[u8], rebuilt: &mut Vec<u8>) -> Box<Engine> {
     ensure_resolver();
-    let mut set = FilterSet::new(false);
+    let mut engine = adblock::Engine::default();
+    let restored = !cached.is_empty() && engine.deserialize_verified(cached).is_ok();
+    build_engine(lists, restored.then_some(engine), Some(rebuilt))
+}
+
+fn build_engine(
+    lists: &[String],
+    cached: Option<adblock::Engine>,
+    rebuilt: Option<&mut Vec<u8>>,
+) -> Box<Engine> {
+    ensure_resolver();
+    let mut set = cached.is_none().then(|| FilterSet::new(false));
     let mut rules = 0;
     let mut hosts = BTreeSet::new();
     for list in lists {
         rules += count_rules(list);
         let list = preprocess(list);
         script_hosts(&list, &mut hosts);
-        set.add_filter_list(list, ParseOptions::default());
+        if let Some(set) = &mut set {
+            set.add_filter_list(list, ParseOptions::default());
+        }
     }
-    let mut engine = adblock::Engine::new_with_filter_set(set);
+    let mut engine = match cached {
+        Some(engine) => engine,
+        None => {
+            let engine = adblock::Engine::new_with_filter_set(set.unwrap());
+            if let Some(rebuilt) = rebuilt {
+                *rebuilt = engine.serialize();
+            }
+            engine
+        }
+    };
     engine.use_resources(resources());
     Box::new(Engine { engine, rules, script_hosts: hosts })
 }

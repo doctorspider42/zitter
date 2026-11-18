@@ -3,8 +3,8 @@
 """Vendor Brave's adblock-rust and the crates Chromium lacks into third_party/rust.
 
 Downloads the pinned .crate archives from crates.io, checks their SHA-256 against
-the pins below (the checksums of Cargo.lock), unpacks the sources unmodified and
-writes third_party/rust/BUILD.gn with `cargo_crate` targets. The overlay installs
+the pins below (the checksums of Cargo.lock), applies Zitter's verified cache
+patch and writes third_party/rust/BUILD.gn with `cargo_crate` targets. The overlay installs
 the directory as //third_party/rust/zitter_vendor, where Chromium's own crates
 (regex-automata, memchr, serde, ICU…) are visible to it.
 
@@ -16,12 +16,14 @@ import hashlib
 import io
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tarfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 VENDOR = ROOT / 'third_party/rust'
+CACHE_PATCH = ROOT / 'tools/adblock_verified_cache.patch'
 LABEL = '//third_party/rust/zitter_vendor'
 CHROMIUM = '//third_party/rust'
 KEEP = ('src/', 'Cargo.toml', 'LICENSE', 'LICENSE-APACHE', 'LICENSE-MIT', 'COPYRIGHT', 'README.md')
@@ -149,6 +151,7 @@ def main():
             with urllib.request.urlopen(url, timeout=60) as response:
                 unpack(name, version, sha256, response.read())
             print(f'vendored {name} {version}')
+        subprocess.run(['git', 'apply', CACHE_PATCH], cwd=ROOT, check=True)
         (VENDOR / 'BUILD.gn').write_bytes(build_gn().encode('utf-8'))
         return
     for name, version, *_ in CRATES:
@@ -157,6 +160,8 @@ def main():
             sys.exit(f'{name} {version} is not vendored; run tools/vendor_adblock.py')
     if (VENDOR / 'BUILD.gn').read_bytes() != build_gn().encode('utf-8'):
         sys.exit('third_party/rust/BUILD.gn is stale; run tools/vendor_adblock.py')
+    subprocess.run(['git', 'apply', '--reverse', '--check', CACHE_PATCH],
+                   cwd=ROOT, check=True)
     print('vendored crates match their pins')
 
 

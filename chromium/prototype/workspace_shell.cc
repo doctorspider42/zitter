@@ -5527,118 +5527,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   {const auto d=sidebar::import_defaults();SetCheckValue(import_profiles_,d.separate_profiles);SetCheckValue(import_bookmarks_,d.bookmarks);SetCheckValue(import_history_,d.history);SetCheckValue(import_cookies_,d.cookies);import_panel->SetLayoutManager(CreateSidebarColumnLayout(12));import_panel->SetBorder(views::CreatePaddedBorder(views::CreateRoundedRectBorder(1,12,Hairline(root_)),gfx::Insets(20)));}
 
 
-  auto general = std::make_unique<views::View>();
-  general_root_ = general.get();
-  preferences_chrome_=std::make_unique<PreferenceChromeState>(general_root_);
-  auto preference_chrome_painted=base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak);
-  auto preference_chrome_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak);
-  auto copy=[&](views::View* parent,std::u16string text,SkColor tone,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false){return AddPreferenceCopy(parent,std::move(text),tone,delta,static_cast<int>(weight),multiline);};
-  auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true,preference_chrome_painted,preference_chrome_visible));
-  preferences_navigation_ = navigation;
-  navigation->SetPreferredSize(gfx::Size(212, 1));
-  auto* main = general->AddChildView(std::make_unique<views::View>());
-  SetSidebarPanelLayout(general.get(),false,gfx::Insets(8),8,main);
-  auto* preferences_heading = main->AddChildView(std::make_unique<views::View>());
-  auto* page_title = copy(preferences_heading, T(u"Preferencje"), kInk, 9,
-                     gfx::Font::Weight::SEMIBOLD);
-  views::AsViewClass<PreferenceCopy>(page_title)->SetDisplay();
-  preferences_search_ = AddEditor(preferences_heading);
-  auto* controls = preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));
-  preferences_close_ = controls->AddControl({}, T(u"Zamknij preferencje (Escape)"));
-  BindFormCommand(preferences_close_, sidebar::FormCommand::PreferencesDismiss);
-  SetSidebarPanelLayout(preferences_heading, false, gfx::Insets(), 12, page_title, true);
-  preferences_search_->SetPlaceholderText(T(u"Szukaj ustawień"));
-  preferences_search_->GetViewAccessibility().SetName(T(u"Szukaj we wszystkich ustawieniach"));
-  preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
-    if(shell&&shell->general_widget_->IsVisible()&&!shell->preferences_search_->IsIMEComposing()){
-      shell->ResetPreferenceRuleLimit();shell->FilterPreferences();
-    }
-  },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
-    return shell&&shell->HandlePreferenceEditorKey(field,event);
-  },weak,base::Unretained(preferences_search_.get())));
-  preferences_search_->view()->SetPreferredSize(gfx::Size(240, 38));
-  preferences_profile_ = copy(main, u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);
-  PanelViewport* preference_viewport=nullptr;
-  auto general_scroll=CreatePanelViewport(&preference_viewport,base::BindRepeating(&WorkspaceShell::RefreshPreferenceViewport,weak));general_scroll_=preference_viewport;
-  auto body = std::make_unique<views::View>();
-  preferences_body_ = body.get();
-  SetSidebarPanelLayout(body.get(),true,gfx::Insets::TLBR(0,0,8,8),16);
-  std::vector<std::u16string> categories = {
-      T(u"Wygląd"), T(u"Wyszukiwanie"), T(u"Prywatność"), T(u"Uprawnienia stron"), T(u"Treści i czytelność"), T(u"Hasła i profile"), T(u"Pobieranie"), T(u"Języki i pisownia"), T(u"Dane przeglądania"), T(u"Zaawansowane")};
-  std::vector<std::u16string> descriptions = {
-      T(u"Dopasuj Zitter do swojego rytmu."),
-      T(u"Wybierz, gdzie zaczyna się każde wyszukiwanie."),
-      T(u"Zdecyduj, jakie ślady zostawiasz w sieci."),
-      T(u"Ustal domyślny dostęp witryn do urządzenia."),
-      T(u"Wygodne czytanie i kontrola zawartości stron."),
-      T(u"Oddzielne logowania, wspólne możliwości."), T(u"Wybierz miejsce dla pobieranych plików."),
-      T(u"Wybierz języki witryn i pomoc podczas pisania."),
-      T(u"Kontroluj dane zapisane w bieżącym profilu."),
-      T(u"Dostępność, połączenia i ustawienia silnika Chromium.")};
-  std::optional<sidebar::PreferenceCatalogue> preference_catalogue;
-  {
-    preference_catalogue=sidebar::preference_catalogue(true);
-    if (callbacks_.open_extensions_manager || callbacks_.install_extension ||
-        callbacks_.show_extension_enablement ||
-        !callbacks_.extension_preferences.empty()) {
-      CHECK_EQ(preference_catalogue->categories.size(), kExtensionsPreferenceCategory);
-      preference_catalogue->categories.push_back(base::UTF16ToUTF8(T(u"Rozszerzenia")));
-      preference_catalogue->descriptions.push_back(base::UTF16ToUTF8(
-          T(u"Zarządzaj rozszerzeniami aktywnego profilu.")));
-    }
-    if (callbacks_.show_extension_enablement) {
-      preference_catalogue->rows.push_back(
-          ExtensionPreference("extension_enabled", T(u"Rozszerzenie profilu")));
-    }
-    for (const auto& [key, title] : callbacks_.extension_preferences)
-      preference_catalogue->rows.push_back(ExtensionPreference(key, title));
-    if (callbacks_.install_extension) {
-      sidebar::PreferenceSpec row{};
-      row.category = kExtensionsPreferenceCategory;
-      row.kind = sidebar::PreferenceRowKind::Action;
-      row.key = "install_extension";
-      row.title = base::UTF16ToUTF8(T(u"Zainstaluj rozszerzenie"));
-      row.detail = base::UTF16ToUTF8(T(u"Sprawdź uprawnienia podpisanego pliku CRX przed instalacją lub aktualizacją w tym profilu."));
-      row.button = base::UTF16ToUTF8(T(u"Wybierz plik"));
-      row.action = sidebar::PreferenceActionKind::None;
-      preference_catalogue->rows.push_back(std::move(row));
-    }
-    auto strings=[](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(base::UTF8ToUTF16(std::string(value)));return output;};
-    categories=strings(preference_catalogue->categories);descriptions=strings(preference_catalogue->descriptions);
-  }
-  preferences_category_picker_=ChoicePicker(main,T(u"Kategoria preferencji"),categories);
-  preferences_category_picker_->SetVisible(false);
-  SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-    if (!shell)
-      return;
-    const auto category = PickerIndex(shell->preferences_category_picker_).value_or(0);
-    if (category == kExtensionsPreferenceCategory && shell->callbacks_.open_extensions_manager) {
-      SyncPickerIndex(shell->preferences_category_picker_,
-                      shell->preferences_form_->form->preference_current());
-      shell->callbacks_.open_extensions_manager.Run();
-    } else {
-      shell->SelectPreferenceCategory(category);
-    }
-  },weak));
-  // This UI-only controller retains category selection across view rebuilds.
-  if(!preferences_form_)preferences_form_=std::make_unique<PreferencesFormState>(categories.size());
-  auto* category_controls=navigation->AddChildView(std::make_unique<ScenePreferenceControls>(false));
-  for (size_t i = 0; i < categories.size(); ++i) {
-    auto* button=category_controls->AddControl({},categories[i]);BindPreferenceCategory(button,i);
-    auto* section = body->AddChildView(std::make_unique<views::View>());
-    SetSidebarPanelLayout(section,true,gfx::Insets(),12);
-    copy(section, categories[i],kInk,4,gfx::Font::Weight::SEMIBOLD);
-    copy(section,descriptions[i],kMuted,-1,gfx::Font::Weight::NORMAL,true);
-    preference_sections_.push_back({section, button, {}});
-  }
-  SetSidebarPanelLayout(navigation, true, gfx::Insets(6), 0);
-  BuildRustPreferenceRows(*preference_catalogue);
-  preferences_empty_ = copy(body.get(), T(u"Brak pasujących ustawień. Spróbuj innego hasła."), kMuted,0,gfx::Font::Weight::NORMAL,true);
-  general_scroll_->SetPanelContents(std::move(body));
-  auto* main_scroll=main->AddChildView(std::move(general_scroll));
-  SetSidebarPanelLayout(main,true,gfx::Insets::VH(16,20),12,main_scroll);
-  general_status_ = copy(main, T(u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter."), kMuted,-2,gfx::Font::Weight::NORMAL,true);
-  FilterPreferences();
   auto peek = std::make_unique<PeekSurface>();
   std::array<views::Button::PressedCallback,5> peek_actions;
   peek_actions[0]=base::BindRepeating(callbacks_.page_command,PageCommand::kBack);peek_actions[1]=base::BindRepeating(callbacks_.page_command,PageCommand::kForward);
@@ -5667,9 +5555,6 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   import_scroll_=import_viewport;import_viewport->SetPanelContents(std::move(import_panel));
   CreatePanelWidget(std::move(import_scroll), import_delegate_, import_widget_, T(u"Zitter — Import danych"));
   CreatePanelWidget(std::move(peek), peek_delegate_, peek_widget_, u"Zitter — Peek");
-  // The preferences tab uses a child widget for native input and scene layers.
-  CreatePanelWidget(std::move(general), general_delegate_, general_widget_, T(u"Zitter — Ustawienia"));
-  general_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
   {auto toast=std::make_unique<ToastView>(base::BindRepeating(&WorkspaceShell::UndoToast,weak),base::BindRepeating(&WorkspaceShell::HideToast,weak),
       base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,bool hovered){if(!shell)return;if(hovered)shell->toast_timer_.Stop();else if(shell->toast_widget_->IsVisible())shell->toast_timer_.Start(FROM_HERE,base::Seconds(6),base::BindOnce(&WorkspaceShell::HideToast,shell));},weak));
    toast_=toast.get();CreatePanelWidget(std::move(toast), toast_delegate_, toast_widget_, T(u"Zitter — Komunikat"), false);}
@@ -5875,7 +5760,8 @@ void WorkspaceShell::Detach() {
     if(field)field->SetCallbacks({},{});
   address_->SetCallbacks({},{});
   emoji_input_->SetCallbacks({},{});
-  preferences_search_->SetCallbacks({},{});
+  if (preferences_search_)
+    preferences_search_->SetCallbacks({},{});
   if (site_origin_) site_origin_->SetCallbacks({},{});
   for(const auto& [key,field]:preference_textfields_)field->SetCallbacks({},{});
   import_scroll_ = nullptr;
@@ -10337,7 +10223,7 @@ void WorkspaceShell::OnNativeThemeUpdated(ui::NativeTheme*) {
     for (const auto& [preview, action] : theme_previews_)
       preview->SchedulePaint();
   }
-  if (theme_mode_ == ThemeMode::kSystem && general_widget_) ApplyAppearance();
+  if (theme_mode_ == ThemeMode::kSystem && scrim_widget_) ApplyAppearance();
 }
 void WorkspaceShell::ScheduleToolsChrome(){
   SyncSceneRowInput();
@@ -11751,7 +11637,11 @@ void WorkspaceShell::SetExtensionActionAppearance(
 
 void WorkspaceShell::AddExtensionPreference(const std::string& key,
                                            const std::u16string& title) {
-  if (!general_widget_ || preference_toggles_.contains(key))
+  if (std::ranges::contains(callbacks_.extension_preferences, key,
+                            &std::pair<std::string, std::u16string>::first))
+    return;
+  callbacks_.extension_preferences.emplace_back(key, title);
+  if (!general_widget_)
     return;
   sidebar::PreferenceCatalogue catalogue = sidebar::preference_catalogue(true);
   CHECK_EQ(catalogue.categories.size(), kExtensionsPreferenceCategory);
@@ -11764,13 +11654,136 @@ void WorkspaceShell::AddExtensionPreference(const std::string& key,
   FilterPreferences();
 }
 
-void WorkspaceShell::OpenGeneralSettings(std::u16string_view query) {
-  if (!widget_ || !widget_->IsVisible() || !general_widget_)
+void WorkspaceShell::EnsurePreferencesTab() {
+  if (general_widget_)
     return;
-  const bool was_visible = general_widget_->IsVisible();
+  const auto weak = weak_factory_.GetWeakPtr();
+  auto general = std::make_unique<views::View>();
+  general_root_ = general.get();
+  preferences_chrome_=std::make_unique<PreferenceChromeState>(general_root_);
+  auto preference_chrome_painted=base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome,weak);
+  auto preference_chrome_visible=base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->PreferenceChromeVisible();},weak);
+  auto copy=[&](views::View* parent,std::u16string text,SkColor tone,int delta=0,gfx::Font::Weight weight=gfx::Font::Weight::NORMAL,bool multiline=false){return AddPreferenceCopy(parent,std::move(text),tone,delta,static_cast<int>(weight),multiline);};
+  auto* navigation = general->AddChildView(std::make_unique<PreferenceSurface>(true,preference_chrome_painted,preference_chrome_visible));
+  preferences_navigation_ = navigation;
+  navigation->SetPreferredSize(gfx::Size(212, 1));
+  auto* main = general->AddChildView(std::make_unique<views::View>());
+  SetSidebarPanelLayout(general.get(),false,gfx::Insets(8),8,main);
+  auto* preferences_heading = main->AddChildView(std::make_unique<views::View>());
+  auto* page_title = copy(preferences_heading, T(u"Preferencje"), kInk, 9,
+                     gfx::Font::Weight::SEMIBOLD);
+  views::AsViewClass<PreferenceCopy>(page_title)->SetDisplay();
+  preferences_search_ = AddEditor(preferences_heading);
+  auto* controls = preferences_heading->AddChildView(std::make_unique<ScenePreferenceControls>(true));
+  preferences_close_ = controls->AddControl({}, T(u"Zamknij preferencje (Escape)"));
+  BindFormCommand(preferences_close_, sidebar::FormCommand::PreferencesDismiss);
+  SetSidebarPanelLayout(preferences_heading, false, gfx::Insets(), 12, page_title, true);
+  preferences_search_->SetPlaceholderText(T(u"Szukaj ustawień"));
+  preferences_search_->GetViewAccessibility().SetName(T(u"Szukaj we wszystkich ustawieniach"));
+  preferences_search_->SetCallbacks(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){
+    if(shell&&shell->general_widget_->IsVisible()&&!shell->preferences_search_->IsIMEComposing()){
+      shell->ResetPreferenceRuleLimit();shell->FilterPreferences();
+    }
+  },weak),base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,EditorControl* field,const ui::KeyEvent& event){
+    return shell&&shell->HandlePreferenceEditorKey(field,event);
+  },weak,base::Unretained(preferences_search_.get())));
+  preferences_search_->view()->SetPreferredSize(gfx::Size(240, 38));
+  preferences_profile_ = copy(main, u"",kMuted,-1,gfx::Font::Weight::NORMAL,true);
+  PanelViewport* preference_viewport=nullptr;
+  auto general_scroll=CreatePanelViewport(&preference_viewport,base::BindRepeating(&WorkspaceShell::RefreshPreferenceViewport,weak));general_scroll_=preference_viewport;
+  auto body = std::make_unique<views::View>();
+  preferences_body_ = body.get();
+  SetSidebarPanelLayout(body.get(),true,gfx::Insets::TLBR(0,0,8,8),16);
+  std::vector<std::u16string> categories = {
+      T(u"Wygląd"), T(u"Wyszukiwanie"), T(u"Prywatność"), T(u"Uprawnienia stron"), T(u"Treści i czytelność"), T(u"Hasła i profile"), T(u"Pobieranie"), T(u"Języki i pisownia"), T(u"Dane przeglądania"), T(u"Zaawansowane")};
+  std::vector<std::u16string> descriptions = {
+      T(u"Dopasuj Zitter do swojego rytmu."),
+      T(u"Wybierz, gdzie zaczyna się każde wyszukiwanie."),
+      T(u"Zdecyduj, jakie ślady zostawiasz w sieci."),
+      T(u"Ustal domyślny dostęp witryn do urządzenia."),
+      T(u"Wygodne czytanie i kontrola zawartości stron."),
+      T(u"Oddzielne logowania, wspólne możliwości."), T(u"Wybierz miejsce dla pobieranych plików."),
+      T(u"Wybierz języki witryn i pomoc podczas pisania."),
+      T(u"Kontroluj dane zapisane w bieżącym profilu."),
+      T(u"Dostępność, połączenia i ustawienia silnika Chromium.")};
+  std::optional<sidebar::PreferenceCatalogue> preference_catalogue;
+  {
+    preference_catalogue=sidebar::preference_catalogue(true);
+    if (callbacks_.open_extensions_manager || callbacks_.install_extension ||
+        callbacks_.show_extension_enablement ||
+        !callbacks_.extension_preferences.empty()) {
+      CHECK_EQ(preference_catalogue->categories.size(), kExtensionsPreferenceCategory);
+      preference_catalogue->categories.push_back(base::UTF16ToUTF8(T(u"Rozszerzenia")));
+      preference_catalogue->descriptions.push_back(base::UTF16ToUTF8(
+          T(u"Zarządzaj rozszerzeniami aktywnego profilu.")));
+    }
+    if (callbacks_.show_extension_enablement) {
+      preference_catalogue->rows.push_back(
+          ExtensionPreference("extension_enabled", T(u"Rozszerzenie profilu")));
+    }
+    for (const auto& [key, title] : callbacks_.extension_preferences)
+      preference_catalogue->rows.push_back(ExtensionPreference(key, title));
+    if (callbacks_.install_extension) {
+      sidebar::PreferenceSpec row{};
+      row.category = kExtensionsPreferenceCategory;
+      row.kind = sidebar::PreferenceRowKind::Action;
+      row.key = "install_extension";
+      row.title = base::UTF16ToUTF8(T(u"Zainstaluj rozszerzenie"));
+      row.detail = base::UTF16ToUTF8(T(u"Sprawdź uprawnienia podpisanego pliku CRX przed instalacją lub aktualizacją w tym profilu."));
+      row.button = base::UTF16ToUTF8(T(u"Wybierz plik"));
+      row.action = sidebar::PreferenceActionKind::None;
+      preference_catalogue->rows.push_back(std::move(row));
+    }
+    auto strings=[](const auto& input){std::vector<std::u16string> output;for(const auto& value:input)output.push_back(base::UTF8ToUTF16(std::string(value)));return output;};
+    categories=strings(preference_catalogue->categories);descriptions=strings(preference_catalogue->descriptions);
+  }
+  preferences_category_picker_=ChoicePicker(main,T(u"Kategoria preferencji"),categories);
+  preferences_category_picker_->SetVisible(false);
+  SetPickerCallback(preferences_category_picker_,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+    if (!shell)
+      return;
+    const auto category = PickerIndex(shell->preferences_category_picker_).value_or(0);
+    if (category == kExtensionsPreferenceCategory && shell->callbacks_.open_extensions_manager) {
+      SyncPickerIndex(shell->preferences_category_picker_,
+                      shell->preferences_form_->form->preference_current());
+      shell->callbacks_.open_extensions_manager.Run();
+    } else {
+      shell->SelectPreferenceCategory(category);
+    }
+  },weak));
+  // This UI-only controller retains category selection across view rebuilds.
+  if(!preferences_form_)preferences_form_=std::make_unique<PreferencesFormState>(categories.size());
+  auto* category_controls=navigation->AddChildView(std::make_unique<ScenePreferenceControls>(false));
+  for (size_t i = 0; i < categories.size(); ++i) {
+    auto* button=category_controls->AddControl({},categories[i]);BindPreferenceCategory(button,i);
+    auto* section = body->AddChildView(std::make_unique<views::View>());
+    SetSidebarPanelLayout(section,true,gfx::Insets(),12);
+    copy(section, categories[i],kInk,4,gfx::Font::Weight::SEMIBOLD);
+    copy(section,descriptions[i],kMuted,-1,gfx::Font::Weight::NORMAL,true);
+    preference_sections_.push_back({section, button, {}});
+  }
+  SetSidebarPanelLayout(navigation, true, gfx::Insets(6), 0);
+  BuildRustPreferenceRows(*preference_catalogue);
+  preferences_empty_ = copy(body.get(), T(u"Brak pasujących ustawień. Spróbuj innego hasła."), kMuted,0,gfx::Font::Weight::NORMAL,true);
+  general_scroll_->SetPanelContents(std::move(body));
+  auto* main_scroll=main->AddChildView(std::move(general_scroll));
+  SetSidebarPanelLayout(main,true,gfx::Insets::VH(16,20),12,main_scroll);
+  general_status_ = copy(main, T(u"Przełączniki zapisują się automatycznie. Pola tekstowe zatwierdź przyciskiem Zapisz lub Enter."), kMuted,-2,gfx::Font::Weight::NORMAL,true);
+  FilterPreferences();
+  // The preferences tab uses a child widget for native input and scene layers.
+  CreatePanelWidget(std::move(general), general_delegate_, general_widget_, T(u"Zitter — Ustawienia"));
+  general_widget_->SetVisibilityAnimationTransition(views::Widget::ANIMATE_NONE);
+  ApplyTheme();
+}
+
+void WorkspaceShell::OpenGeneralSettings(std::u16string_view query) {
+  if (!widget_ || !widget_->IsVisible())
+    return;
+  const bool was_visible = general_widget_ && general_widget_->IsVisible();
   CloseOverlays(true);
   if (callbacks_.open_preferences_tab && !callbacks_.open_preferences_tab.Run())
     return;
+  EnsurePreferencesTab();
   if (!query.empty())
     preferences_search_->SetText(query);
   RefreshGeneralControls();
@@ -11819,13 +11832,14 @@ bool WorkspaceShell::DismissPreferencesTab() {
 }
 
 void WorkspaceShell::SyncPreferencesTab() {
-  if (!callbacks_.open_preferences_tab || !general_widget_)
+  if (!callbacks_.open_preferences_tab)
     return;
   if (!IsSettingsTabUrl(state_.url) || content_fullscreen_ || !widget_->IsVisible()) {
-    if (general_widget_->IsVisible())
+    if (general_widget_ && general_widget_->IsVisible())
       general_widget_->Hide();
     return;
   }
+  EnsurePreferencesTab();
   if (!general_widget_->IsVisible()) {
     PositionPreferencesTab();
     general_widget_->ShowInactive();
