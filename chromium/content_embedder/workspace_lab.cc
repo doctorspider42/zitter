@@ -1149,6 +1149,7 @@ class WorkspaceWebView final : public LabWebView {
     if (!devtools_)
       return;
     const bool changed = devtools_->web_contents() != contents;
+    const bool restore_page_focus = changed && !contents && devtools_->HasFocus();
     if (changed) {
       devtools_->SetWebContents(contents);
       devtools_->SetVisible(contents != nullptr);
@@ -1164,8 +1165,13 @@ class WorkspaceWebView final : public LabWebView {
     }
     if (changed || page_bounds_ != page_bounds) {
       page_bounds_ = page_bounds;
-      InvalidateLayout();
+      if (changed && IsDrawn())
+        DeprecatedLayoutImmediately();
+      else
+        InvalidateLayout();
     }
+    if (restore_page_focus)
+      RequestFocus();
   }
 
   bool SetExtensionSidePanel(const std::string& id, int tab_id, const GURL& url, bool toggle) {
