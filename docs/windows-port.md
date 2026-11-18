@@ -443,6 +443,18 @@ copy, run `out/ZitterWinContent/zitter.exe` with a disposable
 
 ## Media playback and browser controls
 
+Windows uses Acrylic for the tab sidebar and page context menus, including
+their submenus. The floating assistant uses compositor backdrop blur. These
+surfaces retain the workspace tint in light and dark themes and use opaque
+backgrounds when Windows transparency effects are disabled or Acrylic is
+unavailable. The pinned assistant keeps an opaque background on Windows;
+macOS can apply a native material to that region of the main window.
+
+The shared Content runtime includes per-profile private extension controls,
+background update downloads with progress and retry in the sidebar, and
+DevTools zoom independent of page zoom. DevTools keeps its zoom while moving
+between docked and undocked hosts.
+
 Windows protocol launches forward HTTP(S) URLs directly to the running workspace
 window through the native command channel. Both the executable and user-data
 directory must match. This avoids depending on a temporary stock Chromium window

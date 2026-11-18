@@ -255,6 +255,10 @@ void ConfigureNonActivatingPanel(views::Widget* widget, views::Widget::InitParam
   params.desktop_window_tree_host = new NonActivatingPanelHost(widget, native_widget);
 }
 
+bool WorkspaceAllowsTransparency() {
+  return TransparencyEffectsEnabled();
+}
+
 bool SetWorkspaceAcrylicBackdrop(views::Widget* widget, bool enabled, bool dark, SkColor tint) {
   if (!widget || !widget->GetNativeWindow()) return false;
   HWND hwnd = views::HWNDForWidget(widget);

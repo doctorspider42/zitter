@@ -30,6 +30,7 @@
 
 #include "base/check.h"
 #include "base/scoped_observation.h"
+#include "base/scoped_multi_source_observation.h"
 #include "base/command_line.h"
 #include "chromium/prototype/sidebar_metal.h"
 #include "chromium/prototype/sidebar_layout.h"
@@ -175,7 +176,6 @@
 
 #include "chromium/prototype/sidebar_scene.rs.h"
 #if BUILDFLAG(IS_MAC)
-#include "base/scoped_multi_source_observation.h"
 #include "chromium/prototype/workspace_keyboard_mac.h"
 #include "chromium/prototype/workspace_frame_mac.h"
 #elif BUILDFLAG(IS_WIN)
@@ -594,7 +594,7 @@ END_METADATA
 constexpr int32_t kZitterMenuRun = views::MenuRunner::NO_FLAGS;
 // The panel's `radius-md`, passed to every context-menu run.
 gfx::RoundedCornersF ZitterMenuCorners() { return gfx::RoundedCornersF(12); }
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 class PageMenuMaterial final : public views::ViewObserver {
  public:
   PageMenuMaterial(views::MenuItemView& root, SkColor workspace_color)
@@ -636,12 +636,21 @@ class PageMenuMaterial final : public views::ViewObserver {
     const auto corners = ZitterMenuCorners();
     const auto insets = container.outside_border_insets();
     auto* widget = container.GetWidget();
-    if (!SetWorkspaceMenuMaterial(widget, insets, corners.upper_left()))
-      return;
-    SetWorkspaceNativeAppearance(widget, IsDark(&container));
     const auto palette = Palette(&container, workspace_color_);
     const auto tint = color_utils::AlphaBlend(palette.accent, palette.bg_raised,
                                               0.14f);
+#if BUILDFLAG(IS_MAC)
+    if (!SetWorkspaceMenuMaterial(widget, insets, corners.upper_left()))
+      return;
+#else
+    if (!SetWorkspaceAcrylicBackdrop(widget, true, IsDark(&container),
+                                    SkColorSetA(tint, 0x40))) {
+      container.SetBackground(views::CreateRoundedRectBackground(
+          palette.bg_raised, corners, insets));
+      return;
+    }
+#endif
+    SetWorkspaceNativeAppearance(widget, IsDark(&container));
     container.SetBackground(views::CreateRoundedRectBackground(
         SkColorSetA(tint, 178), corners, insets));
   }
@@ -661,7 +670,7 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
     view_adapter_ = std::make_unique<views::MenuModelAdapter>(this);
     return view_adapter_->CreateMenu();
   }
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   void EnablePageMaterial(views::MenuItemView& menu, SkColor workspace_color) {
     page_material_ = std::make_unique<PageMenuMaterial>(menu, workspace_color);
   }
@@ -673,7 +682,7 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
 
  private:
   std::unique_ptr<views::MenuModelAdapter> view_adapter_;
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   std::unique_ptr<PageMenuMaterial> page_material_;
 #endif
 };
@@ -4472,9 +4481,12 @@ class ShellRoot final : public views::View {
     views::View::OnPaintBackground(canvas);
   }
 
+#endif
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   void UpdateAssistantMaterial() {
     const bool blur = assistant && assistant->GetVisible() && !content_fullscreen &&
                       WorkspaceAllowsTransparency();
+#if BUILDFLAG(IS_MAC)
     const auto bounds = blur && assistant_pinned ? assistant->bounds() : gfx::Rect();
     if (bounds != assistant_material_bounds_) {
       const auto insets = gfx::Insets::TLBR(
@@ -4484,6 +4496,7 @@ class ShellRoot final : public views::View {
       assistant_material_bounds_ = material ? bounds : gfx::Rect();
       SchedulePaint();
     }
+#endif
     if (!assistant || !assistant->layer())
       return;
     const bool floating = blur && !assistant_pinned;
@@ -4494,7 +4507,10 @@ class ShellRoot final : public views::View {
           gfx::RectF(assistant->GetLocalBounds()), kAssistantPanelRadius));
     }
     const std::optional<SkColor> accent =
-        floating || !assistant_material_bounds_.IsEmpty()
+        floating
+#if BUILDFLAG(IS_MAC)
+            || !assistant_material_bounds_.IsEmpty()
+#endif
             ? std::optional<SkColor>(Palette(this).accent)
             : std::nullopt;
     if (assistant_material_accent != accent) {
@@ -4503,9 +4519,11 @@ class ShellRoot final : public views::View {
     }
   }
 
+  std::optional<SkColor> assistant_material_accent;
+#endif
+#if BUILDFLAG(IS_MAC)
   bool sidebar_material = false;
   bool sidebar_visible = false;
-  std::optional<SkColor> assistant_material_accent;
 #endif
   void Layout(PassKey) override {
     if (content_fullscreen) {
@@ -4514,7 +4532,7 @@ class ShellRoot final : public views::View {
       content->SetBoundsRect(GetLocalBounds());
       edge->SetVisible(false);
       if (assistant_edge) assistant_edge->SetVisible(false);
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
       UpdateAssistantMaterial();
 #endif
       LayoutSuperclass<views::View>(this);
@@ -4569,7 +4587,7 @@ class ShellRoot final : public views::View {
       // A pinned assistant always reserves page space, including narrow windows.
       if (assistant_pinned) page.set_width(std::max(0, assistant->x() - kGap - page.x()));
     }
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     UpdateAssistantMaterial();
 #endif
     content->SetBoundsRect(page);
@@ -8135,7 +8153,7 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
     layout->SetFlexForView(copy, 1);
   }
   if (menu) {
-#if BUILDFLAG(IS_MAC)
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
     model->EnablePageMaterial(*menu, WindowWorkspaceColor(root_));
 #endif
     link_menu_runner_ = std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
@@ -11830,6 +11848,12 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
     if (sidebar_slide_timer_.IsRunning())
       SetWorkspaceSidebarMaterialOffset(
           sidebar_widget_.get(), -sidebar_root_->width() * (1 - sidebar_slide_value_));
+  }
+#elif BUILDFLAG(IS_WIN)
+  if (SetWorkspaceAcrylicBackdrop(sidebar_widget_.get(), true, IsDark(root_),
+                                  SkColorSetA(sidebar_background, 0x40))) {
+    sidebar_background = SkColorSetA(
+        color_utils::AlphaBlend(Palette(root_).accent, sidebar_background, 0.10f), 170);
   }
 #endif
   if (pinned_) {

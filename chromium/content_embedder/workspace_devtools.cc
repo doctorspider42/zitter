@@ -723,6 +723,12 @@ class WorkspaceDevTools::Window final
     if (!ready_ || !probe_target_ready_ || !probe_isolation_ready_)
       return;
     if (dock_probe_ == DockProbe::kInitial && docked_ && probe_has_bounds_) {
+      probe_page_zoom_ = content::HostZoomMap::GetZoomLevel(target_.get());
+      const double original = content::HostZoomMap::GetZoomLevel(contents_.get());
+      ZoomFrontend(ZoomAction::kIn);
+      probe_frontend_zoom_ = content::HostZoomMap::GetZoomLevel(contents_.get());
+      CHECK_GT(probe_frontend_zoom_, original);
+      CHECK_EQ(content::HostZoomMap::GetZoomLevel(target_.get()), probe_page_zoom_);
       LOG(INFO) << "DevTools probe requested undocking";
       dock_probe_ = DockProbe::kUndock;
       ChangeFrontendDockSide(u"undocked");
@@ -730,11 +736,17 @@ class WorkspaceDevTools::Window final
                widget_->IsVisible() &&
                undocked_view_->web_contents() == contents_.get()) {
       LOG(INFO) << "DevTools probe verified the undocked frontend";
+      CHECK_EQ(content::HostZoomMap::GetZoomLevel(contents_.get()), probe_frontend_zoom_);
       dock_probe_ = DockProbe::kRedock;
       ChangeFrontendDockSide(u"bottom");
     } else if (dock_probe_ == DockProbe::kRedock && docked_ &&
                probe_has_bounds_ && loaded_) {
       LOG(INFO) << "DevTools probe verified redocking";
+      CHECK_EQ(content::HostZoomMap::GetZoomLevel(contents_.get()), probe_frontend_zoom_);
+      ZoomFrontend(ZoomAction::kReset);
+      CHECK_EQ(content::HostZoomMap::GetZoomLevel(contents_.get()), 0);
+      CHECK_EQ(content::HostZoomMap::GetZoomLevel(target_.get()), probe_page_zoom_);
+      LOG(INFO) << "DevTools probe verified independent frontend zoom across docking";
       dock_probe_ = DockProbe::kConsole;
       Show(Action::kConsole);
       contents_->GetPrimaryMainFrame()->ExecuteJavaScript(
@@ -806,6 +818,8 @@ class WorkspaceDevTools::Window final
   bool probe_target_ready_ = false;
   bool probe_isolation_ready_ = false;
   bool probe_has_bounds_ = false;
+  double probe_page_zoom_ = 0;
+  double probe_frontend_zoom_ = 0;
   std::optional<int> probe_inspect_id_;
   DockProbe dock_probe_ = DockProbe::kInitial;
   base::DictValue preferences_;

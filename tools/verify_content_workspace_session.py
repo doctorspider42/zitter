@@ -6020,9 +6020,8 @@ for index in 0..<document.pageCount {
                     shutil.rmtree(package)
             if options.extension_registry:
                 expected_hosts = {f"{host}:{server.server_port}"
-                                  for host in ("localhost", "127.0.0.1", "unapproved.example.com")}
-                if not windows:
-                    expected_hosts.add(f"child.unapproved.example.com:{server.server_port}")
+                                  for host in ("localhost", "127.0.0.1", "unapproved.example.com",
+                                               "child.unapproved.example.com")}
                 if set(server.extension_host_requests) != expected_hosts:
                     raise SystemExit(f"Unexpected extension host requests: {server.extension_host_requests}")
                 print("Extension worker reported its grants and read only approved host responses")
