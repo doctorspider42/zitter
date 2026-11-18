@@ -5156,6 +5156,10 @@ bool VerifyExtensionRegistryProbe(BrowserContext& owner,
       extensions::ExtensionRegistry::Get(&private_context) ||
       owner_registry->GetInstalledExtension(id) ||
       !owner_registry->AddDisabled(fixture)) {
+    LOG(ERROR) << "Extension registry probe initialization failed: owner="
+               << bool(owner_registry) << " other=" << bool(other_registry)
+               << " private=" << bool(extensions::ExtensionRegistry::Get(&private_context))
+               << " installed=" << bool(owner_registry && owner_registry->GetInstalledExtension(id));
     return false;
   }
   const auto* other_extension = other_registry->GetInstalledExtension(id);
@@ -6190,6 +6194,7 @@ void ExtensionNavigationProbe::Start() {
   auto* registry = extensions::ExtensionRegistry::Get(&*owner_);
   if (fixture.keep_disabled) {
     if (!registry->AddDisabled(extension_)) {
+      LOG(ERROR) << "Extension probe could not register its initially disabled fixture";
       Finish(false);
       return;
     }

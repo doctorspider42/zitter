@@ -2578,7 +2578,10 @@ def verify_extension_choice(executable, root, origin, server, extension_id, prof
         elif EXTENSION_STORAGE_MARKER in result.stdout:
             raise SystemExit("A disabled extension ran its startup worker")
         if result.returncode or ":FATAL:" in result.stderr or not expected.issubset(lines):
-            raise SystemExit(f"Extension choice probe failed.\n{result.stdout}\n{result.stderr}")
+            raise SystemExit(
+                f"Extension choice probe failed: profile={name}, action={action}, "
+                f"exit={result.returncode}, missing={sorted(expected - set(lines))}.\n"
+                f"{result.stdout}\n{result.stderr}")
 
     run(profile, EXTENSION_SETTINGS_MARKER, "Zitter Content persisted extension disablement",
         action="disable", counter=initial[profile] + 1)
@@ -2618,6 +2621,7 @@ def verify_extension_choice(executable, root, origin, server, extension_id, prof
         raise SystemExit("Enabling the extension did not stay in its profile")
 
     # Stop the browser after the atomic preference write and before unloading.
+    session_before_interruption = (root / SESSION_FILE).read_bytes()
     arguments = [*flags, f"{EXTENSION_PROFILE_SWITCH}={profile}",
                  f"{EXTENSION_STATE_SWITCH}=pause-after-disable-commit"]
     with tempfile.TemporaryDirectory(prefix="zitter-extension-interruption-") as directory:
@@ -2637,10 +2641,20 @@ def verify_extension_choice(executable, root, origin, server, extension_id, prof
                     time.sleep(0.05)
             finally:
                 if process.poll() is None:
-                    process.kill()
+                    if os.name == "nt":
+                        # Renderer and GPU children inherit the log handle.
+                        # Stop the tree while its browser PID still exists.
+                        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                       capture_output=True, timeout=10)
+                    else:
+                        process.kill()
                 process.wait(timeout=10)
         if EXTENSION_WORKER_MARKER in text:
             raise SystemExit("The extension worker was unregistered before interruption")
+    # The kill can interrupt the Settings toggle before it restores the active
+    # workspace and closes its temporary tab. Keep the next probe's UI fixture
+    # deterministic while preserving the interrupted extension state on disk.
+    (root / SESSION_FILE).write_bytes(session_before_interruption)
     if state.read_bytes() != b"disabled":
         raise SystemExit("The interrupted disable lost the user choice")
     run(profile, "Zitter Content restored the extension disabled by the user",
