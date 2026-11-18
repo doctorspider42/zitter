@@ -1,14 +1,17 @@
 import json
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 import zipfile
 
 with mock.patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "tools"), *sys.path]):
     import verify_content_windows_bundle as bundle
+    import windows_test_desktop
 
 
 REQUIRED = "./zitter.exe\n./zitter_content.pak\n./zitter_assistant.exe\nicudtl.dat\n"
@@ -159,7 +162,7 @@ class WindowsContentBundleTest(unittest.TestCase):
         executable = root / "Zitter Content Lab" / bundle.EXECUTABLE
         env = {"PATH": "C:/Windows/System32"}
         with mock.patch.object(bundle.subprocess, "run", return_value=mock.Mock(stdout="")) as run:
-            bundle.verify_runtime_probes(executable, root, env)
+            bundle.verify_runtime_probes(executable, root, env, jobs=1)
         self.assertEqual([(call.args[0][1].name, call.args[0][3:]) for call in run.call_args_list], [
             ("verify_content_workspace_session.py", []),
             ("verify_content_workspace_session.py", ["--private-windows"]),
@@ -173,6 +176,87 @@ class WindowsContentBundleTest(unittest.TestCase):
             self.assertEqual(call.kwargs["env"], env)
             self.assertTrue(call.kwargs["check"])
 
+    def test_independent_probes_overlap_and_finish_before_the_download_probe(self):
+        root = Path("/fixture")
+        executable = root / bundle.EXECUTABLE
+        workspace_pair = threading.Barrier(2, timeout=5)
+        finished = set()
+        lock = threading.Lock()
+
+        def run_probe(command, **kwargs):
+            name = command[1].name
+            if name == "verify_content_workspace_session.py":
+                workspace_pair.wait()
+            with lock:
+                if name == "verify_content_downloads.py":
+                    self.assertEqual(len(finished), 4)
+                finished.add(tuple(command))
+            return subprocess.CompletedProcess(command, 0, stdout="")
+
+        with mock.patch.object(bundle.subprocess, "run", side_effect=run_probe):
+            bundle.verify_runtime_probes(executable, root, {})
+        self.assertEqual(len(finished), 5)
+
+    def test_local_ui_suite_has_at_least_24_distinct_cases(self):
+        probes = bundle.ui_suite_probes(Path(bundle.EXECUTABLE))
+        self.assertGreaterEqual(len(probes), 24)
+        self.assertEqual(len(probes), len(set(probes)))
+
+    def test_visible_bundle_run_passes_visible_to_its_probes(self):
+        root = Path("/fixture")
+        with mock.patch.object(bundle.subprocess, "run", return_value=mock.Mock(stdout="")) as run:
+            bundle.verify_runtime_probes(root / bundle.EXECUTABLE, root, {}, jobs=1, visible=True)
+        self.assertEqual([call.args[0][-1] for call in run.call_args_list], ["--visible"] * 5)
+
+    @unittest.skipUnless(sys.platform == "win32", "requires Windows desktops")
+    def test_standalone_probe_creates_a_desktop_and_nested_probe_reuses_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            worker = Path(temporary) / "worker.py"
+            worker.write_text(f"""\
+import argparse
+import subprocess
+import sys
+
+sys.path.insert(0, {str(Path(windows_test_desktop.__file__).parent)!r})
+from windows_test_desktop import current_desktop_name, parse_probe_args
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--nested', action='store_true')
+args = parse_probe_args(parser, __file__)
+print(current_desktop_name(), flush=True)
+if not args.nested and not args.visible:
+    subprocess.run([sys.executable, __file__, '--nested'], check=True)
+raise SystemExit(0 if args.nested else 7)
+""", encoding="utf-8")
+            isolated = subprocess.run([sys.executable, worker], capture_output=True, text=True)
+            self.assertEqual(isolated.returncode, 7, isolated.stderr)
+            name, nested = isolated.stdout.splitlines()
+            self.assertTrue(name.startswith(windows_test_desktop.DESKTOP_PREFIX))
+            self.assertEqual(name, nested)
+
+            visible = subprocess.run([sys.executable, worker, "--visible"],
+                                     capture_output=True, text=True)
+            self.assertEqual(visible.returncode, 7, visible.stderr)
+            self.assertEqual(visible.stdout.strip(), windows_test_desktop.current_desktop_name())
+            self.assertNotEqual(name, visible.stdout.strip())
+
+    def test_parallel_probe_failure_reports_the_case_and_skips_the_serial_phase(self):
+        root = Path("/fixture")
+        executable = root / bundle.EXECUTABLE
+
+        def run_probe(command, **kwargs):
+            if "--private-windows" in command:
+                raise subprocess.CalledProcessError(
+                    1, command, output="probe stdout", stderr="probe stderr",
+                )
+            return subprocess.CompletedProcess(command, 0, stdout="")
+
+        with mock.patch.object(bundle.subprocess, "run", side_effect=run_probe) as run:
+            with self.assertRaisesRegex(ValueError, r"(?s)--private-windows.*probe stdout.*probe stderr"):
+                bundle.verify_runtime_probes(executable, root, {})
+        self.assertNotIn("verify_content_downloads.py",
+                         [call.args[0][1].name for call in run.call_args_list])
+
     def test_extension_probes_keep_signing_tools_outside_the_runtime_path(self):
         root = Path("/fixture")
         executable = root / "Zitter Content Lab" / bundle.EXECUTABLE
@@ -180,7 +264,7 @@ class WindowsContentBundleTest(unittest.TestCase):
         openssl = root / "OpenSSL" / "openssl.exe"
         env = {"PATH": "C:/Windows/System32;C:/Windows"}
         with mock.patch.object(bundle.subprocess, "run", return_value=mock.Mock(stdout="")) as run:
-            bundle.verify_runtime_probes(executable, root, env, signer=signer, openssl=openssl)
+            bundle.verify_runtime_probes(executable, root, env, signer=signer, openssl=openssl, jobs=1)
         self.assertEqual(run.call_count, 10)
         self.assertEqual(
             [(call.args[0][1].name, call.args[0][2:]) for call in run.call_args_list[5:7]],

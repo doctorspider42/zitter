@@ -501,6 +501,38 @@ rebuilds signed by the same Developer ID team. Packaging does not change the
 keychain item, its secret or its access controls. This local signing workflow
 does not add notarization or enable Hardened Runtime.
 
+## Content runtime verification
+
+`tools/verify_content_bundle.py` on macOS and
+`tools/verify_content_windows_bundle.py` on Windows run independent runtime
+probes two at a time. Each probe starts its own browser process with a temporary
+profile. Pass `--jobs 1` for a serial run, or increase `--jobs` on machines with
+enough memory. The macOS release probes run serially because the private-window
+probe activates native menus and Dock commands. On Windows the download, optional
+TLS and extension, and migration checks run serially after the parallel probes.
+
+On Windows, run the extended UI suite directly against an existing build:
+
+```powershell
+python tools/verify_content_windows_bundle.py .chromium/src/out/ZitterWinContent --ui-suite
+```
+
+This runs 24 independent cases without rebuilding or packaging. Each case keeps
+its restart and persistence checks together. The UI suite defaults to up to
+eight workers based on the logical CPU count. Higher values can slow the suite
+when browser processes compete for CPU time or memory.
+
+The UI suite, package verification, and standalone Windows UI probes run on a
+temporary desktop, so their windows stay off the working desktop. To run a
+single probe, invoke its script directly:
+
+```powershell
+python tools/verify_content_workspace_session.py .chromium/src/out/ZitterWinContent/zitter.exe --command-center
+```
+
+Pass `--visible` to watch a run. Windows modes that need manual input, native
+window capture, or the system capture picker require this option.
+
 ## Verification status of the Chrome-based prototype (historical)
 
 These results were recorded on the removed Chrome-based build. Current checks

@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 import threading
 
+from windows_test_desktop import parse_probe_args
+
 
 SMOKE = "--zitter-content-workspace-smoke-test"
 MARKER = "Zitter Content rejected an untrusted TLS certificate"
@@ -115,7 +117,7 @@ def main():
                         help="Also load this HTTPS URL with the browser's normal trust settings")
     parser.add_argument("--virtual-webauthn", action="store_true",
                         help="Also register and use a virtual key on a disposable loopback page")
-    options = parser.parse_args()
+    options = parse_probe_args(parser, __file__)
     if os.name == "nt" and options.renderer == "metal":
         parser.error("Metal requires macOS")
     executable = options.app

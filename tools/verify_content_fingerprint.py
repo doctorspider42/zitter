@@ -11,6 +11,8 @@ import tempfile
 import threading
 from urllib.parse import urlsplit
 
+from windows_test_desktop import parse_probe_args
+
 
 FIXTURE = Path(__file__).resolve().parents[1] / "testdata/fingerprint_probe.html"
 PREFIX = "Zitter fingerprint step "
@@ -259,7 +261,7 @@ def main():
     parser.add_argument("--cross-process-frame", action="store_true")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
     parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
-    options = parser.parse_args()
+    options = parse_probe_args(parser, __file__)
     if options.cross_process_frame and not options.workspace:
         parser.error("--cross-process-frame requires --workspace")
     if os.name == "nt":

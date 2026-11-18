@@ -8,6 +8,8 @@ from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
 
+from windows_test_desktop import parse_probe_args
+
 
 MARKER = "Zitter Content extension manifest and host permissions passed"
 
@@ -131,7 +133,7 @@ def write_fixture(root, public_key=None, *, expect_legacy_storage=False, initial
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
-    app = parser.parse_args().app
+    app = parse_probe_args(parser, __file__).app
     executable = app if os.name == "nt" else app / "Contents/MacOS/Zitter Content Lab"
     executable = executable.resolve()
     if not executable.is_file():

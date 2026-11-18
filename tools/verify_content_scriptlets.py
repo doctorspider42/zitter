@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import threading
 
+from windows_test_desktop import parse_probe_args
+
 
 PAGE = b"""<!doctype html>
 <meta charset="utf-8">
@@ -170,7 +172,7 @@ class ScriptletFixture(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def verify_private_workspace(executable, server, root):
+def verify_private_workspace(executable, server, root, theme=None):
     origin = f"http://127.0.0.1:{server.server_port}/"
     environment = dict(os.environ, TMPDIR=str(root), TMP=str(root), TEMP=str(root))
     expected = Counter(PRIVATE_LISTS + ("/private-adblock",) * 3 +
@@ -178,14 +180,16 @@ def verify_private_workspace(executable, server, root):
     appearances = (("light", "compositor"), ("dark", "compositor")) if os.name == "nt" else (
         ("light", "compositor"), ("dark", "metal"), ("dark", "compositor"), ("light", "metal"),
     )
-    for theme, renderer in appearances:
+    for appearance, renderer in appearances:
+        if theme and appearance != theme:
+            continue
         server.hits.clear()
         result = subprocess.run(
             [
                 str(executable),
                 "--zitter-content-workspace",
                 f"--zitter-content-private-adblock-probe={origin}",
-                f"--zitter-content-workspace-theme={theme}",
+                f"--zitter-content-workspace-theme={appearance}",
                 f"--zitter-rust-raster={renderer}",
             ],
             env=environment,
@@ -195,7 +199,7 @@ def verify_private_workspace(executable, server, root):
         )
         if result.returncode or PRIVATE_MARKER not in result.stdout.splitlines():
             raise SystemExit(
-                f"Private Workspace ad blocking failed in {theme}/{renderer}.\n"
+                f"Private Workspace ad blocking failed in {appearance}/{renderer}.\n"
                 f"{result.stdout}\n{result.stderr}"
             )
         hits = Counter(path for path in server.hits if path != "/favicon.ico")
@@ -211,10 +215,14 @@ def main():
     parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     parser.add_argument("--private-workspace", action="store_true",
                         help="Check the temporary Workspace filter policy (required on Windows)")
-    options = parser.parse_args()
+    parser.add_argument("--theme", choices=("light", "dark"),
+                        help="Run the private Workspace probe in just this theme")
+    options = parse_probe_args(parser, __file__)
     windows = os.name == "nt"
     if windows and not options.private_workspace:
         parser.error("Windows requires --private-workspace")
+    if options.theme and not options.private_workspace:
+        parser.error("--theme requires --private-workspace")
     executable = options.app if windows else options.app / "Contents/MacOS/Zitter Content Lab"
     executable = executable.resolve()
     if not executable.is_file():
@@ -230,7 +238,7 @@ def main():
         server_thread.start()
         try:
             if windows:
-                verify_private_workspace(executable, server, root)
+                verify_private_workspace(executable, server, root, options.theme)
                 return
             result = subprocess.run(
                 [
@@ -256,7 +264,7 @@ def main():
                 raise SystemExit("The private scriptlet probe left a profile directory")
             print("Content scriptlet timing, network filtering, and cosmetics passed")
             if options.private_workspace:
-                verify_private_workspace(executable, server, root)
+                verify_private_workspace(executable, server, root, options.theme)
         except subprocess.TimeoutExpired as error:
             raise SystemExit(f"Scriptlet probe timed out. Output: {error.stderr!r}") from error
         finally:

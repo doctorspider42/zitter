@@ -43,6 +43,7 @@ from verify_content_profiles import (
 from verify_content_extension_manifest import write_fixture
 from verify_content_tls import make_tls_fixture
 from verify_content_site_permissions import build_pasteboard_fixture
+from windows_test_desktop import parse_probe_args
 
 
 SESSION_FILE = "ContentWorkspaceSession.json"
@@ -2742,7 +2743,8 @@ def main():
                         help="OpenSSL executable for signing disposable extension fixtures")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
     parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
-    options = parser.parse_args()
+    options = parse_probe_args(parser, __file__,
+                               visible_for=("interactive_extension_management",))
     windows = os.name == "nt"
     encrypted_prefix = b"v10" if windows else ENCRYPTED_PREFIX
     executable = options.app.resolve() if windows else (

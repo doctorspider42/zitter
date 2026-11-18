@@ -16,6 +16,7 @@ import threading
 from verify_content_clipboard import ClipboardFixture
 from verify_content_bundle import loader_environment
 from verify_content_profiles import KEY_FILE
+from windows_test_desktop import parse_probe_args
 
 
 PAGE = b"""<!doctype html><meta charset=utf-8>
@@ -389,7 +390,7 @@ def main():
                       help="Open and cancel the desktop picker without capturing a source")
     mode.add_argument("--native-desktop", choices=("window", "screen"),
                       help="Verify a captured video frame (Windows supports the disposable window fixture)")
-    args = parser.parse_args()
+    args = parse_probe_args(parser, __file__, visible_for=("native_desktop", "native_desktop_cancel"))
     windows = os.name == "nt"
     if windows and args.native_desktop == "screen":
         parser.error("The Windows probe captures only its disposable window fixture")

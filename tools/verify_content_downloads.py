@@ -30,6 +30,7 @@ from profile_migration_trial import (
 )
 from verify_content_tls import make_tls_fixture
 from notarize_app import CONTENT_BUNDLE_ID
+from windows_test_desktop import parse_probe_args
 
 
 PAYLOAD = b"Zitter Content download probe\n"
@@ -1957,7 +1958,7 @@ def main():
         action="store_true",
         help="Require platform quarantine without recording the private download origin",
     )
-    options = parser.parse_args()
+    options = parse_probe_args(parser, __file__)
     if options.ffmpeg and not options.user_save:
         parser.error("--ffmpeg requires --user-save")
     windows = os.name == "nt"

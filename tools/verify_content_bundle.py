@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 
+from content_probe_runner import positive_jobs, run_probes
 from notarize_app import verify_nested_signatures
 from macos_signing import BUNDLE_ID
 from verify_content_assistant_helper import verify_assistant_helper
@@ -307,6 +308,8 @@ def require_passkey_entitlement(app):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, help="Content app bundle or a DMG containing it")
+    parser.add_argument("--jobs", type=positive_jobs, default=2,
+                        help="Maximum concurrent independent runtime probes (default: 2)")
     parser.add_argument("--scratch", type=Path,
                         help="Existing directory for the relocated bundle and image mount")
     parser.add_argument("--content-release", action="store_true",
@@ -393,15 +396,15 @@ def main():
                   trace_loader=trace_loader)
             workspace_flags = ("--extension-registry", "--crx-signer", signer) if signer else ()
             probes = [
-                ("verify_content_workspace_session.py", workspace_flags),
+                ("verify_content_workspace_session.py", (app, *workspace_flags)),
             ]
             if options.content_release:
-                probes.append(("verify_content_workspace_session.py", ("--private-windows",)))
+                probes.append(("verify_content_workspace_session.py", (app, "--private-windows")))
             else:
-                probes.append(("verify_content_profiles.py", ()))
-            for script, flags in probes:
-                print(run(sys.executable, Path(__file__).resolve().with_name(script), app,
-                          *flags, cwd=root, env=loader_environment()), end="")
+                probes.append(("verify_content_profiles.py", (app,)))
+            # The release private-window probe activates native menus and Dock commands.
+            jobs = 1 if options.content_release else options.jobs
+            run_probes(probes, cwd=root, env=loader_environment(), jobs=jobs)
             if options.preserve_signature:
                 verify_signature(app)
     except (OSError, ValueError, subprocess.SubprocessError) as error:

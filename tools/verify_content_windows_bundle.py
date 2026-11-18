@@ -14,9 +14,11 @@ import sys
 import tempfile
 import zipfile
 
+from content_probe_runner import positive_jobs, run_probes
 from package_win import DEBUG_ONLY, package_notices, write_zip
 from verify_content_assistant_helper import verify_assistant_helper
 from verify_content_bundle import verify_sandbox_guards
+from windows_test_desktop import parse_probe_args
 
 
 EXECUTABLE = "zitter.exe"
@@ -167,14 +169,37 @@ def smoke(layout, working_directory, env):
         print(", ".join(markers))
 
 
-def verify_runtime_probes(executable, working_directory, env, *,
-                          signer=None, openssl=None, legacy=None, node=None):
-    tools = Path(__file__).resolve().parent
-    probes = [
+def independent_probes(executable, *, scriptlet_themes=()):
+    scriptlet_flags = [("--theme", theme) for theme in scriptlet_themes] or [()]
+    return [
         ("verify_content_workspace_session.py", (executable,)),
         ("verify_content_workspace_session.py", (executable, "--private-windows")),
         ("verify_content_fingerprint.py", (executable, "--workspace", "--cross-process-frame")),
-        ("verify_content_scriptlets.py", (executable, "--private-workspace")),
+        *(("verify_content_scriptlets.py", (executable, "--private-workspace", *flags))
+          for flags in scriptlet_flags),
+    ]
+
+
+def ui_suite_probes(executable):
+    workspace_cases = (
+        "favicons", "history-panel", "address-history", "closed-tabs",
+        "navigation", "find-reload", "command-center", "rss", "extra-workspace",
+        "reassign-workspace", "link-routing", "popup-commands",
+        "peek", "additional-profile", "create-profile", "tab-commands", "clear-data",
+    )
+    return [
+        ("verify_content_downloads.py", (executable, "--require-quarantine")),
+        *independent_probes(executable, scriptlet_themes=("light", "dark")),
+        ("verify_content_fingerprint.py", (executable, "--workspace")),
+        *(("verify_content_workspace_session.py", (executable, f"--{case}"))
+          for case in workspace_cases),
+    ]
+
+
+def verify_runtime_probes(executable, working_directory, env, *,
+                          signer=None, openssl=None, legacy=None, node=None, jobs=2, visible=False):
+    # Keep release-specific fixtures in the serial phase.
+    probes = [
         ("verify_content_downloads.py", (executable, "--require-quarantine")),
     ]
     if openssl:
@@ -197,13 +222,9 @@ def verify_runtime_probes(executable, working_directory, env, *,
         )))
     if legacy:
         probes.append(("verify_content_windows_migration.py", (legacy, executable, "--node", node)))
-    for script, arguments in probes:
-        result = subprocess.run(
-            [sys.executable, tools / script, *arguments],
-            cwd=working_directory, env=env, capture_output=True, text=True,
-            timeout=300, check=True,
-        )
-        print(result.stdout, end="")
+    run_probes(independent_probes(executable), cwd=working_directory, env=env,
+               jobs=jobs, timeout=300, visible=visible)
+    run_probes(probes, cwd=working_directory, env=env, jobs=1, timeout=300, visible=visible)
 
 
 def keep_archive(archive, destination):
@@ -222,6 +243,10 @@ def keep_archive(archive, destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out", type=Path, help="Windows Content Lab build directory")
+    parser.add_argument("--jobs", type=positive_jobs,
+                        help="Maximum concurrent probes (default: 2 for packages, up to 8 for --ui-suite)")
+    parser.add_argument("--ui-suite", action="store_true",
+                        help="Run the extended UI suite against the existing build without packaging")
     parser.add_argument("--runtime-deps", type=Path,
                         help=f"Override the GN manifest (default: {RUNTIME_MANIFEST} in out)")
     parser.add_argument("--llvm-readobj", type=Path, help="LLVM PE inspector")
@@ -240,10 +265,28 @@ def main():
     archive.add_argument("--archive", type=Path, help="Keep the generated ZIP at this new path")
     archive.add_argument("--input-archive", type=Path,
                          help="Verify an existing ZIP against the GN manifest without repackaging")
-    args = parser.parse_args()
+    args = parse_probe_args(parser, __file__)
     if sys.platform != "win32":
         parser.error("The packaged executable must be verified in a Windows GUI session")
     out = args.out.resolve()
+    if args.ui_suite:
+        executable = out / EXECUTABLE
+        if not executable.is_file():
+            parser.error(f"Build executable not found: {executable}")
+        if any((args.runtime_deps, args.llvm_readobj, args.signtool, args.crx_signer,
+                args.openssl, args.legacy, args.node, args.third_party_licenses,
+                args.archive, args.input_archive)):
+            parser.error("--ui-suite uses the existing build and takes no package verification options")
+        try:
+            with tempfile.TemporaryDirectory(prefix="zitter-content-win-ui-") as working_directory:
+                probes = ui_suite_probes(executable)
+                jobs = args.jobs or min(8, os.cpu_count() or 1)
+                print(f"Running {len(probes)} UI probes with up to {jobs} workers", flush=True)
+                run_probes(probes, cwd=working_directory,
+                           env=os.environ, jobs=jobs, timeout=300, keep_going=True, visible=args.visible)
+        except (OSError, ValueError) as error:
+            raise SystemExit(str(error)) from error
+        return
     manifest = args.runtime_deps or out / RUNTIME_MANIFEST
     if not manifest.is_file():
         parser.error(f"GN runtime manifest not found: {manifest}. Generate the Content output first.")
@@ -297,7 +340,7 @@ def main():
             smoke(layout, root, env)
             verify_assistant_helper(layout / ASSISTANT_EXECUTABLE, root, env)
             verify_runtime_probes(layout / EXECUTABLE, root, env, signer=signer, openssl=openssl,
-                                  legacy=legacy, node=node)
+                                  legacy=legacy, node=node, jobs=args.jobs or 2, visible=args.visible)
             if args.archive:
                 keep_archive(archive, args.archive.absolute())
                 print(f"Verified archive: {args.archive}")

@@ -19,9 +19,8 @@
   `arc_importer_unittests`, Python tests
   (`python3 -m unittest discover -s tests -p 'test_*.py'`) and the single
   `tools/verify_content_*.py` checks a change needs.
-- The `verify_content_*` checks launch the app and show its windows. Ask the user
-  before running many of them in a row: they take over the screen meanwhile. Say
-  how long it takes when you ask.
+- Windows UI probes use a separate desktop by default. Ask the user before
+  running a batch on their working desktop, and give the expected duration.
 
 ## Checking UI changes
 

@@ -16,8 +16,8 @@ The app has an automation channel for agents. `ui.py launch` starts it with
   shows the app as a person sees it, even while other windows cover it.
 
 So you can run as many interactions as you need without asking the user first.
-That is unlike `--cursor`, `shot --screen` and the `verify_content_*` checks,
-which take over the screen.
+`--cursor`, `shot --screen`, and foreground `verify_content_*` runs use the
+working desktop. Windows verification scripts use a separate desktop by default.
 
 All commands: `python3 .claude/skills/verify-ui/scripts/ui.py <command>`, run from
 the repository root (written `ui.py` below).

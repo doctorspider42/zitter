@@ -14,6 +14,7 @@ from threading import Thread
 from verify_content_workspace_session import (
     KEY_FILE, MARKER, SESSION_FILE, WorkspaceFixture, launch, seed_session,
 )
+from windows_test_desktop import parse_probe_args
 
 
 PROBE = "--zitter-content-adblock-cache-smoke-test"
@@ -82,7 +83,7 @@ setInterval(() => {{
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
-    args = parser.parse_args()
+    args = parse_probe_args(parser, __file__)
     executable = args.app if os.name == "nt" else args.app / "Contents/MacOS/Zitter Content Lab"
     executable = executable.resolve()
     if not executable.is_file():

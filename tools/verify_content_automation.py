@@ -4,8 +4,8 @@
 Starts the packaged app in a disposable probe workspace root and drives it only
 through <root>/automation.sock: it lists windows and views, clicks the
 address row by name to open the command palette, closes it with Escape, takes a
-screenshot and an animation contact sheet, and checks that the system cursor
-never went to the clicked point.
+screenshot and an animation contact sheet. On the input desktop it also checks
+that the system cursor never went to the clicked point.
 """
 
 import argparse
@@ -23,6 +23,9 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / ".claude/skills/verify-ui/scripts"))
 from ui_ipc import request
+from windows_test_desktop import parse_probe_args
+
+
 PALETTE_TITLES = {"Zitter — Paleta poleceń", "Zitter — Command Center"}
 SIDEBAR_TITLES = {"Zitter — Karty", "Zitter — Tabs"}
 
@@ -83,7 +86,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, nargs="?", default=ROOT / "build/ZitterContentLab.app")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    args = parser.parse_args()
+    args = parse_probe_args(parser, __file__)
     app = args.app.resolve(strict=True)
     if os.name == "nt":
         executable = app
@@ -106,7 +109,8 @@ def main():
              f"--zitter-content-workspace-theme={args.theme}"],
             stdout=log, stderr=log, start_new_session=True)
         try:
-            before = cursor()
+            # Windows only exposes the system cursor to the input desktop.
+            before = cursor() if os.name != "nt" or args.visible else None
             if not wait(lambda: request(sock_path, {"cmd": "ping"}, 3).get("ok"), 40):
                 raise AssertionError("the automation socket did not answer")
 
@@ -148,7 +152,7 @@ def main():
             if not panel:
                 listed = request(sock_path, {"cmd": "windows"})["windows"]
                 raise AssertionError(f"the click did not open the command palette: {clicked}, {listed}")
-            expect(request(sock_path, {"cmd": "type", "text": "zitter"}), "type")
+            expect(request(sock_path, {"cmd": "type", "text": "zitter", "window": panel["id"]}), "type")
 
             sheet = root / "frames.png"
             answer = expect(request(sock_path, {"cmd": "frames", "window": panel["id"],
@@ -163,9 +167,10 @@ def main():
 
             # The person may move the mouse meanwhile; a cursor driven by the
             # click would sit on the clicked point.
-            after = cursor()
-            if after == click_point and before != after:
-                raise AssertionError(f"the system cursor moved to the clicked point {after}")
+            if before is not None:
+                after = cursor()
+                if after == click_point and before != after:
+                    raise AssertionError(f"the system cursor moved to the clicked point {after}")
         except AssertionError as error:
             print(f"Automation check failed: {error}", file=sys.stderr)
             text = (root / "app.log").read_text(errors="replace")

@@ -24,6 +24,7 @@ from verify_content_workspace_session import (
     new_wrapped_windows_key, seed_session,
     require_rejection,
 )
+from windows_test_desktop import parse_probe_args
 
 
 USERNAME = "zitter-profile-probe"
@@ -287,7 +288,7 @@ def main():
                         help="set the imported preference in a disposable old Zitter profile")
     parser.add_argument("--previous-content-app", type=Path,
                         help="save the first password with an earlier Content build")
-    args = parser.parse_args()
+    args = parse_probe_args(parser, __file__, visible_for=("interactive_reauth",))
     windows = os.name == "nt"
     if args.legacy_app and (windows or not args.password_preference):
         parser.error("--legacy-app requires macOS and --password-preference")

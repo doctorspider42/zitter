@@ -24,6 +24,7 @@ from verify_content_password_forms import require
 from verify_content_password_prompt import verify_windows_login_key
 from verify_content_storage_migration import cookie_ciphertext, set_legacy_active
 from verify_content_workspace_session import ACTIVE_PATHS, MARKER, launch, require_rejection
+from windows_test_desktop import parse_probe_args
 
 
 PROFILES = {"work": "ZitterWork", "personal": "ZitterPersonal"}
@@ -174,7 +175,7 @@ def main():
     parser.add_argument("legacy", type=Path, help="Portable stable Chrome-backed zitter.exe")
     parser.add_argument("content", type=Path, help="Relocated Content zitter.exe")
     parser.add_argument("--node", type=Path, help="Node.js executable with WebSocket support")
-    args = parser.parse_args()
+    args = parse_probe_args(parser, __file__)
     if os.name != "nt":
         parser.error("The migration verifier requires native Windows")
     node = args.node or shutil.which("node")
