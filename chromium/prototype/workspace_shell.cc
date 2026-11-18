@@ -604,9 +604,9 @@ constexpr int32_t kZitterMenuRun = views::MenuRunner::NO_FLAGS;
 // The panel's `radius-md`, passed to every context-menu run.
 gfx::RoundedCornersF ZitterMenuCorners() { return gfx::RoundedCornersF(12); }
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-class PageMenuMaterial final : public views::ViewObserver {
+class WorkspaceMenuMaterial final : public views::ViewObserver {
  public:
-  PageMenuMaterial(views::MenuItemView& root, SkColor workspace_color)
+  WorkspaceMenuMaterial(views::MenuItemView& root, SkColor workspace_color)
       : workspace_color_(workspace_color) {
     ObserveSubmenus(root);
   }
@@ -651,17 +651,20 @@ class PageMenuMaterial final : public views::ViewObserver {
 #if BUILDFLAG(IS_MAC)
     if (!SetWorkspaceMenuMaterial(widget, insets, corners.upper_left()))
       return;
+    constexpr auto opacity = 178;
 #else
-    if (!SetWorkspaceAcrylicBackdrop(widget, true, IsDark(&container),
-                                    SkColorSetA(tint, 0x40))) {
+    // DWM's backdrop fills the HWND, including the transparent shadow margin.
+    // The translucent menu host can blend just the rounded menu surface.
+    if (!WorkspaceAllowsTransparency()) {
       container.SetBackground(views::CreateRoundedRectBackground(
           palette.bg_raised, corners, insets));
       return;
     }
+    constexpr auto opacity = 220;
 #endif
     SetWorkspaceNativeAppearance(widget, IsDark(&container));
     container.SetBackground(views::CreateRoundedRectBackground(
-        SkColorSetA(tint, 178), corners, insets));
+        SkColorSetA(tint, opacity), corners, insets));
   }
 
   const SkColor workspace_color_;
@@ -680,8 +683,8 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
     return view_adapter_->CreateMenu();
   }
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  void EnablePageMaterial(views::MenuItemView& menu, SkColor workspace_color) {
-    page_material_ = std::make_unique<PageMenuMaterial>(menu, workspace_color);
+  void EnableMaterial(views::MenuItemView& menu, SkColor workspace_color) {
+    menu_material_ = std::make_unique<WorkspaceMenuMaterial>(menu, workspace_color);
   }
 #endif
   std::optional<ui::ColorId> GetForegroundColorId(size_t index) override {
@@ -692,9 +695,21 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
  private:
   std::unique_ptr<views::MenuModelAdapter> view_adapter_;
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  std::unique_ptr<PageMenuMaterial> page_material_;
+  std::unique_ptr<WorkspaceMenuMaterial> menu_material_;
 #endif
 };
+
+std::unique_ptr<views::MenuRunner> CreateSidebarMenuRunner(
+    ui::SimpleMenuModel* model, views::View* workspace) {
+#if BUILDFLAG(IS_WIN)
+  auto* design = static_cast<DesignMenuModel*>(model);
+  auto menu = design->CreateViewMenu();
+  design->EnableMaterial(*menu, WindowWorkspaceColor(workspace));
+  return std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
+#else
+  return std::make_unique<views::MenuRunner>(model, kZitterMenuRun);
+#endif
+}
 
 ui::ImageModel MenuIcon(const gfx::VectorIcon& icon,
                         ui::ColorId color = ui::kColorMenuIcon) {
@@ -8146,7 +8161,7 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
   }
   if (menu) {
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-    model->EnablePageMaterial(*menu, WindowWorkspaceColor(root_));
+    model->EnableMaterial(*menu, WindowWorkspaceColor(root_));
 #endif
     link_menu_runner_ = std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
   } else {
@@ -8623,7 +8638,7 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
   if (!context_pin_.empty()) for (const auto& pin : state_.pins) {
     if (pin.id == context_pin_ && pin.folder) {
       BuildFolderMenu(pin.id);
-      workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
+      workspace_menu_runner_ = CreateSidebarMenuRunner(workspace_menu_.get(), root_);
       workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type, gfx::NativeView(), ZitterMenuCorners());
       return;
     }
@@ -8643,7 +8658,7 @@ void WorkspaceShell::ShowContextMenuForViewImpl(views::View* source, const gfx::
     workspace = state_.workspace_id;
   if (!workspace.empty()) {
     BuildWorkspaceMenu(std::move(workspace));
-    workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
+    workspace_menu_runner_ = CreateSidebarMenuRunner(workspace_menu_.get(), root_);
     workspace_menu_runner_->RunMenuAt(widget_, nullptr, gfx::Rect(point, gfx::Size()), views::MenuAnchorPosition::kTopLeft, source_type, gfx::NativeView(), ZitterMenuCorners());
   }
 }
@@ -8929,7 +8944,7 @@ void WorkspaceShell::BuildTabMenu(std::optional<size_t> target_tab,std::string t
 }
 void WorkspaceShell::ShowTabMenu(gfx::Point point,ui::mojom::MenuSourceType source_type) {
   BuildTabMenu(context_tab_,context_pin_);
-  workspace_menu_runner_ = std::make_unique<views::MenuRunner>(workspace_menu_.get(), kZitterMenuRun);
+  workspace_menu_runner_ = CreateSidebarMenuRunner(workspace_menu_.get(), root_);
   workspace_menu_runner_->RunMenuAt(widget_,nullptr,gfx::Rect(point,gfx::Size()),views::MenuAnchorPosition::kTopLeft,source_type, gfx::NativeView(), ZitterMenuCorners());
 }
 
@@ -11941,8 +11956,8 @@ SkColor WorkspaceShell::WorkspaceSidebarBackground(SkColor base, SkColor card,
   if (static_cast<ShellRoot*>(root_.get())->sidebar_material)
     return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 170);
 #elif BUILDFLAG(IS_WIN)
-  if (sidebar_acrylic_)
-    return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 170);
+  if (sidebar_translucent_)
+    return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 220);
 #endif
   return color;
 }
@@ -11978,9 +11993,7 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
 #endif
   const auto palette = Palette(root_, color);
 #if BUILDFLAG(IS_WIN)
-  const auto tint = pinned_ ? palette.bg_base : Mix(palette.bg_base, palette.bg_raised, 70);
-  sidebar_acrylic_ = SetWorkspaceAcrylicBackdrop(
-      sidebar_widget_.get(), true, IsDark(root_), SkColorSetA(tint, 0x40));
+  sidebar_translucent_ = WorkspaceAllowsTransparency();
 #endif
   SetWorkspaceSidebarBackground(
       WorkspaceSidebarBackground(palette.bg_base, palette.bg_raised, palette.accent));
@@ -14631,6 +14644,7 @@ void WorkspaceShell::TogglePinned() {
 }
 void WorkspaceShell::ShowAddMenu() {
   if (!add_button_ || !sidebar_widget_ || !sidebar_widget_->IsVisible()) return;
+  add_menu_runner_.reset();
   add_menu_ = std::make_unique<DesignMenuModel>(this);
   const auto icon=[](const gfx::VectorIcon& vector){return ui::ImageModel::FromVectorIcon(vector,ui::kColorMenuIcon,16);};
   add_menu_->AddItemWithIcon(kAddTab, T(u"Nowa karta"), icon(kAddTabIcon));
@@ -14646,7 +14660,7 @@ void WorkspaceShell::ShowAddMenu() {
     }
   }
   add_menu_->AddItemWithIcon(kAddSpace, T(u"Nowa przestrzeń…"), icon(kAddSpaceIcon));
-  add_menu_runner_ = std::make_unique<views::MenuRunner>(add_menu_.get(), kZitterMenuRun);
+  add_menu_runner_ = CreateSidebarMenuRunner(add_menu_.get(), root_);
   add_menu_runner_->RunMenuAt(sidebar_widget_.get(), nullptr, add_button_->GetBoundsInScreen(), views::MenuAnchorPosition::kTopRight,
       ui::mojom::MenuSourceType::kMouse, gfx::NativeView(), ZitterMenuCorners());
 }

@@ -1373,7 +1373,7 @@ class WorkspaceShell final : public ui::EventHandler,
   SkColor WorkspaceSidebarBackground(SkColor base, SkColor card, SkColor accent) const;
   void SetWorkspaceSidebarBackground(SkColor color);
 #if BUILDFLAG(IS_WIN)
-  bool sidebar_acrylic_ = false;
+  bool sidebar_translucent_ = false;
 #endif
   bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
   void RefreshWorkspaceHeading();

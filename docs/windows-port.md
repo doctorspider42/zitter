@@ -443,11 +443,11 @@ copy, run `out/ZitterWinContent/zitter.exe` with a disposable
 
 ## Media playback and browser controls
 
-Windows uses Acrylic for the tab sidebar and page context menus, including
-their submenus. The floating assistant uses compositor backdrop blur. These
-surfaces retain the workspace tint in light and dark themes and use opaque
-backgrounds when Windows transparency effects are disabled or Acrylic is
-unavailable. The pinned assistant keeps an opaque background on Windows;
+Windows blends the workspace tint into the tab sidebar and the rounded
+surfaces of page and sidebar context menus, including their submenus. Menu
+shadows extend beyond those surfaces. The floating assistant uses compositor
+backdrop blur. These surfaces use opaque backgrounds when Windows transparency
+effects are disabled. The pinned assistant keeps an opaque background on Windows;
 macOS can apply a native material to that region of the main window.
 
 The shared Content runtime includes per-profile private extension controls,

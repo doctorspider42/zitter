@@ -88,6 +88,7 @@ def main():
     executable = executable.resolve()
     if not executable.is_file():
         parser.error(f"App executable is missing: {executable}")
+    renderers = ("compositor",) if os.name == "nt" else ("compositor", "metal")
 
     with ThreadingHTTPServer(("127.0.0.1", 0), CacheFixture) as server:
         origin = f"http://127.0.0.1:{server.server_port}"
@@ -96,7 +97,7 @@ def main():
         thread.start()
         try:
             for theme in ("light", "dark"):
-                for renderer in ("compositor", "metal"):
+                for renderer in renderers:
                     server.requests = []
                     server.cache_requests = []
                     with TemporaryDirectory(prefix="zitter-content-probe-") as directory:
