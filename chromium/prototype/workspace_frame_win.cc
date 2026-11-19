@@ -18,13 +18,13 @@
 #include "base/no_destructor.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
-#include "third_party/skia/include/core/SkPath.h"
-#include "third_party/skia/include/core/SkRegion.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/point_conversions.h"
-#include "ui/gfx/geometry/skia_conversions.h"
+#include "ui/gfx/image/image.h"
+#include "ui/gfx/image/image_skia.h"
+#include "ui/snapshot/snapshot.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
 #include "ui/views/view_tracker.h"
@@ -101,6 +101,8 @@ std::set<WorkspaceTreeHost*>& Hosts() {
 
 class WorkspaceTreeHost final : public views::DesktopWindowTreeHostWin {
  public:
+  using views::DesktopWindowTreeHostWin::SetBackgroundColor;
+
   WorkspaceTreeHost(views::internal::NativeWidgetDelegate* widget,
                     views::DesktopNativeWidgetAura* native_widget,
                     base::RepeatingClosure session_ending)
@@ -287,20 +289,35 @@ bool SetWorkspaceStartupCloaked(views::Widget* widget, bool cloaked) {
                                                  sizeof(value)));
 }
 
-void SetWorkspaceMenuClip(views::Widget* widget, const gfx::Insets& insets,
-                          float radius) {
-  gfx::Rect bounds(widget->GetClientAreaBoundsInScreen().size());
-  bounds.Inset(insets);
-  if (bounds.IsEmpty())
+void SetWorkspaceWindowBackground(views::Widget* widget, SkColor color) {
+  if (!widget || !widget->GetNativeWindow())
     return;
+  const auto* host = widget->GetNativeWindow()->GetHost();
+  for (auto* workspace : Hosts()) {
+    if (static_cast<const aura::WindowTreeHost*>(workspace) == host) {
+      workspace->SetBackgroundColor(color);
+      return;
+    }
+  }
+}
 
-  SkRegion region;
-  region.setPath(SkPath::RRect(gfx::RectToSkRect(bounds), radius, radius),
-                 SkRegion(gfx::RectToSkIRect(bounds)));
-  auto shape = std::make_unique<views::Widget::ShapeRects>();
-  for (SkRegion::Iterator row(region); !row.done(); row.next())
-    shape->push_back(gfx::SkIRectToRect(row.rect()));
-  widget->SetShape(std::move(shape));
+gfx::ImageSkia CaptureWorkspaceBackdrop(views::Widget* owner,
+                                        gfx::Rect screen_bounds) {
+  if (!owner || !owner->IsVisible() || screen_bounds.IsEmpty())
+    return {};
+  const auto client = owner->GetClientAreaBoundsInScreen();
+  if (!client.Contains(screen_bounds))
+    return {};
+  screen_bounds.Offset(-client.x(), -client.y());
+  gfx::ImageSkia image;
+  // Windows implements this snapshot synchronously for the owner's client
+  // area. The owned popup windows aren't part of it.
+  ui::GrabWindowSnapshot(owner->GetNativeWindow(), screen_bounds,
+      base::BindOnce([](gfx::ImageSkia* output, gfx::Image snapshot) {
+        if (!snapshot.IsEmpty())
+          *output = snapshot.AsImageSkia();
+      }, &image));
+  return image;
 }
 
 void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dark) {

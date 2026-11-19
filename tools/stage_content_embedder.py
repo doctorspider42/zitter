@@ -136,6 +136,56 @@ def main():
         plan = content_blocking.prepare(
             checkout, include_chrome=False, previous_plan=fingerprint_patch
         )
+        menu_config = checkout / "ui/views/controls/menu/menu_config.cc"
+        if menu_config.is_symlink() or not menu_config.resolve().is_relative_to(checkout):
+            raise ValueError("Menu config path escapes the checkout")
+        original = menu_config.read_bytes()
+        menu_anchor = b"""bool MenuConfig::ShouldUseBubbleBorderForMenu(
+    const MenuController* controller) const {
+"""
+        old_menu_comment = (
+            b"  // Keep explicitly rounded menus within the painted surface. The native\n"
+            b"  // popup can supply its own shadow without adding a bubble shadow gutter.\n"
+        )
+        menu_comment = b"  // Keep explicitly rounded menus within the painted surface.\n"
+        menu_backdrop = b"""#if BUILDFLAG(IS_WIN)
+  // Keep explicitly rounded menus within the painted surface.
+  if (controller && controller->rounded_corners().has_value() &&
+      !controller->use_ash_system_ui_layout()) {
+    return false;
+  }
+#endif
+"""
+        if original.count(menu_anchor) != 1:
+            raise ValueError("Unexpected Views menu backdrop hook")
+        patched = original.replace(menu_anchor + menu_backdrop.replace(
+            menu_comment, old_menu_comment), menu_anchor + menu_backdrop)
+        if menu_backdrop not in patched:
+            patched = patched.replace(menu_anchor, menu_anchor + menu_backdrop)
+        if patched != original:
+            plan[menu_config] = (original, patched)
+
+        menu_host = checkout / "ui/views/controls/menu/menu_host.cc"
+        if menu_host.is_symlink() or not menu_host.resolve().is_relative_to(checkout):
+            raise ValueError("Menu host path escapes the checkout")
+        original = menu_host.read_bytes()
+        shadow_anchor = b"""  params.shadow_type = bubble_border ? Widget::InitParams::ShadowType::kNone
+                                     : Widget::InitParams::ShadowType::kDrop;
+"""
+        shadow_override = b"""#if BUILDFLAG(IS_WIN)
+  // The HWND drop shadow follows its rectangle, including the transparent
+  // corners of the menu painted by Views.
+  if (menu_controller && menu_controller->rounded_corners().has_value() &&
+      !menu_controller->use_ash_system_ui_layout()) {
+    params.shadow_type = Widget::InitParams::ShadowType::kNone;
+  }
+#endif
+"""
+        if original.count(shadow_anchor) != 1:
+            raise ValueError("Unexpected Views menu shadow hook")
+        if shadow_override not in original:
+            plan[menu_host] = (original, original.replace(
+                shadow_anchor, shadow_anchor + shadow_override))
         dnr_monitor = (checkout / "extensions/browser/api/declarative_net_request"
                        / "rules_monitor_service.cc")
         if dnr_monitor.is_symlink() or not dnr_monitor.resolve().is_relative_to(checkout):

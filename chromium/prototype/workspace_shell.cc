@@ -55,6 +55,7 @@
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
+#include "cc/paint/paint_filter.h"
 #include "cc/paint/path_effect.h"
 #include "cc/paint/paint_shader.h"
 #include "cc/paint/display_item_list.h"
@@ -183,6 +184,8 @@
 
 #include "base/win/windows_version.h"
 #include "chromium/prototype/workspace_frame_win.h"
+#include "ui/aura/window.h"
+#include "ui/snapshot/snapshot_aura.h"
 #endif
 #if !BUILDFLAG(IS_MAC)
 #include "ui/base/emoji/emoji_panel_helper.h"
@@ -603,11 +606,46 @@ END_METADATA
 constexpr int32_t kZitterMenuRun = views::MenuRunner::NO_FLAGS;
 // The panel's `radius-md`, passed to every context-menu run.
 gfx::RoundedCornersF ZitterMenuCorners() { return gfx::RoundedCornersF(12); }
+#if BUILDFLAG(IS_WIN)
+class RoundedBackdropBackground final : public views::Background {
+ public:
+  RoundedBackdropBackground(gfx::ImageSkia image, SkColor tint, float radius,
+                            gfx::Insets insets = {})
+      : image_(std::move(image)), tint_(tint), radius_(radius), insets_(insets) {}
+
+  void Paint(gfx::Canvas* canvas, views::View* view) const override {
+    auto bounds = view->GetLocalBounds();
+    bounds.Inset(insets_);
+    if (bounds.IsEmpty())
+      return;
+    gfx::ScopedCanvas saved(canvas);
+    canvas->ClipPath(SkPath::RRect(gfx::RectToSkRect(bounds), radius_, radius_), true);
+    cc::PaintFlags flags;
+    flags.setImageFilter(sk_make_sp<cc::BlurPaintFilter>(
+        14.f, 14.f, SkTileMode::kClamp, nullptr));
+    canvas->DrawImageInt(image_, 0, 0, image_.width(), image_.height(),
+                         bounds.x(), bounds.y(), bounds.width(), bounds.height(),
+                         true, flags);
+    canvas->FillRect(bounds, tint_);
+  }
+
+ private:
+  const gfx::ImageSkia image_;
+  const SkColor tint_;
+  const float radius_;
+  const gfx::Insets insets_;
+};
+#endif
+
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 class WorkspaceMenuMaterial final : public views::ViewObserver {
  public:
-  WorkspaceMenuMaterial(views::MenuItemView& root, SkColor workspace_color)
-      : workspace_color_(workspace_color) {
+  WorkspaceMenuMaterial(views::MenuItemView& root, views::View* workspace)
+      : workspace_color_(WindowWorkspaceColor(workspace))
+#if BUILDFLAG(IS_WIN)
+        , owner_(workspace->GetWidget()->GetWeakPtr())
+#endif
+  {
     ObserveSubmenus(root);
   }
 
@@ -640,9 +678,8 @@ class WorkspaceMenuMaterial final : public views::ViewObserver {
 #if BUILDFLAG(IS_WIN)
   void OnViewBoundsChanged(views::View* view) override {
     if (auto* container = views::AsViewClass<views::MenuScrollViewContainer>(view);
-        container && container->GetWidget() && WorkspaceAllowsTransparency()) {
-      SetWorkspaceMenuClip(container->GetWidget(), container->outside_border_insets(),
-                           ZitterMenuCorners().upper_left());
+        container && container->GetWidget()) {
+      ApplyMaterial(*container);
     }
   }
 #endif
@@ -664,17 +701,19 @@ class WorkspaceMenuMaterial final : public views::ViewObserver {
     constexpr auto opacity = 178;
 #else
     if (!WorkspaceAllowsTransparency()) {
-      SetWorkspaceAcrylicBackdrop(widget, false, IsDark(&container), tint);
-      widget->SetShape(nullptr);
       container.SetBackground(views::CreateRoundedRectBackground(
           palette.bg_raised, corners, insets));
       return;
     }
-    // DWM paints the entire HWND. Clip it to the painted menu so acrylic
-    // cannot fill the transparent shadow margin.
-    SetWorkspaceMenuClip(widget, insets, corners.upper_left());
-    const auto opacity = SetWorkspaceAcrylicBackdrop(
-        widget, true, IsDark(&container), SkColorSetA(tint, 0x40)) ? 178 : 220;
+    auto bounds = widget->GetClientAreaBoundsInScreen();
+    bounds.Inset(insets);
+    auto backdrop = CaptureWorkspaceBackdrop(owner_.get(), bounds);
+    if (!backdrop.isNull()) {
+      container.SetBackground(std::make_unique<RoundedBackdropBackground>(
+          std::move(backdrop), SkColorSetA(tint, 178), corners.upper_left(), insets));
+      return;
+    }
+    constexpr auto opacity = 220;
 #endif
     SetWorkspaceNativeAppearance(widget, IsDark(&container));
     container.SetBackground(views::CreateRoundedRectBackground(
@@ -682,6 +721,9 @@ class WorkspaceMenuMaterial final : public views::ViewObserver {
   }
 
   const SkColor workspace_color_;
+#if BUILDFLAG(IS_WIN)
+  const base::WeakPtr<views::Widget> owner_;
+#endif
   base::ScopedMultiSourceObservation<views::View, views::ViewObserver>
       observations_{this};
 };
@@ -697,8 +739,8 @@ class DesignMenuModel final : public ui::SimpleMenuModel {
     return view_adapter_->CreateMenu();
   }
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-  void EnableMaterial(views::MenuItemView& menu, SkColor workspace_color) {
-    menu_material_ = std::make_unique<WorkspaceMenuMaterial>(menu, workspace_color);
+  void EnableMaterial(views::MenuItemView& menu, views::View* workspace) {
+    menu_material_ = std::make_unique<WorkspaceMenuMaterial>(menu, workspace);
   }
 #endif
   std::optional<ui::ColorId> GetForegroundColorId(size_t index) override {
@@ -718,7 +760,7 @@ std::unique_ptr<views::MenuRunner> CreateSidebarMenuRunner(
 #if BUILDFLAG(IS_WIN)
   auto* design = static_cast<DesignMenuModel*>(model);
   auto menu = design->CreateViewMenu();
-  design->EnableMaterial(*menu, WindowWorkspaceColor(workspace));
+  design->EnableMaterial(*menu, workspace);
   return std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
 #else
   return std::make_unique<views::MenuRunner>(model, kZitterMenuRun);
@@ -6035,6 +6077,8 @@ void WorkspaceShell::Update(ShellState state) {
   if (selected) ApplyAppearance(false);
   FitInitialSidebarWidth();
   RebuildTabs(previous_workspace, changed);
+  if (selected)
+    AnimateWorkspaceSwitch(previous_workspace);
 }
 
 void WorkspaceShell::ReconcileSidebarNodes(TabListCache& cache,std::string_view workspace,const std::vector<PinnedItem>& pins,const std::vector<ShellTab>& tabs,const std::vector<size_t>& split_tabs,bool split){
@@ -8175,7 +8219,7 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
   }
   if (menu) {
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
-    model->EnableMaterial(*menu, WindowWorkspaceColor(root_));
+    model->EnableMaterial(*menu, root_);
 #endif
     link_menu_runner_ = std::make_unique<views::MenuRunner>(std::move(menu), kZitterMenuRun);
   } else {
@@ -10119,7 +10163,8 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
     if (state_.workspaces[i].id == state_.workspace_id) new_index = i;
   }
   const auto motion=sidebar::workspace_switch_motion(old_index,new_index,sidebar_visible(),workspace_animations_,gfx::Animation::PrefersReducedMotion());
-  if(metal_sidebar_){if(!motion.enabled)return;}
+  if (!motion.enabled)
+    return;
   // Prepare the new viewport before starting the clock. Otherwise its first
   // layout/raster can consume much of a short animation and skip its opening.
   sidebar_widget_->LayoutRootViewIfNecessary();
@@ -10152,12 +10197,17 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   if(!compositor)return;
   tab_scroll_->view()->SetPaintToLayer();
   tab_scroll_->view()->layer()->SetFillsBoundsOpaquely(false);
-  gfx::Transform offset; offset.Translate(new_index > old_index ? 32 : -32, 0);
+  gfx::Transform offset;
+  offset.Translate(motion.offset, 0);
   tab_scroll_->view()->layer()->SetTransform(offset);
   workspace_animation_pending_ = true;
-  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
-      [](base::WeakPtr<WorkspaceShell> shell, size_t generation, const viz::FrameTimingDetails&) {
-        if (!shell || generation != shell->workspace_animation_generation_) return;
+  auto start = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceShell> shell, size_t generation,
+         base::TimeDelta duration) {
+        if (!shell || generation != shell->workspace_animation_generation_ ||
+            !shell->workspace_animation_pending_) {
+          return;
+        }
         shell->workspace_animation_pending_ = false;
         if (!shell->sidebar_visible() || !shell->workspace_animations_ || gfx::Animation::PrefersReducedMotion()) {
           shell->StopWorkspaceAnimation();
@@ -10165,7 +10215,7 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
         }
         auto* layer = shell->tab_scroll_->view()->layer();
         ui::ScopedLayerAnimationSettings settings(layer->GetAnimator());
-        settings.SetTransitionDuration(base::Milliseconds(180));
+        settings.SetTransitionDuration(duration);
         settings.SetTweenType(gfx::Tween::EASE_OUT);
         settings.CacheRenderSurface();
         if (shell->metal_sidebar_) {
@@ -10175,7 +10225,15 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
               &WorkspaceShell::ScheduleMetalSidebar, shell)));
         }
         layer->SetTransform(gfx::Transform());
-      }, weak_factory_.GetWeakPtr(), workspace_animation_generation_));
+      }, weak_factory_.GetWeakPtr(), workspace_animation_generation_,
+      base::Milliseconds(motion.duration_ms));
+  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
+      [](base::RepeatingClosure start, const viz::FrameTimingDetails&) {
+        start.Run();
+      }, start));
+  // Occluded windows can drop presentation feedback.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, std::move(start), base::Milliseconds(100));
   compositor->ScheduleDraw();
 }
 bool WorkspaceShell::workspace_switch_metal_visible() const {
@@ -11977,9 +12035,29 @@ SkColor WorkspaceShell::WorkspaceSidebarBackground(SkColor base, SkColor card,
 }
 
 void WorkspaceShell::SetWorkspaceSidebarBackground(SkColor color) {
+#if BUILDFLAG(IS_WIN)
+  if (!pinned_ && !sidebar_backdrop_.isNull()) {
+    sidebar_root_->SetBackground(std::make_unique<RoundedBackdropBackground>(
+        sidebar_backdrop_, color, 12));
+    return;
+  }
+#endif
   sidebar_root_->SetBackground(pinned_ ? views::CreateSolidBackground(color)
                                       : views::CreateRoundedRectBackground(color, 12));
 }
+
+#if BUILDFLAG(IS_WIN)
+void WorkspaceShell::UpdateWindowsSidebarMaterial() {
+  const auto palette = Palette(root_, workspace_color(state_.workspace_id));
+  if (pinned_ || !WorkspaceAllowsTransparency())
+    sidebar_backdrop_ = {};
+  const bool native_acrylic = SetWorkspaceAcrylicBackdrop(sidebar_widget_.get(),
+      pinned_, IsDark(root_), SkColorSetA(palette.bg_base, 0x40));
+  sidebar_translucent_ = native_acrylic || (!pinned_ && !sidebar_backdrop_.isNull());
+  SetWorkspaceSidebarBackground(
+      WorkspaceSidebarBackground(palette.bg_base, palette.bg_raised, palette.accent));
+}
+#endif
 
 void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   ScheduleMetalHeader();ScheduleMetalSplit();
@@ -11994,7 +12072,13 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
   if (refresh_theme) ApplyTheme();
   else if (repaint) ApplyTheme(/*refresh_controls=*/false);
   if (repaint && sidebar_root_) sidebar_root_->SchedulePaint();
-  root_->SetBackground(views::CreateSolidBackground(FrameVoid(color, root_)));
+  const auto frame_color = FrameVoid(color, root_);
+  root_->SetBackground(views::CreateSolidBackground(frame_color));
+#if BUILDFLAG(IS_WIN)
+  SetWorkspaceWindowBackground(widget_, frame_color);
+  if (auto* compositor = widget_->GetCompositor())
+    compositor->SetBackgroundColor(frame_color);
+#endif
   if (site_settings_page_)
     site_settings_page_->SetBackground(views::CreateRoundedRectBackground(Tone(root_, kCard), 10));
   root_->SchedulePaint();
@@ -12005,14 +12089,13 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
     SetWorkspaceSidebarMaterialOffset(
         sidebar_widget_.get(), -sidebar_root_->width() * (1 - sidebar_slide_value_));
 #endif
-  const auto palette = Palette(root_, color);
 #if BUILDFLAG(IS_WIN)
-  const auto tint = pinned_ ? palette.bg_base : Mix(palette.bg_base, palette.bg_raised, 70);
-  sidebar_translucent_ = SetWorkspaceAcrylicBackdrop(
-      sidebar_widget_.get(), true, IsDark(root_), SkColorSetA(tint, 0x40));
-#endif
+  UpdateWindowsSidebarMaterial();
+#else
+  const auto palette = Palette(root_, color);
   SetWorkspaceSidebarBackground(
       WorkspaceSidebarBackground(palette.bg_base, palette.bg_raised, palette.accent));
+#endif
   if (pinned_) {
     sidebar_root_->SetBorder(nullptr);
   } else {
@@ -14488,6 +14571,14 @@ void WorkspaceShell::ShowSidebar() {
     auto safe = sidebar_widget_->GetWindowBoundsInScreen();
     safe.Inset(gfx::Insets::TLBR(-8, -8, -8, -28));
     sidebar_hover_armed_ = safe.Contains(display::Screen::Get()->GetCursorScreenPoint());
+#if BUILDFLAG(IS_WIN)
+    if (!pinned_ && WorkspaceAllowsTransparency() &&
+        (!workspace_animations_ || gfx::Animation::PrefersReducedMotion())) {
+      sidebar_backdrop_ = CaptureWorkspaceBackdrop(
+          widget_, sidebar_widget_->GetClientAreaBoundsInScreen());
+      UpdateWindowsSidebarMaterial();
+    }
+#endif
   }
   AnimateSidebar(true);
   sidebar_widget_->ShowInactive();
@@ -14571,6 +14662,34 @@ void WorkspaceShell::AnimateSidebarOnCompositor(bool show) {
   outside.Translate(-sidebar_root_->width(), 0);
   layer->SetTransform(outside);
   sidebar_widget_->LayoutRootViewIfNecessary();
+#if BUILDFLAG(IS_WIN)
+  const auto window_bounds = widget_->GetNativeWindow()->GetBoundsInScreen();
+  auto backdrop_bounds = sidebar_widget_->GetClientAreaBoundsInScreen();
+  if (WorkspaceAllowsTransparency() && !backdrop_bounds.IsEmpty() &&
+      window_bounds.Contains(backdrop_bounds)) {
+    backdrop_bounds.Offset(-window_bounds.x(), -window_bounds.y());
+    auto start = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceShell> shell, size_t generation,
+           gfx::Image backdrop) {
+          if (!shell || generation != shell->sidebar_slide_generation_ ||
+              shell->sidebar_root_->layer()->GetTargetTransform().IsIdentity())
+            return;
+          if (WorkspaceAllowsTransparency() && !backdrop.IsEmpty()) {
+            shell->sidebar_backdrop_ = backdrop.AsImageSkia();
+            shell->UpdateWindowsSidebarMaterial();
+          }
+          shell->SlideSidebarLayer(generation, true);
+        },
+        weak_factory_.GetWeakPtr(), generation);
+    // The workspace compositor can supply the backdrop without blocking input.
+    // If it stalls, keep the fallback tint for this opening.
+    ui::GrabWindowSnapshotAura(widget_->GetNativeWindow(), backdrop_bounds,
+                              start);
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+        FROM_HERE, base::BindOnce(start, gfx::Image()), base::Milliseconds(100));
+    return;
+  }
+#endif
   compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
       [](base::WeakPtr<WorkspaceShell> shell, size_t generation, const viz::FrameTimingDetails&) {
         if (shell) shell->SlideSidebarLayer(generation, true);
@@ -18381,6 +18500,12 @@ void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visib
   }
 #endif
   if (widget == sidebar_widget_.get() && !visible) {
+#if BUILDFLAG(IS_WIN)
+    if (!sidebar_backdrop_.isNull()) {
+      sidebar_backdrop_ = {};
+      UpdateWindowsSidebarMaterial();
+    }
+#endif
     if (site_panel_) CloseSitePanel();
     FinishSidebarRename(false);
     sidebar_hover_timer_.Stop(); sidebar_slide_timer_.Stop();

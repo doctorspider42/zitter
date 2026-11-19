@@ -55,6 +55,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
 #include "base/i18n/rtl.h"
 #include "base/i18n/time_formatting.h"
 #include "base/json/json_reader.h"
@@ -1317,8 +1318,12 @@ class WorkspaceWebView final : public LabWebView {
     }
     // Preferences paint in a native child widget. Hide the placeholder
     // document so its background cannot show through the rounded corners.
-    holder()->SetVisible(!rss_ &&
-                         !prototype::IsSettingsTabUrl(web_contents()->GetVisibleURL()));
+    bool show_page = !rss_ &&
+        !prototype::IsSettingsTabUrl(web_contents()->GetVisibleURL());
+#if BUILDFLAG(IS_WIN)
+    show_page &= !ShowsInitialDocument(*web_contents());
+#endif
+    holder()->SetVisible(show_page);
     if (navigation_changed_)
       navigation_changed_.Run(web_contents());
   }
@@ -4017,6 +4022,29 @@ void WorkspaceLab::StartWorkspace() {
 #if BUILDFLAG(ENABLE_PRINTING)
   active_probe |= switches.HasSwitch(kPdfExportProbe);
 #endif
+#if BUILDFLAG(IS_WIN)
+  // Wait for the restored geometry and tab to be laid out before asking for
+  // the frame that will uncover the HWND.
+  base::ScopedClosureRunner reveal_when_ready(base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab) {
+        if (!lab || !lab->done_)
+          return;
+        auto reveal = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+          if (lab && lab->done_)
+            prototype::SetWorkspaceStartupCloaked(lab->widget_.get(), false);
+        }, lab);
+        auto* compositor = lab->widget_->GetCompositor();
+        compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
+            [](base::RepeatingClosure reveal, const viz::FrameTimingDetails&) {
+              reveal.Run();
+            }, reveal));
+        compositor->ScheduleDraw();
+        // When presentation feedback is unavailable, the native window and
+        // the empty pane already use the workspace colors.
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+            FROM_HERE, std::move(reveal), base::Milliseconds(750));
+      }, weak_factory_.GetWeakPtr()));
+#endif
   if (smoke_ || UiAutomationBlocksActivation() ||
       (session_probe_url_.is_valid() && !active_probe) ||
       private_adblock_probe_url_.is_valid()) {
@@ -4026,21 +4054,6 @@ void WorkspaceLab::StartWorkspace() {
   }
   if (std::exchange(restore_window_maximized_, false))
     widget_->Maximize();
-#if BUILDFLAG(IS_WIN)
-  auto reveal = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
-    if (lab && lab->done_)
-      prototype::SetWorkspaceStartupCloaked(lab->widget_.get(), false);
-  }, weak_factory_.GetWeakPtr());
-  auto* compositor = widget_->GetCompositor();
-  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
-      [](base::RepeatingClosure reveal, const viz::FrameTimingDetails&) {
-        reveal.Run();
-      }, reveal));
-  compositor->ScheduleDraw();
-  // Some compositor configurations cannot report presentation while cloaked.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-      FROM_HERE, std::move(reveal), base::Milliseconds(300));
-#endif
   if (private_owner_) {
     SelectWorkspace(std::string(kWorkspaceIds[0]));
     shell_->OpenAddress(false);
@@ -10588,6 +10601,10 @@ void WorkspaceLab::ShowTab() {
   shell_->content_host()->DeprecatedLayoutImmediately();
   for (size_t index : visible) {
     auto* view = tabs[index].view.get();
+#if BUILDFLAG(IS_WIN)
+    if (ShowsInitialDocument(*view->web_contents()))
+      view->holder()->SetVisible(false);
+#endif
     view->SetVisible(true);
     view->web_contents()->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
   }

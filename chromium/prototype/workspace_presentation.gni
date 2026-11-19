@@ -444,6 +444,7 @@ template("zitter_workspace_presentation") {
           "//components/prefs",
           "//ui/aura",
           "//ui/base/emoji",
+          "//ui/snapshot",
         ]
         libs = [
           "dwmapi.lib",

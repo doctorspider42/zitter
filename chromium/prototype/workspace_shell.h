@@ -1373,6 +1373,9 @@ class WorkspaceShell final : public ui::EventHandler,
   SkColor WorkspaceSidebarBackground(SkColor base, SkColor card, SkColor accent) const;
   void SetWorkspaceSidebarBackground(SkColor color);
 #if BUILDFLAG(IS_WIN)
+  void UpdateWindowsSidebarMaterial();
+#endif
+#if BUILDFLAG(IS_WIN)
   bool sidebar_translucent_ = false;
 #endif
   bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
@@ -1846,6 +1849,9 @@ class WorkspaceShell final : public ui::EventHandler,
   bool new_tab_ = false;
   bool appearance_ready_ = false;
   int pending_writes_ = 0;
+#if BUILDFLAG(IS_WIN)
+  gfx::ImageSkia sidebar_backdrop_;
+#endif
   base::WeakPtrFactory<WorkspaceShell> weak_factory_{this};
 };
 }
