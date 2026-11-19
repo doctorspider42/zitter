@@ -361,7 +361,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
                             std::u16string restore_time);
   std::optional<size_t> LastClosedTab() const;
   bool ReopenClosedTab(size_t newest);
-  Tab MakeTab(size_t workspace, views::View& host);
+  Tab MakeTab(size_t workspace, views::View* host);
   void AddTab(size_t workspace, GURL deferred_url = {},
               std::u16string deferred_title = {}, std::string pin = {});
   void OpenPin(std::string id);

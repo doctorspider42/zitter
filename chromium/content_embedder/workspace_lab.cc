@@ -1141,6 +1141,18 @@ class WorkspaceWebView final : public LabWebView {
     presentation_changed_ = std::move(callback);
   }
 
+  void UpdatePageHolderVisibility() {
+    bool show_page = !rss_ &&
+        !prototype::IsSettingsTabUrl(web_contents()->GetVisibleURL());
+#if BUILDFLAG(IS_WIN)
+    // NativeViewHost::SetVisible also toggles the Aura window directly.
+    // A background navigation must not expose it over the selected pane.
+    show_page &= GetVisible() && !ShowsInitialDocument(*web_contents());
+#endif
+    if (holder()->GetVisible() != show_page)
+      holder()->SetVisible(show_page);
+  }
+
   // Picture-in-picture's back-to-tab control selects the page's tab.
   void SetActivatePageCallback(base::RepeatingCallback<void(content::WebContents*)> callback) {
     activate_page_ = std::move(callback);
@@ -1318,12 +1330,7 @@ class WorkspaceWebView final : public LabWebView {
     }
     // Preferences paint in a native child widget. Hide the placeholder
     // document so its background cannot show through the rounded corners.
-    bool show_page = !rss_ &&
-        !prototype::IsSettingsTabUrl(web_contents()->GetVisibleURL());
-#if BUILDFLAG(IS_WIN)
-    show_page &= !ShowsInitialDocument(*web_contents());
-#endif
-    holder()->SetVisible(show_page);
+    UpdatePageHolderVisibility();
     if (navigation_changed_)
       navigation_changed_.Run(web_contents());
   }
@@ -7186,7 +7193,7 @@ bool WorkspaceLab::OpenPeek(const GURL& url, std::string source) {
   DiscardPeek();
 
   peek_workspace_id_ = model_.workspaces()[target].id;
-  peek_tab_ = MakeTab(target, *shell_->peek_host());
+  peek_tab_ = MakeTab(target, shell_->peek_host());
   auto* view = static_cast<WorkspaceWebView*>(peek_tab_->view.get());
   auto* page = view->GetWebContents(url);
   AttachPageServices(*page, target);
@@ -7944,6 +7951,10 @@ content::WebContents& WorkspaceLab::EnsureHiddenTabPage(
     size_t workspace, Tab& tab, const GURL& url) {
   if (auto* page = tab.view->web_contents())
     return *page;
+#if BUILDFLAG(IS_WIN)
+  if (tab.detached_view)
+    shell_->content_host()->AddChildView(std::move(tab.detached_view));
+#endif
   if (tab.discarded_page)
     tab.view->SetOwnedWebContents(std::move(tab.discarded_page));
 #if BUILDFLAG(IS_WIN)
@@ -7964,6 +7975,12 @@ content::WebContents& WorkspaceLab::EnsureHiddenTabPage(
     page->SetAudioMuted(true);
   AttachPageServices(*page, workspace);
   HideTabView(*tab.view);
+#if BUILDFLAG(IS_WIN)
+  // Hidden NativeViewHosts skip layout. Give pages loaded in the background
+  // a real initial viewport before their first script measures the document.
+  if (page->GetSize().IsEmpty())
+    page->Resize(shell_->content_host()->GetLocalBounds());
+#endif
   sleeping_[workspace] = false;
   return *page;
 }
@@ -9565,10 +9582,9 @@ bool WorkspaceLab::CommitWorkspaceSleep(size_t workspace) {
   return true;
 }
 
-WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View& host) {
+WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View* host) {
   const uint64_t id = next_tab_id_++;
-  auto* view = host.AddChildView(
-      std::make_unique<WorkspaceWebView>(WorkspaceProfile(workspace),
+  auto owned = std::make_unique<WorkspaceWebView>(WorkspaceProfile(workspace),
           media_access_->GetWeakPtr(), base::BindRepeating(
               [](base::WeakPtr<WorkspaceLab> lab, uint64_t id, GURL url) {
                 if (lab && std::ranges::contains(lab->tabs_[lab->active_index_], id,
@@ -9602,7 +9618,8 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View& host) {
               [](base::WeakPtr<WorkspaceLab> lab, content::WebContents* page) {
                 return lab && lab->CanFullscreenPage(page);
               }, weak_factory_.GetWeakPtr()),
-          base::BindRepeating(&WorkspaceLab::SetPageFullscreen, weak_factory_.GetWeakPtr())));
+          base::BindRepeating(&WorkspaceLab::SetPageFullscreen, weak_factory_.GetWeakPtr()));
+  auto* view = owned.get();
   view->SetImagePreviews(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab) { return lab && lab->image_link_previews_; },
       weak_factory_.GetWeakPtr()));
@@ -9631,14 +9648,23 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View& host) {
             }, lab));
       }, weak_factory_.GetWeakPtr()));
   view->SetVisible(false);
-  return {nullptr, view, id, {}, {}, {},
+  if (host)
+    host->AddChildView(std::move(owned));
+  return {std::move(owned), view, id, {}, {}, {},
           view->AddWebContentsFocusedCallback(base::BindRepeating(
               &WorkspaceLab::FocusVisibleView, weak_factory_.GetWeakPtr()))};
 }
 
 void WorkspaceLab::AddTab(size_t workspace, GURL deferred_url,
                           std::u16string deferred_title, std::string pin) {
-  auto tab = MakeTab(workspace, *shell_->content_host());
+  auto* host = shell_->content_host();
+#if BUILDFLAG(IS_WIN)
+  // A deferred page has no native surface yet. Mount it on first display or
+  // background load so dormant tabs stay out of widget focus and layout walks.
+  if (!deferred_url.is_empty())
+    host = nullptr;
+#endif
+  auto tab = MakeTab(workspace, host);
   tab.extension_tab = CreateWorkspaceExtensionTab(*WorkspaceProfile(workspace), *this);
   tab.deferred_url = std::move(deferred_url);
   tab.deferred_title = std::move(deferred_title);
@@ -10600,12 +10626,11 @@ void WorkspaceLab::ShowTab() {
   // first, especially when switching between horizontal and vertical splits.
   shell_->content_host()->DeprecatedLayoutImmediately();
   for (size_t index : visible) {
-    auto* view = tabs[index].view.get();
-#if BUILDFLAG(IS_WIN)
-    if (ShowsInitialDocument(*view->web_contents()))
-      view->holder()->SetVisible(false);
-#endif
+    auto* view = static_cast<WorkspaceWebView*>(tabs[index].view.get());
     view->SetVisible(true);
+#if BUILDFLAG(IS_WIN)
+    view->UpdatePageHolderVisibility();
+#endif
     view->web_contents()->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
   }
   Observe(page);
@@ -17543,7 +17568,7 @@ bool WorkspaceLab::PrepareManagedExtensionCacheForProbe(ProfileContext& owner,
     for (auto* profile : {&owner, &peer}) {
       for (size_t workspace = 0; workspace < model_.workspaces().size(); ++workspace) {
         if (WorkspaceProfile(workspace) == profile) {
-          auto tab = MakeTab(workspace, *managed_cache_probe_host_);
+          auto tab = MakeTab(workspace, managed_cache_probe_host_.get());
           managed_cache_views_[view_index++] = tab.view;
           tab.view->LoadInitialURL(page_url);
           break;

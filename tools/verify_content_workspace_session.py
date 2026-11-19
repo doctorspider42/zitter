@@ -876,6 +876,8 @@ window.addEventListener('load', () => {
             favicon_link = '<link rel="icon" href="/work/renewed.png">'
         if profile == "work" and getattr(self.server, "refreshed_icon_markup", False):
             favicon_link = '<link rel="icon" href="/work/renewed.png">'
+        check_viewport = (self.path == "/work/active"
+                          and getattr(self.server, "check_favorite_viewport", False))
         body = f"""<!doctype html>
 <meta charset="utf-8">
 {rss_link}{favicon_link}
@@ -885,7 +887,9 @@ window.addEventListener('load', () => {
   const cookie = document.cookie.split('; ')
     .find(entry => entry.startsWith('profile_probe='))?.split('=')[1] ?? '';
   const storage = localStorage.getItem('profile_probe') ?? '';
-  if (cookie === expected && storage === expected && {json.dumps(actual)} === expected) {{
+  if ({json.dumps(check_viewport)} && (!innerWidth || !innerHeight)) {{
+    document.title = 'Zitter workspace favorite started with an empty viewport';
+  }} else if (cookie === expected && storage === expected && {json.dumps(actual)} === expected) {{
     document.cookie = 'profile_probe=' + profile + '; Max-Age=600; Path=/; SameSite=Strict';
     localStorage.setItem('profile_probe', profile);
     document.title = 'Zitter workspace probe ' + profile;
@@ -4240,6 +4244,7 @@ if (location.pathname === '/extension-content/live-install') {
         expected_session["personal"]["tabs"][0]["title"] = "Zitter workspace probe personal"
         server.requests = []
         server.navigation_probe = options.navigation
+        server.check_favorite_viewport = windows and options.shared_favorites
         server.split_actions = options.split_actions
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()

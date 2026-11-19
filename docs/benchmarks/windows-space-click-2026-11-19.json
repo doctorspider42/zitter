@@ -1,0 +1,527 @@
+{
+  "date": "2026-11-19",
+  "platform": "Windows 10 x64, AMD Ryzen Threadripper 1920X, 24 logical processors",
+  "build": "ZitterWinContent Release, Chromium compositor, dark theme, 1084 x 732 DIP client",
+  "baseline": "6ef5acc with the preceding pinned-tab visibility and workspace animation fixes applied",
+  "workload": "Six restored spaces across two profiles. Alternate sidebar button clicks between two spaces in the same profile. The other four spaces stay inactive. Each run uses a fresh, disposable copy of a synthetic profile. A signed MV3 extension is enabled; both measured spaces verify its document_start content script before sampling.",
+  "timing": "Elapsed wall time on the browser UI thread from entry to exit of WorkspaceLab::SelectWorkspace. Nested scopes use base::TimeTicks. The extension_tab_scan scope brackets the complete metadata update loop in RefreshShell. Timings exclude IPC and presentation. Nested scopes overlap.",
+  "sampling": "60 alternating clicks in each configuration and build, after opening the target pages and 8 warm-up clicks. Wait 300 ms after each automation click. p50 is the median and p95 uses nearest rank. All regular runs load only the selected tab in each of the two measured spaces.",
+  "changes": [
+    "Restrict PaneHost layout to participating panes and their controls. Skip synchronous root layout when clearing the old pane list.",
+    "On Windows keep deferred tab views outside the widget hierarchy until they need to display or load a page."
+  ],
+  "source_sha256": {
+    "chromium/prototype/workspace_shell.cc": "c2ea6f42e07df333cd908c64feb76dc1df50701ed7fd7fe62cfbe6f68f976210",
+    "chromium/content_embedder/workspace_lab.cc": "ae870fe1bf5b19334d96f1615fdf43f1ee6e94b6786e2975c9f81e2c6aacc987",
+    "chromium/content_embedder/workspace_lab.h": "4916fbb491fb597a80a91ab12afc039a0582f0b2e9cc089d836d49732ee1649b"
+  },
+  "cases": [
+    {
+      "total_tabs": 28,
+      "tabs_per_switched_space": 12,
+      "tabs_per_inactive_space": 1,
+      "loaded_tabs": 2,
+      "before": {
+        "switch": {
+          "p50_ms": 12.345,
+          "p95_ms": 27.029
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.023,
+          "p95_ms": 0.032
+        },
+        "activate_workspace": {
+          "p50_ms": 6.788,
+          "p95_ms": 20.001
+        },
+        "show_tab": {
+          "p50_ms": 2.938,
+          "p95_ms": 8.079
+        },
+        "refresh_shell": {
+          "p50_ms": 4.667,
+          "p95_ms": 6.649
+        },
+        "sidebar_state": {
+          "p50_ms": 0.186,
+          "p95_ms": 0.259
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.279,
+          "p95_ms": 0.386
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 2.618,
+          "p95_ms": 3.74
+        }
+      },
+      "layout_change_only": {
+        "switch": {
+          "p50_ms": 7.633,
+          "p95_ms": 16.408
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.017,
+          "p95_ms": 0.023
+        },
+        "activate_workspace": {
+          "p50_ms": 4.046,
+          "p95_ms": 12.199
+        },
+        "show_tab": {
+          "p50_ms": 1.867,
+          "p95_ms": 5.26
+        },
+        "refresh_shell": {
+          "p50_ms": 3.418,
+          "p95_ms": 4.51
+        },
+        "sidebar_state": {
+          "p50_ms": 0.145,
+          "p95_ms": 0.191
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.22,
+          "p95_ms": 0.272
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 1.954,
+          "p95_ms": 2.459
+        }
+      },
+      "after": {
+        "switch": {
+          "p50_ms": 10.534,
+          "p95_ms": 18.068
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.024,
+          "p95_ms": 0.042
+        },
+        "activate_workspace": {
+          "p50_ms": 5.045,
+          "p95_ms": 11.249
+        },
+        "show_tab": {
+          "p50_ms": 2.33,
+          "p95_ms": 4.886
+        },
+        "refresh_shell": {
+          "p50_ms": 4.958,
+          "p95_ms": 8.084
+        },
+        "sidebar_state": {
+          "p50_ms": 0.189,
+          "p95_ms": 0.379
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.306,
+          "p95_ms": 0.546
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 2.562,
+          "p95_ms": 4.902
+        }
+      }
+    },
+    {
+      "total_tabs": 2024,
+      "tabs_per_switched_space": 12,
+      "tabs_per_inactive_space": 500,
+      "loaded_tabs": 2,
+      "before": {
+        "switch": {
+          "p50_ms": 25.706,
+          "p95_ms": 41.977
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.463,
+          "p95_ms": 0.87
+        },
+        "activate_workspace": {
+          "p50_ms": 17.62,
+          "p95_ms": 29.456
+        },
+        "show_tab": {
+          "p50_ms": 6.977,
+          "p95_ms": 11.052
+        },
+        "refresh_shell": {
+          "p50_ms": 4.841,
+          "p95_ms": 7.805
+        },
+        "sidebar_state": {
+          "p50_ms": 0.185,
+          "p95_ms": 0.315
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.269,
+          "p95_ms": 0.499
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 2.429,
+          "p95_ms": 3.92
+        }
+      },
+      "layout_change_only": {
+        "switch": {
+          "p50_ms": 16.311,
+          "p95_ms": 31.117
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.326,
+          "p95_ms": 0.527
+        },
+        "activate_workspace": {
+          "p50_ms": 10.023,
+          "p95_ms": 22.54
+        },
+        "show_tab": {
+          "p50_ms": 2.288,
+          "p95_ms": 6.495
+        },
+        "refresh_shell": {
+          "p50_ms": 4.006,
+          "p95_ms": 6.105
+        },
+        "sidebar_state": {
+          "p50_ms": 0.153,
+          "p95_ms": 0.24
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.232,
+          "p95_ms": 0.435
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 2.071,
+          "p95_ms": 3.09
+        }
+      },
+      "after": {
+        "switch": {
+          "p50_ms": 9.011,
+          "p95_ms": 12.37
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.446,
+          "p95_ms": 0.899
+        },
+        "activate_workspace": {
+          "p50_ms": 4.303,
+          "p95_ms": 5.886
+        },
+        "show_tab": {
+          "p50_ms": 1.865,
+          "p95_ms": 2.919
+        },
+        "refresh_shell": {
+          "p50_ms": 4.172,
+          "p95_ms": 6.424
+        },
+        "sidebar_state": {
+          "p50_ms": 0.164,
+          "p95_ms": 0.235
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.26,
+          "p95_ms": 0.399
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 2.127,
+          "p95_ms": 3.221
+        }
+      }
+    },
+    {
+      "total_tabs": 304,
+      "tabs_per_switched_space": 150,
+      "tabs_per_inactive_space": 1,
+      "loaded_tabs": 2,
+      "before": {
+        "switch": {
+          "p50_ms": 18.089,
+          "p95_ms": 23.462
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.081,
+          "p95_ms": 0.119
+        },
+        "activate_workspace": {
+          "p50_ms": 7.438,
+          "p95_ms": 10.35
+        },
+        "show_tab": {
+          "p50_ms": 2.926,
+          "p95_ms": 4.466
+        },
+        "refresh_shell": {
+          "p50_ms": 9.827,
+          "p95_ms": 13.095
+        },
+        "sidebar_state": {
+          "p50_ms": 1.699,
+          "p95_ms": 2.551
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 1.711,
+          "p95_ms": 2.619
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 4.538,
+          "p95_ms": 6.31
+        }
+      },
+      "layout_change_only": {
+        "switch": {
+          "p50_ms": 14.007,
+          "p95_ms": 28.788
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.058,
+          "p95_ms": 0.083
+        },
+        "activate_workspace": {
+          "p50_ms": 5.24,
+          "p95_ms": 18.192
+        },
+        "show_tab": {
+          "p50_ms": 1.945,
+          "p95_ms": 7.877
+        },
+        "refresh_shell": {
+          "p50_ms": 8.041,
+          "p95_ms": 10.637
+        },
+        "sidebar_state": {
+          "p50_ms": 1.481,
+          "p95_ms": 2.152
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 1.314,
+          "p95_ms": 1.819
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 3.858,
+          "p95_ms": 5.262
+        }
+      },
+      "after": {
+        "switch": {
+          "p50_ms": 10.506,
+          "p95_ms": 13.22
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.057,
+          "p95_ms": 0.097
+        },
+        "activate_workspace": {
+          "p50_ms": 3.431,
+          "p95_ms": 4.492
+        },
+        "show_tab": {
+          "p50_ms": 1.427,
+          "p95_ms": 2.105
+        },
+        "refresh_shell": {
+          "p50_ms": 6.769,
+          "p95_ms": 8.838
+        },
+        "sidebar_state": {
+          "p50_ms": 1.243,
+          "p95_ms": 1.618
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 1.151,
+          "p95_ms": 1.525
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 3.307,
+          "p95_ms": 4.247
+        }
+      }
+    },
+    {
+      "total_tabs": 2300,
+      "tabs_per_switched_space": 150,
+      "tabs_per_inactive_space": 500,
+      "loaded_tabs": 2,
+      "before": {
+        "switch": {
+          "p50_ms": 28.492,
+          "p95_ms": 42.486
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.378,
+          "p95_ms": 0.697
+        },
+        "activate_workspace": {
+          "p50_ms": 16.544,
+          "p95_ms": 26.399
+        },
+        "show_tab": {
+          "p50_ms": 6.504,
+          "p95_ms": 10.409
+        },
+        "refresh_shell": {
+          "p50_ms": 8.948,
+          "p95_ms": 14.07
+        },
+        "sidebar_state": {
+          "p50_ms": 1.801,
+          "p95_ms": 2.653
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 1.303,
+          "p95_ms": 2.442
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 4.048,
+          "p95_ms": 6.315
+        }
+      },
+      "layout_change_only": {
+        "switch": {
+          "p50_ms": 21.718,
+          "p95_ms": 34.992
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.357,
+          "p95_ms": 0.568
+        },
+        "activate_workspace": {
+          "p50_ms": 10.854,
+          "p95_ms": 19.167
+        },
+        "show_tab": {
+          "p50_ms": 2.512,
+          "p95_ms": 5.777
+        },
+        "refresh_shell": {
+          "p50_ms": 8.639,
+          "p95_ms": 11.249
+        },
+        "sidebar_state": {
+          "p50_ms": 1.656,
+          "p95_ms": 2.017
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 1.286,
+          "p95_ms": 1.944
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 3.816,
+          "p95_ms": 5.458
+        }
+      },
+      "after": {
+        "switch": {
+          "p50_ms": 12.203,
+          "p95_ms": 16.257
+        },
+        "extension_tab_scan": {
+          "p50_ms": 0.401,
+          "p95_ms": 0.587
+        },
+        "activate_workspace": {
+          "p50_ms": 4.05,
+          "p95_ms": 5.483
+        },
+        "show_tab": {
+          "p50_ms": 1.647,
+          "p95_ms": 2.474
+        },
+        "refresh_shell": {
+          "p50_ms": 7.938,
+          "p95_ms": 10.188
+        },
+        "sidebar_state": {
+          "p50_ms": 1.342,
+          "p95_ms": 1.655
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 1.247,
+          "p95_ms": 1.902
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 3.561,
+          "p95_ms": 4.687
+        }
+      }
+    },
+    {
+      "total_tabs": 2024,
+      "tabs_per_switched_space": 12,
+      "tabs_per_inactive_space": 500,
+      "loaded_tabs": 24,
+      "setup": "Open each of the 12 tabs in both switched spaces and return to their original selection before sampling. Run the final build first and the baseline second.",
+      "before": {
+        "switch": {
+          "p50_ms": 58.304,
+          "p95_ms": 66.734
+        },
+        "extension_tab_scan": {
+          "p50_ms": 1.071,
+          "p95_ms": 1.481
+        },
+        "activate_workspace": {
+          "p50_ms": 40.264,
+          "p95_ms": 49.509
+        },
+        "show_tab": {
+          "p50_ms": 14.93,
+          "p95_ms": 18.265
+        },
+        "refresh_shell": {
+          "p50_ms": 9.303,
+          "p95_ms": 12.635
+        },
+        "sidebar_state": {
+          "p50_ms": 0.373,
+          "p95_ms": 0.496
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.506,
+          "p95_ms": 0.689
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 4.37,
+          "p95_ms": 5.987
+        }
+      },
+      "after": {
+        "switch": {
+          "p50_ms": 21.179,
+          "p95_ms": 26.416
+        },
+        "extension_tab_scan": {
+          "p50_ms": 1.296,
+          "p95_ms": 2.112
+        },
+        "activate_workspace": {
+          "p50_ms": 9.129,
+          "p95_ms": 15.821
+        },
+        "show_tab": {
+          "p50_ms": 3.814,
+          "p95_ms": 8.394
+        },
+        "refresh_shell": {
+          "p50_ms": 10.468,
+          "p95_ms": 14.62
+        },
+        "sidebar_state": {
+          "p50_ms": 0.348,
+          "p95_ms": 0.792
+        },
+        "reconcile_sidebar_rows": {
+          "p50_ms": 0.48,
+          "p95_ms": 0.816
+        },
+        "start_sidebar_animation": {
+          "p50_ms": 4.649,
+          "p95_ms": 8.62
+        }
+      }
+    }
+  ]
+}

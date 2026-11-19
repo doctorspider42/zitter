@@ -148,6 +148,7 @@
 #include "ui/color/color_provider_manager.h"
 #include "ui/views/controls/menu/menu_config.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/animation/compositor_animation_runner.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/button.h"
@@ -3935,6 +3936,11 @@ class WorkspaceSwipePreview final : public views::View {
     layer()->SetMasksToBounds(true);
     layer()->SetFillsBoundsOpaquely(false);
   }
+  void StartSettle(base::RepeatingCallback<void(base::TimeTicks)> step) {
+    settle_runner_.emplace(GetWidget());
+    settle_runner_->gfx::AnimationRunner::Start(
+        base::TimeDelta(), base::TimeDelta(), std::move(step));
+  }
   void Move(double position, int count) {
     if (scene_size_ != size()) {
       scene_size_ = size();
@@ -4029,6 +4035,7 @@ class WorkspaceSwipePreview final : public views::View {
  private:
   int center_ = -1;
   size_t native_capture_count_=0;
+  std::optional<views::CompositorAnimationRunner> settle_runner_;
   base::RepeatingCallback<std::vector<sidebar::Item>(int)> scene_capture_;
   std::map<int,std::vector<sidebar::Item>> scenes_;
   std::map<int,std::unique_ptr<SidebarMetal>> surfaces_;
@@ -4181,6 +4188,11 @@ class PaneHost final : public views::View, public views::ResizeAreaDelegate {
            base::RepeatingCallback<bool(size_t)> visible,base::RepeatingCallback<void(size_t)> focus,
            base::RepeatingCallback<void(size_t,std::optional<gfx::Point>,bool)> drag)
       : painted_(std::move(painted)),changed_(std::move(changed)) {
+    // Layout below sets bounds on every participating pane and its chrome.
+    // SetBounds also lays out a dirty child whose bounds stayed the same.
+    // The default View pass would also lay out every hidden WebView, including
+    // tabs belonging to other workspaces.
+    SetProperty(views::kViewDoesNotLayOutChildren, true);
     for (size_t pane = 0; pane < kMaxSplitPanes; ++pane) {
       auto* bar = AddChildView(std::make_unique<PaneBar>(views::Button::PressedCallback(),
           base::BindRepeating(close, pane),painted_,base::BindRepeating(visible,SurfaceIndex(false,pane)),base::BindRepeating(focus,pane),base::BindRepeating(drag,pane)));
@@ -5071,9 +5083,11 @@ void WorkspaceShell::LayoutAssistant(bool pinned) {
   PositionPreferencesTab();
 }
 void WorkspaceShell::SetPanes(std::vector<views::View*> panes, std::vector<double> weights, bool vertical) {
-  static_cast<PaneHost*>(content_host_.get())->SetPanes(std::move(panes), std::move(weights), vertical);
+  auto* host = static_cast<PaneHost*>(content_host_.get());
+  host->SetPanes(std::move(panes), std::move(weights), vertical);
   // Size hidden native pages before WasShown can request their first frame.
-  if (widget_) widget_->LayoutRootViewIfNecessary();
+  // Clearing the old panes has no incoming page to size.
+  if (widget_ && host->pane_count()) widget_->LayoutRootViewIfNecessary();
   ScheduleMetalSplit();
 }
 
@@ -6039,14 +6053,18 @@ void WorkspaceShell::Update(ShellState state) {
     if(profile_form_){const auto profiles=ProfileOptions(state_);profile_form_->form->reconcile(rust::Slice<const sidebar::ProfileOption>(profiles.data(),profiles.size()),added_profile);}
     renaming_profile_id_.clear();
   }
-  if (changed || profiles_changed || selected) {RebuildProfileRows();RebuildWorkspaceProfileRows();RefreshWorkspaceDanger();}
+  // Both settings panels populate their rows when opened. Keep their hidden
+  // view trees off the workspace-switch path.
+  const bool workspace_settings_changed = changed || profiles_changed || selected;
+  if (workspace_settings_changed && profiles_widget_ && profiles_widget_->IsVisible())
+    RebuildProfileRows();
   if(import_form_){RefreshRustImportControls();if(ready_changed&&import_visible()&&import_form_->form->should_resume(state_.configuration_ready,state_.profiles_busy))ImportSelectionChanged();}
   profile_picker_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   if (changed || profiles_changed || ready_changed) RefreshProfileControls();
   add_workspace_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   edit_workspace_->SetEnabled(state_.configuration_ready && !state_.profiles_busy);
   remove_workspace_->SetEnabled(state_.configuration_ready && !state_.profiles_busy && state_.workspaces.size() > 1);
-  if ((changed || selected || profiles_changed) && settings_visible()) RefreshWorkspaceSettings();
+  if (workspace_settings_changed && settings_visible()) RefreshWorkspaceSettings();
   SyncPreferencesTab();
   if (general_widget_ && general_widget_->IsVisible()) RefreshGeneralControls();
   RefreshWorkspaceHeading();
@@ -7431,15 +7449,17 @@ void WorkspaceShell::FinishWorkspaceSwipe() {
                                   weak_factory_.GetWeakPtr()));
     return;
   }
-  swipe_settle_timer_.Start(FROM_HERE, base::Milliseconds(16), base::BindRepeating(
-      [](WorkspaceShell* shell, base::TimeTicks started, double start, int target) {
-        const double progress = std::min(1.0, (base::TimeTicks::Now() - started) /
-                                                   base::Milliseconds(160));
-        const double eased = gfx::Tween::CalculateValue(gfx::Tween::EASE_OUT, progress);
-        shell->PaintWorkspaceSwipe(std::lerp(start, target, eased));
-        if (progress == 1.0)
-          shell->CommitWorkspaceSwipe();
-      }, base::Unretained(this), base::TimeTicks::Now(), start, target));
+  constexpr auto duration = base::Milliseconds(160);
+  static_cast<WorkspaceSwipePreview*>(swipe_overlay_.get())->StartSettle(
+      base::BindRepeating([](WorkspaceShell* shell, base::TimeTicks started,
+                             double start, int target, base::TimeDelta duration,
+                             base::TimeTicks frame) {
+        const double progress = std::clamp((frame - started) / duration, 0.0, 1.0);
+        shell->PaintWorkspaceSwipe(std::lerp(start, target,
+            gfx::Tween::CalculateValue(gfx::Tween::EASE_OUT, progress)));
+      }, base::Unretained(this), base::TimeTicks::Now(), start, target, duration));
+  // Commit even if the window becomes occluded and frame ticks stop.
+  swipe_settle_timer_.Start(FROM_HERE, duration, this, &WorkspaceShell::CommitWorkspaceSwipe);
 }
 
 void WorkspaceShell::CommitWorkspaceSwipe() {
@@ -10261,10 +10281,11 @@ void WorkspaceShell::ApplyTheme(bool refresh_controls) {
       PreparePanelText(panel->GetRootView());
     }
 #if BUILDFLAG(IS_MAC)
+    if (!refresh_controls) continue;
     SetWorkspaceNativeAppearance(panel, mode ? std::optional<bool>(*mode == ui::ColorProviderKey::ColorMode::kDark) : std::nullopt);
 #elif BUILDFLAG(IS_WIN)
     // Only the main window has a system frame; its border follows the theme.
-    if (panel == widget_.get())
+    if (refresh_controls && panel == widget_.get())
       SetWorkspaceNativeAppearance(panel, mode ? *mode == ui::ColorProviderKey::ColorMode::kDark
           : ui::NativeTheme::GetInstanceForNativeUi()->preferred_color_scheme() == ui::NativeTheme::PreferredColorScheme::kDark);
 #endif
