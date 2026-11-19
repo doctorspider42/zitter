@@ -637,6 +637,16 @@ class WorkspaceMenuMaterial final : public views::ViewObserver {
       ApplyMaterial(*container);
   }
 
+#if BUILDFLAG(IS_WIN)
+  void OnViewBoundsChanged(views::View* view) override {
+    if (auto* container = views::AsViewClass<views::MenuScrollViewContainer>(view);
+        container && container->GetWidget() && WorkspaceAllowsTransparency()) {
+      SetWorkspaceMenuClip(container->GetWidget(), container->outside_border_insets(),
+                           ZitterMenuCorners().upper_left());
+    }
+  }
+#endif
+
   void OnViewIsDeleting(views::View* view) override {
     observations_.RemoveObservation(view);
   }
@@ -653,14 +663,18 @@ class WorkspaceMenuMaterial final : public views::ViewObserver {
       return;
     constexpr auto opacity = 178;
 #else
-    // DWM's backdrop fills the HWND, including the transparent shadow margin.
-    // The translucent menu host can blend just the rounded menu surface.
     if (!WorkspaceAllowsTransparency()) {
+      SetWorkspaceAcrylicBackdrop(widget, false, IsDark(&container), tint);
+      widget->SetShape(nullptr);
       container.SetBackground(views::CreateRoundedRectBackground(
           palette.bg_raised, corners, insets));
       return;
     }
-    constexpr auto opacity = 220;
+    // DWM paints the entire HWND. Clip it to the painted menu so acrylic
+    // cannot fill the transparent shadow margin.
+    SetWorkspaceMenuClip(widget, insets, corners.upper_left());
+    const auto opacity = SetWorkspaceAcrylicBackdrop(
+        widget, true, IsDark(&container), SkColorSetA(tint, 0x40)) ? 178 : 220;
 #endif
     SetWorkspaceNativeAppearance(widget, IsDark(&container));
     container.SetBackground(views::CreateRoundedRectBackground(
@@ -11957,7 +11971,7 @@ SkColor WorkspaceShell::WorkspaceSidebarBackground(SkColor base, SkColor card,
     return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 170);
 #elif BUILDFLAG(IS_WIN)
   if (sidebar_translucent_)
-    return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 220);
+    return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 178);
 #endif
   return color;
 }
@@ -11993,7 +12007,9 @@ void WorkspaceShell::ApplyAppearance(bool refresh_theme) {
 #endif
   const auto palette = Palette(root_, color);
 #if BUILDFLAG(IS_WIN)
-  sidebar_translucent_ = WorkspaceAllowsTransparency();
+  const auto tint = pinned_ ? palette.bg_base : Mix(palette.bg_base, palette.bg_raised, 70);
+  sidebar_translucent_ = SetWorkspaceAcrylicBackdrop(
+      sidebar_widget_.get(), true, IsDark(root_), SkColorSetA(tint, 0x40));
 #endif
   SetWorkspaceSidebarBackground(
       WorkspaceSidebarBackground(palette.bg_base, palette.bg_raised, palette.accent));

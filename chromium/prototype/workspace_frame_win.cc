@@ -18,10 +18,13 @@
 #include "base/no_destructor.h"
 #include "base/win/registry.h"
 #include "base/win/windows_version.h"
+#include "third_party/skia/include/core/SkPath.h"
+#include "third_party/skia/include/core/SkRegion.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
 #include "ui/views/view_tracker.h"
@@ -269,9 +272,35 @@ bool SetWorkspaceAcrylicBackdrop(views::Widget* widget, bool enabled, bool dark,
     BOOL dark_mode = dark;
     ::DwmSetWindowAttribute(hwnd, kImmersiveDarkMode, &dark_mode, sizeof(dark_mode));
     const int type = enabled ? kBackdropAcrylic : kBackdropNone;
-    return SUCCEEDED(::DwmSetWindowAttribute(hwnd, kSystemBackdropType, &type, sizeof(type))) && enabled;
+    if (SUCCEEDED(::DwmSetWindowAttribute(hwnd, kSystemBackdropType, &type,
+                                         sizeof(type)))) {
+      return enabled;
+    }
   }
   return SetAccent(hwnd, enabled ? kAccentAcrylic : kAccentDisabled, tint) && enabled;
+}
+
+bool SetWorkspaceStartupCloaked(views::Widget* widget, bool cloaked) {
+  const HWND hwnd = views::HWNDForWidget(widget);
+  const BOOL value = cloaked;
+  return hwnd && SUCCEEDED(::DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &value,
+                                                 sizeof(value)));
+}
+
+void SetWorkspaceMenuClip(views::Widget* widget, const gfx::Insets& insets,
+                          float radius) {
+  gfx::Rect bounds(widget->GetClientAreaBoundsInScreen().size());
+  bounds.Inset(insets);
+  if (bounds.IsEmpty())
+    return;
+
+  SkRegion region;
+  region.setPath(SkPath::RRect(gfx::RectToSkRect(bounds), radius, radius),
+                 SkRegion(gfx::RectToSkIRect(bounds)));
+  auto shape = std::make_unique<views::Widget::ShapeRects>();
+  for (SkRegion::Iterator row(region); !row.done(); row.next())
+    shape->push_back(gfx::SkIRectToRect(row.rect()));
+  widget->SetShape(std::move(shape));
 }
 
 void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dark) {

@@ -251,6 +251,7 @@
 #include "ui/views/view_class_properties.h"
 #include "ui/menus/simple_menu_model.h"
 #include "ui/views/focus/focus_manager.h"
+#include "ui/compositor/compositor.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -1041,6 +1042,12 @@ class ExtensionPopupWebView final : public LabWebView {
   }
 };
 
+bool ShowsInitialDocument(const content::WebContents& page) {
+  const auto* entry = page.GetController().GetLastCommittedEntry();
+  return !entry || entry->IsInitialEntry() ||
+         entry->GetURL() == GURL("about:blank");
+}
+
 class WorkspaceWebView final : public LabWebView {
  public:
   using ShowPageMenu = base::RepeatingCallback<bool(
@@ -1286,6 +1293,16 @@ class WorkspaceWebView final : public LabWebView {
       presentation_changed_.Run();
   }
 
+  void DidStartNavigation(content::NavigationHandle* navigation) override {
+    if (navigation->IsInPrimaryMainFrame() &&
+        navigation->GetURL().SchemeIsHTTPOrHTTPS() &&
+        ShowsInitialDocument(*web_contents())) {
+      // Chromium can submit a white frame for the initial empty document.
+      // Keep the themed pane visible until the new document commits.
+      holder()->SetVisible(false);
+    }
+  }
+
   void DidFinishNavigation(content::NavigationHandle* navigation) override {
     if (!navigation->IsInPrimaryMainFrame() || !navigation->HasCommitted())
       return;
@@ -1363,6 +1380,24 @@ class WorkspaceWebView final : public LabWebView {
       bounds.set_width(bounds.width() - width);
     }
     holder()->SetBoundsRect(bounds);
+  }
+
+  void OnFirstContentfulPaintInPrimaryMainFrame(base::TimeTicks) override {
+    web_contents()->SetPageBaseBackgroundColor(std::nullopt);
+  }
+
+  void ReadyToCommitNavigation(content::NavigationHandle* navigation) override {
+    if (!navigation->IsInPrimaryMainFrame() || !GetWidget() ||
+        !ShowsInitialDocument(*web_contents())) {
+      return;
+    }
+    // A cross-process first navigation can replace the native view before the
+    // destination renderer has anything to present.
+    if (auto* view = navigation->GetRenderFrameHost()->GetView()) {
+      const bool dark =
+          GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
+      view->SetBackgroundColor(sidebar::design_palette(dark, SK_ColorTRANSPARENT).bg_raised);
+    }
   }
 
   void UpdateTargetURL(content::WebContents* source, const GURL& url) override {
@@ -1561,6 +1596,16 @@ void HideTabView(views::WebView& view) {
   view.SetVisible(false);
   if (auto* page = view.web_contents())
     page->WasHidden();
+}
+
+void SetInitialPageBackground(content::WebContents& page, views::Widget& widget) {
+  if (!ShowsInitialDocument(page))
+    return;
+  const bool dark = widget.GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
+  const auto color = sidebar::design_palette(dark, SK_ColorTRANSPARENT).bg_raised;
+  page.SetPageBaseBackgroundColor(color);
+  if (auto* view = page.GetRenderWidgetHostView())
+    view->SetBackgroundColor(color);
 }
 
 bool IsNewPageDisposition(WindowOpenDisposition disposition) {
@@ -2512,6 +2557,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
 #endif
   widget_->Init(std::move(params));
 #if BUILDFLAG(IS_WIN)
+  prototype::SetWorkspaceStartupCloaked(widget_.get(), true);
   if (!private_owner_ && !session_path_.empty()) {
     prototype::SetWorkspaceCommandHandler(
         widget_.get(),
@@ -3951,7 +3997,7 @@ void WorkspaceLab::RebuildAdblockProfiles() {
   const auto ready = base::BarrierClosure(
       contexts_.size() + private_sessions_.size(),
       base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool resume) {
-        if (!lab)
+        if (!lab || !lab->done_)
           return;
         lab->shell_->RefreshAdBlockingPreferences();
         if (resume)
@@ -3980,6 +4026,21 @@ void WorkspaceLab::StartWorkspace() {
   }
   if (std::exchange(restore_window_maximized_, false))
     widget_->Maximize();
+#if BUILDFLAG(IS_WIN)
+  auto reveal = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+    if (lab && lab->done_)
+      prototype::SetWorkspaceStartupCloaked(lab->widget_.get(), false);
+  }, weak_factory_.GetWeakPtr());
+  auto* compositor = widget_->GetCompositor();
+  compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
+      [](base::RepeatingClosure reveal, const viz::FrameTimingDetails&) {
+        reveal.Run();
+      }, reveal));
+  compositor->ScheduleDraw();
+  // Some compositor configurations cannot report presentation while cloaked.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE, std::move(reveal), base::Milliseconds(300));
+#endif
   if (private_owner_) {
     SelectWorkspace(std::string(kWorkspaceIds[0]));
     shell_->OpenAddress(false);
@@ -4173,10 +4234,14 @@ void WorkspaceLab::StartWorkspace() {
     session_probe_advancing_ = true;
   SelectWorkspace(model_.workspaces()[restored_workspace_].id);
 #if BUILDFLAG(IS_WIN)
-  for (size_t workspace = 0; workspace < tabs_.size(); ++workspace) {
-    if (workspace != active_index_)
-      LoadBackgroundProfileFavorites(workspace);
-  }
+  // Start already-pinned pages after the main window can process input.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+        if (!lab || !lab->done_ || !lab->CanEditWorkspace())
+          return;
+        for (size_t workspace = 0; workspace < lab->tabs_.size(); ++workspace)
+          lab->LoadBackgroundProfileFavorites(workspace);
+      }, weak_factory_.GetWeakPtr()));
 #endif
   if (std::exchange(restore_window_fullscreen_, false)) {
     // AppKit needs the main window and its content to be ready before
@@ -4186,10 +4251,6 @@ void WorkspaceLab::StartWorkspace() {
           if (lab && lab->widget_->IsVisible() && !lab->saving_session_)
             lab->widget_->SetFullscreen(true);
         }, weak_factory_.GetWeakPtr()));
-  }
-  if (std::exchange(close_after_workspace_start_, false)) {
-    RequestClose();
-    return;
   }
   ready_for_external_urls_ = true;
   for (auto& url : std::exchange(startup_external_urls_, {}))
@@ -4252,7 +4313,7 @@ bool WorkspaceLab::Activate(std::string_view workspace_id,
       for (auto& tab : tabs_[active_index_]) {
         if (tab.view->GetVisible())
           HideTabView(*tab.view);
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_MAC)
         // Remove the native surface from this window without destroying the
         // WebContents or the tab's navigation state.
         if (tab.view->parent()) {
@@ -4266,7 +4327,8 @@ bool WorkspaceLab::Activate(std::string_view workspace_id,
     sleeping_[index] = false;
     ShowTab();
 #if BUILDFLAG(IS_WIN)
-    LoadBackgroundProfileFavorites(index);
+    if (ready_for_external_urls_)
+      LoadBackgroundProfileFavorites(index);
 #endif
     if (!smoke_) {
       downloads_->SetSource(
@@ -10262,6 +10324,8 @@ bool WorkspaceLab::ResetPinnedUrl(std::string id) {
 
 void WorkspaceLab::AttachPageServices(content::WebContents& page,
                                       size_t workspace) {
+  page.SetColorProviderSource(widget_.get());
+  SetInitialPageBackground(page, *widget_);
   if (!private_owner_ && IsManagedExtensionSession()) {
     AttachExtensionsManager(page, base::BindRepeating(
         [](base::WeakPtr<WorkspaceLab> lab, content::WebContents& page,
@@ -10437,6 +10501,17 @@ void WorkspaceLab::OnWidgetShowStateChanged(views::Widget* widget) {
   }
 }
 
+void WorkspaceLab::OnWidgetThemeChanged(views::Widget* widget) {
+  if (widget != widget_.get())
+    return;
+  for (const auto& tabs : tabs_) {
+    for (const auto& tab : tabs) {
+      if (auto* page = tab.view->web_contents())
+        SetInitialPageBackground(*page, *widget);
+    }
+  }
+}
+
 void WorkspaceLab::ShowTab() {
 #if BUILDFLAG(IS_WIN)
   tabs_[active_index_][selected_[active_index_]].last_selection_order =
@@ -10461,11 +10536,9 @@ void WorkspaceLab::ShowTab() {
     auto& tab = tabs[index];
     if (!tab.view->GetVisible() || std::ranges::contains(visible, index))
       continue;
+    // On Windows, keeping the hidden Aura surface attached preserves its
+    // compositor state for the next switch back to the tab.
     HideTabView(*tab.view);
-#if BUILDFLAG(IS_WIN)
-    // Reattach the Aura surface at the pane's new bounds on the next show.
-    tab.detached_view = shell_->content_host()->RemoveChildViewT(tab.view.get());
-#endif
   }
   std::vector<views::View*> panes;
   std::vector<size_t> pending_navigation;
@@ -12942,8 +13015,8 @@ void WorkspaceLab::RequestClose() {
   ExitPageFullscreen();
   if (!model_.active() && !smoke_ && !session_probe_url_.is_valid() &&
       !private_owner_) {
-    // A native Quit can arrive while the startup filter cache is loading.
-    close_after_workspace_start_ = true;
+    // The saved session has not been activated or changed yet.
+    Finish(true);
     return;
   }
   if (saving_catalogue_) {
@@ -18388,7 +18461,7 @@ void WorkspaceLab::OpenExtensionPackage() {
 
 void WorkspaceLab::ShowExtensionsToolbarMenu() {
   CloseNightShiftSettings();
-  if (extensions_toolbar_menu_widget_ && !extensions_toolbar_menu_widget_->IsClosed()) {
+  if (extensions_toolbar_menu_widget_) {
     CloseExtensionsToolbarMenu();
     return;
   }
@@ -18487,8 +18560,13 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
       }
     }
     row->AddChildViewAt(std::move(icon), 0);
-    row->SetText(name, manager->enabled() ? std::u16string() : prototype::T(u"Wyłączone w tym profilu"),
-                 false, 16);
+    const bool enabled = manager->enabled();
+    std::u16string status;
+    if (manager->failed())
+      status = prototype::T(u"Nie udało się uruchomić rozszerzenia");
+    else if (!enabled)
+      status = prototype::T(u"Wyłączone w tym profilu");
+    row->SetText(name, std::move(status), manager->failed(), 16);
     if (has_popup) {
       const bool is_pinned = std::ranges::contains(pinned, id);
       constexpr char kPin[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
@@ -18501,6 +18579,36 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
       pin->SetToggledAppearance(is_pinned);
       row->AddTrailing(row->AddChildView(std::move(pin)), true);
     }
+    constexpr int kExtensionActionRow = 1;
+    auto* toggle = add_row(nullptr,
+        prototype::T(enabled ? u"Wyłącz rozszerzenie" : u"Włącz rozszerzenie"),
+        prototype::kFooterHeight,
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, std::string id,
+                               bool enable) {
+          if (!lab || !lab->CanEditWorkspace())
+            return;
+          auto* current = lab->ManagedExtensionForProfile(
+              *lab->WorkspaceProfile(lab->active_index_), id);
+          if (current && !current->uninstalling() && current->SetEnabled(enable))
+            lab->CloseExtensionsToolbarMenu();
+        }, weak, id, !enabled));
+    toggle->SetID(kExtensionActionRow);
+    toggle->SetVisible(false);
+    toggle->SetEnabled(manager->editable() && !manager->uninstalling() &&
+                       CanEditWorkspace());
+    constexpr char kMore[] = "M4 8h.1M8 8h.1M12 8h.1";
+    auto more = std::make_unique<ContentToolbarButton>(
+        kMore, prototype::TF(u"Opcje rozszerzenia: {}", {name}),
+        base::BindRepeating([](views::View* body, views::View* toggle,
+                               views::BubbleDialogDelegate* panel) {
+          const bool open = !toggle->GetVisible();
+          for (views::View* child : body->children()) {
+            if (child->GetID() == kExtensionActionRow)
+              child->SetVisible(child == toggle && open);
+          }
+          panel->SizeToContents();
+        }, body.get(), toggle, &panel), palette);
+    row->AddTrailing(row->AddChildView(std::move(more)), true);
   }
   if (empty)
     add_row(nullptr, prototype::T(u"Brak zainstalowanych rozszerzeń"), 36, {})->SetEnabled(false);
@@ -18540,8 +18648,13 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
   }
   panel.SetContentsView(std::move(body));
   extensions_toolbar_menu_widget_ = views::BubbleDialogDelegate::CreateBubble(
-      &panel, ReleaseAfterClose(base::BindOnce(
-                 &WorkspaceLab::ReleaseClosedToolbarBubbles, weak_factory_.GetWeakPtr())));
+      &panel, ReleaseAfterClose(base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+        if (lab) {
+          lab->extensions_toolbar_menu_widget_.reset();
+          lab->extensions_toolbar_menu_.reset();
+        }
+      }, weak_factory_.GetWeakPtr())));
+  extensions_toolbar_menu_widget_->SetColorModeOverride(widget_->color_mode_override());
   extensions_toolbar_menu_widget_->Show();
 }
 
@@ -18595,10 +18708,6 @@ void WorkspaceLab::RunNightShiftThemeProbe(int phase) {
 // window would then crash in AnchorWidgetObserver::OnWidgetThemeChanged, so
 // toolbar bubbles are released once Views has finished closing them.
 void WorkspaceLab::ReleaseClosedToolbarBubbles() {
-  if (extensions_toolbar_menu_widget_ && extensions_toolbar_menu_widget_->IsClosed()) {
-    extensions_toolbar_menu_widget_.reset();
-    extensions_toolbar_menu_.reset();
-  }
   if (night_shift_widget_ && night_shift_widget_->IsClosed()) {
     night_shift_widget_.reset();
     night_shift_panel_.reset();
@@ -20822,8 +20931,14 @@ void WorkspaceLab::CheckPresentation(base::TimeTicks deadline) {
 }
 
 void WorkspaceLab::Finish(bool success) {
-  if (done_)
-    std::move(done_).Run(success);
+  auto done = std::move(done_);
+  if (!done)
+    return;
+#if BUILDFLAG(IS_WIN)
+  if (success)
+    widget_->Hide();
+#endif
+  std::move(done).Run(success);
 }
 
 }  // namespace zitter::content_embedder

@@ -33,6 +33,9 @@ void SetWorkspaceNativeAppearance(views::Widget* widget, std::optional<bool> dar
 // transparency effects off or the system refused: the panel then paints an
 // opaque backdrop of its own.
 bool SetWorkspaceAcrylicBackdrop(views::Widget* widget, bool enabled, bool dark, SkColor tint);
+bool SetWorkspaceStartupCloaked(views::Widget* widget, bool cloaked);
+void SetWorkspaceMenuClip(views::Widget* widget, const gfx::Insets& insets,
+                          float radius);
 bool WorkspaceAllowsTransparency();
 // Width of the invisible resize band the system frame would put above the
 // client area; the header answers HTTOP there while the window is restored.

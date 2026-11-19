@@ -8,6 +8,7 @@
 #include "content/public/browser/site_instance.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "bluetooth_access.h"
 #include "hid_access.h"
 #include "serial_access.h"
@@ -24,6 +25,9 @@
 #include "base/task/sequenced_task_runner.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/redirect_info.h"
+#include "ui/color/color_id.h"
+#include "ui/color/color_provider.h"
+#include "ui/gfx/color_utils.h"
 
 #include <optional>
 #include <utility>
@@ -1606,12 +1610,11 @@ LabBrowserClientBase::GetAlternativeErrorPageOverrideInfo(
     return nullptr;
   base::DictValue params;
   params.Set("polish", !prototype::UiLanguageIsEnglish());
-  if (const auto window = navigation.GetWebContents()->GetTopLevelNativeWindow()) {
-    if (auto* widget = views::Widget::GetWidgetForNativeWindow(window)) {
-      if (const auto mode = widget->color_mode_override())
-        params.Set("dark", *mode == ui::ColorProviderKey::ColorMode::kDark);
-    }
-  }
+  auto* page = navigation.GetWebContents();
+  auto* widget = views::Widget::GetTopLevelWidgetForNativeView(page->GetNativeView());
+  params.Set("dark", widget
+      ? widget->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark
+      : color_utils::IsDark(page->GetColorProvider().GetColor(ui::kColorPrimaryBackground)));
   return content::mojom::AlternativeErrorPageOverrideInfo::New(0, std::move(params));
 }
 
@@ -1632,7 +1635,11 @@ void LabRendererClient::PrepareErrorPage(
       alternative->alternative_error_page_params.FindBool("polish").value_or(false);
   const auto dark = alternative ? alternative->alternative_error_page_params.FindBool("dark")
                                 : std::nullopt;
-  const std::string_view theme = dark ? (*dark ? "dark" : "light") : "system";
+  auto* web_view = frame->GetWebView();
+  const bool renderer_dark = web_view &&
+      web_view->GetWebPreferences().preferred_color_scheme ==
+          blink::mojom::PreferredColorScheme::kDark;
+  const std::string_view theme = dark.value_or(renderer_dark) ? "dark" : "light";
   std::string_view title = polish ? "Nie udało się otworzyć strony"
                                   : "This page couldn't be opened";
   std::string_view hint = polish ? "Spróbuj odświeżyć kartę za chwilę."
@@ -1667,35 +1674,85 @@ void LabRendererClient::PrepareErrorPage(
 <html lang=")HTML", polish ? "pl" : "en", R"HTML(" data-theme=")HTML", theme, R"HTML(">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content=")HTML", theme, R"HTML(">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <title>)HTML", title, R"HTML(</title>
 <style>
   :root {
-    color-scheme: light dark;
-    background: light-dark(#f7f4ef, #1c1a23);
-    color: light-dark(#24212b, #f1edf6);
-    --muted: light-dark(#615a69, #b9b1c4);
+    color-scheme: light;
+    --base: #f4f1ec;
+    --ink: #25212d;
+    --surface: #fdfaf7;
+    --line: #ded7e1;
+    --muted: #635a6e;
+    --accent: #654892;
+    --accent-soft: #eee5f8;
+    --warning: #9a3129;
+    --warning-soft: #fce7e2;
+    background: var(--base);
+    color: var(--ink);
   }
-  :root[data-theme="dark"] { color-scheme: dark; }
-  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --base: #17151d;
+    --ink: #f3edf8;
+    --surface: #211e2a;
+    --line: #3c3549;
+    --muted: #bbb1c7;
+    --accent: #caaeef;
+    --accent-soft: #382b4e;
+    --warning: #ffb4a8;
+    --warning-soft: #492927;
+  }
   body {
     box-sizing: border-box;
     display: grid;
-    align-items: center;
+    place-items: center;
     min-height: 100vh;
     margin: 0;
-    padding: clamp(16px, 7vw, 64px);
+    padding: clamp(12px, 5vw, 48px);
     font: 15px/1.5 system-ui, sans-serif;
   }
-  main { width: 100%; max-width: 30rem; margin: 0 auto; overflow-wrap: anywhere; }
-  h1 { font-size: clamp(20px, 4vw, 28px); line-height: 1.2; margin: 0 0 12px; }
-  p { margin: 0 0 20px; color: var(--muted); }
-  code { font-size: 12px; color: var(--muted); }
+  main {
+    box-sizing: border-box;
+    width: min(100%, 30rem);
+    padding: clamp(18px, 5vw, 34px);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface);
+    overflow-wrap: anywhere;
+  }
+  .symbol {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: 20px;
+    border-radius: 13px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font: 600 22px/1 system-ui, sans-serif;
+  }
+  #certificate-error {
+    --accent: var(--warning);
+    --accent-soft: var(--warning-soft);
+  }
+  h1 {
+    margin: 0 0 8px;
+    color: var(--ink);
+    font-size: clamp(22px, 5vw, 32px);
+    line-height: 1.12;
+    letter-spacing: -.025em;
+  }
+  p { margin: 0; color: var(--muted); }
+  footer { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line); }
+  code { font: 12px ui-monospace, monospace; color: var(--muted); }
 </style>
 <main id=")HTML", certificate ? "certificate-error" : "network-error", R"HTML(">
+  <div class="symbol" aria-hidden="true">!</div>
   <h1>)HTML", title, R"HTML(</h1>
   <p>)HTML", hint, R"HTML(</p>
-  <code>)HTML", net::ErrorToShortString(reason), "</code>\n</main>\n"});
+  <footer><code>)HTML", net::ErrorToShortString(reason), "</code></footer>\n</main>\n"});
 }
 
 void LabRendererClient::WebViewCreated(blink::WebView* view,

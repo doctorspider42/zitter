@@ -400,6 +400,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool ExitPageFullscreen();
   void SetPageFullscreen(content::WebContents* page, bool enter);
   void OnWidgetShowStateChanged(views::Widget* widget) override;
+  void OnWidgetThemeChanged(views::Widget* widget) override;
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
   bool SplitShown() const;
   bool SplitTab(size_t index);
@@ -1100,7 +1101,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
   size_t extension_probes_pending_ = 0;
   std::unique_ptr<prototype::AdblockFilterLists> adblock_filter_lists_;
   bool waiting_for_adblock_cache_ = false;
-  bool close_after_workspace_start_ = false;
   bool ready_for_external_urls_ = false;
   std::vector<GURL> startup_external_urls_;
   std::unique_ptr<prototype::AdBlockingRulesPanel> ad_blocking_rules_panel_;

@@ -6129,7 +6129,9 @@ void ManagedExtension::CompleteTransition(bool success) {
     if (activating && !enabled() &&
         (registry->disabled_extensions().Contains(extension_id_) ||
          registry->AddDisabled(extension_))) {
-      ready_ = PersistExtensionFixtureEnabled(extension_->path(), false);
+      // A first install that couldn't activate stays disabled. A restored
+      // extension's activation failure must not overwrite the user's choice.
+      ready_ = !installed_ || PersistExtensionFixtureEnabled(extension_->path(), false);
     }
   }
   auto installed = std::move(installed_);
