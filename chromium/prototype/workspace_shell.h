@@ -223,6 +223,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, std::string)> rename_profile;
     base::RepeatingCallback<bool(std::string, std::string)> assign_profile;
     base::RepeatingCallback<bool(std::string)> remove_profile;
+    base::RepeatingCallback<bool(std::string, std::string)> move_profile_workspaces;
     base::RepeatingCallback<void(BrowserImportOptions)> preview_import;
     base::RepeatingClosure invalidate_import;
     base::RepeatingCallback<bool()> apply_import;
@@ -636,6 +637,16 @@ class WorkspaceShell final : public ui::EventHandler,
   views::Widget* general_widget() const { return general_widget_.get(); }
   views::Widget* about_widget_for_testing() const { return about_dialog_.get(); }
   void RefreshBookmarkSync();
+  struct BookmarkImportPreview {
+    size_t profiles = 0;
+    size_t workspaces = 0;
+    size_t tabs = 0;
+    size_t bookmarks = 0;
+    size_t extensions = 0;
+    std::vector<std::u16string> workspace_names;
+  };
+  void ReviewBookmarkImport(BookmarkImportPreview preview, bool has_local_data,
+                            base::OnceCallback<void(std::optional<bool>, bool)> done);
   bool SuspendWelcomeForLogin();
   void ResumeWelcomeAfterLogin();
   void SetPreferencesStatus(std::u16string text, bool error = false);
@@ -736,6 +747,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void CancelPendingWorkspaceRemoval() { pending_removal_.reset(); }
   void ReportWorkspaceNameSaved(bool saved);
   void OpenProfiles(std::string profile_id = {}, std::string workspace_id = {});
+  void CloseProfiles();
   void OpenImport(std::optional<ImportBrowser> browser = std::nullopt);
   // The first-run wizard (design: Pierwsze uruchomienie, Windows): welcome,
   // default browser, import and the first space, in a tool window.
@@ -1359,6 +1371,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SelectManagedProfile(std::string profile_id);
   void StartProfileRename(std::string profile_id);
   void RequestProfileDelete(std::string profile_id);
+  void ReviewProfileWorkspaces(std::string profile_id);
   void CancelProfileRow();
   bool HandleProfileEditorKey(bool rename,const ui::KeyEvent& event);
   void OpenEmojiPicker();
@@ -1661,6 +1674,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<std::string> move_tab_workspaces_;
   std::string context_workspace_id_;
   std::string new_profile_workspace_id_;
+  bool profiles_from_workspace_ = false;
+  bool profiles_from_preferences_ = false;
   std::vector<ProfileInfo> menu_profiles_;
   std::unique_ptr<ui::SimpleMenuModel> workspace_menu_;
   std::unique_ptr<ui::SimpleMenuModel> profile_menu_;

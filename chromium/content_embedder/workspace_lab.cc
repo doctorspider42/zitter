@@ -48,6 +48,7 @@
 #include <cstdio>
 #include <iterator>
 #include <map>
+#include <tuple>
 #include <span>
 #include <set>
 #include <string>
@@ -949,6 +950,7 @@ void SetUnavailableActions(prototype::WorkspaceShell::Callbacks& callbacks) {
   auto set = [&](auto&... fields) { (SetUnavailable(fields), ...); };
   set(callbacks.add_workspace, callbacks.edit_workspace, callbacks.remove_workspace,
       callbacks.create_profile, callbacks.rename_profile, callbacks.remove_profile,
+      callbacks.move_profile_workspaces,
       callbacks.assign_profile, callbacks.preview_import, callbacks.invalidate_import,
       callbacks.apply_import, callbacks.dismiss_import, callbacks.open_pin,
       callbacks.duplicate_pin, callbacks.pin_tab, callbacks.unpin, callbacks.move_pin,
@@ -1756,6 +1758,24 @@ class WorkspaceLab::FaviconDecoderObserver final : public content::WebContentsOb
   base::OnceCallback<void(bool)> ready_;
 };
 
+struct WorkspaceLab::DropboxSyncExchange {
+  struct Plan {
+    base::DictValue merged;
+    std::optional<bookmark_sync::ShardSet> shards;
+  };
+  base::DictValue snapshot;
+  base::DictValue local;
+  base::DictValue remote;
+  base::DictValue merged;
+  base::DictValue index;
+  base::DictValue cache;
+  std::optional<bookmark_sync::ShardSet> outgoing;
+  std::vector<std::pair<std::string, std::string>> pending;
+  std::string revision;
+  bool read_only = false;
+  int retries = 0;
+};
+
 struct WorkspaceLab::PendingBrowserImport {
   struct Space {
     Workspace workspace;
@@ -1988,16 +2008,21 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     auto registry = base::MakeRefCounted<PrefRegistrySimple>();
     for (const char* key : {"method", "device", "credential"})
       registry->RegisterStringPref(key, {});
+    registry->RegisterBooleanPref("import_pending", false);
     registry->RegisterFilePathPref("folder", {});
     registry->RegisterDictionaryPref("ledger");
     registry->RegisterDictionaryPref("snapshot");
+    registry->RegisterDictionaryPref("scope_snapshot");
+    registry->RegisterListPref("workspace_order");
     PrefServiceFactory factory;
     factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(
         session_path_.DirName().AppendASCII("BookmarkSync.json")));
     factory.set_async(true);
     sync_prefs_ = factory.Create(registry);
     sync_prefs_->AddPrefInitObserver(base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool ok) {
-      if (!ok || !lab || !lab->ready_for_external_urls_ || lab->sync_prefs_->GetString("method").empty()) return;
+      if (!ok || !lab || !lab->ready_for_external_urls_) return;
+      if (!lab->sync_prefs_->GetList("workspace_order").empty()) lab->RefreshShell();
+      if (lab->sync_prefs_->GetString("method").empty()) return;
       lab->sync_timer_.Start(FROM_HERE, base::Seconds(30), lab.get(), &WorkspaceLab::RunBookmarkSync);
       lab->RunBookmarkSync();
     }, weak_factory_.GetWeakPtr()));
@@ -2005,7 +2030,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
         &WorkspaceLab::ConfigureBookmarkSync, weak_factory_.GetWeakPtr());
     callbacks.bookmark_sync_status = base::BindRepeating([](WorkspaceLab* lab) {
       if (!lab->sync_status_.empty()) return lab->sync_status_;
-      return prototype::T(u"Synchronizuj ulubione i przypięte karty między urządzeniami.");
+      return prototype::T(u"Synchronizuj przestrzenie, otwarte karty i zakładki między urządzeniami.");
     }, base::Unretained(this));
     callbacks.bookmark_sync_enabled = base::BindRepeating([](WorkspaceLab* lab) {
       return !lab->sync_prefs_->GetString("method").empty();
@@ -2150,6 +2175,11 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   callbacks.rename_profile = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string id, std::string name) {
         return lab && lab->RenameProfile(std::move(id), std::move(name));
+      }, weak);
+  callbacks.move_profile_workspaces =
+      base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, std::string source,
+                             std::string destination) {
+        return lab && lab->MoveProfileWorkspaces(std::move(source), std::move(destination));
       }, weak);
   callbacks.create_profile = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string name, std::string workspace) {
@@ -2873,6 +2903,7 @@ void WorkspaceLab::AppendWorkspace(Workspace workspace, const base::DictValue* e
            std::move(tab.title).value_or(std::u16string()),
            std::move(tab.pin).value_or(std::string()));
     tabs_[index].back().custom_title = std::move(tab.custom_title).value_or(std::u16string());
+    tabs_[index].back().sync_id = std::move(tab.sync_id).value_or("");
   }
   selected_[index] = static_cast<size_t>(*entry->FindInt("active"));
   sleeping_[index] = entry->FindBool("sleeping").value_or(false);
@@ -3234,8 +3265,79 @@ void WorkspaceLab::SaveWorkspaceUpdate(std::string id, std::string name,
       std::move(profile_id), std::move(epoch)));
 }
 
-void WorkspaceLab::ReplaceWorkspaceProfile(size_t index,
-                                           const std::string& epoch) {
+bool WorkspaceLab::MoveProfileWorkspaces(std::string source, std::string destination) {
+  if (!CanEditWorkspace() || private_owner_ || source == destination ||
+      !std::ranges::contains(profiles_, destination, &ContentProfileInfo::id))
+    return false;
+  std::vector<content::WebContents*> pages;
+  for (size_t index = 0; index < tabs_.size(); ++index) {
+    if (model_.workspaces()[index].profile_id != source) continue;
+    if (WorkspaceHasCapture(index)) return false;
+    auto workspace_pages = WorkspacePages(index);
+    pages.insert(pages.end(), workspace_pages.begin(), workspace_pages.end());
+  }
+  if (std::ranges::any_of(pages, [](auto* page) { return page->NeedToFireBeforeUnload(); })) {
+    CheckBeforeUnload(pages, base::BindOnce(&WorkspaceLab::SaveProfileWorkspaceMove,
+        weak_factory_.GetWeakPtr(), std::move(source), std::move(destination)));
+  } else {
+    SaveProfileWorkspaceMove(std::move(source), std::move(destination));
+  }
+  return true;
+}
+
+void WorkspaceLab::SaveProfileWorkspaceMove(std::string source, std::string destination) {
+  if (!CanEditWorkspace()) return;
+  auto session = CaptureSession();
+  std::vector<std::string> moved;
+  for (size_t index = 0; index < tabs_.size(); ++index) {
+    const auto& workspace = model_.workspaces()[index];
+    if (workspace.profile_id != source) continue;
+    if (WorkspaceHasCapture(index)) {
+      shell_->SetProfileStatus(prototype::T(u"Nie udało się przenieść przestrzeni."));
+      return;
+    }
+    auto* layout = session.FindDict(workspace.id);
+    layout->Set("profile_id", destination);
+    layout->Remove("split");
+    layout->Remove("sleeping");
+    for (auto& entry : *layout->FindList("tabs")) {
+      auto& tab = entry.GetDict();
+      const auto* pin = tab.FindString("pin");
+      if (pin && !std::ranges::contains(pins_[index], *pin, &prototype::PinnedItem::id))
+        tab.Remove("pin");
+      const GURL url(*tab.FindString("url"));
+      if (!url.SchemeIsHTTPOrHTTPS() || url.has_username() || url.has_password()) {
+        tab.Set("url", "");
+        tab.Set("title", "");
+      }
+    }
+    session.EnsureDict("timeline_epochs")->Set(workspace.id,
+        base::Uuid::GenerateRandomV4().AsLowercaseString());
+    moved.push_back(workspace.id);
+  }
+  if (moved.empty()) return;
+  auto layouts = session.Clone();
+  SaveCatalogueChange(std::move(session), base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab, std::vector<std::string> ids,
+         std::string destination, base::DictValue layouts, bool ok) {
+        if (!lab) return;
+        if (ok) {
+          for (const auto& id : ids) {
+            const auto index = lab->WorkspaceIndex(id).value();
+            const auto name = lab->model_.workspaces()[index].name;
+            CHECK(lab->model_.Update(id, name, destination));
+            lab->ReplaceWorkspaceProfile(index,
+                *layouts.FindDict("timeline_epochs")->FindString(id), layouts.FindDict(id));
+          }
+        }
+        lab->RefreshShell();
+        lab->shell_->SetProfileStatus(prototype::T(ok ? u"Przeniesiono przestrzenie."
+                                                     : u"Nie udało się przenieść przestrzeni."));
+      }, weak_factory_.GetWeakPtr(), std::move(moved), std::move(destination), std::move(layouts)));
+}
+
+void WorkspaceLab::ReplaceWorkspaceProfile(size_t index, const std::string& epoch,
+                                           const base::DictValue* layout) {
   base::AutoReset<bool> updating(&updating_panes_, true);
   const auto& id = model_.workspaces()[index].id;
   if (peek_workspace_id_ == id)
@@ -3276,14 +3378,26 @@ void WorkspaceLab::ReplaceWorkspaceProfile(size_t index,
     if (!session_path_.empty())
       PersistTimeline();
   }
-  AddTab(index);
+  if (layout) {
+    auto restored = prototype::ReadWorkspaceSessionTabs(
+        *layout, model_.workspaces()[index].profile_id);
+    CHECK(restored);
+    for (auto& tab : *restored) {
+      AddTab(index, std::move(tab.url), tab.title.value_or(u""), tab.pin.value_or(""));
+      tabs_[index].back().custom_title = tab.custom_title.value_or(u"");
+      tabs_[index].back().sync_id = tab.sync_id.value_or("");
+    }
+    selected_[index] = *layout->FindInt("active");
+  } else {
+    AddTab(index);
+  }
   if (active) {
     ShowTab();
     auto* profile = WorkspaceProfile(index);
     downloads_->SetSource(
         profile->GetDownloadManager(), base::UTF8ToUTF16(WorkspaceProfileName(index)),
         {}, {}, {}, prototype::DownloadPanel::FileActions::kOpenRevealAndDelete);
-    tabs_[index].front().view->RequestFocus();
+    tabs_[index][selected_[index]].view->RequestFocus();
   }
 }
 
@@ -4677,7 +4791,7 @@ bool WorkspaceLab::RunShortcut(std::string id, bool show_tab_switcher) {
   } else if (id == "next_space" || id == "previous_space" ||
              (id.starts_with("space") && id.size() == 6 &&
               id.back() >= '1' && id.back() <= '9')) {
-    const auto& workspaces = model_.workspaces();
+    const auto workspaces = OrderedBookmarkWorkspaces();
     if (private_owner_ || !CanEditWorkspace() || workspaces.empty())
       return false;
     size_t index;
@@ -4685,7 +4799,8 @@ bool WorkspaceLab::RunShortcut(std::string id, bool show_tab_switcher) {
       if (workspaces.size() < 2)
         return false;
       const size_t offset = id == "next_space" ? 1 : workspaces.size() - 1;
-      index = (active_index_ + offset) % workspaces.size();
+      const auto active = std::ranges::find(workspaces, model_.active()->id, &Workspace::id);
+      index = (active - workspaces.begin() + offset) % workspaces.size();
     } else {
       index = id.back() - '1';
       if (index >= workspaces.size())
@@ -9732,6 +9847,8 @@ void WorkspaceLab::AddTab(size_t workspace, GURL deferred_url,
   tab.deferred_url = std::move(deferred_url);
   tab.deferred_title = std::move(deferred_title);
   tab.pin = std::move(pin);
+  if (sync_prefs_ && !sync_prefs_->GetString("method").empty())
+    tab.sync_id = base::Uuid::GenerateRandomV4().AsLowercaseString();
   tabs_[workspace].push_back(std::move(tab));
 }
 
@@ -12137,7 +12254,7 @@ void WorkspaceLab::RefreshShell() {
 #if BUILDFLAG(IS_WIN)
   if (!private_owner_ && !session_path_.empty()) {
     std::vector<std::pair<std::string, std::string>> listed;
-    for (const auto& workspace : model_.workspaces())
+    for (const auto& workspace : OrderedBookmarkWorkspaces())
       listed.emplace_back(workspace.id, workspace.name);
     if (listed != jump_list_spaces_) {
       jump_list_spaces_ = listed;
@@ -12189,7 +12306,7 @@ void WorkspaceLab::RefreshShell() {
   state.profile_name = private_owner_ ? state.workspace_name
       : base::UTF8ToUTF16(WorkspaceProfileName(active_index_));
   if (!private_owner_) {
-    state.workspaces = model_.workspaces();
+    state.workspaces = OrderedBookmarkWorkspaces();
     for (const auto [host, target] : link_rules_)
       state.link_rules.push_back({std::string(host), target.GetString()});
   }
@@ -13298,6 +13415,8 @@ base::DictValue WorkspaceLab::CaptureWorkspaceSession(size_t workspace) const {
       entry.Set("pin", tab.pin);
     if (!tab.custom_title.empty())
       entry.Set("custom_title", base::UTF16ToUTF8(tab.custom_title));
+    if (!tab.sync_id.empty() && bookmark_sync::CanSyncTabUrl(url))
+      entry.Set("sync_id", tab.sync_id);
     tabs.Append(std::move(entry));
   }
   auto entry = base::DictValue()
@@ -18254,7 +18373,7 @@ bool WorkspaceLab::InstallFromWebStore(content::RenderFrameHost& frame,
       profile.GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess().get(),
       id, version, profile.GetPath(), std::move(installed),
       base::BindOnce(&WorkspaceLab::OnExtensionReview, weak_factory_.GetWeakPtr(),
-                     index, document, id, std::move(done)));
+                     index, document, id, std::move(done), false));
   return true;
 }
 
@@ -19307,7 +19426,7 @@ void WorkspaceLab::FileSelected(const ui::SelectedFileInfo& file, int index) {
       base::BindOnce(&WorkspaceLab::OnExtensionReview,
                      weak_factory_.GetWeakPtr(), extension_install_profile_,
                      content::WeakDocumentPtr(), std::string(),
-                     base::OnceCallback<void(bool)>()));
+                     base::OnceCallback<void(bool)>(), false));
 }
 
 void WorkspaceLab::FileSelectionCanceled() {}
@@ -19316,11 +19435,15 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
                                      content::WeakDocumentPtr store_document,
                                      std::string store_id,
                                      base::OnceCallback<void(bool)> done,
+                                     bool bookmark_import,
                                      std::optional<base::DictValue> review) {
   auto install = std::move(extension_install_);
-  auto* settings = store_id.empty() ? ExtensionDialogOwner() : widget_.get();
+  auto* welcome = shell_->welcome_widget_for_testing();
+  auto* settings = bookmark_import && welcome && welcome->IsVisible() ? welcome
+      : bookmark_import || !store_id.empty() ? widget_.get() : ExtensionDialogOwner();
   if (!settings || !settings->IsVisible() || !CanEditWorkspace() ||
-      WorkspaceProfileIndex(active_index_) != profile ||
+      (bookmark_import ? profile >= contexts_.size() || shell_->HasDangerDialog()
+                       : WorkspaceProfileIndex(active_index_) != profile) ||
       (!store_id.empty() && (!IsActiveWebStoreListing(store_document, store_id) ||
                              shell_->HasDangerDialog()))) {
     SetExtensionManagerStatus({});
@@ -19340,7 +19463,7 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
     SetExtensionManagerStatus(reason, true);
     // The store page only stops its spinner; say why over it.
     if (!store_id.empty())
-      shell_->ShowNotice(widget_.get(),
+      shell_->ShowNotice(settings,
                          prototype::T(u"Nie można zainstalować rozszerzenia"), reason);
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(kExtensionInstallUiProbe)) {
       LOG(ERROR) << "The Settings package review failed";
@@ -19455,9 +19578,10 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
           [](base::WeakPtr<WorkspaceLab> lab, size_t profile, bool is_update,
              std::string id, std::unique_ptr<WorkspaceExtensionInstall> install,
              content::WeakDocumentPtr store_document, std::string store_id,
-             base::OnceCallback<void(bool)> done, bool accepted) {
+             base::OnceCallback<void(bool)> done, bool bookmark_import, bool accepted) {
             if (!lab || !lab->CanEditWorkspace() ||
-                lab->WorkspaceProfileIndex(lab->active_index_) != profile ||
+                (bookmark_import ? profile >= lab->contexts_.size()
+                                 : lab->WorkspaceProfileIndex(lab->active_index_) != profile) ||
                 (!store_id.empty() && !lab->IsActiveWebStoreListing(store_document, store_id))) {
               return;
             }
@@ -19479,7 +19603,8 @@ void WorkspaceLab::OnExtensionReview(size_t profile,
             lab->InstallReviewedExtension(profile, *install, is_update, std::move(done));
           },
           weak_factory_.GetWeakPtr(), profile, is_update, *review->FindString("id"),
-          std::move(install), store_document, std::move(store_id), std::move(done)));
+          std::move(install), store_document, std::move(store_id), std::move(done),
+          bookmark_import));
   const auto& command = *base::CommandLine::ForCurrentProcess();
   if (!command.HasSwitch(kExtensionInstallUiProbe))
     return;

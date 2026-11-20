@@ -11,6 +11,7 @@ that the system cursor never went to the clicked point.
 import argparse
 import ctypes
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import plistlib
 import secrets
@@ -82,6 +83,21 @@ def wait(predicate, timeout):
     return None
 
 
+@contextmanager
+def temporary_workspace():
+    directory = tempfile.TemporaryDirectory(prefix="zitter-content-probe-")
+    try:
+        yield directory.name
+    finally:
+        def cleanup():
+            directory.cleanup()
+            return True
+
+        # Taskkill can return just before Chromium's children release files.
+        if os.name != "nt" or not wait(cleanup, 10):
+            directory.cleanup()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, nargs="?", default=ROOT / "build/ZitterContentLab.app")
@@ -101,7 +117,7 @@ def main():
         with (app / "Contents/Info.plist").open("rb") as stream:
             executable = app / "Contents/MacOS" / plistlib.load(stream)["CFBundleExecutable"]
 
-    with tempfile.TemporaryDirectory(prefix="zitter-content-probe-") as temporary:
+    with temporary_workspace() as temporary:
         root = Path(temporary).resolve()
         os.chmod(root, 0o700)
         key = root / "probe-cookie-key"

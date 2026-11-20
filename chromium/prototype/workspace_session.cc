@@ -36,6 +36,8 @@ std::optional<std::vector<WorkspaceSessionTab>> ReadWorkspaceSessionTabs(
       entry.custom_title = base::UTF8ToUTF16(*title);
     if (const auto* pin = tab->FindString("pin"))
       entry.pin = *pin;
+    if (const auto* id = tab->FindString("sync_id"); id && id->size() <= 64)
+      entry.sync_id = *id;
     restored.push_back(std::move(entry));
   }
   return restored;

@@ -21,6 +21,7 @@ struct WorkspaceSessionTab {
   std::optional<std::u16string> title;
   std::optional<std::string> pin;
   std::optional<std::u16string> custom_title;
+  std::optional<std::string> sync_id;
 };
 
 std::optional<std::vector<WorkspaceSessionTab>> ReadWorkspaceSessionTabs(

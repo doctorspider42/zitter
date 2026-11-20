@@ -1,6 +1,8 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 #include "bookmark_sync.h"
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 #include <tuple>
@@ -9,25 +11,165 @@
 #include "base/files/important_file_writer.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/uuid.h"
 #include "workspace_session_store.h"
 #include "chromium/prototype/workspace_session.h"
+#include "components/crx_file/id_util.h"
+#include "crypto/hash.h"
 
 namespace zitter::content_embedder::bookmark_sync {
+bool CanSyncTabUrl(const GURL& url) {
+  return url.is_valid() && url.SchemeIsHTTPOrHTTPS() &&
+         !url.has_username() && !url.has_password() &&
+         url.spec().size() <= 8192;
+}
+
 namespace {
-constexpr size_t kMaxBytes = 16 * 1024 * 1024;
-base::DictValue Index(const base::ListValue& pins) {
+constexpr size_t kMaxLegacyBytes = 16 * 1024 * 1024;
+constexpr size_t kMaxIndexBytes = 256 * 1024;
+constexpr size_t kMaxScopes = 256;
+
+bool IsDigest(std::string_view value) {
+  return value.size() == 64 && std::ranges::all_of(value, [](char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+  });
+}
+
+std::string Digest(std::string_view value) {
+  return base::HexEncodeLower(crypto::hash::Sha256(value));
+}
+
+base::DictValue Index(const base::ListValue& items, std::string_view kind) {
   base::DictValue result;
   int position = 0;
-  for (const auto& pin : pins) {
-    result.Set(*pin.GetDict().FindString("id"),
-               base::DictValue().Set("pin", pin.Clone()).Set("position", position++));
+  for (const auto& item : items) {
+    result.Set(*item.GetDict().FindString("id"),
+               base::DictValue().Set(kind, item.Clone()).Set("position", position++));
   }
   return result;
 }
 auto Version(const base::DictValue& entry) {
   return std::tuple(*entry.FindInt("clock"), *entry.FindString("device"));
 }
+
+std::vector<std::string> SharedOrder(const base::ListValue& list,
+                                     const base::DictValue& other) {
+  std::vector<std::string> order;
+  for (const auto& item : list) {
+    const auto& id = *item.GetDict().FindString("id");
+    if (other.contains(id)) order.push_back(id);
+  }
+  return order;
+}
+
+// Keep anchors when a tab is inserted or closed. Only an explicit reorder
+// advances the positions of existing tabs, so shifting indices cannot revive
+// a tab deleted concurrently on another device.
+bool AnchorTabPositions(const base::ListValue& previous,
+                        const base::ListValue& current,
+                        const base::DictValue& prior, base::DictValue& next,
+                        const base::DictValue* records) {
+  if (SharedOrder(previous, next) != SharedOrder(current, prior))
+    return false;
+  std::vector<base::DictValue*> ordered;
+  std::vector<std::optional<double>> anchors;
+  double last = -std::numeric_limits<double>::infinity();
+  for (const auto& value : current) {
+    const auto& id = *value.GetDict().FindString("id");
+    ordered.push_back(next.FindDict(id));
+    const auto* record = records && prior.contains(id) ? records->FindDict(id) : nullptr;
+    const auto position = record && record->contains("tab") ?
+        record->FindDouble("position") : std::nullopt;
+    if (position) {
+      if (*position < last) return false;
+      last = *position;
+    }
+    anchors.push_back(position);
+  }
+  for (size_t begin = 0; begin < anchors.size();) {
+    if (anchors[begin]) {
+      ordered[begin]->Set("position", *anchors[begin]);
+      ++begin;
+      continue;
+    }
+    size_t end = begin;
+    while (end < anchors.size() && !anchors[end]) ++end;
+    const auto count = static_cast<double>(end - begin + 1);
+    const double left = begin > 0 ? *anchors[begin - 1] :
+        end < anchors.size() ? *anchors[end] - count : -1;
+    const double right = end < anchors.size() ? *anchors[end] : left + count;
+    double previous_position = left;
+    for (size_t i = begin; i < end; ++i) {
+      const double position = left + (right - left) * (i - begin + 1) / count;
+      if (position <= previous_position || position >= right) return false;
+      ordered[i]->Set("position", position);
+      previous_position = position;
+    }
+    begin = end;
+  }
+  return true;
+}
+
+bool ValidTab(std::string_view id, const base::DictValue& tab) {
+  const auto* key = tab.FindString("id");
+  const auto* url = tab.FindString("url");
+  const auto* title = tab.FindString("title");
+  return key && *key == id && ValidTabId(id) && url && CanSyncTabUrl(GURL(*url)) &&
+      (!tab.contains("title") || (title && title->size() <= 8192)) &&
+      tab.size() == (title ? 3u : 2u);
+}
+}
+
+bool ValidTabId(std::string_view id) {
+  return IsDigest(id) || base::Uuid::ParseLowercase(id).is_valid();
+}
+
+std::string LegacyTabId(std::string_view workspace, std::string_view url, size_t occurrence) {
+  return Digest(base::StrCat({workspace, "\n", url, "\n", base::NumberToString(occurrence)}));
+}
+
+bool IsTabScope(std::string_view scope) {
+  return scope.starts_with("tabs2/");
+}
+
+bool ValidSnapshot(std::string_view scope, const base::ListValue& items) {
+  if (!IsTabScope(scope))
+    return !!ReadWorkspacePins(base::DictValue().Set("pins", items.Clone()));
+  if (items.size() > prototype::kMaxWorkspaceSessionTabs) return false;
+  std::set<std::string> seen;
+  for (const auto& item : items) {
+    const auto* tab = item.GetIfDict();
+    const auto* id = tab ? tab->FindString("id") : nullptr;
+    if (!id || !ValidTab(*id, *tab) || !seen.insert(*id).second) return false;
+  }
+  return true;
+}
+
+void UpgradeLegacyTabs(base::DictValue& ledger) {
+  std::vector<std::string> legacy;
+  for (const auto [key, records] : ledger)
+    if (key.starts_with("tabs/")) legacy.emplace_back(key);
+  for (const auto& key : legacy) {
+    auto records = ledger.Extract(key);
+    const auto* meta = records->GetDict().FindDict("");
+    if (!meta) continue;
+    const auto* urls = meta->FindDict("scope")->FindList("tabs");
+    const std::string workspace = key.substr(5);
+    const auto current = "tabs2/" + workspace;
+    if (!urls || ledger.contains(current)) continue;
+    auto* dest = ledger.EnsureDict(current);
+    std::map<std::string, size_t> occurrences;
+    int position = 0;
+    for (const auto& value : *urls) {
+      const auto& url = value.GetString();
+      const auto id = LegacyTabId(workspace, url, occurrences[url]++);
+      dest->Set(id, base::DictValue().Set("clock", *meta->FindInt("clock"))
+          .Set("device", *meta->FindString("device")).Set("position", position++)
+          .Set("tab", base::DictValue().Set("id", id).Set("url", url)));
+    }
+  }
 }
 
 base::DictValue RecordEdits(const base::DictValue& previous,
@@ -39,9 +181,17 @@ base::DictValue RecordEdits(const base::DictValue& previous,
   for (const auto [scope, records] : ledger)
     for (const auto [id, entry] : records.GetDict())
       clock = std::max(clock, *entry.GetDict().FindInt("clock"));
-  for (const auto [scope, pins] : current) {
-    auto prior = previous.FindList(scope) ? Index(*previous.FindList(scope)) : base::DictValue();
-    auto now = Index(pins.GetList());
+  for (const auto [scope, items] : current) {
+    const bool tabs = IsTabScope(scope);
+    const std::string_view kind = tabs ? "tab" : "pin";
+    const auto* previous_items = previous.FindList(scope);
+    auto prior = previous_items ? Index(*previous_items, kind) : base::DictValue();
+    auto now = Index(items.GetList(), kind);
+    bool anchored = false;
+    if (tabs && previous_items) {
+      anchored = AnchorTabPositions(*previous_items, items.GetList(), prior, now, ledger.FindDict(scope));
+      if (!anchored) now = Index(items.GetList(), kind);
+    }
     auto put = [&](std::string_view id, base::DictValue value) {
       value.Set("clock", clock + 1);
       value.Set("device", device);
@@ -49,20 +199,24 @@ base::DictValue RecordEdits(const base::DictValue& previous,
     };
     for (const auto [id, entry] : now) {
       const auto* old = prior.Find(id);
-      if (!old || *old != entry) put(id, entry.GetDict().Clone());
+      if (!old || (anchored ? *old->GetDict().Find(kind) != *entry.GetDict().Find(kind)
+                            : *old != entry))
+        put(id, entry.GetDict().Clone());
     }
     for (const auto [id, entry] : prior)
       if (!now.contains(id)) put(id, {});
+    if (tabs) result.EnsureDict(scope);
   }
   return result;
 }
 
 bool Merge(base::DictValue& target, const base::DictValue& source) {
-  if (source.size() > 256) return false;
+  if (source.size() > kMaxScopes) return false;
   for (const auto [scope, records] : source) {
     if (scope.size() > 1024 || !records.is_dict() || records.GetDict().size() > 20000)
       return false;
     auto* dest = target.EnsureDict(scope);
+    if (target.size() > kMaxScopes) return false;
     for (const auto [id, value] : records.GetDict()) {
       if (!value.is_dict() || id.size() > 256) return false;
       const auto& entry = value.GetDict();
@@ -70,11 +224,55 @@ bool Merge(base::DictValue& target, const base::DictValue& source) {
       const auto* device = entry.FindString("device");
       if (!clock || *clock < 1 || *clock >= 2000000000 || !device ||
           !base::Uuid::ParseLowercase(*device).is_valid()) return false;
+      if (IsTabScope(scope)) {
+        if (!ValidTabId(id)) return false;
+        const auto* tab = entry.FindDict("tab");
+        const auto position = entry.FindDouble("position");
+        if (entry.contains("tab")
+            ? !tab || !ValidTab(id, *tab) || !position ||
+                !std::isfinite(*position) || std::abs(*position) > 1e12 || entry.size() != 4
+            : entry.size() != 2)
+          return false;
+      } else if (entry.contains("tab")) {
+        return false;
+      }
       if (id.empty()) {
         const auto* scope_info = entry.FindDict("scope");
         if (!scope_info || entry.contains("pin") || !scope_info->FindString("profile") ||
             !scope_info->FindString("name") || !IsContentWorkspaceName(*scope_info->FindString("name")))
           return false;
+        if (scope_info->contains("position")) {
+          const int position = scope_info->FindInt("position").value_or(-1);
+          const int color = scope_info->FindInt("color").value_or(-1);
+          const auto* emoji = scope_info->FindString("emoji");
+          if (!scope.starts_with("space/") || position < 0 ||
+              position >= static_cast<int>(kMaxContentWorkspaces) || color < 0 ||
+              color > 0xffffff || !emoji || emoji->size() > 128)
+            return false;
+        }
+        if (scope_info->contains("extensions")) {
+          const auto* extensions = scope_info->FindList("extensions");
+          if (!scope.starts_with("profile/") ||
+              scope.substr(8) != *scope_info->FindString("profile") || !extensions ||
+              extensions->size() > 128)
+            return false;
+          std::set<std::string> seen;
+          for (const auto& extension_id : *extensions) {
+            const auto* key = extension_id.GetIfString();
+            if (!key || !crx_file::id_util::IdIsValid(*key) || !seen.insert(*key).second)
+              return false;
+          }
+        }
+        if (scope_info->contains("tabs")) {
+          const auto* tabs = scope_info->FindList("tabs");
+          if (!scope.starts_with("tabs/") || !tabs ||
+              tabs->size() > prototype::kMaxWorkspaceSessionTabs)
+            return false;
+          for (const auto& tab : *tabs) {
+            if (!tab.is_string() || !CanSyncTabUrl(GURL(tab.GetString())))
+              return false;
+          }
+        }
       }
       if (entry.contains("pin")) {
         const auto* pin = entry.FindDict("pin");
@@ -93,6 +291,18 @@ bool Merge(base::DictValue& target, const base::DictValue& source) {
 std::optional<base::DictValue> Materialize(const base::DictValue& ledger) {
   base::DictValue result;
   for (const auto [scope, records] : ledger) {
+    if (IsTabScope(scope)) {
+      std::vector<std::tuple<double, std::string_view, const base::DictValue*>> ordered;
+      for (const auto [id, entry] : records.GetDict()) {
+        if (const auto* tab = entry.GetDict().FindDict("tab"))
+          ordered.emplace_back(*entry.GetDict().FindDouble("position"), id, tab);
+      }
+      if (ordered.size() > prototype::kMaxWorkspaceSessionTabs) return std::nullopt;
+      std::ranges::sort(ordered);
+      auto* list = result.EnsureList(scope);
+      for (const auto& [position, id, tab] : ordered) list->Append(tab->Clone());
+      continue;
+    }
     std::vector<std::pair<int, const base::DictValue*>> ordered;
     for (const auto [id, entry] : records.GetDict()) {
       if (const auto* pin = entry.GetDict().FindDict("pin"))
@@ -126,27 +336,162 @@ std::optional<base::DictValue> Materialize(const base::DictValue& ledger) {
   return result;
 }
 
-std::optional<base::DictValue> ExchangeFolder(base::FilePath folder,
-                                             std::string device,
-                                             base::DictValue local) {
+namespace {
+std::string ShardKey(std::string_view scope) {
+  if (IsTabScope(scope)) return base::StrCat({"space/", scope.substr(6)});
+  if (scope.starts_with("tabs/")) return base::StrCat({"space/", scope.substr(5)});
+  return std::string(scope);
+}
+
+bool ValidShardKey(std::string_view key) {
+  const bool space = key.starts_with("space/");
+  if (!space && !key.starts_with("profile/")) return false;
+  auto id = key.substr(space ? 6 : 8);
+  if (id == "work" || id == "personal") return true;
+  const std::string_view prefix = space ? "space-" : "profile-";
+  return id.starts_with(prefix) && base::Uuid::ParseLowercase(id.substr(prefix.size())).is_valid();
+}
+}
+
+std::optional<ShardSet> WriteShards(const base::DictValue& ledger) {
+  std::map<std::string, base::DictValue> groups;
+  for (const auto [scope, value] : ledger) {
+    auto key = ShardKey(scope);
+    if (!ValidShardKey(key)) return std::nullopt;
+    groups[key].Set(scope, value.Clone());
+  }
+  ShardSet result;
+  for (const auto& [key, group] : groups) {
+    auto json = base::WriteJson(group);
+    if (!json || json->size() > kMaxShardBytes) return std::nullopt;
+    result.index.Set(key, Digest(*json));
+    result.blobs.emplace(key, std::move(*json));
+  }
+  return result;
+}
+
+std::optional<base::DictValue> ReadIndex(std::string_view json) {
+  if (json.size() > kMaxIndexBytes) return std::nullopt;
+  auto value = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  if (!value || value->FindInt("format") != 2 || value->size() != 2)
+    return std::nullopt;
+  auto shards = value->Extract("shards");
+  if (!shards || !shards->is_dict() || shards->GetDict().size() > kMaxScopes)
+    return std::nullopt;
+  for (const auto [key, digest] : shards->GetDict()) {
+    if (!ValidShardKey(key) || !digest.is_string() || !IsDigest(digest.GetString()))
+      return std::nullopt;
+  }
+  return std::move(*shards).TakeDict();
+}
+
+std::optional<base::DictValue> ReadShard(std::string_view key, std::string_view digest,
+                                        std::string_view json) {
+  if (json.size() > kMaxShardBytes || Digest(json) != digest) return std::nullopt;
+  auto shard = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  if (!shard || !MatchesShardKey(key, *shard)) return std::nullopt;
+  base::DictValue validated;
+  if (!Merge(validated, *shard)) return std::nullopt;
+  return validated;
+}
+
+bool MatchesShardKey(std::string_view key, const base::DictValue& shard) {
+  return !shard.empty() && std::ranges::all_of(shard, [&](const auto& entry) {
+    return ShardKey(entry.first) == key;
+  });
+}
+
+base::DictValue CacheShards(base::DictValue ledger) {
+  UpgradeLegacyTabs(ledger);
+  base::DictValue cache;
+  auto shards = WriteShards(ledger);
+  if (!shards) return cache;
+  for (const auto& [key, json] : shards->blobs) {
+    const auto& digest = *shards->index.FindString(key);
+    if (auto shard = ReadShard(key, digest, json))
+      cache.Set(digest, std::move(*shard));
+  }
+  return cache;
+}
+
+std::optional<FolderResult> ExchangeFolder(base::FilePath folder, std::string device,
+                                          base::DictValue local, bool read_only,
+                                          base::DictValue cache) {
   if (!base::DirectoryExists(folder)) return std::nullopt;
-  auto dir = folder.AppendASCII("Zitter Bookmarks");
+  const auto dir = folder.AppendASCII("Zitter Bookmarks");
   if (base::IsLink(dir) || !base::CreateDirectory(dir)) return std::nullopt;
-  auto own = dir.AppendASCII(device + ".json");
+  const auto shard_dir = dir.AppendASCII("sync-v2");
+  if (base::IsLink(shard_dir)) return std::nullopt;
+  if (cache.empty() && !local.empty())
+    cache = CacheShards(local.Clone());
+  base::DictValue next_cache;
+  std::set<std::string> migrated;
+  base::DictValue previous;
+  base::FileEnumerator indexes(shard_dir, false, base::FileEnumerator::FILES,
+                               FILE_PATH_LITERAL("index-*.json"));
+  for (auto path = indexes.Next(); !path.empty(); path = indexes.Next()) {
+    const auto name = path.BaseName().RemoveExtension().AsUTF8Unsafe();
+    if (!name.starts_with("index-")) continue;
+    const auto peer = name.substr(6);
+    if (!base::Uuid::ParseLowercase(peer).is_valid()) continue;
+    std::string json;
+    if (base::IsLink(path) ||
+        !base::ReadFileToStringWithMaxSize(path, &json, kMaxIndexBytes)) return std::nullopt;
+    auto index = ReadIndex(json);
+    if (!index) return std::nullopt;
+    for (const auto [key, value] : *index) {
+      const auto& digest = value.GetString();
+      const auto* entry = next_cache.FindDict(digest);
+      if (!entry) {
+        const auto blob = shard_dir.AppendASCII(digest + ".json");
+        if (base::IsLink(blob) || !base::PathExists(blob)) return std::nullopt;
+        auto cached = cache.Extract(digest);
+        if (!cached) {
+          if (!base::ReadFileToStringWithMaxSize(blob, &json, kMaxShardBytes)) return std::nullopt;
+          auto shard = ReadShard(key, digest, json);
+          if (!shard) return std::nullopt;
+          cached = base::Value(std::move(*shard));
+        }
+        entry = &next_cache.Set(digest, std::move(*cached))->GetDict();
+      }
+      if (!MatchesShardKey(key, *entry) || !Merge(local, *entry)) return std::nullopt;
+    }
+    migrated.insert(peer);
+    if (peer == device) previous = std::move(*index);
+  }
   base::FileEnumerator files(dir, false, base::FileEnumerator::FILES, FILE_PATH_LITERAL("*.json"));
-  std::string previous;
   for (auto path = files.Next(); !path.empty(); path = files.Next()) {
-    if (!base::Uuid::ParseLowercase(path.BaseName().RemoveExtension().AsUTF8Unsafe()).is_valid()) continue;
+    const auto peer = path.BaseName().RemoveExtension().AsUTF8Unsafe();
+    if (!base::Uuid::ParseLowercase(peer).is_valid() || migrated.contains(peer)) continue;
     std::string data;
-    if (base::IsLink(path) || !base::ReadFileToStringWithMaxSize(path, &data, kMaxBytes)) return std::nullopt;
+    if (base::IsLink(path) ||
+        !base::ReadFileToStringWithMaxSize(path, &data, kMaxLegacyBytes)) return std::nullopt;
     auto records = base::JSONReader::ReadDict(data, base::JSON_PARSE_RFC);
     if (!records || !Merge(local, *records)) return std::nullopt;
-    if (path == own) previous = std::move(data);
   }
-  auto json = base::WriteJson(local);
-  if (!json || json->size() > kMaxBytes || !Materialize(local) ||
-      (*json != previous && !base::ImportantFileWriter::WriteFileAtomically(own, *json)))
-    return std::nullopt;
-  return local;
+  UpgradeLegacyTabs(local);
+  if (!Materialize(local)) return std::nullopt;
+  if (!read_only) {
+    auto plan = WriteShards(local);
+    if (!plan || !base::CreateDirectory(shard_dir)) return std::nullopt;
+    for (const auto& [key, json] : plan->blobs) {
+      const auto& digest = *plan->index.FindString(key);
+      if (next_cache.contains(digest)) continue;
+      const auto blob = shard_dir.AppendASCII(digest + ".json");
+      if (base::IsLink(blob) || !base::ImportantFileWriter::WriteFileAtomically(blob, json))
+        return std::nullopt;
+      auto verified = ReadShard(key, digest, json);
+      if (!verified) return std::nullopt;
+      next_cache.Set(digest, std::move(*verified));
+    }
+    if (plan->index != previous || !migrated.contains(device)) {
+      auto json = base::WriteJson(base::DictValue().Set("format", 2)
+                                                .Set("shards", std::move(plan->index)));
+      const auto own = shard_dir.AppendASCII("index-" + device + ".json");
+      if (!json || base::IsLink(own) ||
+          !base::ImportantFileWriter::WriteFileAtomically(own, *json)) return std::nullopt;
+    }
+  }
+  return FolderResult{std::move(local), std::move(next_cache)};
 }
 }

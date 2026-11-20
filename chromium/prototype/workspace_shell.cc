@@ -1,4 +1,5 @@
 #include "base/logging.h"
+#include "base/task/bind_post_task.h"
 #include "base/i18n/number_formatting.h"
 #include "ui/gfx/image/image.h"
 #include "ui/views/controls/image_view.h"
@@ -299,6 +300,9 @@ DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderTokenField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderRemoveTokenField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantApiKeyField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantSetupField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kBookmarkSyncReplaceField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kBookmarkSyncExtensionsField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kProfileDestinationField);
 // Color roles. The values only name a role: Tone() resolves each one from the
 // design system palette (design.rs) for the view's scheme and workspace color.
 constexpr SkColor kInk = 0xFF1B1A22;
@@ -5515,10 +5519,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
   auto profiles_panel = std::make_unique<views::View>();
   profiles_root_ = profiles_panel.get();
   profiles_panel->SetBackground(views::CreateRoundedRectBackground(kCard, 12));
-  // Header: title with the way back to the space it was opened from.
+  // Return to the panel that opened the profile manager.
   auto* profile_header=profiles_panel->AddChildView(std::make_unique<views::View>());
   auto* profile_title=profile_header->AddChildView(std::make_unique<SceneParagraph>(profile_copy[0],3,true,kInk));
-  profile_header->AddChildView(CreateSceneAction(base::BindRepeating(&WorkspaceShell::OpenWorkspaceSettings,weak),profile_copy[10],ControlGlyph::kVector,&vector_icons::kCloseIcon,{},{}));
+  profile_header->AddChildView(CreateSceneAction(
+      base::BindRepeating(&WorkspaceShell::CloseProfiles, weak),
+      T(u"Zamknij profile"), ControlGlyph::kVector, &vector_icons::kCloseIcon, {}, {}));
   SetSidebarPanelLayout(profile_header,false,gfx::Insets(),8,profile_title,true);
   profiles_panel->AddChildView(std::make_unique<SceneParagraph>(profile_copy[1],-1,false,kMuted));
   // One row per profile; the rename and delete strips and the row status are
@@ -10531,9 +10537,9 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
           return shell && shell->PreferenceChromeVisible();
         }, weak)));
     SetSidebarPanelLayout(card, true, gfx::Insets(16), 10);
-    copy(card, T(u"Synchronizacja zakładek"), kInk, 1, gfx::Font::Weight::SEMIBOLD, true);
+    copy(card, T(u"Synchronizacja przestrzeni"), kInk, 1, gfx::Font::Weight::SEMIBOLD, true);
     BuildBookmarkSync(card, false);
-    section.rows.push_back({card, base::i18n::ToLower(T(u"Synchronizacja zakładek") + u" Dropbox " + T(u"Folder"))});
+    section.rows.push_back({card, base::i18n::ToLower(T(u"Synchronizacja przestrzeni") + u" Dropbox " + T(u"Folder"))});
   }
   constexpr size_t kSiteSection = 3;
   auto& sites = preference_sections_[kSiteSection];
@@ -11543,6 +11549,60 @@ void WorkspaceShell::RefreshBookmarkSync() {
     controls.disable.view()->SetVisible(enabled);
   }
 }
+
+void WorkspaceShell::ReviewBookmarkImport(
+    BookmarkImportPreview preview, bool has_local_data,
+    base::OnceCallback<void(std::optional<bool>, bool)> done) {
+  auto* owner = welcome_widget_ && welcome_widget_->IsVisible() ? welcome_widget_.get()
+      : general_widget_ && general_widget_->IsVisible() ? general_widget_.get() : widget_.get();
+  auto [accept, decline] = base::SplitOnceCallback(
+      base::BindPostTaskToCurrentDefault(std::move(done)));
+  auto [cancel, close] = base::SplitOnceCallback(std::move(decline));
+  ui::DialogModel::Builder builder;
+  auto* model = builder.model();
+  builder.SetTitle(T(u"Podgląd synchronizacji przestrzeni"))
+      .AddParagraph(ui::DialogModelLabel(TF(
+          u"Profile: {}  ·  Przestrzenie: {}  ·  Otwarte karty: {}  ·  Zakładki: {}",
+          {base::NumberToString16(preview.profiles),
+           base::NumberToString16(preview.workspaces),
+           base::NumberToString16(preview.tabs),
+           base::NumberToString16(preview.bookmarks)})));
+  if (!preview.workspace_names.empty()) {
+    std::u16string names;
+    for (const auto& name : preview.workspace_names)
+      names += (names.empty() ? u"" : u"\n") + name;
+    if (preview.workspaces > preview.workspace_names.size()) {
+      names += u"\n" + TF(u"I jeszcze {} przestrzeni",
+          {base::NumberToString16(preview.workspaces - preview.workspace_names.size())});
+    }
+    builder.AddParagraph(ui::DialogModelLabel(std::move(names)));
+  }
+  if (has_local_data) {
+    builder.AddParagraph(ui::DialogModelLabel(T(u"Połącz zakładki i otwarte karty z obu urządzeń albo zastąp lokalne dane synchronizacji pobraną kopią.")));
+    builder.AddCheckbox(kBookmarkSyncReplaceField, ui::DialogModelLabel(
+        T(u"Zastąp lokalne zakładki i otwarte karty")));
+  }
+  if (preview.extensions) {
+    builder.AddCheckbox(kBookmarkSyncExtensionsField, ui::DialogModelLabel(
+        TF(u"Zainstaluj brakujące rozszerzenia z Chrome Web Store ({})",
+           {base::NumberToString16(preview.extensions)})));
+  }
+  builder.AddOkButton(base::BindOnce(
+      [](ui::DialogModel* model, bool has_local_bookmarks, bool has_extensions,
+         base::OnceCallback<void(std::optional<bool>, bool)> done) {
+        const bool replace = has_local_bookmarks &&
+            model->GetCheckboxByUniqueId(kBookmarkSyncReplaceField)->is_checked();
+        const bool extensions = has_extensions &&
+            model->GetCheckboxByUniqueId(kBookmarkSyncExtensionsField)->is_checked();
+        std::move(done).Run(replace, extensions);
+      }, base::Unretained(model), has_local_data, preview.extensions != 0, std::move(accept)),
+      ui::DialogModel::Button::Params().SetLabel(T(u"Kontynuuj")));
+  builder.AddCancelButton(base::BindOnce(std::move(cancel), std::nullopt, false),
+      ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")));
+  builder.SetCloseActionCallback(base::BindOnce(std::move(close), std::nullopt, false));
+  ShowAssistantDialog(owner, builder.Build());
+}
+
 bool WorkspaceShell::SuspendWelcomeForLogin() {
   if (!welcome_widget_ || !welcome_widget_->IsVisible()) return false;
   welcome_widget_->Hide();
@@ -15920,7 +15980,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kEnd);
     ket_ = Text(brand, u"|z⟩", DesignFont(1, 34, 400, true), true);
     eyebrow_ = Text(brand, base::i18n::ToUpper(T(u"Pierwsze kroki")), DesignFont(2, 11, 600, false), false);
-    const std::array<std::u16string, 6> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Asystent AI"), T(u"Import danych"), T(u"Synchronizacja zakładek"), T(u"Pierwsza przestrzeń")};
+    const std::array<std::u16string, 6> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Asystent AI"), T(u"Import danych"), T(u"Synchronizacja przestrzeni"), T(u"Pierwsza przestrzeń")};
     for (size_t i = 0; i < labels.size(); ++i) {
       steps_[i] = nav_->AddChildView(std::make_unique<WelcomeStep>(
           base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), i), labels[i]));
@@ -16102,7 +16162,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         break;
       }
       case 4: {
-        Headline(page_, T(u"Synchronizacja zakładek"), 40);
+        Headline(page_, T(u"Synchronizacja przestrzeni"), 40);
         if (setup_.build_bookmark_sync) setup_.build_bookmark_sync.Run(page_);
         Body(page_, T(u"Możesz pominąć ten krok i wrócić do niego w ustawieniach."), 12, true);
         break;
@@ -17707,7 +17767,8 @@ void WorkspaceShell::DispatchFormCommand(views::View* source,const sidebar::Form
     case C::ProfileCreate:SubmitProfile();break;
     case C::ProfileRename:RenameSelectedProfile();break;
     case C::ProfileDelete:DeleteSelectedProfile();break;
-    case C::ProfileBack:case C::Workspace:OpenWorkspaceSettings();break;
+    case C::ProfileBack:CloseProfiles();break;
+    case C::Workspace:OpenWorkspaceSettings();break;
     case C::ImportApply:SubmitImport();break;
     case C::PreferenceText:SaveTextPreference(std::string(binding.key));break;
     case C::PreferenceSite:SaveSitePreference();break;
@@ -17989,7 +18050,56 @@ void WorkspaceShell::StartProfileRename(std::string profile_id){
   renaming_profile_id_=std::move(profile_id);LayoutProfileStrips();profile_rename_input_->RequestFocus();
 }
 void WorkspaceShell::RequestProfileDelete(std::string profile_id){
-  SelectManagedProfile(profile_id);SubmitRustProfileAction(2);
+  SelectManagedProfile(profile_id);
+  if (std::ranges::contains(state_.workspaces, profile_id, &Workspace::profile_id)) {
+    ReviewProfileWorkspaces(std::move(profile_id));
+    return;
+  }
+  if (!callbacks_.remove_profile) {
+    SetProfileStatus(T(u"Usuwanie profili jest niedostępne w tej wersji."));
+    return;
+  }
+  SubmitRustProfileAction(2);
+}
+
+void WorkspaceShell::ReviewProfileWorkspaces(std::string profile_id) {
+  if (!state_.configuration_ready || state_.profiles_busy) return;
+  std::u16string spaces;
+  for (const auto& workspace : state_.workspaces)
+    if (workspace.profile_id == profile_id)
+      spaces += u"\n• " + base::UTF8ToUTF16(workspace.name);
+  std::vector<std::string> targets;
+  std::vector<ui::SimpleComboboxModel::Item> choices;
+  for (const auto& profile : state_.profiles) {
+    if (profile.id == profile_id) continue;
+    targets.push_back(profile.id);
+    choices.emplace_back(base::UTF8ToUTF16(profile.name));
+  }
+  const auto warning = T(u"Uwaga: ten profil jest używany przez przestrzenie.") + spaces;
+  if (choices.empty() || !callbacks_.move_profile_workspaces) {
+    ShowNotice(profiles_widget_.get(), T(u"Profil jest używany"), warning);
+    return;
+  }
+  ui::DialogModel::Builder builder;
+  auto* model = builder.model();
+  builder.SetTitle(T(u"Profil jest używany"))
+      .AddParagraph(ui::DialogModelLabel(warning))
+      .AddParagraph(ui::DialogModelLabel(T(u"Przenieś przestrzenie do innego profilu. Karty otworzą się ponownie z logowaniem profilu docelowego.")))
+      .AddCombobox(kProfileDestinationField, T(u"Profil docelowy"),
+                   std::make_unique<ui::SimpleComboboxModel>(std::move(choices)))
+      .AddOkButton(base::BindOnce(
+          [](base::WeakPtr<WorkspaceShell> shell, ui::DialogModel* model,
+             std::string source, std::vector<std::string> targets) {
+            if (!shell) return;
+            const auto destination = model->GetComboboxByUniqueId(kProfileDestinationField)->selected_index();
+            if (!shell->callbacks_.move_profile_workspaces.Run(std::move(source), targets.at(destination)))
+              shell->SetProfileStatus(T(u"Nie udało się przenieść przestrzeni."));
+          }, weak_factory_.GetWeakPtr(), base::Unretained(model),
+          std::move(profile_id), std::move(targets)),
+          ui::DialogModel::Button::Params().SetLabel(T(u"Przenieś przestrzenie")))
+      .AddCancelButton(base::DoNothing(),
+          ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")));
+  ShowAssistantDialog(profiles_widget_.get(), builder.Build());
 }
 void WorkspaceShell::CancelProfileRow(){
   if(!profile_form_)return;
@@ -18016,6 +18126,10 @@ bool WorkspaceShell::HandleProfileEditorKey(bool rename,const ui::KeyEvent& even
 }
 void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_id) {
   if (!profiles_widget_) return;
+  if (!profiles_widget_->IsVisible()) {
+    profiles_from_workspace_ = settings_visible();
+    profiles_from_preferences_ = general_widget_ && general_widget_->IsVisible();
+  }
   if(profile_form_)CancelSceneActions(profiles_root_);
   CloseOverlays();
   new_profile_workspace_id_ = std::move(workspace_id);
@@ -18032,6 +18146,19 @@ void WorkspaceShell::OpenProfiles(std::string profile_id, std::string workspace_
   profiles_widget_->Activate();
   if(!profile_id.empty())StartProfileRename(profile_id);
   else if(!new_profile_workspace_id_.empty())profile_name_input_->RequestFocus();
+}
+
+void WorkspaceShell::CloseProfiles() {
+  if (!profiles_widget_ || !profiles_widget_->IsVisible()) return;
+  profiles_widget_->Hide();
+  if (std::exchange(profiles_from_workspace_, false)) {
+    profiles_from_preferences_ = false;
+    OpenWorkspaceSettings();
+  } else if (std::exchange(profiles_from_preferences_, false)) {
+    if (!FocusPreferencesTab()) OpenGeneralSettings();
+  } else {
+    RestorePageFocus();
+  }
 }
 void WorkspaceShell::ReportClearData(ClearDataEvent event, const std::u16string& profile) {
   if (metal_sidebar_) {
@@ -18129,7 +18256,7 @@ bool WorkspaceShell::SubmitRustProfileAction(unsigned action) {
   switch(request.action){
     case sidebar::ProfileAction::Create:accepted=callbacks_.create_profile.Run(std::string(request.name),std::string(request.workspace));break;
     case sidebar::ProfileAction::Rename:accepted=callbacks_.rename_profile.Run(std::string(request.id),std::string(request.name));break;
-    case sidebar::ProfileAction::Delete:accepted=callbacks_.remove_profile.Run(std::string(request.id));break;
+    case sidebar::ProfileAction::Delete:accepted=callbacks_.remove_profile&&callbacks_.remove_profile.Run(std::string(request.id));break;
     default:break;
   }
   if(!alive||!profile_form_)return true;profile_form_->form->finish_attempt(accepted);

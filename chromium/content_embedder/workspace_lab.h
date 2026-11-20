@@ -474,7 +474,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool UpdateWorkspace(std::string id, std::string name, std::string profile_id);
   void SaveWorkspaceUpdate(std::string id, std::string name,
                            std::string profile_id);
-  void ReplaceWorkspaceProfile(size_t index, const std::string& epoch);
+  void ReplaceWorkspaceProfile(size_t index, const std::string& epoch,
+                               const base::DictValue* layout = nullptr);
+  bool MoveProfileWorkspaces(std::string source, std::string destination);
+  void SaveProfileWorkspaceMove(std::string source, std::string destination);
   bool RenameProfile(std::string id, std::string name);
   void SaveCatalogueChange(base::DictValue session,
                            base::OnceCallback<void(bool)> done);
@@ -489,15 +492,31 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ConfigureBookmarkSync(std::string method);
   void StartBookmarkSync(std::string method);
   void RunBookmarkSync();
-  base::DictValue CaptureBookmarks() const;
-  bool PrepareBookmarkScopes(const base::DictValue& ledger, const base::DictValue& collections);
-  bool ApplyBookmarks(const base::DictValue& ledger, const base::DictValue& collections);
+  base::DictValue CaptureBookmarks();
+  base::DictValue CaptureBookmarkScopes() const;
+  GURL BookmarkTabUrl(size_t workspace, size_t tab) const;
+  bool ApplyBookmarkTabs(const base::DictValue& collections);
+  std::vector<Workspace> OrderedBookmarkWorkspaces() const;
+  bool PrepareBookmarkScopes(const base::DictValue& ledger, const base::DictValue& collections,
+                             base::OnceClosure resume = {});
+  bool ApplyBookmarks(const base::DictValue& ledger, const base::DictValue& collections,
+                      bool replace);
   void FinishBookmarkSync(base::DictValue snapshot, std::optional<base::DictValue> ledger);
+  void ReviewBookmarkImport(base::DictValue ledger);
+  void CommitBookmarkImport(base::DictValue ledger, bool replace, bool extensions);
+  std::vector<std::pair<std::string, std::string>> BookmarkExtensionCandidates(
+      const base::DictValue& ledger) const;
+  void InstallNextBookmarkExtension();
   void SetSyncStatus(std::u16string message);
   base::OneShotTimer dropbox_login_timeout_;
   void ExchangeDropboxCode(std::string verifier, std::string code);
   void DropboxToken(std::string form, bool connecting);
   void DownloadDropboxBookmarks(base::DictValue snapshot, base::DictValue ledger);
+  void FetchDropboxIndex();
+  void FetchNextDropboxShard();
+  void MergeDropboxShards();
+  void UploadNextDropboxShard();
+  void CompleteDropboxExchange(bool success);
   using DropboxReply = base::OnceCallback<void(int, std::string, std::string)>;
   void DropboxRequest(std::string endpoint, std::string argument, std::string body,
                       std::string mime, DropboxReply reply);
@@ -505,10 +524,16 @@ class WorkspaceLab final : private WorkspaceRuntime,
   base::RepeatingTimer sync_timer_;
   std::u16string sync_status_;
   bool sync_busy_ = false;
+  base::DictValue sync_sent_scopes_;
+  base::DictValue folder_shard_cache_;
+  std::vector<std::pair<std::string, std::string>> bookmark_extension_import_;
   std::string dropbox_access_;
   base::Time dropbox_expires_;
   base::Time sync_retry_after_;
   std::unique_ptr<network::SimpleURLLoader> sync_loader_;
+  struct DropboxSyncExchange;
+  std::unique_ptr<DropboxSyncExchange> dropbox_exchange_;
+  base::DictValue dropbox_shard_cache_;
   class SyncPicker;
   std::unique_ptr<SyncPicker> sync_picker_;
   void ImportFromWelcome(prototype::BrowserImportOptions options,
@@ -911,6 +936,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void FileSelectionCanceled() override;
   void OnExtensionReview(size_t profile, content::WeakDocumentPtr store_document,
                          std::string store_id, base::OnceCallback<void(bool)> done,
+                         bool bookmark_import,
                          std::optional<base::DictValue> review);
   void InstallReviewedExtension(size_t profile, WorkspaceExtensionInstall& install,
                                 bool is_update, base::OnceCallback<void(bool)> done = {});
@@ -1211,6 +1237,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
     std::unique_ptr<content::WebContents> discarded_page = {};
     bool native_muted = false;
     std::u16string custom_title = {};
+    std::string sync_id = {};
 #if BUILDFLAG(IS_WIN)
     uint64_t last_selection_order = 0;
 #endif

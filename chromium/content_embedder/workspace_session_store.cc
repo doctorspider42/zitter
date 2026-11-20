@@ -187,7 +187,8 @@ bool IsValidSession(const base::DictValue& session) {
     const auto& raw_tabs = *entry->FindList("tabs");
     for (size_t i = 0; i < tabs->size(); ++i) {
       const auto& tab = (*tabs)[i];
-      if (raw_tabs[i].GetDict().size() != (2u + tab.pin.has_value() + tab.custom_title.has_value()))
+      if (raw_tabs[i].GetDict().size() !=
+          (2u + tab.pin.has_value() + tab.custom_title.has_value() + tab.sync_id.has_value()))
         return false;
       if (!tab.pin)
         continue;
