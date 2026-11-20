@@ -13,6 +13,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Nie można otworzyć karty Dropbox. Zamknij kartę i spróbuj ponownie.", "Couldn’t open a Dropbox tab. Close a tab and try again."),
     ("Anulowano łączenie z Dropbox.", "Dropbox sign-in was canceled."),
     ("Synchronizacja przestrzeni", "Workspace sync"),
+    ("Folder", "Folder"),
     ("Podgląd synchronizacji przestrzeni", "Workspace sync preview"),
     ("Profile: {}  ·  Przestrzenie: {}  ·  Otwarte karty: {}  ·  Zakładki: {}", "Profiles: {}  ·  Spaces: {}  ·  Open tabs: {}  ·  Bookmarks: {}"),
     ("{} · Karty: {}", "{} · Tabs: {}"),
