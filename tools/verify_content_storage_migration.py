@@ -1320,7 +1320,16 @@ def copy_update_trial_bundles(legacy_app, content_app, directory):
 
 
 def swap_trial_applications(installed, staged):
-    # Both bundles live in the same private installation directory.
+    # Keep the production bundle directories in place when they only contain
+    # Contents. Older layouts use the whole-bundle exchange.
+    if all(
+        not (app / "Contents").is_symlink()
+        and (app / "Contents").is_dir()
+        and list(app.iterdir()) == [app / "Contents"]
+        for app in (installed, staged)
+    ):
+        installed /= "Contents"
+        staged /= "Contents"
     rename_swap = 0x00000002  # Darwin RENAME_SWAP.
     rename = ctypes.CDLL(None, use_errno=True).renamex_np
     rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)

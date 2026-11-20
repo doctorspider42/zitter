@@ -18,20 +18,38 @@ class ReplacementTrialTest(unittest.TestCase):
             with self.subTest(signature_failure=signature_failure), TemporaryDirectory() as directory:
                 installed = Path(directory) / "Zitter.app"
                 incoming = Path(directory) / "Incoming.app"
-                installed.mkdir()
-                incoming.mkdir()
-                (installed / "legacy").touch()
-                (incoming / "content").touch()
+                (installed / "Contents").mkdir(parents=True)
+                (incoming / "Contents").mkdir(parents=True)
+                pinned_inode = installed.stat().st_ino
+                (installed / "Contents/legacy").touch()
+                (incoming / "Contents/content").touch()
                 check = [ValueError("bad signature"), None] if signature_failure else [None, None]
                 expected = "bad signature" if signature_failure else "launch failed"
                 with mock.patch.object(migration, "verify_signature", side_effect=check) as verify:
                     with self.assertRaisesRegex(ValueError, expected):
                         with migration.temporary_trial_replacement(installed, incoming):
-                            self.assertTrue((installed / "content").is_file())
+                            self.assertEqual(installed.stat().st_ino, pinned_inode)
+                            self.assertTrue((installed / "Contents/content").is_file())
                             raise ValueError("launch failed")
                 self.assertEqual(verify.call_args_list, [mock.call(installed), mock.call(installed)])
-                self.assertTrue((installed / "legacy").is_file())
-                self.assertTrue((incoming / "content").is_file())
+                self.assertTrue((installed / "Contents/legacy").is_file())
+                self.assertTrue((incoming / "Contents/content").is_file())
+
+
+    def test_extra_top_level_item_uses_whole_bundle_exchange(self):
+        with TemporaryDirectory() as directory:
+            installed = Path(directory) / "Zitter.app"
+            incoming = Path(directory) / "Incoming.app"
+            (installed / "Contents").mkdir(parents=True)
+            (incoming / "Contents").mkdir(parents=True)
+            (installed / "legacy").touch()
+            incoming_inode = incoming.stat().st_ino
+
+            migration.swap_trial_applications(installed, incoming)
+
+            self.assertEqual(installed.stat().st_ino, incoming_inode)
+            self.assertTrue((incoming / "legacy").is_file())
+            self.assertFalse((installed / "legacy").exists())
 
 
     def test_rejects_adhoc_signature_with_production_identifier(self):

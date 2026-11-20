@@ -746,6 +746,28 @@ std::unique_ptr<StagedMacUpdate> StageMacUpdate(const MacInstaller& installer,
   }
 }
 
+// A Dock pin bookmarks the bundle directory itself. Exchange the signed
+// Contents trees so the pin still resolves to the installed app after restart.
+bool ExchangeMacUpdate(const StagedMacUpdate& update) {
+  auto has_only_contents = [](const base::FilePath& app) {
+    NSArray<NSString*>* entries = [NSFileManager.defaultManager
+        contentsOfDirectoryAtPath:base::apple::FilePathToNSString(app) error:nullptr];
+    return entries.count == 1 && [entries.firstObject isEqualToString:@"Contents"] &&
+           !base::IsLink(app.AppendASCII("Contents")) &&
+           base::DirectoryExists(app.AppendASCII("Contents"));
+  };
+  if (has_only_contents(update.installed) && has_only_contents(update.app) &&
+      renamex_np(update.app.AppendASCII("Contents").value().c_str(),
+                 update.installed.AppendASCII("Contents").value().c_str(),
+                 RENAME_SWAP) == 0) {
+    return true;
+  }
+  // Older layouts and read-only bundle directories can still be replaced
+  // atomically when the containing Applications directory is writable.
+  return renamex_np(update.app.value().c_str(), update.installed.value().c_str(),
+                    RENAME_SWAP) == 0;
+}
+
 using OpenEncryptionCallback = base::OnceCallback<os_crypt_async::OSCryptAsync*(
     const base::FilePath&, base::FilePath, std::vector<base::FilePath>,
     std::vector<base::FilePath>, bool)>;
@@ -1234,8 +1256,7 @@ class LabMainParts final : public content::BrowserMainParts,
     if (install_mac_update_on_exit_ && staged_mac_update_) {
       auto update = std::move(staged_mac_update_);
       // Keep the profile locked until the atomic bundle exchange completes.
-      if (renamex_np(update->app.value().c_str(), update->installed.value().c_str(),
-                     RENAME_SWAP) != 0) {
+      if (!ExchangeMacUpdate(*update)) {
         PLOG(ERROR) << "Could not replace the installed Zitter application";
       }
       restart = update->installed;
