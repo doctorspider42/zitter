@@ -1,7 +1,4 @@
-// Render the drag-to-Applications DMG background ("Papier" design) at 1x and 2x.
-//
-// The light theme is deliberate: Finder draws icon labels in black over a
-// background picture, even in Dark Mode, so a dark background hides them.
+// Render the drag-to-Applications DMG background ("Noc" design) at 1x and 2x.
 //
 // Usage: swift render_dmg_background.swift FONTS_DIR VERSION PLATFORM OUTPUT_DIR
 // Writes OUTPUT_DIR/background.png (720x432) and OUTPUT_DIR/background@2x.png.
@@ -28,11 +25,11 @@ func color(_ hex: UInt32) -> CGColor {
             blue: CGFloat(hex & 0xff) / 255, alpha: 1)
 }
 
-// Zitter design tokens, "Papier" theme.
-let void = color(0xebe8e1)      // bg-void
-let ink = color(0x16141c)       // ink
-let inkMuted = color(0x5a5566)  // ink-muted
-let particle = color(0x4b40d9)  // ket: zing would vanish on ivory
+// Zitter design tokens, "Noc" theme.
+let void = color(0x0c0b11)      // bg-void
+let ink = color(0xf3f1f8)       // ink
+let inkMuted = color(0xaaa5bb)  // ink-muted
+let particle = color(0x9a92ff)  // ket
 
 func font(_ file: String, size: CGFloat, weight: CGFloat? = nil) -> CTFont {
     let url = fonts.appendingPathComponent(file) as CFURL
@@ -125,7 +122,16 @@ func render(scale: CGFloat, to url: URL) throws {
     context.setFillColor(particle)
     context.fillEllipse(in: CGRect(x: 292, y: 232, width: 8, height: 8))
 
-    centered(line(platform, monoFont, inkMuted), top: height - 36, lineHeight: 16, in: context)
+    // Finder uses dark, system-rendered labels over picture backgrounds.
+    context.setFillColor(inkMuted)
+    for center in [CGFloat(200), CGFloat(520)] {
+        let label = CGRect(x: center - 76, y: 304, width: 152, height: 32)
+        context.addPath(CGPath(roundedRect: label, cornerWidth: 16, cornerHeight: 16, transform: nil))
+    }
+    context.fillPath()
+
+    // Leave room for Finder's optional path bar at the bottom of the window.
+    centered(line(platform, monoFont, inkMuted), top: height - 56, lineHeight: 16, in: context)
 
     guard let image = context.makeImage() else { throw NSError(domain: "dmg", code: 2) }
     let bitmap = NSBitmapImageRep(cgImage: image)

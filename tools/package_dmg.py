@@ -60,6 +60,7 @@ def finder_layout_script(disk, app_name="Zitter.app"):
         set arrangement of viewOptions to not arranged
         set icon size of viewOptions to 128
         set text size of viewOptions to 13
+        set label position of viewOptions to bottom
         set background picture of viewOptions to file ".background:background.tiff"
 {positions}
         close
