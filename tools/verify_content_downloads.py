@@ -1533,7 +1533,6 @@ def prepare_workspace(executable, server, root, options, windows):
         f"--zitter-content-workspace-root={root}",
         f"--zitter-content-workspace-probe=http://127.0.0.1:{server.server_port}/",
         f"--zitter-content-workspace-theme={options.theme}",
-        f"--zitter-rust-raster={options.renderer}",
         "--no-proxy-server",
     ]
 
@@ -1589,7 +1588,7 @@ def verify_workspace_history_clear(run, server, root, snapshot, options, windows
             raise SystemExit("Clearing download history changed a downloaded file")
         if options.require_quarantine:
             require_quarantine(path, windows, private=False)
-    print(f"Content cleared download history by period and profile in {options.theme} with {options.renderer}")
+    print(f"Content cleared download history by period and profile in {options.theme}")
 
 
 def verify_workspace_history_import(args, server, root, snapshot, options, windows):
@@ -1681,7 +1680,7 @@ def verify_workspace_history_import(args, server, root, snapshot, options, windo
             raise SystemExit("Import changed a source download")
         if options.require_quarantine:
             require_quarantine(file, windows, private=False)
-    print(f"Content imported terminal download history in {options.theme} with {options.renderer}")
+    print(f"Content imported terminal download history in {options.theme}")
 
 
 def verify_workspace(executable, server, root, options, windows):
@@ -1804,7 +1803,7 @@ def verify_workspace(executable, server, root, options, windows):
             path.unlink()
             if backup.exists():
                 backup.rename(path)
-    print(f"Content download panel and history passed in {options.theme} with {options.renderer}")
+    print(f"Content download panel and history passed in {options.theme}")
 
 
 def verify_workspace_deletion(run, server, root, snapshot, options, windows):
@@ -1865,7 +1864,7 @@ def verify_workspace_deletion(run, server, root, snapshot, options, windows):
         raise SystemExit("Confirmed deletion affected the other profile")
     if server.requests != list(WORKSPACE_CASES):
         raise SystemExit(f"Deletion issued unexpected network requests: {server.requests}")
-    print(f"Content confirmed download deletion passed in {options.theme} with {options.renderer}")
+    print(f"Content confirmed download deletion passed in {options.theme}")
 
 
 def verify_close(executable, server, root, options, windows, wait):
@@ -1952,7 +1951,6 @@ def main():
     parser.add_argument("--native-picker", action="store_true",
                         help="Interactively accept, then automatically cancel, the macOS save panel")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     parser.add_argument(
         "--require-quarantine",
         action="store_true",
@@ -1973,8 +1971,6 @@ def main():
                 or info.get("ZitterUsePreparedWorkspace") is True):
             parser.error("--native-picker requires the isolated Content Lab bundle. "
                          "A release bundle could open the account profile when relaunched.")
-    if windows and options.renderer == "metal":
-        parser.error("Metal is only available on macOS")
     if windows and options.user_resume_after_crash:
         parser.error("The persistent HTTPS download fixture is available on macOS")
     executable = options.app if windows else options.app / "Contents/MacOS/Zitter Content Lab"

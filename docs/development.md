@@ -602,7 +602,9 @@ out/ZitterContentBundle/sidebar_scene_unittests
 Use Chromium's own Ninja, not Homebrew's. `editor_text_layout_unittests` builds
 on Windows and Linux only.
 
-## Live Rust + Metal sidebar prototype
+## Historical Rust and Metal sidebar prototype
+
+Current builds draw the Rust UI through Chromium's compositor. This section records the former Metal overlay.
 
 The real workspace now has an optional Rust + Metal navigation/sidebar renderer, with live
 titles, folders, Split View and existing keyboard/controller routing. Live rows
@@ -831,13 +833,6 @@ gclient sync -D --revision "src@$revision"
 `gclient sync -D` is intended for this dedicated checkout; it can remove obsolete
 dependency directories. Windows commands require adapting directory creation to
 your shell. Use Chromium's own fetched compiler, GN, and dependency revisions.
-
-Recent Xcode versions ship the Metal shader compiler as an optional component.
-If `xcrun metal --version` reports a missing toolchain, install it before building:
-
-```sh
-xcodebuild -downloadComponent MetalToolchain
-```
 
 From the Zitter repository, `./build.sh` stages the Content embedder into the
 checkout, generates the output and builds it (see

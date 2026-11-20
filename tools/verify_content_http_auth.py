@@ -75,7 +75,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     args = parser.parse_args()
     executable = (args.app / "Contents/MacOS/Zitter Content Lab").resolve()
     if not executable.is_file():
@@ -97,7 +96,6 @@ def main():
                         result = launch(executable, root, origin, [
                             f"--zitter-content-http-auth-probe={action}",
                             f"--zitter-content-workspace-theme={args.theme}",
-                            f"--zitter-rust-raster={args.renderer}",
                         ])
                         if result.returncode or MARKER not in result.stdout.splitlines():
                             raise SystemExit(f"{scheme} {action} failed:\n{result.stdout}\n{result.stderr}")
@@ -105,7 +103,7 @@ def main():
                         if server.auth_results != expected:
                             raise SystemExit(f"{scheme} {action}: unexpected authentication attempts "
                                              f"{server.auth_results!r}")
-                        print(f"Verified HTTP {scheme} {action} ({args.theme}, {args.renderer})", flush=True)
+                        print(f"Verified HTTP {scheme} {action} ({args.theme})", flush=True)
         finally:
             server.shutdown()
             thread.join(timeout=5)

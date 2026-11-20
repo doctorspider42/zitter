@@ -112,22 +112,18 @@ def main():
     parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     parser.add_argument("--openssl", default="openssl")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     parser.add_argument("--trusted-url",
                         help="Also load this HTTPS URL with the browser's normal trust settings")
     parser.add_argument("--virtual-webauthn", action="store_true",
                         help="Also register and use a virtual key on a disposable loopback page")
     options = parse_probe_args(parser, __file__)
-    if os.name == "nt" and options.renderer == "metal":
-        parser.error("Metal requires macOS")
     executable = options.app
     if os.name != "nt":
         executable /= "Contents/MacOS/Zitter Content Lab"
     executable = executable.resolve()
     if not executable.is_file():
         parser.error(f"App executable is missing: {executable}")
-    appearance = (f"--zitter-content-workspace-theme={options.theme}",
-                  f"--zitter-rust-raster={options.renderer}")
+    appearance = (f"--zitter-content-workspace-theme={options.theme}",)
 
     with (
         tempfile.TemporaryDirectory(prefix="zitter-content-tls-") as directory,

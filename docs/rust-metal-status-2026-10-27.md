@@ -1,5 +1,7 @@
 # Rust + Metal — stan i pozostałe prace
 
+> Historical record. Current Content builds use Chromium's compositor. The macOS Metal overlay was removed after the 0.16.7 comparison.
+
 Stan na 2026-10-28. **Jeden UI: Rust.** Backend Views i przełącznik `--zitter-sidebar`
 zostały usunięte (decyzja użytkownika, bez możliwości powrotu). Domyślne malowanie idzie
 przez kompozytor Chromium; nakładka Metal w procesie jest opcją

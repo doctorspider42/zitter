@@ -151,8 +151,7 @@ covers Command Center/shortcut entry, local feed discovery, tab close and profil
 switch during a delayed response, English empty state, and captures of list,
 article, narrow, 250–350 px split-pane, pinned-sidebar, focused, and scrolled
 layouts in light/dark themes. Pass
-`--zitter-test-rss-render-dir=/absolute/output/directory` for screenshots; repeat
-with `--zitter-rust-raster=metal` to inspect the Metal renderer.
+`--zitter-test-rss-render-dir=/absolute/output/directory` for screenshots.
 `RssReaderTabsPinsRestoreAndIsolation` checks tab deduplication, closed-pin menu
 reopening, AppKit target/selector dispatch on macOS, pin/unpin, a new window's
 session restoration, closed-tab reopening, opaque-document isolation, exact URL

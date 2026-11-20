@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Launch the packaged Zitter Content app, drive it and screenshot it.
 
-  ui.py launch [--open-panel space] [--theme dark] [--raster metal] [--scale 2]
+  ui.py launch [--open-panel space] [--theme dark] [--scale 2]
                                     quit the running copy, start build/ZitterContentLab.app in the
                                     workspace root $TMPDIR/zitter-content-probe-ui (and open the
                                     space panel by itself, without the mouse)
@@ -181,8 +181,6 @@ def wait(predicate, timeout=15.0):
 
 def launch(a):
     if os.name == "nt":
-        if a.raster == "metal":
-            sys.exit("Metal requires macOS.")
         binary = ui_win.EXE
         if not binary.is_file():
             sys.exit(f"No build at {binary}; build zitter_content first (build_app_win.ps1).")
@@ -215,8 +213,6 @@ def launch(a):
         command.append(f"--zitter-open-panel={a.open_panel}")
     if a.theme:
         command.append(f"--zitter-content-workspace-theme={a.theme}")
-    if a.raster:
-        command.append(f"--zitter-rust-raster={a.raster}")
     if a.scale:
         command.append(f"--force-device-scale-factor={a.scale:g}")
     launch_options = {"start_new_session": True}
@@ -343,7 +339,6 @@ sub = parser.add_subparsers(dest="command", required=True)
 l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads", "history", "rss", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "night-shift", "ad-blocking", "menu", "app-menu", "dialog", "toast", "update", "update-about", "add", "space-end", "space-new", "remove", "drop", "passwords", "site", "site-data", "permission"],
     help="open this panel once the window is up (no mouse needed)")
 l.add_argument("--theme", choices=["dark", "light"], help="Noc (dark) or Papier (light); default: the saved setting")
-l.add_argument("--raster", choices=["compositor", "metal"], help="Rust UI painting (default: compositor)")
 l.add_argument("--scale", type=float, help="force a device scale factor (HiDPI checks)")
 l.add_argument("--fresh", action="store_true", help="start from an empty workspace root")
 l.add_argument("--front", action="store_true",

@@ -1,7 +1,5 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-// Portable raster path for the Rust UI: adapters paint their Rust scene recipes
-// through the Chromium compositor. The macOS Metal overlay is an opt-in
-// alternative (--zitter-rust-raster=metal).
+// Adapters paint Rust scene recipes through the Chromium compositor.
 #include "chromium/prototype/sidebar_metal.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/sidebar_scene.rs.h"
@@ -9,7 +7,6 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
-#include "base/command_line.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
@@ -19,7 +16,6 @@
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/animation/animation.h"
 #include "base/task/single_thread_task_runner.h"
-#include "build/build_config.h"
 #include "cc/paint/paint_flags.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/color/color_id.h"
@@ -297,17 +293,7 @@ class CompositorSurface final : public SidebarMetal {
  private:
   rust::Box<sidebar::Viewport> viewport_ = sidebar::new_viewport();
 };
-#if !BUILDFLAG(IS_MAC)
-SidebarMetalStats GetSidebarMetalStatsForTesting() { return {}; }
-#endif
 std::unique_ptr<SidebarMetal> CreateSidebarMetal() {
-  // Adapters paint their Rust recipes in the Chromium compositor by default;
-  // --zitter-rust-raster=metal opts into the in-process Metal overlay.
-  // Never null: an unavailable Metal device falls back to the compositor.
-#if BUILDFLAG(IS_MAC)
-  if (base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII("zitter-rust-raster") == "metal")
-    if (auto surface = CreateMetalSidebarSurface()) return surface;
-#endif
   return std::make_unique<CompositorSurface>();
 }
 }  // namespace zitter::prototype

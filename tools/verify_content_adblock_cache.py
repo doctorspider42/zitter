@@ -88,7 +88,6 @@ def main():
     executable = executable.resolve()
     if not executable.is_file():
         parser.error(f"App executable is missing: {executable}")
-    renderers = ("compositor",) if os.name == "nt" else ("compositor", "metal")
 
     with ThreadingHTTPServer(("127.0.0.1", 0), CacheFixture) as server:
         origin = f"http://127.0.0.1:{server.server_port}"
@@ -97,37 +96,36 @@ def main():
         thread.start()
         try:
             for theme in ("light", "dark"):
-                for renderer in renderers:
-                    server.requests = []
-                    server.cache_requests = []
-                    with TemporaryDirectory(prefix="zitter-content-probe-") as directory:
-                        root = Path(directory).resolve()
-                        if os.name == "nt":
-                            from verify_content_workspace_session import WINDOWS_LOCAL_STATE, new_wrapped_windows_key
+                server.requests = []
+                server.cache_requests = []
+                with TemporaryDirectory(prefix="zitter-content-probe-") as directory:
+                    root = Path(directory).resolve()
+                    if os.name == "nt":
+                        from verify_content_workspace_session import WINDOWS_LOCAL_STATE, new_wrapped_windows_key
 
-                            (root / WINDOWS_LOCAL_STATE).write_text(json.dumps({
-                                "os_crypt": {"encrypted_key": new_wrapped_windows_key()},
-                            }), encoding="utf-8")
-                        else:
-                            key = root / KEY_FILE
-                            key.write_bytes(secrets.token_bytes(32))
-                            key.chmod(0o600)
-                        (root / SESSION_FILE).write_text(json.dumps(seed_session(origin)), encoding="utf-8")
-                        result = launch(executable, root, origin, (
-                            PROBE, f"--zitter-rust-raster={renderer}",
-                            f"--zitter-content-workspace-theme={theme}",
-                        ))
-                        if result.returncode or MARKER not in result.stdout or CACHE_MARKER not in result.stdout:
-                            raise SystemExit(f"Cache probe failed in {theme}/{renderer}.\n"
-                                             f"{result.stdout}\n{result.stderr}")
-                        for path in root.rglob("Content Ad Blocking Preferences"):
-                            prefs = json.loads(path.read_text(encoding="utf-8")).get("zitter", {})
-                            if prefs.get("ad_blocking_rules") or prefs.get("ad_blocking_allowed_sites"):
-                                raise SystemExit(f"Cache probe left test filters in {path.parent.name}")
-                    requests = Counter(server.cache_requests)
-                    if requests[PAGE] != 1 or requests[CHILD] != 1:
-                        raise SystemExit(f"Cache probe fetched a document again: {server.cache_requests}")
-                    print(f"Ad blocking cache restoration passed in {theme}/{renderer}")
+                        (root / WINDOWS_LOCAL_STATE).write_text(json.dumps({
+                            "os_crypt": {"encrypted_key": new_wrapped_windows_key()},
+                        }), encoding="utf-8")
+                    else:
+                        key = root / KEY_FILE
+                        key.write_bytes(secrets.token_bytes(32))
+                        key.chmod(0o600)
+                    (root / SESSION_FILE).write_text(json.dumps(seed_session(origin)), encoding="utf-8")
+                    result = launch(executable, root, origin, (
+                        PROBE,
+                        f"--zitter-content-workspace-theme={theme}",
+                    ))
+                    if result.returncode or MARKER not in result.stdout or CACHE_MARKER not in result.stdout:
+                        raise SystemExit(f"Cache probe failed in {theme}.\n"
+                                         f"{result.stdout}\n{result.stderr}")
+                    for path in root.rglob("Content Ad Blocking Preferences"):
+                        prefs = json.loads(path.read_text(encoding="utf-8")).get("zitter", {})
+                        if prefs.get("ad_blocking_rules") or prefs.get("ad_blocking_allowed_sites"):
+                            raise SystemExit(f"Cache probe left test filters in {path.parent.name}")
+                requests = Counter(server.cache_requests)
+                if requests[PAGE] != 1 or requests[CHILD] != 1:
+                    raise SystemExit(f"Cache probe fetched a document again: {server.cache_requests}")
+                print(f"Ad blocking cache restoration passed in {theme}")
         finally:
             server.shutdown()
             thread.join()

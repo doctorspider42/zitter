@@ -167,9 +167,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     if ((durable && !interactive) || command_line.HasSwitch(kWorkspaceKeychain) ||
         command_line.HasSwitch(kWorkspaceLegacyKeychain) ||
         (command_line.HasSwitch(kWorkspaceProbe) && !durable) ||
-        (workspace_lab_ &&
-         (command_line.HasSwitch(kSmokeTest) ||
-          command_line.GetSwitchValueASCII("zitter-rust-raster") == "metal")) ||
+        (workspace_lab_ && command_line.HasSwitch(kSmokeTest)) ||
         (interactive && workspace_smoke_)) {
       return 1;
     }
@@ -533,7 +531,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         durable ? root.AppendASCII(kWorkspaceSession) : base::FilePath(),
         std::move(workspace_session_), std::move(workspace_timeline_),
         workspace_probe_url_, *context_,
-        personal_context_.get(), dark, /*metal=*/false, workspace_smoke_,
+        personal_context_.get(), dark, workspace_smoke_,
         nullptr, additional_profiles_, os_crypt_, std::move(user_downloads),
         safe_browsing_key_, offer_startup_import);
   }

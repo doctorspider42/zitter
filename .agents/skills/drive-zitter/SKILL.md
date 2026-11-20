@@ -155,8 +155,6 @@ answers each with one line. See `automation()` in `ui.py`. Commands: `ping`,
   can't click them. Ask the user before you fall back to `--cursor` and
   `shot --screen`, which use the real mouse and screen. A blocking system dialog
   can also hold commands until it closes.
-- A sidebar drawn with `--raster metal` is a separate Metal layer; the compositor
-  shot misses it.
 - Drag and drop between apps (files from Finder) isn't possible.
 - **Windows:** use `ui.py` for compositor captures and in-app input. Ask before using `--cursor` or `shot --screen`.
 - A clicked control edits the test workspace (selected tab, emoji, a new space).

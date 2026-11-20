@@ -194,7 +194,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
                ProfileContext& work,
                ProfileContext* personal,
                bool dark,
-               bool metal,
                bool smoke,
                WorkspaceLab* private_owner = nullptr,
                base::span<const std::unique_ptr<ProfileContext>> extra_profiles = {},
@@ -721,7 +720,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PublishWorkspaceFavicon(const GURL& page, const GURL& icon,
                                const gfx::Image& image);
   void SwitchTo(size_t index);
-  void CheckPresentation(base::TimeTicks deadline);
+  void CheckPresentation();
   bool CheckSessionProbeSetup() const;
   void CheckSessionProbePage();
   void AdvanceSessionProbe();
@@ -959,7 +958,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
   const GURL session_probe_url_;
   GURL private_adblock_probe_url_;
   const bool dark_;
-  const bool metal_;
   const bool smoke_;
   GURL webauthn_probe_url_;
   std::unique_ptr<WorkspaceWebAuthnProbe> webauthn_probe_;

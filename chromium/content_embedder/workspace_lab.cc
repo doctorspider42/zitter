@@ -1897,7 +1897,6 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                            ProfileContext& work,
                            ProfileContext* personal,
                            bool dark,
-                           bool metal,
                            bool smoke,
                            WorkspaceLab* private_owner,
                            base::span<const std::unique_ptr<ProfileContext>> extra_profiles,
@@ -1915,7 +1914,6 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       timeline_(std::move(timeline)),
       session_probe_url_(std::move(session_probe_url)),
       dark_(dark),
-      metal_(metal),
       smoke_(smoke),
       private_owner_(private_owner),
       os_crypt_(os_crypt),
@@ -5146,7 +5144,7 @@ void WorkspaceLab::OpenPendingPrivateWindows(size_t source) {
     auto window = std::make_unique<WorkspaceLab>(
         directory.AppendASCII("Settings.json"), directory, base::FilePath(),
         base::DictValue(), nullptr, GURL(), *session->profile, nullptr,
-        /*dark=*/true, metal_, /*smoke=*/false, this);
+        /*dark=*/true, /*smoke=*/false, this);
     auto* child = window.get();
     child->private_source_index_ = source;
     session->windows.push_back(std::move(window));
@@ -12708,8 +12706,7 @@ void WorkspaceLab::CheckPasswordManager(PasswordManagerStep step,
   if (panel->loaded_for_testing()) {
     switch (step) {
       case PasswordManagerStep::kInitial:
-        if (sites == work_sites &&
-            (!metal_ || panel->scene_contains_for_testing("127.0.0.1"))) {
+        if (sites == work_sites) {
           if (panel->widget()->color_mode_override() != widget_->color_mode_override()) {
             FinishPasswordProbe(false);
             return;
@@ -12892,15 +12889,10 @@ void WorkspaceLab::CheckPasswordPrompt(base::TimeTicks deadline) {
         base::Milliseconds(75));
     return;
   }
-  const auto login_label = prototype::TF(u"Użytkownik: {}", {u"zitter-profile-probe"});
-  const bool rendered_in_metal =
-      page && PagePasswordPromptMetalContainsForTesting(
-                  *page, base::UTF16ToUTF8(login_label));
-  if (!prompt || !prompt->IsVisible() || (metal_ && !rendered_in_metal)) {
+  if (!prompt || !prompt->IsVisible()) {
     if (base::TimeTicks::Now() >= deadline) {
       LOG(ERROR) << "Expected a rendered password prompt after form submission"
-                 << ", visible=" << (prompt && prompt->IsVisible())
-                 << ", metal_text=" << rendered_in_metal;
+                 << ", visible=" << (prompt && prompt->IsVisible());
       FinishPasswordProbe(false);
       return;
     }
@@ -12916,7 +12908,7 @@ void WorkspaceLab::CheckPasswordPrompt(base::TimeTicks deadline) {
   const auto copy = sidebar::password_prompt_copy(update, "", "", "");
   auto* delegate = prompt->widget_delegate()->AsDialogDelegate();
   if (!delegate || delegate->GetModalType() != ui::mojom::ModalType::kNone ||
-      prompt->IsActive() || rendered_in_metal != metal_ ||
+      prompt->IsActive() ||
       delegate->GetWindowTitle() != base::UTF8ToUTF16(std::string(copy.title)) ||
       prompt->color_mode_override() != widget_->color_mode_override()) {
     LOG(ERROR) << "Unexpected password prompt title or theme: "
@@ -20767,21 +20759,15 @@ void WorkspaceLab::CheckHistoryPanelProbe(base::TimeTicks deadline) {
   const bool contains_title =
       history_panel_->has_visible_visit_title_for_testing(kProbeTitles[profile]) &&
       (!legacy_history || history_panel_->has_visible_visit_title_for_testing(legacy_title));
-  const bool contains_metal_title =
-      !metal_ || history_panel_->scene_contains_text_for_testing(
-                     base::UTF16ToUTF8(kProbeTitles[profile]));
-  const bool contains_legacy_metal_title = !metal_ || !legacy_history ||
-      history_panel_->scene_contains_text_for_testing(base::UTF16ToUTF8(legacy_title));
   if (querying || !correct_visits || !visible || !correct_theme ||
-      !contains_title || !contains_metal_title || !contains_legacy_metal_title) {
+      !contains_title) {
     if (base::TimeTicks::Now() >= deadline) {
       LOG(ERROR) << "History panel probe did not display the active profile "
                  << profile << ": querying=" << querying
                  << ", correct_visits=" << correct_visits
                  << ", visit_count=" << visits.size() << ", visible=" << visible
                  << ", correct_theme=" << correct_theme
-                 << ", contains_title=" << contains_title
-                 << ", contains_metal_title=" << contains_metal_title;
+                 << ", contains_title=" << contains_title;
       Finish(false);
       return;
     }
@@ -20885,21 +20871,10 @@ void WorkspaceLab::DocumentOnLoadCompletedInPrimaryMainFrame() {
 
   runner->PostTask(FROM_HERE,
                    base::BindOnce(&WorkspaceLab::CheckPresentation,
-                                  weak_factory_.GetWeakPtr(),
-                                  base::TimeTicks::Now() + base::Seconds(5)));
+                                  weak_factory_.GetWeakPtr()));
 }
 
-void WorkspaceLab::CheckPresentation(base::TimeTicks deadline) {
-  const bool metal_text =
-      shell_->metal_sidebar_contains_text_for_testing(kTitles[active_index_]);
-  if (metal_ && !metal_text && base::TimeTicks::Now() < deadline) {
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(&WorkspaceLab::CheckPresentation,
-                       weak_factory_.GetWeakPtr(), deadline),
-        base::Milliseconds(50));
-    return;
-  }
+void WorkspaceLab::CheckPresentation() {
   const auto* work_view = tabs_[0][0].view.get();
   const auto* personal_view = tabs_[1][0].view.get();
   auto* webauthn = content::GetContentClientForTesting()
@@ -20913,7 +20888,7 @@ void WorkspaceLab::CheckPresentation(base::TimeTicks deadline) {
     Finish(false);
     return;
   }
-  if (metal_ != metal_text || !widget_->IsVisible() ||
+  if (!widget_->IsVisible() ||
       !personal_view->IsDrawn() || work_view->GetVisible() ||
       work_view->web_contents()->GetVisibility() != content::Visibility::HIDDEN ||
       webauthn->IsFocused(work_view->web_contents()) ||

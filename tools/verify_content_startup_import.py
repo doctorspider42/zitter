@@ -20,7 +20,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     args = parser.parse_args()
     source = args.app.resolve(strict=True)
     with (TemporaryDirectory(prefix="zitter-content-startup-import-") as trial,
@@ -37,8 +36,7 @@ def main():
         library = compile_file_keychain_fixture(Path(trial))
         env = dict(file_keychain_environment(library), ZITTER_CONTENT_STARTUP_TRIAL_ROOT=str(root))
         executable = app / "Contents/MacOS/Zitter Content Lab"
-        env.update(ZITTER_CONTENT_STARTUP_IMPORT_THEME=args.theme,
-                   ZITTER_CONTENT_STARTUP_IMPORT_RENDERER=args.renderer)
+        env.update(ZITTER_CONTENT_STARTUP_IMPORT_THEME=args.theme)
         session_path = root / "ContentKeychainWorkspaceSession.json"
 
         def run(phase):

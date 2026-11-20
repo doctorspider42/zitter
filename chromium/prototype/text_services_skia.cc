@@ -1,7 +1,7 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 // Platform text services outside macOS: gfx::RenderText (HarfBuzz + Skia) in
 // place of CoreText. Same contracts as editor_text_layout_mac.inc and the
-// CoreText half of sidebar_metal.mm: UTF-16 offsets, logical points, one shaped
+// CoreText half of text_services_mac.mm: UTF-16 offsets, logical points, one shaped
 // line shared by hit testing, caret/selection geometry and drawing.
 #include <algorithm>
 #include <climits>

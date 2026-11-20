@@ -1,6 +1,6 @@
 ---
 name: verify-ui
-description: Finish every Zitter UI change by running the packaged app, screenshotting the changed view, comparing it with its design, and fixing the differences straight away before handing over. Use this whenever you change anything the user sees in Zitter (chromium/prototype — workspace_shell.cc, sidebar_scene.rs, design.rs, sidebar_metal.mm, panels, sidebar, colors, type, spacing), when you implement or polish a design or design-system component, and whenever the user says "włącz", "odpal", "pokaż", "zrób screena", "sprawdź jak wygląda" or asks whether the app matches the design — even if they don't mention screenshots.
+description: Finish every Zitter UI change by running the packaged app, screenshotting the changed view, comparing it with its design, and fixing the differences straight away before handing over. Use this whenever you change anything the user sees in Zitter (chromium/prototype — workspace_shell.cc, sidebar_scene.rs, design.rs, sidebar_raster.cc, panels, sidebar, colors, type, spacing), when you implement or polish a design or design-system component, and whenever the user says "włącz", "odpal", "pokaż", "zrób screena", "sprawdź jak wygląda" or asks whether the app matches the design — even if they don't mention screenshots.
 ---
 
 # Verify UI against the design
@@ -41,8 +41,8 @@ against the design, and fixed until it matches.
    `--zitter-content-workspace` in its own workspace root,
    `$TMPDIR/zitter-content-probe-ui` (the app accepts a root only as a private
    `zitter-content-probe-*` directory in `$TMPDIR`). The root keeps spaces, tabs and
-   settings between launches; `--fresh` starts from an empty one. `--theme dark|light`,
-   `--raster metal` and `--scale 2` pass the matching app switches. Prefer launch
+   settings between launches; `--fresh` starts from an empty one. `--theme dark|light`
+   and `--scale 2` pass the matching app switches. Prefer launch
    switches over clicking: `--open-panel space` passes `--zitter-open-panel=space`,
    which opens the space panel by itself.
    - For another view, add a value to that switch next to the `space` case in

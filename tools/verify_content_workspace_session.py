@@ -2746,7 +2746,6 @@ def main():
     parser.add_argument("--openssl", type=Path,
                         help="OpenSSL executable for signing disposable extension fixtures")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     options = parse_probe_args(parser, __file__,
                                visible_for=("interactive_extension_management",))
     windows = os.name == "nt"
@@ -2760,8 +2759,6 @@ def main():
         parser.error("The system print probes require macOS")
     if options.copy_address and sys.platform != "darwin":
         parser.error("--copy-address requires the macOS pasteboard fixture")
-    if windows and options.renderer == "metal":
-        parser.error("Metal requires macOS")
     if options.encrypted_import and sys.platform != "darwin":
         parser.error("--encrypted-import requires macOS")
     managed_extensions = (options.extension_manage or options.extension_multi or
@@ -2812,7 +2809,6 @@ def main():
         openssl = Path(openssl).resolve()
     extra_flags = [
         f"--zitter-content-workspace-theme={options.theme}",
-        f"--zitter-rust-raster={options.renderer}",
     ]
     if options.extension_registry:
         extra_flags.append("--host-resolver-rules=MAP *.example.com 127.0.0.1")
