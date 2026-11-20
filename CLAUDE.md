@@ -19,8 +19,9 @@
   `arc_importer_unittests`, Python tests
   (`python3 -m unittest discover -s tests -p 'test_*.py'`) and the single
   `tools/verify_content_*.py` checks a change needs.
-- Windows UI probes use a separate desktop by default. Ask the user before
-  running a batch on their working desktop, and give the expected duration.
+- Windows UI probes use a separate desktop by default. The macOS socket
+  automation probe also keeps windows off the working desktop. Ask the user
+  before running a batch on their working desktop, and give the expected duration.
 
 ## Checking UI changes
 
@@ -29,9 +30,9 @@ the packaged app, screenshot the changed view, compare it with its design, fix w
 differs, and only then hand over the final screenshot.
 
 To click, type, scroll or capture animations in the running app, use the
-`drive-zitter` skill (`.claude/skills/drive-zitter/`). On Windows `ui.py launch`
-uses a separate desktop. Follow the background-launch guidance in `AGENTS.md`
-for other Windows programs and helpers.
+`drive-zitter` skill (`.claude/skills/drive-zitter/`). On macOS and Windows,
+`ui.py launch` keeps test windows off the working desktop. Follow the
+background-launch guidance in `AGENTS.md` for other Windows programs and helpers.
 
 ## Shared build directory
 

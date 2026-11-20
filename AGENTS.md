@@ -29,8 +29,9 @@ an interactive step.
 
 To exercise or look at Zitter's UI (clicks, typing, scrolling, screenshots,
 animation frames), follow `.agents/skills/drive-zitter/SKILL.md`. Start Zitter
-with `ui.py launch`, which uses a separate desktop on Windows and drives the app
-through its automation socket on both platforms.
+with `ui.py launch`. It keeps windows off the working desktop by default on
+macOS and Windows and drives the app through its automation socket. Use
+`ui.py launch --front` for interactive work on the working desktop.
 
 ## Build directories and disk space
 

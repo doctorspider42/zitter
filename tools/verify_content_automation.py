@@ -86,6 +86,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, nargs="?", default=ROOT / "build/ZitterContentLab.app")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
+    if sys.platform == "darwin":
+        visibility = parser.add_mutually_exclusive_group()
+        visibility.add_argument("--hidden", dest="visible", action="store_false",
+                                help="Keep windows off the desktop (default)")
+        visibility.add_argument("--visible", action="store_true",
+                                help="Show test windows on the working desktop")
+        parser.set_defaults(visible=False)
     args = parse_probe_args(parser, __file__)
     app = args.app.resolve(strict=True)
     if os.name == "nt":
@@ -103,9 +110,11 @@ def main():
             key.chmod(0o600)
         sock_path = root / "automation.sock"
         log = open(root / "app.log", "w")
+        hidden = sys.platform == "darwin" and not args.visible
+        automation = "--zitter-automation=hidden" if hidden else "--zitter-automation"
         process = subprocess.Popen(
             [str(executable), "--zitter-content-workspace",
-             f"--zitter-content-workspace-root={root}", "--zitter-automation",
+             f"--zitter-content-workspace-root={root}", automation,
              f"--zitter-content-workspace-theme={args.theme}"],
             stdout=log, stderr=log, start_new_session=True)
         try:
@@ -115,8 +124,11 @@ def main():
                 raise AssertionError("the automation socket did not answer")
 
             def window(titles):
-                listed = expect(request(sock_path, {"cmd": "windows"}), "windows")["windows"]
-                return next((w for w in listed if w["visible"] and w["title"] in titles), None)
+                result = expect(request(sock_path, {"cmd": "windows"}), "windows")
+                if hidden and (not result.get("hidden") or result.get("desktop_windows") != 0
+                               or result.get("app_active") is not False):
+                    raise AssertionError(f"hidden probe reached the desktop: {result}")
+                return next((w for w in result["windows"] if w["visible"] and w["title"] in titles), None)
 
             main_window = wait(lambda: (w := window({"Zitter"})) and w["width"] > 600 and w, 30)
             if not main_window:

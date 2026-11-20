@@ -29,8 +29,9 @@ against the design, and fixed until it matches.
 2. **Run the tests that cover the change**: the Rust tests
    (`out/ZitterContentBundle/sidebar_scene_unittests`) and the `tools/verify_content_*.py`
    checks for the area you changed (for example `verify_content_workspace_session.py`
-   for the workspace UI). The `verify_content_*` checks open app windows; run only the
-   ones the change needs, and ask the user before running many of them.
+   for the workspace UI). The socket automation probe keeps its windows off the
+   desktop by default. Other checks can open visible windows or system dialogs.
+   Run only the checks the change needs and ask before running many of them.
 
 3. **Launch and open the view.**
    ```bash
@@ -52,8 +53,8 @@ against the design, and fixed until it matches.
      by name, so it leaves the user's browser alone.
    - `launch` also passes `--zitter-automation`. The app then takes commands on
      `<workspace root>/automation.sock` and delivers them straight to its own widgets
-     and pages. The user's cursor never moves, the app may stay in the background, and
-     other windows may cover it. See the `drive-zitter` skill.
+     and pages. The default launch keeps test windows off the working desktop on
+     macOS and Windows. Use `--front` for visible debugging. See the `drive-zitter` skill.
    - `shot` copies the window's own composited frame, web pages included. It never
      captures the screen, so it needs no Screen Recording permission and works on a
      covered window. Keep screenshots in `build/screens/`, which git ignores.

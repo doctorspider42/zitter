@@ -511,6 +511,27 @@ enough memory. The macOS release probes run serially because the private-window
 probe activates native menus and Dock commands. On Windows the download, optional
 TLS and extension, and migration checks run serially after the parallel probes.
 
+On macOS, socket-driven UI checks keep their windows off the desktop by
+default. Each invocation gets its own temporary workspace and automation
+socket. The probe checks that WindowServer lists no on-screen windows from
+the process and that the compositor produces screenshots.
+
+```sh
+python3 tools/verify_content_automation.py --theme light &
+light_pid=$!
+python3 tools/verify_content_automation.py --theme dark &
+dark_pid=$!
+wait "$light_pid"
+light_status=$?
+wait "$dark_pid"
+dark_status=$?
+test "$light_status" -eq 0 && test "$dark_status" -eq 0
+```
+
+Use `--visible` to watch the automation probe, or `ui.py launch --front` for
+manual testing on the desktop. Tests that exercise the system menu bar, Dock,
+native dialogs, or the desktop's real pointer require a visible session.
+
 On Windows, run the extended UI suite directly against an existing build:
 
 ```powershell

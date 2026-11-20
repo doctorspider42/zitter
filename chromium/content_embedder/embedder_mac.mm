@@ -97,6 +97,7 @@
 #include "ui/base/clipboard/clipboard_metadata.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/display/screen.h"
+#include "ui/gfx/switches.h"
 #include "ui/gfx/native_ui_types.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -2420,13 +2421,24 @@ class LabMainDelegate final : public content::ContentMainDelegate {
   std::optional<int> PreBrowserMain() override {
     if (auto result = ConfigureExtensionProbes())
       return result;
+    auto* command = base::CommandLine::ForCurrentProcess();
+    const bool hidden = command->GetSwitchValueASCII(kUiAutomation) == "hidden";
+    if (hidden) {
+      if (!command->HasSwitch(kWorkspaceLab) ||
+          !IsProbeRoot(command->GetSwitchValuePath(kWorkspaceRoot))) {
+        LOG(ERROR) << "Hidden UI automation needs a private workspace probe root";
+        return 1;
+      }
+      command->AppendSwitch(switches::kHeadless);
+    }
     [ZitterContentApplication sharedApplication];
     CHECK([NSApp isKindOfClass:[ZitterContentApplication class]]);
     if (ordinary_prepared_startup_) {
       auto* app = static_cast<ZitterContentApplication*>(NSApp);
       app.delegate = app;
     }
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [NSApp setActivationPolicy:(hidden ? NSApplicationActivationPolicyAccessory
+                                       : NSApplicationActivationPolicyRegular)];
     return std::nullopt;
   }
 

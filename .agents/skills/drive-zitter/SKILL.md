@@ -16,8 +16,8 @@ The app has an automation channel for agents. `ui.py launch` starts it with
   shows the app as a person sees it, even while other windows cover it.
 
 So you can run as many interactions as you need without asking the user first.
-On Windows, `ui.py launch` and verification scripts use a separate desktop by
-default. Keep it that way for agent work. `--cursor` and `shot --screen` require
+`ui.py launch` and the socket verification probe keep test windows off the
+working desktop by default on macOS and Windows. `--cursor` and `shot --screen` require
 an instance launched with `--front` on the working desktop. Ask before using
 those fallbacks if the user has not requested interactive operation.
 
@@ -43,6 +43,17 @@ python3 .claude/skills/verify-ui/scripts/ui.py launch --fresh    # empty spaces,
   display scale.
 - `--front` lets the app come to the front. Use it only when the user wants to
   watch.
+
+On macOS, set `ZITTER_UI_SESSION` on every command to select a separate profile and
+socket when running multiple sessions. Session names use up to six lowercase
+letters or digits. For example:
+
+```sh
+export ZITTER_UI_SESSION=dark
+python3 .claude/skills/verify-ui/scripts/ui.py launch --theme dark
+python3 .claude/skills/verify-ui/scripts/ui.py shot build/screens/dark.png
+python3 .claude/skills/verify-ui/scripts/ui.py stop
+```
 
 ## 2. Find what to act on
 

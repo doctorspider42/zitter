@@ -15,6 +15,7 @@
 #include "ui/views/win/hwnd_util.h"
 #else
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -74,6 +75,7 @@
 #include "ui/events/event.h"
 #if BUILDFLAG(IS_MAC)
 #include "base/strings/sys_string_conversions.h"
+#include "ui/display/screen.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
 #endif
 #include "ui/gfx/canvas.h"
@@ -169,14 +171,27 @@ NSWindow* WindowFor(views::Widget* widget) {
   return widget ? widget->GetNativeWindow().GetNativeNSWindow() : nil;
 }
 
+bool HasHeadlessScreen() {
+  const auto* screen = display::Screen::Get();
+  return screen && screen->IsHeadless();
+}
+
 // Front to back, only windows that belong to a Views widget.
 std::vector<views::Widget*> OrderedWidgets(bool visible_only) {
   std::vector<views::Widget*> widgets;
-  NSArray<NSWindow*>* windows = visible_only ? NSApp.orderedWindows : NSApp.windows;
+  // Headless windows are never ordered by AppKit.
+  const bool headless = HasHeadlessScreen();
+  NSArray<NSWindow*>* windows = visible_only && !headless
+                                   ? NSApp.orderedWindows : NSApp.windows;
   for (NSWindow* window in windows) {
     views::Widget* widget = WidgetFor(window);
     if (widget && (!visible_only || (widget->IsVisible() && window.isVisible)))
       widgets.push_back(widget);
+  }
+  if (visible_only && headless) {
+    std::stable_sort(widgets.begin(), widgets.end(), [](auto* a, auto* b) {
+      return WindowFor(a).windowNumber > WindowFor(b).windowNumber;
+    });
   }
   return widgets;
 }
@@ -700,6 +715,23 @@ class Driver final : public views::WidgetObserver {
     }
     base::DictValue result = Ok();
     result.Set("windows", std::move(list));
+#if BUILDFLAG(IS_MAC)
+    if (HasHeadlessScreen()) {
+      NSArray<NSDictionary*>* desktop = CFBridgingRelease(
+          CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly,
+                                     kCGNullWindowID));
+      if (desktop) {
+        int count = 0;
+        for (NSDictionary* window in desktop) {
+          NSNumber* owner = window[(__bridge NSString*)kCGWindowOwnerPID];
+          count += owner.intValue == getpid();
+        }
+        result.Set("desktop_windows", count);
+      }
+      result.Set("hidden", true);
+      result.Set("app_active", [NSApp isActive] == YES);
+    }
+#endif
     return result;
   }
 
