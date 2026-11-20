@@ -2538,11 +2538,16 @@ class RustRowView final : public views::View {
   Spec SidebarSnapshot() const{Spec spec;spec.sidebar_row=true;spec.favicon=spec_.favicon;spec.favorite=spec_.favorite;spec.audio_replaces_icon=AudioButton()&&!spec_.favorite;const auto presentation=state_->sidebar_presentation();if(presentation.valid){spec.title=std::u16string(presentation.title.begin(),presentation.title.end());spec.monogram=std::u16string(presentation.monogram.begin(),presentation.monogram.end());spec.monogram_color=presentation.color;spec.icon=presentation.folder?spec_.icon.get():nullptr;spec.tile=presentation.tile;spec.height=presentation.height;spec.active=state_->action_snapshot().on;}return spec;}
   sidebar::SidebarRowScene SidebarScene(gfx::RectF bounds, gfx::RectF clip) const {
     const auto palette = Palette(this);
+    SkColor inactive_ink = palette.ink_muted;
+#if BUILDFLAG(IS_WIN)
+    if (!spec_.favorite && !state_->sidebar_presentation().folder)
+      inactive_ink = Mix(palette.ink, inactive_ink, 75);
+#endif
     auto scene = state_->sidebar_scene(
         {bounds.x(), bounds.y(), bounds.width(), bounds.height()},
         {clip.x(), clip.y(), clip.width(), clip.height()},
         {float(Font(0).GetFontSize()), Tone(this,kInk), Tone(this,kCard),
-         HoverWash(this), Hairline(this), palette.focus, Tone(this,kMuted)},
+         HoverWash(this), Hairline(this), palette.focus, inactive_ink},
         has_close_button(), close_button_visible());
     for (auto pixel : spec_.favicon) scene.item.favicon.push_back(pixel);
     auto& item = scene.item;
@@ -12050,7 +12055,8 @@ SkColor WorkspaceShell::WorkspaceSidebarBackground(SkColor base, SkColor card,
     return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 170);
 #elif BUILDFLAG(IS_WIN)
   if (sidebar_translucent_)
-    return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f), 178);
+    return SkColorSetA(color_utils::AlphaBlend(accent, color, 0.10f),
+                       pinned_ ? 178 : 224);
 #endif
   return color;
 }
