@@ -82,6 +82,8 @@ class WidgetDelegate;
 }
 namespace gfx { class Image; }
 
+namespace network { class SimpleURLLoader; }
+
 namespace zitter::prototype {
 struct ShellState;
 struct BrowsingImportData;
@@ -484,6 +486,31 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ImportPasswordsCsv(gfx::NativeWindow owner,
                           base::OnceCallback<void(std::u16string)> done);
   void ShowWelcome();
+  void ConfigureBookmarkSync(std::string method);
+  void StartBookmarkSync(std::string method);
+  void RunBookmarkSync();
+  base::DictValue CaptureBookmarks() const;
+  bool PrepareBookmarkScopes(const base::DictValue& ledger, const base::DictValue& collections);
+  bool ApplyBookmarks(const base::DictValue& ledger, const base::DictValue& collections);
+  void FinishBookmarkSync(base::DictValue snapshot, std::optional<base::DictValue> ledger);
+  void SetSyncStatus(std::u16string message);
+  base::OneShotTimer dropbox_login_timeout_;
+  void ExchangeDropboxCode(std::string verifier, std::string code);
+  void DropboxToken(std::string form, bool connecting);
+  void DownloadDropboxBookmarks(base::DictValue snapshot, base::DictValue ledger);
+  using DropboxReply = base::OnceCallback<void(int, std::string, std::string)>;
+  void DropboxRequest(std::string endpoint, std::string argument, std::string body,
+                      std::string mime, DropboxReply reply);
+  std::unique_ptr<PrefService> sync_prefs_;
+  base::RepeatingTimer sync_timer_;
+  std::u16string sync_status_;
+  bool sync_busy_ = false;
+  std::string dropbox_access_;
+  base::Time dropbox_expires_;
+  base::Time sync_retry_after_;
+  std::unique_ptr<network::SimpleURLLoader> sync_loader_;
+  class SyncPicker;
+  std::unique_ptr<SyncPicker> sync_picker_;
   void ImportFromWelcome(prototype::BrowserImportOptions options,
                          base::OnceCallback<void(bool, std::u16string)> done);
   void PreviewBrowserImport(prototype::BrowserImportOptions options);
@@ -1273,6 +1300,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::map<uint64_t, base::Time> tab_left_at_;
   std::map<uint64_t, gfx::ImageSkia> tab_thumbnails_;
   uint64_t shown_tab_id_ = 0;
+  base::WeakPtrFactory<WorkspaceLab> dropbox_login_{this};
+  base::WeakPtrFactory<WorkspaceLab> sync_weak_{this};
   base::WeakPtrFactory<WorkspaceLab> weak_factory_{this};
 };
 

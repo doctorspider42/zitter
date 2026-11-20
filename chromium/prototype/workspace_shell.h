@@ -266,6 +266,9 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<void(bool, int)> timeline_settings;
     base::RepeatingCallback<bool()> clear_timeline;
     base::RepeatingCallback<bool(std::string)> run_shortcut;
+    base::RepeatingCallback<void(std::string)> bookmark_sync_action;
+    base::RepeatingCallback<std::u16string()> bookmark_sync_status;
+    base::RepeatingCallback<bool()> bookmark_sync_enabled;
     base::RepeatingCallback<BrowserPreferences()> read_preferences;
     base::RepeatingCallback<std::u16string()> download_directory;
     base::RepeatingClosure choose_download_directory;
@@ -632,6 +635,9 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_swipe_contains_scene_text(std::string_view text) const;
   views::Widget* general_widget() const { return general_widget_.get(); }
   views::Widget* about_widget_for_testing() const { return about_dialog_.get(); }
+  void RefreshBookmarkSync();
+  bool SuspendWelcomeForLogin();
+  void ResumeWelcomeAfterLogin();
   void SetPreferencesStatus(std::u16string text, bool error = false);
   // Rust forms own outcome copy/tone; `native` is the Views fallback text.
   // outcome is sidebar::PreferenceOutcome; general updates only the settings status.
@@ -739,6 +745,7 @@ class WorkspaceShell final : public ui::EventHandler,
       ImportBrowser browser;
       SkBitmap icon;
     };
+    base::RepeatingCallback<void(views::View*)> build_bookmark_sync;
     std::vector<Source> sources;
     std::u16string space_name;
     SkColor space_color = 0;
@@ -1463,6 +1470,11 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> assistant_add_model_ = nullptr;
   std::vector<std::string> assistant_add_providers_;
   std::string assistant_preferences_snapshot_;
+  void BuildBookmarkSync(views::View* parent, bool welcome);
+  struct SyncControls {
+    views::ViewTracker status, folder, dropbox, disable;
+  };
+  std::array<SyncControls, 2> sync_controls_;
   views::ViewTracker welcome_assistant_backends_;
   std::string welcome_assistant_snapshot_;
   std::string welcome_assistant_provider_;

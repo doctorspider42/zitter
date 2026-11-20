@@ -37,6 +37,8 @@ class LabContentClient final : public content::ContentClient {
 
 class NavigationReputation;
 
+void AddDropboxLoginThrottle(content::NavigationThrottleRegistry& registry);
+
 // Implemented by each platform's Content embedder.
 void LaunchExternalProtocol(const GURL& url);
 

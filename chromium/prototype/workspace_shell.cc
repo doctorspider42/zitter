@@ -10523,6 +10523,18 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     copy(labels,text(spec.title),kInk,0,gfx::Font::Weight::MEDIUM,true);copy(labels,text(spec.detail),kMuted,-1,gfx::Font::Weight::NORMAL,true);SetSidebarPanelLayout(row,false,gfx::Insets(16),20,labels,true);
     preference_sections_[spec.category].rows.push_back({row,base::i18n::ToLower(text(catalogue.categories[spec.category])+u" "+text(spec.title)+u" "+text(spec.detail))});return row;
   };
+  if (callbacks_.bookmark_sync_action) {
+    auto& section = preference_sections_[5];  // Passwords and profiles.
+    auto* card = section.view->AddChildView(std::make_unique<PreferenceSurface>(
+        false, base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome, weak),
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          return shell && shell->PreferenceChromeVisible();
+        }, weak)));
+    SetSidebarPanelLayout(card, true, gfx::Insets(16), 10);
+    copy(card, T(u"Synchronizacja zakładek"), kInk, 1, gfx::Font::Weight::SEMIBOLD, true);
+    BuildBookmarkSync(card, false);
+    section.rows.push_back({card, base::i18n::ToLower(T(u"Synchronizacja zakładek") + u" Dropbox " + T(u"Folder"))});
+  }
   constexpr size_t kSiteSection = 3;
   auto& sites = preference_sections_[kSiteSection];
   constexpr auto kGroupTitles = std::to_array({
@@ -11490,6 +11502,56 @@ void ShowAssistantDialog(views::Widget* owner, std::unique_ptr<ui::DialogModel> 
   prompt->Show();
 }
 }  // namespace
+
+void WorkspaceShell::BuildBookmarkSync(views::View* parent, bool welcome) {
+  auto& controls = sync_controls_[welcome ? 1 : 0];
+  views::View* status = welcome || !preferences_chrome_
+      ? static_cast<views::View*>(parent->AddChildView(std::make_unique<SceneParagraph>(u"", 0, false, kMuted)))
+      : AddPreferenceCopy(parent, u"", kMuted, 0, static_cast<int>(gfx::Font::Weight::NORMAL), true);
+  controls.status.SetView(status);
+  const auto action = [&](views::ViewTracker& tracker, const char* method,
+                          std::u16string detail, std::u16string label) {
+    auto* row = parent->AddChildView(std::make_unique<views::View>());
+    tracker.SetView(row);
+    auto* explanation = row->AddChildView(std::make_unique<SceneParagraph>(
+        std::move(detail), 0, false, kMuted));
+    auto* button = PreferenceAction(row, base::BindRepeating(callbacks_.bookmark_sync_action,
+                                                             std::string(method)), std::move(label));
+    SetSidebarPanelLayout(row, false, gfx::Insets::VH(3, 0), 12, explanation, true);
+    return button;
+  };
+  auto* folder = action(controls.folder, "folder", T(u"Folder współdzielony przez Twoje urządzenia"),
+                        T(u"Wybierz folder…"));
+  auto* dropbox = action(controls.dropbox, "dropbox", T(u"Folder aplikacji na Twoim koncie Dropbox"),
+                         T(u"Połącz z Dropbox…"));
+  auto provider_size = folder->GetPreferredSize();
+  provider_size.SetToMax(dropbox->GetPreferredSize());
+  folder->SetPreferredSize(provider_size);
+  dropbox->SetPreferredSize(provider_size);
+  action(controls.disable, "off", T(u"Zachowaj zakładki na tym urządzeniu"),
+         T(u"Wyłącz synchronizację"));
+  RefreshBookmarkSync();
+}
+void WorkspaceShell::RefreshBookmarkSync() {
+  if (!callbacks_.bookmark_sync_status) return;
+  for (auto& controls : sync_controls_) {
+    if (!controls.status.view()) continue;
+    SetPanelText(controls.status.view(), callbacks_.bookmark_sync_status.Run());
+    const bool enabled = callbacks_.bookmark_sync_enabled.Run();
+    controls.folder.view()->SetVisible(!enabled);
+    controls.dropbox.view()->SetVisible(!enabled);
+    controls.disable.view()->SetVisible(enabled);
+  }
+}
+bool WorkspaceShell::SuspendWelcomeForLogin() {
+  if (!welcome_widget_ || !welcome_widget_->IsVisible()) return false;
+  welcome_widget_->Hide();
+  return true;
+}
+
+void WorkspaceShell::ResumeWelcomeAfterLogin() {
+  if (welcome_widget_) welcome_widget_->Show();
+}
 
 void WorkspaceShell::ShowAssistantKeyDialog(views::Widget* owner){
   if (!owner) owner = general_widget_.get();
@@ -15858,7 +15920,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kEnd);
     ket_ = Text(brand, u"|z⟩", DesignFont(1, 34, 400, true), true);
     eyebrow_ = Text(brand, base::i18n::ToUpper(T(u"Pierwsze kroki")), DesignFont(2, 11, 600, false), false);
-    const std::array<std::u16string, 5> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Asystent AI"), T(u"Import danych"), T(u"Pierwsza przestrzeń")};
+    const std::array<std::u16string, 6> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Asystent AI"), T(u"Import danych"), T(u"Synchronizacja zakładek"), T(u"Pierwsza przestrzeń")};
     for (size_t i = 0; i < labels.size(); ++i) {
       steps_[i] = nav_->AddChildView(std::make_unique<WelcomeStep>(
           base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), i), labels[i]));
@@ -15903,7 +15965,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   void ShowStep(size_t step) {
     if (import_busy_) return;
 #if BUILDFLAG(IS_WIN)
-    if (step == 4 && !imported_sources_.empty()) step = 3;
+    if (step == 5 && !imported_sources_.empty()) step = 4;
 #endif
     const auto import_scroll_offset = import_scroll_
         ? import_scroll_->GetVisibleRect().origin() : gfx::Point();
@@ -16040,6 +16102,12 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         break;
       }
       case 4: {
+        Headline(page_, T(u"Synchronizacja zakładek"), 40);
+        if (setup_.build_bookmark_sync) setup_.build_bookmark_sync.Run(page_);
+        Body(page_, T(u"Możesz pominąć ten krok i wrócić do niego w ustawieniach."), 12, true);
+        break;
+      }
+      case 5: {
         Headline(page_, T(u"Twoja pierwsza przestrzeń"), 48);
         Text(page_, T(u"Nazwa"), DesignFont(2, 12, 500, false), false);
         name_field_ = page_->AddChildView(std::make_unique<views::Textfield>());
@@ -16076,9 +16144,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 #else
     const bool has_imports = false;
 #endif
-    steps_[4]->SetVisible(!has_imports);
+    steps_[5]->SetVisible(!has_imports);
     auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1),
-        base::NumberToString16(has_imports ? 4 : 5)}), DesignFont(2, 12, 500, false), false);
+        base::NumberToString16(has_imports ? 5 : 6)}), DesignFont(2, 12, 500, false), false);
     row->SetFlexForView(count, 1);
     if (step > 0)
       footer_->AddChildView(std::make_unique<WelcomeButton>(
@@ -16091,7 +16159,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         false;
 #endif
     const std::u16string next = step == 0 ? T(u"Zaczynamy")
-        : step == 4 ? T(u"Otwórz Zitter")
+        : (step == 5 || (step == 4 && has_imports)) ? T(u"Otwórz Zitter")
         : defer_default_browser ? T(u"Nie teraz") : T(u"Kontynuuj");
     footer_->AddChildView(std::make_unique<WelcomeButton>(
         base::BindRepeating(&WelcomeView::Next, base::Unretained(this)), next,
@@ -16283,9 +16351,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 
   void Next() {
     if (import_busy_) return;
-    if (step_ == 4
+    if (step_ == 5
 #if BUILDFLAG(IS_WIN)
-        || (step_ == 3 && !imported_sources_.empty())
+        || (step_ == 4 && !imported_sources_.empty())
 #endif
     ) {
       if (GetWidget()) GetWidget()->Close();
@@ -16319,7 +16387,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   raw_ptr<views::Label> ket_ = nullptr;
   raw_ptr<views::Label> eyebrow_ = nullptr;
   raw_ptr<views::Textfield> name_field_ = nullptr;
-  std::array<raw_ptr<WelcomeStep>, 5> steps_ = {};
+  std::array<raw_ptr<WelcomeStep>, 6> steps_ = {};
   bool shown_ = false;
   std::vector<raw_ptr<WelcomeSwatch>> swatches_;
   std::vector<raw_ptr<WelcomeSwitch>> switches_;
@@ -16341,6 +16409,10 @@ void WorkspaceShell::ImportFromWelcomeForTesting(ImportBrowser browser) {
 
 void WorkspaceShell::ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(WelcomeResult)> done) {
   if (!widget_ || welcome_widget_) return;
+  if (callbacks_.bookmark_sync_action)
+    setup.build_bookmark_sync = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* parent) {
+      if (shell) shell->BuildBookmarkSync(parent, true);
+    }, weak_factory_.GetWeakPtr());
   setup.build_assistant_backends = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,
                                                          views::View* cards, std::string provider) {
     if (!shell) return;

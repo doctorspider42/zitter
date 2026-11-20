@@ -1,6 +1,13 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
 #include "workspace_lab.h"
+#include "bookmark_sync.h"
+#include "lab_clients.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
+#include "zitter_content/bookmark_sync_buildflags.h"
+#include "crypto/hash.h"
+#include "base/base64url.h"
+#include "base/rand_util.h"
 
 #include "ui_automation.h"
 
@@ -142,6 +149,8 @@
 #include "content/public/browser/web_contents_user_data.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/base/url_util.h"
+#include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/navigation_throttle_registry.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/permission_request_description.h"
 #include "content/public/browser/permission_result.h"
@@ -1888,6 +1897,26 @@ class WorkspaceLab::ExtensionShortcutTarget final : public ui::AcceleratorTarget
   const raw_ref<WorkspaceLab> workspace_;
 };
 
+class WorkspaceLab::SyncPicker final : public ui::SelectFileDialog::Listener {
+ public:
+  explicit SyncPicker(WorkspaceLab* lab) : lab_(lab) {}
+  ~SyncPicker() override { if (dialog_) dialog_->ListenerDestroyed(); }
+  void Show(gfx::NativeWindow owner) {
+    if (!dialog_) dialog_ = ui::SelectFileDialog::Create(this, nullptr);
+    if (!dialog_->IsRunning(owner))
+      dialog_->SelectFile(ui::SelectFileDialog::SELECT_FOLDER, prototype::T(u"Wybierz folder…"),
+                          {}, nullptr, 0, {}, owner);
+  }
+  void FileSelected(const ui::SelectedFileInfo& file, int) override {
+    lab_->sync_prefs_->SetFilePath("folder", file.path());
+    lab_->StartBookmarkSync("folder");
+  }
+  void FileSelectionCanceled() override {}
+ private:
+  const raw_ptr<WorkspaceLab> lab_;
+  scoped_refptr<ui::SelectFileDialog> dialog_;
+};
+
 WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                            const base::FilePath& temporary_root,
                            base::FilePath session_path,
@@ -1955,6 +1984,33 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   prototype::ApplyUiLanguage("en-US");
 #endif
   prototype::WorkspaceShell::Callbacks callbacks;
+  if (!private_owner_ && !session_path_.empty() && !smoke_) {
+    auto registry = base::MakeRefCounted<PrefRegistrySimple>();
+    for (const char* key : {"method", "device", "credential"})
+      registry->RegisterStringPref(key, {});
+    registry->RegisterFilePathPref("folder", {});
+    registry->RegisterDictionaryPref("ledger");
+    registry->RegisterDictionaryPref("snapshot");
+    PrefServiceFactory factory;
+    factory.set_user_prefs(base::MakeRefCounted<JsonPrefStore>(
+        session_path_.DirName().AppendASCII("BookmarkSync.json")));
+    factory.set_async(true);
+    sync_prefs_ = factory.Create(registry);
+    sync_prefs_->AddPrefInitObserver(base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool ok) {
+      if (!ok || !lab || !lab->ready_for_external_urls_ || lab->sync_prefs_->GetString("method").empty()) return;
+      lab->sync_timer_.Start(FROM_HERE, base::Seconds(30), lab.get(), &WorkspaceLab::RunBookmarkSync);
+      lab->RunBookmarkSync();
+    }, weak_factory_.GetWeakPtr()));
+    callbacks.bookmark_sync_action = base::BindRepeating(
+        &WorkspaceLab::ConfigureBookmarkSync, weak_factory_.GetWeakPtr());
+    callbacks.bookmark_sync_status = base::BindRepeating([](WorkspaceLab* lab) {
+      if (!lab->sync_status_.empty()) return lab->sync_status_;
+      return prototype::T(u"Synchronizuj ulubione i przypięte karty między urządzeniami.");
+    }, base::Unretained(this));
+    callbacks.bookmark_sync_enabled = base::BindRepeating([](WorkspaceLab* lab) {
+      return !lab->sync_prefs_->GetString("method").empty();
+    }, base::Unretained(this));
+  }
 #if BUILDFLAG(IS_WIN)
   callbacks.locale_preferences = ui_preferences_.get();
 #endif
@@ -3386,6 +3442,8 @@ void WorkspaceLab::ImportPasswordsCsv(
   password_csv_import_->Start(owner);
 }
 
+#include "workspace_bookmark_sync.inc"
+
 void WorkspaceLab::ShowWelcome() {
 #if BUILDFLAG(IS_MAC)
   session_writer_->PostTaskAndReplyWithResult(
@@ -3883,6 +3941,9 @@ WorkspaceLab::~WorkspaceLab() {
 #endif
   StopFind();
   Observe(nullptr);
+  sync_weak_.InvalidateWeakPtrs();
+  sync_timer_.Stop();
+  sync_loader_.reset();
   weak_factory_.InvalidateWeakPtrs();
   FinishWorkspaceFaviconRefresh();
   if (extension_picker_)
@@ -4271,6 +4332,10 @@ void WorkspaceLab::StartWorkspace() {
         }, weak_factory_.GetWeakPtr()));
   }
   ready_for_external_urls_ = true;
+  if (sync_prefs_ && !sync_prefs_->GetString("method").empty()) {
+    sync_timer_.Start(FROM_HERE, base::Seconds(30), this, &WorkspaceLab::RunBookmarkSync);
+    RunBookmarkSync();
+  }
   for (auto& url : std::exchange(startup_external_urls_, {}))
     OpenExternalUrl(std::move(url));
   if (restore_extensions) {

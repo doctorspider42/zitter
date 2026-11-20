@@ -74,19 +74,20 @@ bool CheckCookieStore(const base::FilePath& network_path,
   if (!scratch.IsValid())
     return true;
 
-  // SQLite may create WAL bookkeeping even for a read-only connection. Open
-  // a disposable copy so no database or sidecar in the profile can change.
-  sql::Database database(sql::DatabaseOptions().set_read_only(true), "Cookie");
+  // Allow SQLite to recover a hot rollback journal on the disposable copy.
+  sql::Database database(sql::DatabaseOptions(), "Cookie");
   if (!database.Open(scratch.GetPath().AppendASCII("Cookies")))
     return false;
   sql::Statement schema(database.GetReadonlyStatement(
       "SELECT value FROM meta WHERE key = 'version'"));
-  if (!schema.Step() || schema.ColumnInt(0) != kVerifiedCookieSchema ||
+  if (!schema.is_valid() || !schema.Step() || schema.ColumnInt(0) != kVerifiedCookieSchema ||
       schema.Step() || !schema.Succeeded()) {
     return false;
   }
   sql::Statement rows(database.GetReadonlyStatement(
       "SELECT host_key, value, encrypted_value FROM cookies"));
+  if (!rows.is_valid())
+    return false;
   while (rows.Step()) {
     const auto ciphertext = rows.ColumnBlob(2);
     if (ciphertext.empty() || !rows.ColumnStringView(1).empty())
@@ -116,10 +117,12 @@ bool CheckLoginStore(const base::FilePath& profile_path,
     return false;
   if (!scratch.IsValid())
     return true;
-  sql::Database database(sql::DatabaseOptions().set_read_only(true), "Passwords");
+  sql::Database database(sql::DatabaseOptions(), "Passwords");
   if (!database.Open(scratch.GetPath().AppendASCII("Login Data")))
     return false;
   sql::Statement rows(database.GetReadonlyStatement("SELECT password_value FROM logins"));
+  if (!rows.is_valid())
+    return false;
   while (rows.Step()) {
     const auto ciphertext = rows.ColumnBlob(0);
     if (ciphertext.empty())

@@ -1330,6 +1330,7 @@ LabBrowserClientBase::CreateURLLoaderThrottles(
 
 void LabBrowserClientBase::CreateThrottlesForNavigation(
     content::NavigationThrottleRegistry& registry) {
+  AddDropboxLoginThrottle(registry);
   WorkspaceDevTools::AddNavigationThrottle(registry);
   AddHttpsOnlyThrottle(registry);
   prototype::LinkNavigation::CreateThrottle(registry);

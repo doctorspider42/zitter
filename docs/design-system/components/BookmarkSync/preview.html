@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Bookmark sync · Zitter</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#ebe8e1}canvas{display:block;width:100%;max-width:1100px;margin:auto}</style>
+<canvas width="1100" height="460" aria-label="Bookmark sync. First-run choice and connected settings in light and dark themes."></canvas>
+<script>
+const ctx=document.querySelector('canvas').getContext('2d');
+function panel(x,dark){
+ const ink=dark?'#f4eff9':'#26242a',muted=dark?'#c2bbcc':'#615c64',line=dark?'#443e50':'#dcd7cd',accent=dark?'#dec7ff':'#634780';
+ function box(a,b,w,h,r,color){ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(x+a,b,w,h,r);ctx.fill()}
+ function label(a,b,s,size,color,serif=false){ctx.fillStyle=color;ctx.font=size+'px '+(serif?'Georgia':'system-ui');ctx.fillText(s,x+a,b)}
+ box(0,0,550,460,0,dark?'#14121b':'#f5f3ef');
+ label(38,55,dark?'Settings':'First steps',14,muted);label(38,116,'Bookmark sync',44,ink,true);
+ label(38,156,dark?'Your bookmarks sync through Dropbox.':'Keep favorites and pinned items on your devices.',16,muted);
+ const rows=dark?[['Dropbox','Connected'],['Turn off sync','Keep local bookmarks']]:[['Folder','Choose a synced folder'],['Dropbox','Connect your account']];
+ rows.forEach(([title,detail],i)=>{const top=190+i*77;box(38,top,474,69,11,dark?'#1e1b28':'#fff');label(55,top+29,title,17,ink);label(55,top+52,detail,14,muted);label(480,top+40,dark&&!i?'✓':'›',20,accent)});
+ if(!dark){box(38,378,474,1,0,line);label(38,417,'Set up later',15,muted)}
+}
+panel(0,false);panel(550,true);
+</script></html>
