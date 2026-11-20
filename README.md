@@ -111,6 +111,18 @@ The [`zitter-dev`](tools/claude-plugins/zitter-dev/README.md) mod adds Content b
 </details>
 
 <details>
+<summary><strong>Developing with Codex</strong></summary>
+
+[Zitter Dev for Codex](tools/codex-plugins/zitter-dev/README.md) adds a live build panel, a local job queue and shell guards for Content development.
+
+```sh
+codex plugin marketplace add .
+codex plugin add zitter-dev@zitter-tools
+```
+
+</details>
+
+<details>
 <summary><strong>Explore the core without building Chromium</strong></summary>
 
 The workspace model and controller build independently with CMake and a C++20 compiler. This runs their contract tests; it does not build the browser.
@@ -126,7 +138,7 @@ python3 tools/check_boundaries.py
 
 ## Under the hood
 
-**Chromium's Content API** handles the web. **Rust** owns Zitter's UI models, layout and interaction logic. **C++ and Views adapters** connect them to browser services, native windows, input and accessibility. The default rendering path uses Chromium's compositor; an optional Metal backend is available on macOS.
+**Chromium's Content API** handles the web. **Rust** owns Zitter's UI models, layout and interaction logic. **C++ and Views adapters** connect them to browser services, native windows, input and accessibility. Chromium's compositor draws the UI.
 
 The [product/browser boundary](docs/product-browser-boundary.md) describes the
 standalone workspace, command-ranking and pin-tree logic, shared UI data models,

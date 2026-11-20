@@ -142,7 +142,7 @@ mod ffi {
         ready: bool, busy: bool, valid: bool, tab: usize, has_tab: bool,
         // members: the Split View group in pane order (tab indices).
         split: bool, members: Vec<usize>,
-        vertical: bool, tab_count: usize, http: bool, pinned: bool, host: String, workspace: String, has_rule: bool,
+        vertical: bool, tab_count: usize, pinned: bool, host: String, has_rule: bool,
     }
     struct TabMenuEntry { command: u32, label: String }
     struct LinkRoute { id: String, label: String }
@@ -1713,7 +1713,7 @@ fn tab_context_menu(s:&ffi::TabMenuState)->Vec<ffi::TabMenuEntry> {
         // With two panes, taking one out is the same as separating them.
         if s.members.len()>2{add(6,t("Wyjmij kartę ze splitu"));}
     } else {add(5,t("Otwórz obok w Split View"));}
-    if s.http{add(0,"");add(23,&tf("Otwieraj {} zawsze w przestrzeni „{}”",&[&s.host,&s.workspace]));if s.has_rule{add(24,&tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]));}}
+    if s.has_rule{add(0,"");add(24,&tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]));}
     if s.has_tab{add(0,"");add(10,t("Zamknij kartę"));}
     if split{add(12,t("Zamknij wszystkie karty w splicie"));}
     entries
@@ -1724,15 +1724,12 @@ const LINK_PEEK:i32=20;const LINK_NEW_TAB:i32=21;const LINK_SPLIT:i32=22;const L
 fn link_route(command:i32,s:&ffi::LinkMenuState)->Option<&ffi::LinkRoute>{if command<LINK_ROUTE_BASE{return None;}s.routes.get((command-LINK_ROUTE_BASE) as usize)}
 fn link_context_menu(s:&ffi::LinkMenuState)->Vec<ffi::LinkMenuEntry>{
     let mut entries=Vec::new();let mut add=|command,label:String,kind|entries.push(ffi::LinkMenuEntry{command,label,kind});
-    // Design: Page context menu. The long rule labels sit in the routes
-    // submenu, so the menu keeps its width whatever the space is called.
     add(LINK_NEW_TAB,t("Otwórz w nowej karcie").into(),0);add(LINK_PEEK,t("Otwórz w Peek").into(),0);add(LINK_SPLIT,t("Otwórz obok w Split View").into(),0);
-    add(LINK_ROUTES,tf("Otwieraj {} w…",&[&s.host]),2);
-    for (index,route) in s.routes.iter().enumerate(){add(LINK_ROUTE_BASE+index as i32,route.label.clone(),3);}
-    // A route label is "space · profile"; the rule names the space alone.
-    let source=s.routes.iter().find(|r|r.id==s.source).map_or(s.source.as_str(),|r|r.label.rsplit_once(" · ").map_or(r.label.as_str(),|(name,_)|name));
-    add(0,String::new(),6);add(LINK_RULE_HERE,tf("Zawsze otwieraj {} w {}",&[&s.host,source]),5);
-    if s.has_rule{add(LINK_REMOVE_RULE,tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]),5);}entries
+    if s.has_rule{
+        add(0,String::new(),1);
+        add(LINK_REMOVE_RULE,tf("Wyłącz automatyczny wybór przestrzeni dla {}",&[&s.host]),0);
+    }
+    entries
 }
 fn link_menu_enabled(command:i32,s:&ffi::LinkMenuState)->bool{
     if !s.ready{return false;}
@@ -1923,13 +1920,17 @@ fn workspace_preview_layout(width:i32,height:i32,offset:i32,rows:&[ffi::PreviewR
     for row in rows {
         if row.kind==3{y=y.saturating_add(row.height.max(0));continue;}
         let x=folder_indent(row.depth).min(width);let w=width-x;
-        let h=match row.kind{1=>row.height.max(0),2=>46,_=>34};
-        emit(row.index,ffi::Rect{x,y,width:w,height:h});
+        let h=match row.kind{1|4=>row.height.max(0),2=>46,_=>34};
+        if row.kind == 4 {
+            emit(row.index,ffi::Rect{x:12,y:y.saturating_add(8),width:width.saturating_sub(24),height:2});
+        } else {
+            emit(row.index,ffi::Rect{x,y,width:w,height:h});
+        }
         if row.kind==2 {
             let g=split_layout(w,h,row.members.max(2));
             for (i,r) in g.children.into_iter().enumerate(){emit(row.index.saturating_add(i+1),ffi::Rect{x:x.saturating_add(r.x),y:y.saturating_add(r.y),width:r.width,height:r.height});}
         }
-        y=y.saturating_add(h).saturating_add(2);
+        y=y.saturating_add(h).saturating_add(if row.kind == 4 { 0 } else { 4 });
     }
     out
 }
@@ -3475,7 +3476,9 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
                 }
             } else if i.glyph==12 || i.glyph==13 {
                 let segments: &[(f32, f32, f32, f32)] = if i.glyph == 12 {
-                    &[(5.0,-5.0,5.0,3.0),(5.0,3.0,-5.0,3.0),(-5.0,3.0,-1.0,-1.0),(-5.0,3.0,-1.0,7.0)]
+                    &[(-5.5,-0.5,0.0,-5.0),(0.0,-5.0,5.5,-0.5),
+                      (-4.0,-1.5,-4.0,5.0),(-4.0,5.0,4.0,5.0),(4.0,5.0,4.0,-1.5),
+                      (0.0,2.0,0.0,5.0)]
                 } else {
                     &[(-5.0,0.0,-1.0,4.0),(-1.0,4.0,6.0,-4.0)]
                 };
@@ -4101,7 +4104,7 @@ mod tests {
         assert_ne!((first[1].x,first[1].y),(second[1].x,second[1].y));
         assert!(first.iter().all(|p|p.x>=0.0&&p.y>=0.0&&p.x+p.width<=32.0&&p.y+p.height<=32.0));
     }
-    fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,members:vec![3,7],vertical:false,tab_count:3,http:true,pinned:false,host:"example.com".into(),workspace:"Work".into(),has_rule:true}}
+    fn menu_state()->ffi::TabMenuState{ffi::TabMenuState{ready:true,busy:false,valid:true,tab:7,has_tab:true,split:true,members:vec![3,7],vertical:false,tab_count:3,pinned:false,host:"example.com".into(),has_rule:true}}
     fn select_fixture()->Box<SelectState> {new_select_state(vec![ffi::SelectOption{key:"Arc".into(),label:"Arc".into(),search:"arc".into()},ffi::SelectOption{key:"Google Chrome".into(),label:"Google Chrome".into(),search:"google chrome".into()},ffi::SelectOption{key:"Microsoft Edge".into(),label:"Microsoft Edge".into(),search:"microsoft edge".into()},ffi::SelectOption{key:"Brave".into(),label:"Brave".into(),search:"brave".into()}])}
     fn keyed_options(values:&[(&str,&str)])->Vec<ffi::SelectOption>{values.iter().map(|(key,label)|ffi::SelectOption{key:(*key).into(),label:(*label).into(),search:label.to_lowercase()}).collect()}
     #[test] fn select_none_cancels_old_popup_and_allows_first_item_prefix() {
@@ -5458,11 +5461,11 @@ mod tests {
         assert!(sidebar_drop_accepts(ffi::Rect{x:i32::MAX-20,y:0,width:100,height:20},i32::MAX,0,true));assert!(!sidebar_drop_accepts(ffi::Rect{x:i32::MAX-20,y:0,width:100,height:20},i32::MAX-21,0,true));
     }
     fn link_state()->ffi::LinkMenuState{ffi::LinkMenuState{ready:true,host:"example.com".into(),source:"work".into(),has_rule:true,rule_workspace:"home".into(),routes:vec![ffi::LinkRoute{id:"work".into(),label:"Praca · Główny".into()},ffi::LinkRoute{id:"home".into(),label:"Dom · Prywatny".into()}]}}
-    #[test] fn link_menu_preserves_order_labels_route_submenu_and_checks() {
-        let s=link_state();let menu=link_context_menu(&s);assert_eq!(menu.iter().map(|e|(e.command,e.kind)).collect::<Vec<_>>(),vec![(21,0),(20,0),(22,0),(25,2),(1000,3),(1001,3),(0,6),(23,5),(24,5)]);assert_eq!(menu[3].label,"Otwieraj example.com w…");assert_eq!(menu[5].label,"Dom · Prywatny");assert_eq!(menu[1].label,"Otwórz w Peek");assert_eq!(menu[7].label,"Zawsze otwieraj example.com w Praca");
+    #[test] fn link_menu_hides_rule_creation_and_allows_removing_existing_rules() {
+        let s=link_state();let menu=link_context_menu(&s);assert_eq!(menu.iter().map(|e|(e.command,e.kind)).collect::<Vec<_>>(),vec![(21,0),(20,0),(22,0),(0,1),(24,0)]);assert_eq!(menu[1].label,"Otwórz w Peek");assert_eq!(menu[4].label,"Wyłącz automatyczny wybór przestrzeni dla example.com");
         assert!(!link_menu_checked(1000,&s)&&link_menu_checked(1001,&s)&&!link_menu_checked(1002,&s)&&!link_menu_checked(24,&s));let mut none=link_state();none.has_rule=false;assert!(!link_menu_checked(1001,&none));
         assert!(link_menu_enabled(24,&s)&&!link_menu_enabled(24,&none)&&link_menu_enabled(23,&none)&&link_menu_enabled(1001,&s)&&!link_menu_enabled(1002,&s)&&!link_menu_enabled(999,&s)&&!link_menu_enabled(0,&s));
-        let mut empty=link_state();empty.routes.clear();assert_eq!(link_context_menu(&empty).iter().filter(|e|e.kind==3).count(),0);
+        assert_eq!(link_context_menu(&none).len(),3);
     }
     #[test] fn link_menu_actions_capture_source_route_and_revalidate_readiness() {
         use ffi::LinkMenuCommand as C;let s=link_state();
@@ -5548,21 +5551,18 @@ mod tests {
         assert!(command_catalogue(&c,"nonexistent").is_empty());assert_eq!(command_fold("ĄĆĘŁŃÓŚŹŻ Żółć"),"acelnoszz zolc");
     }
     #[test] fn tab_menu_preserves_order_labels_and_orientation() {
-        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,0,7,8,9,11,0,23,24,0,10,12]);assert_eq!(entries[3].label,"Przesuń w lewo");assert_eq!(entries[6].label,"Rozdziel");assert_eq!(entries[12].label,"Zamknij wszystkie karty w splicie");
+        let mut s=menu_state();let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,0,7,8,9,11,0,24,0,10,12]);assert_eq!(entries[3].label,"Przesuń w lewo");assert_eq!(entries[6].label,"Rozdziel");assert_eq!(entries[11].label,"Zamknij wszystkie karty w splicie");
         s.vertical=true;let entries=tab_context_menu(&s);assert_eq!(entries[3].label,"Przesuń w górę");assert_eq!(entries[5].label,"Podział poziomy (obok siebie)");
         // Three or more panes can also lose a single member.
-        s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,0,7,8,9,11,6,0,23,24,0,10,12]);
-        s.has_tab=false;s.http=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,5]);
+        s.members=vec![3,7,9];let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,0,7,8,9,11,6,0,24,0,10,12]);
+        s.has_tab=false;s.has_rule=false;let entries=tab_context_menu(&s);assert_eq!(entries.iter().map(|e|e.command).collect::<Vec<_>>(),vec![36,20,5]);
     }
     #[test] fn pinned_tab_menu_offers_edit_reset_and_unpin_without_destructive_routing() {
         let mut s=menu_state();s.pinned=true;s.split=false;s.has_tab=false;s.has_rule=false;
         let menu=tab_context_menu(&s);
         for id in 26..=28{assert!(menu.iter().any(|e|e.command==id));assert!(tab_menu_enabled(id,&s));}
-        assert!(!menu.iter().any(|e|e.command==24));
-        assert!(menu.iter().any(|e|e.command==23&&e.label.contains("example.com")&&e.label.contains("Work")));
+        assert!(!menu.iter().any(|e|matches!(e.command,23|24)));
         s.pinned=false;for id in 26..=28{assert!(!tab_menu_enabled(id,&s));}
-        let mut links=link_state();links.has_rule=false;assert!(!link_context_menu(&links).iter().any(|e|e.command==24));
-        assert!(link_context_menu(&links).iter().any(|e|e.command==23&&e.label.contains("Praca")));
     }
     #[test] fn tab_menu_moves_middle_panes_both_ways_and_separates_groups() {
         use ffi::SidebarAction as A;let mut s=menu_state();s.members=vec![3,7,9];
@@ -5605,9 +5605,9 @@ mod tests {
         let rows=vec![ffi::PreviewRow{index:0,kind:1,depth:0,height:13,members:0},ffi::PreviewRow{index:1,kind:0,depth:2,height:34,members:0},ffi::PreviewRow{index:0,kind:3,depth:0,height:8,members:0},ffi::PreviewRow{index:2,kind:0,depth:0,height:34,members:0}];
         let p=workspace_preview_layout(201,60,20,&rows);
         assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![1,2]);
-        assert_eq!((p[0].bounds.x,p[0].bounds.y,p[0].bounds.width),(24,-5,177));
-        assert_eq!((p[0].clip.x,p[0].clip.y,p[0].clip.height),(24,0,29));
-        assert_eq!((p[1].bounds.y,p[1].clip.height),(39,21));
+        assert_eq!((p[0].bounds.x,p[0].bounds.y,p[0].bounds.width),(24,-3,177));
+        assert_eq!((p[0].clip.x,p[0].clip.y,p[0].clip.height),(24,0,31));
+        assert_eq!((p[1].bounds.y,p[1].clip.height),(43,17));
     }
     #[test] fn workspace_preview_pairs_share_live_split_geometry_and_outer_clipping() {
         let rows=vec![ffi::PreviewRow{index:5,kind:2,depth:1,height:0,members:0}];let p=workspace_preview_layout(201,40,3,&rows);
@@ -5618,9 +5618,19 @@ mod tests {
         let rows=vec![ffi::PreviewRow{index:5,kind:2,depth:0,height:0,members:3}];
         assert_eq!(workspace_preview_layout(201,60,0,&rows).iter().map(|p|p.index).collect::<Vec<_>>(),vec![5,6,7,8]);
     }
+    #[test] fn workspace_preview_divider_matches_sidebar_spacing() {
+        let rows = [
+            ffi::PreviewRow { index: 0, kind: 3, depth: 0, height: 49, members: 0 },
+            ffi::PreviewRow { index: 1, kind: 4, depth: 0, height: 17, members: 0 },
+            ffi::PreviewRow { index: 2, kind: 0, depth: 0, height: 34, members: 0 },
+        ];
+        let preview = workspace_preview_layout(240, 120, 0, &rows);
+        assert_eq!((preview[0].bounds.x, preview[0].bounds.y, preview[0].bounds.width), (12, 57, 216));
+        assert_eq!(preview[1].bounds.y, 66);
+    }
     #[test] fn workspace_preview_large_source_scroll_culls_offscreen_rows() {
         let rows:Vec<_>=(0..1000).map(|index|ffi::PreviewRow{index,kind:0,depth:0,height:0,members:0}).collect();
-        let p=workspace_preview_layout(240,72,36*800,&rows);
+        let p=workspace_preview_layout(240,72,38*800,&rows);
         assert_eq!(p.iter().map(|p|p.index).collect::<Vec<_>>(),vec![800,801]);
         assert!(p.iter().all(|p|p.clip.y>=0&&p.clip.y+p.clip.height<=72));
     }

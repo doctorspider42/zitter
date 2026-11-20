@@ -62,8 +62,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/escape.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chromium/prototype/i18n.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "content/public/browser/frame_tree_node_id.h"
+#include "content/public/browser/navigation_handle.h"
 #include "services/network/public/cpp/web_sandbox_flags.h"
 #include "chromium/prototype/link_navigation.h"
 #include "chromium/prototype/adblock_network.h"
@@ -90,6 +92,7 @@
 #include "content/public/browser/storage_partition_config.h"
 #include "content/public/browser/web_authentication_delegate.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/alternative_error_page_override_info.mojom.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/isolated_world_ids.h"
 #include "content/public/common/url_constants.h"
@@ -150,6 +153,7 @@
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
 #include "third_party/blink/public/platform/web_url_error.h"
+#include "ui/views/widget/widget.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_script_source.h"
@@ -454,6 +458,14 @@ class FingerprintStateReceiver final : public mojom::FingerprintState {
 
 class LabExtensionHooksDelegate final : public extensions::APIBindingHooksDelegate {
  public:
+  void InitializeTemplate(v8::Isolate* isolate,
+                          v8::Local<v8::ObjectTemplate> object_template,
+                          const extensions::APITypeReferenceMap&) override {
+    object_template->Set(isolate, "inIncognitoContext",
+        v8::Boolean::New(isolate,
+            extensions::ExtensionsRendererClient::Get()->IsIncognitoProcess()));
+  }
+
   extensions::APIBindingHooks::RequestResult HandleRequest(
       const std::string& method_name,
       const extensions::APISignature*,
@@ -901,7 +913,7 @@ void LabBrowserClientBase::ExposeInterfacesToRenderer(
     service_manager::BinderRegistry*,
     blink::AssociatedInterfaceRegistry* registry,
     content::RenderProcessHost* process) {
-  if (!IsWorkspaceExtensionRuntime() || process->GetBrowserContext()->IsOffTheRecord())
+  if (!IsWorkspaceExtensionRuntime())
     return;
   registry->AddInterface<extensions::mojom::WebRequestHost>(base::BindRepeating(
       [](content::ChildProcessId process_id,
@@ -941,8 +953,9 @@ void LabBrowserClientBase::RegisterNonNetworkSubresourceURLLoaderFactories(
     const bool sandbox = initiator->opaque() &&
         initiator->GetTupleOrPrecursorTupleIfOpaque().scheme() == extensions::kExtensionScheme;
     if (frame && (initiator->GetURL().SchemeIsHTTPOrHTTPS() || sandbox) &&
-        !frame->GetBrowserContext()->IsOffTheRecord() &&
-        IsWorkspaceExtensionRuntime()) {
+        IsWorkspaceExtensionRuntime() &&
+        (!frame->GetBrowserContext()->IsOffTheRecord() ||
+         CanLoadExtensionProbeResources(*frame->GetBrowserContext()))) {
       auto target = extensions::CreateExtensionURLLoaderFactory(
           process->GetID(), render_frame_id);
       if (!target)
@@ -1126,6 +1139,7 @@ LabBrowserClientBase::CreateURLLoaderThrottles(
 
 void LabBrowserClientBase::CreateThrottlesForNavigation(
     content::NavigationThrottleRegistry& registry) {
+  AddDropboxLoginThrottle(registry);
   WorkspaceDevTools::AddNavigationThrottle(registry);
   AddHttpsOnlyThrottle(registry);
   prototype::LinkNavigation::CreateThrottle(registry);
@@ -1163,7 +1177,7 @@ void LabBrowserClientBase::RegisterAssociatedInterfaceBindersForRenderFrameHost(
                 std::move(receiver), frame);
           }, &frame));
 #endif
-  if (IsWorkspaceExtensionRuntime() && !frame.GetBrowserContext()->IsOffTheRecord()) {
+  if (IsWorkspaceExtensionRuntime()) {
     registry.AddInterface<extensions::mojom::LocalFrameHost>(base::BindRepeating(
         [](content::RenderFrameHost* frame,
            mojo::PendingAssociatedReceiver<extensions::mojom::LocalFrameHost> receiver) {
@@ -1312,7 +1326,7 @@ void LabBrowserClientBase::OverrideURLLoaderFactoryParams(
     bool is_for_isolated_world,
     bool is_for_service_worker,
     network::mojom::URLLoaderFactoryParams* params) {
-  if (!context || context->IsOffTheRecord() || is_for_isolated_world ||
+  if (!context || is_for_isolated_world ||
       origin.scheme() != extensions::kExtensionScheme ||
       !CanLoadExtensionProbeResources(*context, origin.host())) {
     return;
@@ -1374,33 +1388,106 @@ void LabRendererClient::RenderThreadStarted() {
   }
 }
 
+content::mojom::AlternativeErrorPageOverrideInfoPtr
+LabBrowserClientBase::GetAlternativeErrorPageOverrideInfo(
+    content::NavigationHandle& navigation,
+    content::RenderFrameHost* frame,
+    content::BrowserContext* browser_context,
+    int32_t error_code) {
+  if (!navigation.IsInPrimaryMainFrame())
+    return nullptr;
+  base::DictValue params;
+  params.Set("polish", !prototype::UiLanguageIsEnglish());
+  if (const auto window = navigation.GetWebContents()->GetTopLevelNativeWindow()) {
+    if (auto* widget = views::Widget::GetWidgetForNativeWindow(window)) {
+      if (const auto mode = widget->color_mode_override())
+        params.Set("dark", *mode == ui::ColorProviderKey::ColorMode::kDark);
+    }
+  }
+  return content::mojom::AlternativeErrorPageOverrideInfo::New(0, std::move(params));
+}
+
 void LabRendererClient::PrepareErrorPage(
     content::RenderFrame* frame,
     const blink::WebURLError& error,
     const std::string& http_method,
     content::mojom::AlternativeErrorPageOverrideInfoPtr alternative,
     std::string* error_html) {
-  if (!error_html || !frame->IsMainFrame() || !net::IsCertificateError(error.reason()))
+  const int reason = error.reason();
+  if (!error_html || !frame->IsMainFrame() || reason == net::ERR_ABORTED ||
+      reason == net::OK)
     return;
-  // The only substituted text is Chromium's constant error identifier.
-  *error_html = R"HTML(<!doctype html>
-<html lang="en">
+  const bool certificate = net::IsCertificateError(reason);
+  if (!certificate && !GURL(error.url()).SchemeIsHTTPOrHTTPS())
+    return;
+  const bool polish = !certificate && alternative &&
+      alternative->alternative_error_page_params.FindBool("polish").value_or(false);
+  const auto dark = alternative ? alternative->alternative_error_page_params.FindBool("dark")
+                                : std::nullopt;
+  const std::string_view theme = dark ? (*dark ? "dark" : "light") : "system";
+  std::string_view title = polish ? "Nie udało się otworzyć strony"
+                                  : "This page couldn't be opened";
+  std::string_view hint = polish ? "Spróbuj odświeżyć kartę za chwilę."
+                                 : "Try reloading this tab in a moment.";
+  if (certificate) {
+    title = "Certificate could not be verified";
+    hint = "Zitter blocked this connection. Check the address or go back.";
+  } else if (reason == net::ERR_INTERNET_DISCONNECTED) {
+    title = polish ? "Brak połączenia z internetem" : "You're offline";
+    hint = polish ? "Sprawdź połączenie i odśwież kartę."
+                  : "Check your connection, then reload this tab.";
+  } else if (reason == net::ERR_NAME_NOT_RESOLVED ||
+             reason == net::ERR_NAME_RESOLUTION_FAILED) {
+    title = polish ? "Nie znaleziono witryny" : "Website not found";
+    hint = polish ? "Sprawdź, czy adres jest poprawny, i spróbuj ponownie."
+                  : "Check the address and try again.";
+  } else if (reason == net::ERR_CONNECTION_REFUSED) {
+    title = polish ? "Witryna odrzuciła połączenie" : "The website refused the connection";
+    hint = polish ? "Sprawdź, czy serwer działa, i odśwież kartę."
+                  : "Check whether the server is running, then reload this tab.";
+  } else if (reason == net::ERR_CONNECTION_TIMED_OUT || reason == net::ERR_TIMED_OUT) {
+    title = polish ? "Witryna nie odpowiada" : "The website took too long to respond";
+  } else if (reason == net::ERR_BLOCKED_BY_CLIENT || reason == net::ERR_BLOCKED_BY_ADMINISTRATOR) {
+    title = polish ? "Dostęp do witryny został zablokowany" : "Access to this website was blocked";
+    hint = polish ? "Sprawdź ustawienia witryny lub wróć do poprzedniej strony."
+                  : "Check the site settings or go back.";
+  }
+
+  // Use only local strings and the constant network error identifier. The
+  // failed request's URL and content never enter the generated document.
+  *error_html = base::StrCat({R"HTML(<!doctype html>
+<html lang=")HTML", polish ? "pl" : "en", R"HTML(" data-theme=")HTML", theme, R"HTML(">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-<title>Certificate could not be verified</title>
+<title>)HTML", title, R"HTML(</title>
 <style>
-  :root { color-scheme: light dark; background: Canvas; color: CanvasText; }
-  body { margin: 0; padding: clamp(16px, 6vw, 64px); font: 15px/1.5 system-ui, sans-serif; }
-  main { max-width: 34rem; margin: 0 auto; }
-  h1 { font-size: clamp(20px, 4vw, 28px); line-height: 1.2; margin: 0 0 16px; }
-  p { margin: 0 0 12px; }
-  code { overflow-wrap: anywhere; }
+  :root {
+    color-scheme: light dark;
+    background: light-dark(#f7f4ef, #1c1a23);
+    color: light-dark(#24212b, #f1edf6);
+    --muted: light-dark(#615a69, #b9b1c4);
+  }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  body {
+    box-sizing: border-box;
+    display: grid;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: clamp(16px, 7vw, 64px);
+    font: 15px/1.5 system-ui, sans-serif;
+  }
+  main { width: 100%; max-width: 30rem; margin: 0 auto; overflow-wrap: anywhere; }
+  h1 { font-size: clamp(20px, 4vw, 28px); line-height: 1.2; margin: 0 0 12px; }
+  p { margin: 0 0 20px; color: var(--muted); }
+  code { font-size: 12px; color: var(--muted); }
 </style>
-<main id="certificate-error">
-  <h1>Certificate could not be verified</h1>
-  <p>Zitter blocked this connection. Check the address or go back.</p>
-  <code>)HTML" + net::ErrorToShortString(error.reason()) + "</code>\n</main>\n";
+<main id=")HTML", certificate ? "certificate-error" : "network-error", R"HTML(">
+  <h1>)HTML", title, R"HTML(</h1>
+  <p>)HTML", hint, R"HTML(</p>
+  <code>)HTML", net::ErrorToShortString(reason), "</code>\n</main>\n"});
 }
 
 void LabRendererClient::WebViewCreated(blink::WebView* view,

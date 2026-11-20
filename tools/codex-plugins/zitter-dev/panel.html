@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zitter Dev</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --base: light-dark(#f5f3ef, #14121b);
+    --raised: light-dark(#fff, #1e1b28);
+    --hover: light-dark(#e2ded6, #2a2638);
+    --line: light-dark(#dcd7cd, #393247);
+    --border: light-dark(#8c8678, #736d89);
+    --ink: light-dark(#221d2b, #eeeaf4);
+    --muted: light-dark(#62596c, #b8afc5);
+    --accent: light-dark(#4b40d9, #9a92ff);
+    --primary-ink: light-dark(white, #0c0b11);
+    --danger: light-dark(#9b253b, #ff9cab);
+    --ok: light-dark(#2c6b4b, #83d2a9);
+    font: 13px/1.45 system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--base);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; }
+  main { max-width: 880px; margin: auto; padding: clamp(16px, 4vw, 36px); }
+  header, .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  h1, h2, p, ul { margin: 0; }
+  h1 { font-size: 23px; letter-spacing: -.04em; }
+  h2 { font-size: 14px; }
+  .repo, small { color: var(--muted); overflow-wrap: anywhere; }
+  .repo { font: 12px/1.45 ui-monospace, monospace; }
+  .checkout-name { min-width: 0; }
+  .identity { display: flex; align-items: center; gap: 11px; min-width: 0; }
+  .mark { flex: none; display: grid; place-items: center; width: 40px; height: 40px;
+          color: var(--primary-ink); background: var(--accent); border-radius: 12px;
+          font: 650 15px ui-monospace, monospace; letter-spacing: -.08em; }
+  form, .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+  form label { flex-basis: 100%; }
+  input, button { font: inherit; color: inherit; border: 1px solid var(--border); border-radius: 7px; }
+  input { background: var(--raised); min-width: 0; flex: 1 1 145px; padding: 6px 9px; }
+  button { min-height: 32px; background: var(--raised); padding: 4px 10px; cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: var(--primary-ink); border-color: var(--accent); font-weight: 650; }
+  button.primary:hover:not(:disabled) { filter: brightness(.88); background: var(--accent); }
+  button.quiet { color: var(--muted); border-color: transparent; background: transparent; }
+  #change { flex-shrink: 0; }
+  section { margin-top: 10px; padding: 13px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; }
+  .controls { margin-top: 16px; }
+  .controls .actions { margin: 10px 0 0; }
+  .controls button { min-height: 35px; }
+  .state { font-size: 12px; white-space: nowrap; font-weight: 650; }
+  .state[data-state="running"], .state[data-state="queued"] { color: var(--accent); }
+  .state[data-state="failed"], #notice[data-error] { color: var(--danger); }
+  .state[data-state="ok"] { color: var(--ok); }
+  #notice { margin: 8px 0; }
+  progress { display: block; width: 100%; height: 8px; margin: 8px 0; accent-color: var(--accent); }
+  #step { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  pre { margin: 8px 0 0; padding: 9px; border-radius: 7px; background: var(--base);
+        max-height: 230px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 ui-monospace, monospace; }
+  ul { padding: 0; list-style: none; }
+  li { padding: 5px 0; }
+  li + li { border-top: 1px solid var(--line); }
+  .log-link { text-align: left; }
+  #failure-actions { margin-bottom: 0; }
+  #machine { text-align: right; }
+  @media (max-width: 420px) {
+    .controls > .row { align-items: flex-start; flex-direction: column; gap: 2px; }
+    #machine { text-align: left; }
+  }
+</style>
+<main>
+  <header>
+    <div class="identity">
+      <span class="mark" aria-hidden="true">|z⟩</span>
+      <div class="checkout-name">
+        <h1>Zitter Dev</h1>
+        <p id="repo" class="repo" hidden></p>
+      </div>
+    </div>
+    <button id="change" class="quiet" hidden>Change checkout</button>
+  </header>
+
+  <form id="select" hidden>
+    <label for="checkout">Zitter checkout path</label>
+    <input id="checkout" required spellcheck="false" autocomplete="off" placeholder="/path/to/zitter">
+    <button type="submit">Use checkout</button>
+  </form>
+  <p id="notice" role="status">Connecting…</p>
+
+  <div id="workspace" hidden>
+    <section class="controls" aria-labelledby="controls-title">
+      <div class="row">
+        <h2 id="controls-title">Content browser</h2>
+        <small id="machine"></small>
+      </div>
+      <div class="actions" id="commands">
+        <button class="primary" data-kind="build">Build</button>
+        <button data-kind="run">Build &amp; run</button>
+        <button data-kind="launch">Launch</button>
+        <button data-kind="test">Tests</button>
+      </div>
+    </section>
+    <section id="job" aria-labelledby="title">
+      <div class="row">
+        <h2 id="title">Build activity</h2>
+        <span id="state" class="state"></span>
+      </div>
+      <progress id="progress" aria-label="Ninja build progress" hidden></progress>
+      <p id="step"></p>
+      <pre id="log" aria-label="Job log" tabindex="0" hidden></pre>
+      <div class="actions" id="failure-actions" hidden>
+        <button id="stop" hidden>Stop</button>
+        <button id="retry" hidden>Retry</button>
+        <button id="ask" hidden>Ask Codex to fix</button>
+        <button id="follow" class="quiet" hidden>Back to live activity</button>
+      </div>
+    </section>
+    <section id="queued" aria-labelledby="queue-title" hidden>
+      <h2 id="queue-title">Queue</h2>
+      <ul id="queue"></ul>
+    </section>
+    <section id="recent" aria-labelledby="history-title" hidden>
+      <h2 id="history-title">Recent jobs</h2>
+      <ul id="history"></ul>
+    </section>
+  </div>
+</main>
+<script>
+  const el = id => document.getElementById(id);
+  const KINDS = { build: 'Build', run: 'Build & run', launch: 'Launch', test: 'Tests' };
+  const STATES = { queued: 'Queued', running: 'Running', ok: 'Succeeded', failed: 'Failed', stopped: 'Stopped' };
+  const requests = new Map();
+  let nextId = 0;
+  let root, view, current, selected, refreshTimer;
+  let loadVersion = 0;
+  let actionPending = false;
+  let checkoutPending = false;
+  let refreshFailed = false;
+  let canMessage = false;
+  let manualDraft = false;
+  let manualCheckout = false;
+
+  function request(method, params) {
+    const id = ++nextId;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        requests.delete(id);
+        reject(Error('The Codex panel connection timed out.'));
+      }, 12000);
+      requests.set(id, { resolve, reject, timeout });
+      parent.postMessage({ jsonrpc: '2.0', method, params, id }, '*');
+    });
+  }
+
+  function notify(method, params) {
+    parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+  }
+
+  function applyTheme(context) {
+    if (context?.theme) document.documentElement.style.colorScheme = context.theme;
+  }
+
+  async function call(name, args = {}) {
+    const result = await request('tools/call', { name: 'zitter_dev_' + name, arguments: args });
+    if (result.isError) throw Error(result.content?.[0]?.text || 'The Zitter tool failed.');
+    return result.structuredContent ?? JSON.parse(result.content[0].text);
+  }
+
+  function notice(message = '', isError = false) {
+    el('notice').textContent = message;
+    el('notice').hidden = !message;
+    el('notice').toggleAttribute('data-error', isError);
+  }
+
+  function checkSize() {
+    notify('ui/notifications/size-changed', { height: document.querySelector('main').offsetHeight });
+  }
+
+  function duration(seconds) {
+    const whole = Math.max(0, Math.round(seconds));
+    return whole < 60 ? whole + 's' : Math.floor(whole / 60) + 'm ' + (whole % 60) + 's';
+  }
+
+  function summary(job) {
+    const seconds = job.started ? (job.ended ?? Date.now() / 1000) - job.started : 0;
+    return (job.stopRequested ? 'Stopping…' : STATES[job.state]) + (job.started ? ' · ' + duration(seconds) : '');
+  }
+
+  function renderJob(job) {
+    const state = el('state');
+    el('title').textContent = job ? KINDS[job.kind] : 'Build activity';
+    state.textContent = job ? summary(job) : '';
+    state.dataset.state = job?.state ?? '';
+    const progress = el('progress');
+    progress.hidden = job?.state !== 'running';
+    if (job?.progress) {
+      const { done, total, step } = job.progress;
+      progress.max = total;
+      progress.value = done;
+      const eta = Math.max(0, Date.now() / 1000 - job.started) * (total - done) / done;
+      el('step').textContent = done + '/' + total + ' · ' + duration(eta) + ' left · ' + step;
+    } else {
+      progress.removeAttribute('value');
+      el('step').textContent = job?.state === 'queued' ? 'Waiting for the build runner.' : job ? '' : 'No jobs yet.';
+    }
+    const log = el('log');
+    const text = job?.log || job?.errors?.join('\n') || '';
+    log.hidden = !text;
+    if (log.textContent !== text) {
+      const wasAtEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+      log.textContent = text;
+      if (wasAtEnd) log.scrollTop = log.scrollHeight;
+    }
+    el('stop').hidden = !job || !['queued', 'running'].includes(job.state);
+    el('stop').disabled = Boolean(job?.stopRequested) || actionPending || checkoutPending;
+    el('retry').hidden = job?.state !== 'failed';
+    el('retry').disabled = actionPending || checkoutPending;
+    el('ask').hidden = job?.state !== 'failed' || !canMessage;
+    el('ask').disabled = actionPending || checkoutPending;
+    el('follow').hidden = !selected;
+    el('failure-actions').hidden = ['stop', 'retry', 'ask', 'follow'].every(id => el(id).hidden);
+  }
+
+  function renderList(id, section, jobs) {
+    const list = el(id);
+    el(section).hidden = !jobs.length;
+    const signature = JSON.stringify(jobs.map(job => [job.id, summary(job)]));
+    if (list.dataset.signature === signature) return;
+    list.dataset.signature = signature;
+    list.replaceChildren(...jobs.map(job => {
+      const item = document.createElement('li');
+      item.className = 'row';
+      const button = document.createElement('button');
+      button.className = 'quiet log-link';
+      button.textContent = KINDS[job.kind] + ' · ' + new Date(job.queued * 1000).toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+      button.addEventListener('click', () => { selected = job.id; refresh(); });
+      const state = document.createElement('span');
+      state.className = 'state';
+      state.dataset.state = job.state;
+      state.textContent = summary(job);
+      item.append(button, state);
+      return item;
+    }));
+  }
+
+  function render() {
+    if (!view) return;
+    el('workspace').hidden = false;
+    el('change').hidden = false;
+    el('repo').hidden = false;
+    el('repo').textContent = [view.branch, view.root].filter(Boolean).join(' · ');
+    const out = view.output.replaceAll('\\', '/').split('/').slice(-2).join('/');
+    el('machine').textContent = out + ' · ' + (view.diskFree / 2 ** 30).toFixed(1) + ' GiB free'
+      + (view.buildReady ? '' : ' · Set up this output before building');
+    for (const button of el('commands').querySelectorAll('button')) {
+      button.disabled = actionPending || checkoutPending || (button.dataset.kind === 'launch' ? !view.launchReady
+        : button.dataset.kind !== 'test' && !view.buildReady);
+    }
+    renderJob(current);
+    renderList('queue', 'queued', view.queue);
+    renderList('history', 'recent', view.history);
+    checkSize();
+  }
+
+  async function refresh(path = root, selecting = false, remember = false) {
+    clearTimeout(refreshTimer);
+    const version = ++loadVersion;
+    const selection = selected;
+    checkoutPending = selecting;
+    if (selecting) render();
+    try {
+      if (remember) await call('select_checkout', { root: path });
+      const data = await call('status', path ? { root: path } : {});
+      if (version !== loadVersion) return;
+      if (!data.root) {
+        el('select').hidden = false;
+        notice();
+        checkSize();
+        return;
+      }
+      const job = selection && selection !== data.current?.id ?
+        await call('log', { root: data.root, id: selection }) : data.current;
+      if (version !== loadVersion) return;
+      if (!view || selecting || refreshFailed) notice();
+      root = data.root;
+      view = data;
+      current = job;
+      if (selecting) el('select').hidden = true;
+      refreshFailed = false;
+    } catch (error) {
+      if (version !== loadVersion) return;
+      if (selecting || !root) el('select').hidden = false;
+      refreshFailed = !selecting;
+      notice(error.message, true);
+      checkSize();
+    } finally {
+      if (version === loadVersion) {
+        checkoutPending = false;
+        render();
+        if (root) refreshTimer = setTimeout(refresh, 2000);
+      }
+    }
+  }
+
+  async function act(task) {
+    if (actionPending || checkoutPending) return;
+    actionPending = true;
+    notice();
+    render();
+    try {
+      await task();
+      await refresh();
+    } catch (error) {
+      notice(error.message, true);
+    } finally {
+      actionPending = false;
+      render();
+    }
+  }
+
+  function start(kind) {
+    return act(async () => {
+      await call('start', { root, kind });
+      selected = undefined;
+    });
+  }
+
+  el('select').addEventListener('submit', event => {
+    event.preventDefault();
+    if (actionPending || checkoutPending) return;
+    manualCheckout = true;
+    selected = undefined;
+    refresh(el('checkout').value.trim(), true, true);
+  });
+  el('change').addEventListener('click', () => {
+    if (actionPending || checkoutPending) return;
+    el('select').hidden = !el('select').hidden;
+    el('checkout').value = root;
+    if (!el('select').hidden) el('checkout').focus();
+    checkSize();
+  });
+  el('commands').addEventListener('click', event => {
+    if (event.target.dataset.kind) start(event.target.dataset.kind);
+  });
+  el('stop').addEventListener('click', () => {
+    const id = current.id;
+    act(() => call('stop', { root, id }));
+  });
+  el('retry').addEventListener('click', () => start(current.kind));
+  el('follow').addEventListener('click', () => { selected = undefined; refresh(); });
+  el('ask').addEventListener('click', () => {
+    const job = current;
+    const text = 'Please diagnose and fix the failed Zitter ' + KINDS[job.kind].toLowerCase() + ' job.'
+      + '\nCheckout: ' + root + '\nJob: ' + job.id + '\nLog: ' + job.logPath
+      + (job.errors?.length ? '\nErrors:\n' + job.errors.join('\n') : '');
+    const params = { role: 'user', content: [{ type: 'text', text }] };
+    if (manualDraft) params._meta = { 'openai/message': { target: 'active', send: false } };
+    act(() => request('ui/message', params));
+  });
+
+  window.addEventListener('message', event => {
+    if (event.source !== parent || event.data?.jsonrpc !== '2.0') return;
+    const message = event.data;
+    const waiting = requests.get(message.id);
+    if (waiting) {
+      clearTimeout(waiting.timeout);
+      requests.delete(message.id);
+      if (message.error) waiting.reject(Error(message.error.message));
+      else waiting.resolve(message.result);
+    }
+    if (message.method === 'ui/notifications/host-context-changed') applyTheme(message.params);
+    if (message.method === 'ui/notifications/tool-result' && !manualCheckout && !actionPending) {
+      const initial = message.params?.structuredContent?.root;
+      if (initial && initial !== root) {
+        el('checkout').value = initial;
+        refresh(initial, true);
+      }
+    }
+  });
+
+  async function init() {
+    try {
+      const host = await request('ui/initialize', {
+        appInfo: { name: 'Zitter Dev', version: '0.1.2' },
+        appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+        protocolVersion: '2026-01-26'
+      });
+      canMessage = Boolean(host.hostCapabilities?.message || host.hostCapabilities?.experimental?.['openai/message']);
+      manualDraft = Boolean(host.hostCapabilities?.experimental?.['openai/message']);
+      applyTheme(host.hostContext);
+      notify('ui/notifications/initialized');
+      if (!root && !checkoutPending) await refresh();
+    } catch (error) {
+      notice(error.message, true);
+    }
+  }
+  init();
+</script>
+</html>

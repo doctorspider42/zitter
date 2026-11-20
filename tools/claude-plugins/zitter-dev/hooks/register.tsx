@@ -126,7 +126,7 @@ async function start($: $, job: Job): Promise<boolean> {
   const files = filesOf(job.id)
   await $.fs.write(files.script, script(platform, root, files.exit, job.title, job.kind, helperPath, python))
   const head = (await sh($, ['git', 'rev-parse', '--short', 'HEAD'])).stdout.trim()
-  const launched = await helper($, ['start', files.script, files.log])
+  const launched = await helper($, ['start', files.script, files.log, ...(KINDS[job.kind].usesBuildDir ? [root] : [])])
   const pid = Number(launched.stdout.trim())
   if (launched.exitCode !== 0 || !Number.isInteger(pid) || pid <= 0) {
     await setJob($, job.id, j => ({ ...j, state: 'failed', endedAt: Date.now(), tail: ['Could not start the job.', launched.stderr.trim()] }))

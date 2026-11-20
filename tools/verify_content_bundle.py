@@ -388,7 +388,7 @@ def main():
             smoke(app, root, source, workspace_flags, workspace_markers, trace_loader=trace_loader)
             smoke(app, root, source, (
                 workspace, "--zitter-content-devtools-smoke-test",
-                "--zitter-content-workspace-theme=dark", "--zitter-rust-raster=metal",
+                "--zitter-content-workspace-theme=dark",
             ), (workspace_marker, "Zitter Content DevTools frontend ready"),
                   trace_loader=trace_loader)
             workspace_flags = ("--extension-registry", "--crx-signer", signer) if signer else ()

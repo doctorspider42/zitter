@@ -1,5 +1,6 @@
 # Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
+import("//build/buildflag_header.gni")
 import("//components/safe_browsing/buildflags.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//printing/buildflags/buildflags.gni")
@@ -20,6 +21,16 @@ if (is_mac) {
 assert(is_mac || is_win, "The Content Lab requires macOS or Windows.")
 assert(safe_browsing_mode != 0,
        "The Content Lab requires Chromium download file type policies.")
+
+declare_args() {
+  # Public Dropbox App folder client ID, shared by all installed copies.
+  zitter_dropbox_app_key = "q6vf3gtvgqulmgy"
+}
+
+buildflag_header("bookmark_sync_buildflags") {
+  header = "bookmark_sync_buildflags.h"
+  flags = [ "ZITTER_DROPBOX_APP_KEY=\"$zitter_dropbox_app_key\"" ]
+}
 
 night_shift_files = [
   "//zitter/chromium/night_shift/manifest.json",
@@ -181,6 +192,7 @@ lab_sources = [
   "workspace_native_message_port_dispatcher.h",
   "workspace_native_messaging.cc",
   "workspace_native_messaging.h",
+  "bookmark_sync.cc",
   "workspace_session_store.cc",
   "workspace_session_store.h",
   "workspace_timeline.cc",
@@ -188,6 +200,7 @@ lab_sources = [
 ]
 
 lab_deps = [
+  ":bookmark_sync_buildflags",
   "//cc",
   "//components/vector_icons",
   "//components/viz/common",

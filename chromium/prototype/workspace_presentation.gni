@@ -315,7 +315,7 @@ template("zitter_workspace_presentation") {
 
   if (!is_mac) {
     # Text layout, paragraph shaping and the editor fallback painter on
-    # gfx::RenderText; macOS has them in sidebar_metal.mm on CoreText.
+    # gfx::RenderText. macOS uses CoreText in text_services_mac.mm.
     source_set("text_services") {
       sources = [
         "chromium/prototype/editor_text_layout.h",
@@ -332,20 +332,6 @@ template("zitter_workspace_presentation") {
         "//cc/paint",
         "//skia",
         "//ui/gfx",
-      ]
-    }
-  }
-
-  if (is_mac) {
-    action("sidebar_shader") {
-      script = "chromium/app/compile_ui_lab_metal.py"
-      sources = [ "chromium/prototype/sidebar.metal" ]
-      outputs = [ "$target_gen_dir/chromium/prototype/sidebar_shader.h" ]
-      args = [
-        rebase_path(sources[0], root_build_dir),
-        rebase_path(outputs[0], root_build_dir),
-        "--namespace",
-        "zitter::sidebar",
       ]
     }
   }
@@ -411,14 +397,13 @@ template("zitter_workspace_presentation") {
           "chromium/prototype/browser_import_key_mac.mm",
           "chromium/prototype/editor_text_layout_mac.inc",
           "chromium/prototype/i18n_mac.cc",
-          "chromium/prototype/sidebar_metal.mm",
+          "chromium/prototype/text_services_mac.mm",
           "chromium/prototype/workspace_frame_mac.h",
           "chromium/prototype/workspace_frame_mac.mm",
           "chromium/prototype/workspace_keyboard_mac.h",
           "chromium/prototype/workspace_keyboard_mac.mm",
         ]
         deps += [
-          ":sidebar_shader",
           "//components/remote_cocoa/app_shim",
           "//components/remote_cocoa/common:mojo",
         ]
@@ -426,7 +411,6 @@ template("zitter_workspace_presentation") {
           "AppKit.framework",
           "CoreFoundation.framework",
           "CoreText.framework",
-          "Metal.framework",
           "QuartzCore.framework",
         ]
       } else {

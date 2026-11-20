@@ -28,6 +28,11 @@ class LabWebView : public views::WebView {
   content::PictureInPictureResult EnterPictureInPicture(
       content::WebContents* page) override;
   void ExitPictureInPicture() override;
+#if BUILDFLAG(IS_MAC)
+  bool HandleKeyboardEvent(
+      content::WebContents* source,
+      const input::NativeWebKeyboardEvent& event) override;
+#endif
 
  private:
   void PrintCrossProcessSubframe(content::WebContents* contents,

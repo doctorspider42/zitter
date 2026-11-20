@@ -102,6 +102,7 @@ struct PaletteResult;
 struct TimelineStore;
 }
 
+namespace network { class SimpleURLLoader; }
 namespace os_crypt_async { class OSCryptAsync; }
 
 namespace extensions {
@@ -194,7 +195,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
                ProfileContext& work,
                ProfileContext* personal,
                bool dark,
-               bool metal,
                bool smoke,
                WorkspaceLab* private_owner = nullptr,
                base::span<const std::unique_ptr<ProfileContext>> extra_profiles = {},
@@ -250,6 +250,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PromptExtensionPermissions(content::BrowserContext& profile,
                                   const extensions::Extension& extension,
                                   const extensions::PermissionSet& permissions,
+                                  content::WebContents* source,
                                   base::OnceCallback<void(bool)> answer);
   void RemoveExtensionTabs(base::span<WorkspaceExtensionTab* const> targets,
                            base::OnceCallback<void(bool)> done);
@@ -418,6 +419,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ResizeSplit(size_t divider, double ratio, bool done);
   void SetSplitVertical(bool vertical);
   GURL TabUrl(std::optional<size_t> tab, std::string_view pin) const;
+  GURL WorkspaceTabUrl(size_t workspace, size_t index) const;
   bool OpenLink(const GURL& url, std::string source, bool new_tab, bool split);
   bool OpenPeek(const GURL& url, std::string source);
   bool PromotePeek(bool split);
@@ -482,6 +484,31 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ImportPasswordsCsv(gfx::NativeWindow owner,
                           base::OnceCallback<void(std::u16string)> done);
   void ShowWelcome();
+  void ConfigureBookmarkSync(std::string method);
+  void StartBookmarkSync(std::string method);
+  void RunBookmarkSync();
+  base::DictValue CaptureBookmarks() const;
+  bool PrepareBookmarkScopes(const base::DictValue& ledger, const base::DictValue& collections);
+  bool ApplyBookmarks(const base::DictValue& ledger, const base::DictValue& collections);
+  void FinishBookmarkSync(base::DictValue snapshot, std::optional<base::DictValue> ledger);
+  void SetSyncStatus(std::u16string message);
+  base::OneShotTimer dropbox_login_timeout_;
+  void ExchangeDropboxCode(std::string verifier, std::string code);
+  void DropboxToken(std::string form, bool connecting);
+  void DownloadDropboxBookmarks(base::DictValue snapshot, base::DictValue ledger);
+  using DropboxReply = base::OnceCallback<void(int, std::string, std::string)>;
+  void DropboxRequest(std::string endpoint, std::string argument, std::string body,
+                      std::string mime, DropboxReply reply);
+  std::unique_ptr<PrefService> sync_prefs_;
+  base::RepeatingTimer sync_timer_;
+  std::u16string sync_status_;
+  bool sync_busy_ = false;
+  std::string dropbox_access_;
+  base::Time dropbox_expires_;
+  base::Time sync_retry_after_;
+  std::unique_ptr<network::SimpleURLLoader> sync_loader_;
+  class SyncPicker;
+  std::unique_ptr<SyncPicker> sync_picker_;
   void ImportFromWelcome(prototype::BrowserImportOptions options,
                          base::OnceCallback<void(bool, std::u16string)> done);
   void PreviewBrowserImport(prototype::BrowserImportOptions options);
@@ -666,10 +693,12 @@ class WorkspaceLab final : private WorkspaceRuntime,
   struct PrivateSession;
   struct ExtensionDnrNavigationProbe;
   bool OpenPrivateWindow();
+  bool OpenPrivateWindowForProfile(size_t source);
+  PrivateSession* PrivateSessionForProfile(size_t source) const;
   void InitializePrivateSession(size_t source,
                                 std::unique_ptr<PrivateSession> session);
-  void OpenPendingPrivateWindows();
-  void ClosePrivateWindow(WorkspaceLab* window);
+  void OpenPendingPrivateWindows(size_t source);
+  void ClosePrivateWindow(size_t source, WorkspaceLab* window);
   prototype::AdblockFilterLists* AdblockLists() const;
   void UpdateAdblockShield();
   void RefreshAdblockCount();
@@ -709,12 +738,14 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void OnFindResultAvailable(content::WebContents* contents) override;
   void OnFindTabHelperDestroyed(find_in_page::FindTabHelper* helper) override;
   void RefreshShell();
+  void PopulateSidebarState(size_t workspace, prototype::ShellState& state,
+                            bool refresh_icons);
   void ReadCachedFavicons(prototype::ShellState& state, const std::set<GURL>& urls);
   bool RefreshWorkspaceFavicons();
   void PublishWorkspaceFavicon(const GURL& page, const GURL& icon,
                                const gfx::Image& image);
   void SwitchTo(size_t index);
-  void CheckPresentation(base::TimeTicks deadline);
+  void CheckPresentation();
   bool CheckSessionProbeSetup() const;
   void CheckSessionProbePage();
   void AdvanceSessionProbe();
@@ -952,7 +983,6 @@ class WorkspaceLab final : private WorkspaceRuntime,
   const GURL session_probe_url_;
   GURL private_adblock_probe_url_;
   const bool dark_;
-  const bool metal_;
   const bool smoke_;
   GURL webauthn_probe_url_;
   std::unique_ptr<WorkspaceWebAuthnProbe> webauthn_probe_;
@@ -993,8 +1023,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool startup_import_pending_ = false;
   const std::string startup_import_probe_;
   base::OnceCallback<void(bool, std::u16string)> welcome_import_done_;
-  std::unique_ptr<PrivateSession> private_session_;
-  size_t pending_private_windows_ = 0;
+  std::map<size_t, std::unique_ptr<PrivateSession>> private_sessions_;
+  std::map<size_t, size_t> pending_private_windows_;
+  size_t private_source_index_ = 0;
   base::RepeatingCallback<bool(std::string)> native_menu_probe_;
   WorkspaceModel model_;
   WorkspaceController controller_{model_, *this};
@@ -1133,6 +1164,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void PumpImportedFavicons();
   void StartImportedFaviconRefresh(std::string profile, std::set<GURL> urls, bool loaded);
   void FinishImportedFaviconRefresh();
+  std::string favicon_cache_profile_;
   std::map<std::string, std::map<GURL, CachedFavicon>> cached_favicons_;
   base::CancelableTaskTracker favicon_tasks_;
   base::OneShotTimer favicon_refresh_timer_;
@@ -1267,6 +1299,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::map<uint64_t, base::Time> tab_left_at_;
   std::map<uint64_t, gfx::ImageSkia> tab_thumbnails_;
   uint64_t shown_tab_id_ = 0;
+  base::WeakPtrFactory<WorkspaceLab> dropbox_login_{this};
+  base::WeakPtrFactory<WorkspaceLab> sync_weak_{this};
   base::WeakPtrFactory<WorkspaceLab> weak_factory_{this};
 };
 

@@ -66,6 +66,7 @@ class DmgTests(unittest.TestCase):
         self.assertIn('tell disk "Zitter 1"', script)
         self.assertIn('set bounds of container window to {200, 120, 920, 580}', script)
         self.assertIn('file ".background:background.tiff"', script)
+        self.assertIn('set label position of viewOptions to bottom', script)
         self.assertIn('set position of item "Zitter.app" of container window to {200, 236}', script)
         self.assertIn('set position of item "Applications" of container window to {520, 236}', script)
 

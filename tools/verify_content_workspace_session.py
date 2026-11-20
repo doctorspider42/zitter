@@ -1636,8 +1636,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (!message?.offscreenProbe || sender.id !== chrome.runtime.id)
     return;
   (async () => {
-    if (chrome.runtime.getManifest().incognito !== 'not_allowed')
-      throw Error('Private extension mode was not disabled');
+    if (chrome.runtime.getManifest().incognito !== 'split' ||
+        chrome.extension.inIncognitoContext ||
+        await chrome.extension.isAllowedIncognitoAccess()) {
+      throw Error('The extension received private access without opt-in');
+    }
     const self = await chrome.management.getSelf();
     if (self.id !== chrome.runtime.id || self.version !== chrome.runtime.getManifest().version ||
         !self.enabled || self.type !== 'extension' || self.installType !== 'normal' ||
@@ -2724,7 +2727,6 @@ def main():
     parser.add_argument("--openssl", type=Path,
                         help="OpenSSL executable for signing disposable extension fixtures")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     options = parser.parse_args()
     windows = os.name == "nt"
     encrypted_prefix = b"v10" if windows else ENCRYPTED_PREFIX
@@ -2737,8 +2739,6 @@ def main():
         parser.error("The system print probes require macOS")
     if options.copy_address and sys.platform != "darwin":
         parser.error("--copy-address requires the macOS pasteboard fixture")
-    if windows and options.renderer == "metal":
-        parser.error("Metal requires macOS")
     if options.encrypted_import and sys.platform != "darwin":
         parser.error("--encrypted-import requires macOS")
     managed_extensions = (options.extension_manage or options.extension_multi or
@@ -2789,7 +2789,6 @@ def main():
         openssl = Path(openssl).resolve()
     extra_flags = [
         f"--zitter-content-workspace-theme={options.theme}",
-        f"--zitter-rust-raster={options.renderer}",
     ]
     if options.extension_registry:
         extra_flags.append("--host-resolver-rules=MAP *.example.com 127.0.0.1")
@@ -4003,10 +4002,10 @@ if (location.pathname === '/extension-content/live-install') {
                 sign_archive_size_fixture(signer, package, private_key, name,
                                           files=("manifest.json",), **limits)
                 for name, limits in (
-                    ("archive-limit.crx", {"stored_sizes": (16, 16)}),
-                    ("file-limit.crx", {"deflated_sizes": (17,)}),
-                    ("expanded-limit.crx", {"deflated_sizes": (16,) * 6 + (1,)}),
-                    ("entry-limit.crx", {"empty_files": 2048}),
+                    ("archive-limit.crx", {"stored_sizes": (32, 32, 32)}),
+                    ("file-limit.crx", {"deflated_sizes": (33,)}),
+                    ("expanded-limit.crx", {"deflated_sizes": (32,) * 7}),
+                    ("entry-limit.crx", {"empty_files": 16384}),
                 )
             ]
             keyless_manifest = {key: value for key, value in manifest.items() if key != "key"}
@@ -5626,12 +5625,13 @@ for index in 0..<document.pageCount {
                     *((path, trust_flag, "Content extension CRX3 verification failed")
                       for path in collision_archives),
                 ):
-                    require_rejection(
-                        launch(executable, root, origin, [
-                            f"{EXTENSION_REGISTRY_SWITCH}={path}", pin, *extension_profile_flags,
-                        ]),
-                        error,
-                    )
+                    result = launch(executable, root, origin, [
+                        f"{EXTENSION_REGISTRY_SWITCH}={path}", pin, *extension_profile_flags,
+                    ])
+                    if result.returncode != 1 or error not in result.stderr:
+                        raise SystemExit(
+                            f"{path.name}: expected exit 1 and {error!r}, got {result.returncode}.\n"
+                            f"{result.stdout}\n{result.stderr}")
                     if install_root.exists() or other_install_root.exists() or server.requests:
                         raise SystemExit("A rejected package published files or loaded a workspace tab")
 
@@ -5702,7 +5702,7 @@ for index in 0..<document.pageCount {
                     "include_globs": script.get("include_globs", []),
                     "exclude_globs": script.get("exclude_globs", []),
                 } for script in manifest["content_scripts"]]
-                if (review != {
+                expected_review = {
                     "review_version": 7,
                     "name": manifest["name"],
                     "version": manifest["version"],
@@ -5723,6 +5723,7 @@ for index in 0..<document.pageCount {
                         *review_hosts, "https://scope.example.com/*",
                     ],
                     "external_extension_ids": sorted(manifest["externally_connectable"]["ids"]),
+                    "external_web_matches": [],
                     "content_scripts": expected_scripts,
                     "background_service_worker": True,
                     "file_access_blocked": True,
@@ -5739,8 +5740,15 @@ for index in 0..<document.pageCount {
                         "matches": ["<all_urls>"],
                         "use_dynamic_url": True,
                     }],
-                } or len(approval) != 64):
-                    raise SystemExit(f"Unexpected extension review: {review}")
+                }
+                if review != expected_review or len(approval) != 64:
+                    mismatches = {
+                        key: {"expected": expected_review.get(key), "actual": review.get(key)}
+                        for key in review.keys() | expected_review.keys()
+                        if review.get(key) != expected_review.get(key)
+                    }
+                    raise SystemExit(
+                        f"Unexpected extension review: {mismatches}; approval length {len(approval)}")
                 approved_flag = f"{EXTENSION_REVIEW_SWITCH}={approval}"
                 for flags in (
                     [f"{EXTENSION_REGISTRY_SWITCH}={replaced_archive}", *extension_profile_flags],

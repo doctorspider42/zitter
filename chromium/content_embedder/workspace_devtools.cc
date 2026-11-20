@@ -2,10 +2,13 @@
 
 #include "workspace_devtools.h"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <utility>
 
+#include "base/containers/adapters.h"
 #include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
@@ -23,6 +26,7 @@
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/devtools_frontend_host.h"
+#include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_throttle.h"
@@ -39,6 +43,7 @@
 #include "profile_context.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "third_party/blink/public/common/page/page_zoom.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/views/controls/webview/webview.h"
@@ -59,6 +64,9 @@ constexpr char kFrontend[] =
 constexpr std::string_view kBundledPrefix = "/bundled/";
 constexpr int kTargetProbeId = 1000000000;
 constexpr int kIsolationProbeId = 1000000001;
+constexpr char16_t kZoomIndicatorScript[] =
+#include "workspace_devtools_zoom.js.inc"
+    ;
 
 enum class DockProbe { kInitial, kUndock, kRedock, kConsole, kInspect, kPick };
 
@@ -417,6 +425,8 @@ class WorkspaceDevTools::Window final
     docked_ = docked;
     probe_has_bounds_ = false;
     if (docked_) {
+      // Release the first responder in the old window before moving its view.
+      widget_->ClearNativeFocus();
       undocked_view_->SetWebContents(nullptr);
       widget_->Hide();
       dock_.Run(contents_.get(), std::nullopt);
@@ -430,6 +440,54 @@ class WorkspaceDevTools::Window final
       else
         widget_->Show();
     }
+    // Detaching the native frontend can hide its renderer. Show it again
+    // once it has a host, before handing keyboard focus to the new host.
+    contents_->WasShown();
+    if (loaded_ && !ready_)
+      contents_->Focus();
+  }
+
+  enum class ZoomAction { kIn, kOut, kReset };
+
+  void ZoomFrontend(ZoomAction action) {
+    // The frontend has its own in-memory BrowserContext. Its zoom is scoped
+    // to this DevTools session and follows it between the two hosts.
+    const double current = blink::ZoomLevelToZoomFactor(
+        content::HostZoomMap::GetZoomLevel(contents_.get()));
+    const auto factors = blink::kPresetBrowserZoomFactors;
+    double next = current;
+    if (action == ZoomAction::kIn) {
+      const auto larger = std::ranges::find_if(factors, [current](double factor) {
+        return factor > current && !blink::ZoomValuesEqual(factor, current);
+      });
+      if (larger != factors.end())
+        next = *larger;
+    } else if (action == ZoomAction::kOut) {
+      const auto smaller = std::ranges::find_if(
+          base::Reversed(factors), [current](double factor) {
+            return factor < current && !blink::ZoomValuesEqual(factor, current);
+          });
+      if (smaller != factors.rend())
+        next = *smaller;
+    } else {
+      next = 1.0;
+    }
+    if (!blink::ZoomValuesEqual(next, current)) {
+      content::HostZoomMap::SetZoomLevel(contents_.get(),
+                                        blink::ZoomFactorToZoomLevel(next));
+    }
+    ShowFrontendZoom(next);
+  }
+
+  void ShowFrontendZoom(double factor) {
+    const auto factors = blink::kPresetBrowserZoomFactors;
+    CallFrontend(u"zitterShowZoom",
+                 base::ListValue()
+                     .Append(static_cast<int>(std::lround(factor * 100)))
+                     .Append(factor > factors.front() &&
+                             !blink::ZoomValuesEqual(factor, factors.front()))
+                     .Append(factor < factors.back() &&
+                             !blink::ZoomValuesEqual(factor, factors.back())));
   }
 
   void SetPageBounds(const base::DictValue& bounds) {
@@ -546,6 +604,12 @@ class WorkspaceDevTools::Window final
       }
     } else if (*method == "loadCompleted") {
       CallFrontend(u"setUseSoftMenu", base::ListValue().Append(true));
+      contents_->GetPrimaryMainFrame()->ExecuteJavaScript(kZoomIndicatorScript,
+                                                         {});
+      const double factor = blink::ZoomLevelToZoomFactor(
+          content::HostZoomMap::GetZoomLevel(contents_.get()));
+      if (!blink::ZoomValuesEqual(factor, 1.0))
+        ShowFrontendZoom(factor);
       if (ready_ && agent_) {
         SendProbeCommand(kTargetProbeId, "Target.getTargetInfo");
         SendProbeCommand(kIsolationProbeId, "Target.getTargets");
@@ -586,6 +650,12 @@ class WorkspaceDevTools::Window final
       CallFrontend(u"fileSystemsLoaded", base::ListValue().Append(base::ListValue()));
     } else if (*method == "loadNetworkResource") {
       response.Set("statusCode", 403);
+    } else if (*method == "zoomIn") {
+      ZoomFrontend(ZoomAction::kIn);
+    } else if (*method == "zoomOut") {
+      ZoomFrontend(ZoomAction::kOut);
+    } else if (*method == "resetZoom") {
+      ZoomFrontend(ZoomAction::kReset);
     } else if (*method == "setIsDocked" && params && params->size() == 1) {
       if (const auto docked = (*params)[0].GetIfBool())
         SetDocked(*docked);

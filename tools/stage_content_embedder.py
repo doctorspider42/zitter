@@ -425,7 +425,6 @@ CONTENT_EXPORT void ZitterBeforeDocumentCommit(
         if path.is_file()
     }
     for path in (
-        "chromium/app/compile_ui_lab_metal.py",
         "chromium/app/zitter_version.h",
         "chromium/app/mac_release_metadata.cc",
         "chromium/app/mac_release_metadata.h",

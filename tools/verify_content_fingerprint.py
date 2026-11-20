@@ -161,7 +161,7 @@ def verify_results(stdout):
             raise ValueError(f"Enabling or rotating protection did not change {surface}")
 
 
-def verify_workspace(executable, root, url, theme, renderer, server):
+def verify_workspace(executable, root, url, theme, server):
     windows = os.name == "nt"
     if windows:
         from verify_content_workspace_session import WINDOWS_LOCAL_STATE, new_wrapped_windows_key
@@ -185,7 +185,6 @@ def verify_workspace(executable, root, url, theme, renderer, server):
         f"--zitter-content-workspace-root={root}",
         f"--zitter-content-workspace-probe={url}/",
         f"--zitter-content-workspace-theme={theme}",
-        f"--zitter-rust-raster={renderer}",
         "--no-proxy-server",
     ]
     if server.cross_process_frame:
@@ -249,7 +248,7 @@ def verify_workspace(executable, root, url, theme, renderer, server):
                 "Could not open Content fingerprint preferences" not in result.stderr or
                 legacy_path.read_bytes() != legacy):
             raise ValueError("A symlinked fingerprint preference was accepted or modified")
-    print(f"Content fingerprint workspace passed in {theme} with {renderer}")
+    print(f"Content fingerprint workspace passed in {theme}")
 
 
 def main():
@@ -258,13 +257,12 @@ def main():
     parser.add_argument("--workspace", action="store_true")
     parser.add_argument("--cross-process-frame", action="store_true")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     options = parser.parse_args()
     if options.cross_process_frame and not options.workspace:
         parser.error("--cross-process-frame requires --workspace")
     if os.name == "nt":
-        if not options.workspace or options.renderer == "metal":
-            parser.error("Windows requires --workspace with the compositor renderer")
+        if not options.workspace:
+            parser.error("Windows requires --workspace")
         executable = options.app.resolve()
     else:
         executable = (options.app / "Contents/MacOS/Zitter Content Lab").resolve()
@@ -283,7 +281,7 @@ def main():
         server_thread.start()
         try:
             if options.workspace:
-                verify_workspace(executable, root, url, options.theme, options.renderer, server)
+                verify_workspace(executable, root, url, options.theme, server)
                 return
             result = subprocess.run(
                 [

@@ -1320,7 +1320,9 @@ def copy_update_trial_bundles(legacy_app, content_app, directory):
 
 
 def swap_trial_applications(installed, staged):
-    # Both bundles live in the same private installation directory.
+    # Exercise the Contents exchange used for standard production bundles.
+    installed = installed / "Contents"
+    staged = staged / "Contents"
     rename_swap = 0x00000002  # Darwin RENAME_SWAP.
     rename = ctypes.CDLL(None, use_errno=True).renamex_np
     rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
@@ -1412,7 +1414,7 @@ def main():
     parser.add_argument("--adblock", action="store_true",
                         help="Verify separate migrated ad blocking settings and edits across restart")
     parser.add_argument("--initial-appearance",
-                        choices=("light-compositor", "dark-compositor", "light-metal", "dark-metal"),
+                        choices=("light", "dark"),
                         help="Choose the appearance for the interactive ad blocking trial")
     parser.add_argument("--pins", action="store_true", help="Restore and reopen migrated pins")
     parser.add_argument("--edit-pins", action="store_true",
@@ -1724,15 +1726,15 @@ def main():
             finally:
                 displaced.rename(session)
             print("Content rejected the wrong prepared Workspace layout and missing session before locking")
-        appearances = [("light", "compositor"), ("dark", "metal")]
+        appearances = ["light", "dark"]
         if (args.pins or args.sleep_workspace or args.timeline_clear
                 or args.adblock or args.assistant_settings):
-            appearances.extend([("dark", "compositor"), ("light", "metal")])
+            appearances.extend(["dark", "light"])
         if args.initial_appearance:
-            first = tuple(args.initial_appearance.split("-"))
+            first = args.initial_appearance
             appearances.remove(first)
             appearances.insert(0, first)
-        for index, (theme, renderer) in enumerate(appearances):
+        for index, theme in enumerate(appearances):
             server.requests.clear()
             server.observations.clear()
             server.assistant_requests.clear()
@@ -1746,11 +1748,9 @@ def main():
             server.assistant_diagnose_observations = []
             server.assistant_preview_observations = []
             server.assistant_elements = {}
-            appearance = (f"--zitter-rust-raster={renderer}",
-                          f"--zitter-content-workspace-theme={theme}")
+            appearance = (f"--zitter-content-workspace-theme={theme}",)
             if args.appearance:
-                appearance = (f"--zitter-rust-raster={renderer}",
-                              f"--zitter-content-imported-appearance-probe={args.appearance}")
+                appearance = (f"--zitter-content-imported-appearance-probe={args.appearance}",)
             if assistant_ciphertext:
                 probe, marker = ASSISTANT_CREDENTIAL_PROBE, ASSISTANT_PANEL_MARKER
             elif args.filter_lists:
@@ -1801,7 +1801,7 @@ def main():
                         f"Assistant stages: {server.assistant_requests!r}\n"
                         if assistant_ciphertext else ""
                     )
-                    raise SystemExit(f"Content did not reopen the migrated stores in {theme} {renderer}: "
+                    raise SystemExit(f"Content did not reopen the migrated stores in {theme}: "
                                      f"{server.observations!r}\n{assistant_stages}"
                                      f"{result.stdout}\n{result.stderr}")
                 stdout = result.stdout

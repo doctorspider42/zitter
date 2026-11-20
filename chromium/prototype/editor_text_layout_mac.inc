@@ -1,5 +1,5 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
-// Included by sidebar_metal.mm and the window-free native layout test harness.
+// Included by text_services_mac.mm and the window-free native layout test harness.
 #include "editor_text_layout.h"
 #import <AppKit/AppKit.h>
 #import <CoreText/CoreText.h>

@@ -1,0 +1,12 @@
+{
+  "name": "zitter-tools",
+  "interface": { "displayName": "Zitter" },
+  "plugins": [
+    {
+      "name": "zitter-dev",
+      "source": { "source": "local", "path": "./tools/codex-plugins/zitter-dev" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    }
+  ]
+}

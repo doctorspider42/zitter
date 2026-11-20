@@ -136,6 +136,10 @@ int WorkspaceExtensionTabIdForTesting(content::WebContents& contents);
 // The popup the action shows for `tab_id`, after action.setPopup.
 GURL WorkspaceExtensionPopupUrl(content::BrowserContext& context,
                                 const std::string& id, int tab_id);
+content::BrowserContext* WorkspaceExtensionPopupContext(
+    content::BrowserContext& context, const std::string& id);
+void SetWorkspaceExtensionPopupTabContext(content::WebContents& popup,
+                                          content::BrowserContext& context);
 // action.onClicked for an action without a popup.
 void DispatchWorkspaceExtensionActionClicked(content::BrowserContext& context,
                                              const std::string& id,
@@ -148,7 +152,8 @@ bool VerifyExtensionRulePreferencesForTesting(content::BrowserContext& context,
 scoped_refptr<PrefStore> GetWorkspaceExtensionPreferenceStore(
     content::BrowserContext& context);
 void DispatchExtensionPasswordSavingChange(content::BrowserContext& context);
-void RegisterExtensionContext(content::BrowserContext& context);
+void RegisterExtensionContext(content::BrowserContext& context,
+                              content::BrowserContext* private_source);
 void UnregisterExtensionContext(content::BrowserContext& context);
 void AddExtensionProbeNavigationThrottle(
     content::NavigationThrottleRegistry& registry);
@@ -205,6 +210,10 @@ class ManagedExtension {
   bool SetEnabled(bool enabled);
   std::optional<bool> UserScriptsAllowed() const;
   bool SetUserScriptsAllowed(bool allowed);
+  std::optional<bool> OptionalClipboardWriteAllowed() const;
+  bool SetOptionalClipboardWriteAllowed(bool allowed);
+  std::optional<bool> IncognitoAllowed() const;
+  bool SetIncognitoAllowed(bool allowed);
   void Uninstall(base::OnceCallback<void(bool)> done);
   std::optional<base::UnguessableToken> RunningWorkerForTesting();
   void StopWorkerForTesting(base::OnceClosure stopped);

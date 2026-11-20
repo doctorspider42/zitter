@@ -175,10 +175,7 @@ def verify_private_workspace(executable, server, root):
     environment = dict(os.environ, TMPDIR=str(root), TMP=str(root), TEMP=str(root))
     expected = Counter(PRIVATE_LISTS + ("/private-adblock",) * 3 +
                        ("/private-blocked",))
-    appearances = (("light", "compositor"), ("dark", "compositor")) if os.name == "nt" else (
-        ("light", "compositor"), ("dark", "metal"), ("dark", "compositor"), ("light", "metal"),
-    )
-    for theme, renderer in appearances:
+    for theme in ("light", "dark"):
         server.hits.clear()
         result = subprocess.run(
             [
@@ -186,7 +183,6 @@ def verify_private_workspace(executable, server, root):
                 "--zitter-content-workspace",
                 f"--zitter-content-private-adblock-probe={origin}",
                 f"--zitter-content-workspace-theme={theme}",
-                f"--zitter-rust-raster={renderer}",
             ],
             env=environment,
             capture_output=True,
@@ -195,7 +191,7 @@ def verify_private_workspace(executable, server, root):
         )
         if result.returncode or PRIVATE_MARKER not in result.stdout.splitlines():
             raise SystemExit(
-                f"Private Workspace ad blocking failed in {theme}/{renderer}.\n"
+                f"Private Workspace ad blocking failed in {theme}.\n"
                 f"{result.stdout}\n{result.stderr}"
             )
         hits = Counter(path for path in server.hits if path != "/favicon.ico")

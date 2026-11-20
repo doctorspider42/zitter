@@ -215,6 +215,7 @@ class WorkspaceShell final : public ui::EventHandler,
     Callbacks& operator=(Callbacks&&);
     ~Callbacks();
     base::RepeatingCallback<void(std::string)> select_workspace;
+    base::RepeatingCallback<ShellState(std::string_view)> workspace_preview;
     base::RepeatingCallback<bool(std::string, std::string)> add_workspace;
     base::RepeatingCallback<bool(std::string, std::string)> edit_workspace;
     base::RepeatingCallback<bool(std::string)> remove_workspace;
@@ -265,6 +266,9 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<void(bool, int)> timeline_settings;
     base::RepeatingCallback<bool()> clear_timeline;
     base::RepeatingCallback<bool(std::string)> run_shortcut;
+    base::RepeatingCallback<void(std::string)> bookmark_sync_action;
+    base::RepeatingCallback<std::u16string()> bookmark_sync_status;
+    base::RepeatingCallback<bool()> bookmark_sync_enabled;
     base::RepeatingCallback<BrowserPreferences()> read_preferences;
     base::RepeatingCallback<std::u16string()> download_directory;
     base::RepeatingClosure choose_download_directory;
@@ -383,6 +387,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ShowLinkMenu(GURL url, std::string source_workspace, gfx::Point point,
                     base::RepeatingClosure inspect,
                     std::optional<PageMenuNavigation> navigation, bool from_address);
+  void ShowPageZoomLevel(int percent, gfx::Rect page_bounds);
   void SetDeveloperPage(GURL url, bool allowed = true, bool compare = true);
   void SetDeveloperMode(std::string mode);
   void ShowDeveloperMenu();
@@ -458,7 +463,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetUpdateCheckCallback(base::RepeatingCallback<void(UpdateCheckDone)> check,
                               base::RepeatingCallback<void(bool, bool)> configure = {});
   void DownloadUpdate(base::OnceCallback<void(UpdateCheckDone)> download);
-  void SetUpdateDownloadPending(bool pending);
+  void SetUpdateDownloadPending(bool pending, std::string version = {});
   // The installer download's progress, 0–1; negative while the size is unknown.
   void SetUpdateDownloadProgress(double fraction);
   void ShowUpdateOffer(std::string version, std::u16string message,
@@ -630,6 +635,10 @@ class WorkspaceShell final : public ui::EventHandler,
   bool workspace_swipe_contains_scene_text(std::string_view text) const;
   views::Widget* general_widget() const { return general_widget_.get(); }
   views::Widget* about_widget_for_testing() const { return about_dialog_.get(); }
+  void RefreshBookmarkSync();
+
+  bool SuspendWelcomeForLogin();
+  void ResumeWelcomeAfterLogin();
   void SetPreferencesStatus(std::u16string text, bool error = false);
   // Rust forms own outcome copy/tone; `native` is the Views fallback text.
   // outcome is sidebar::PreferenceOutcome; general updates only the settings status.
@@ -737,6 +746,7 @@ class WorkspaceShell final : public ui::EventHandler,
       ImportBrowser browser;
       SkBitmap icon;
     };
+    base::RepeatingCallback<void(views::View*)> build_bookmark_sync;
     std::vector<Source> sources;
     std::u16string space_name;
     SkColor space_color = 0;
@@ -1005,6 +1015,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void PositionPanels();
   void PositionPreferencesTab();
   void SyncPreferencesTab();
+  void EnsurePreferencesTab();
   void ApplySidebarWidth(int width,bool done);
   void FitInitialSidebarWidth();
   void HideMetalSidebarGrip();
@@ -1102,6 +1113,10 @@ class WorkspaceShell final : public ui::EventHandler,
   void RefreshToolsChoiceFields();
   void SetShortcutRecording(bool recording);
   std::unique_ptr<views::WidgetDelegate> tools_delegate_;
+  std::unique_ptr<views::WidgetDelegate> zoom_feedback_delegate_;
+  std::unique_ptr<views::Widget> zoom_feedback_widget_;
+  raw_ptr<views::Label> zoom_feedback_label_ = nullptr;
+  base::OneShotTimer zoom_feedback_timer_;
   std::unique_ptr<views::WidgetDelegate> toast_delegate_;
   std::unique_ptr<views::Widget> toast_widget_;
   std::unique_ptr<views::WidgetDelegate> scrim_delegate_;
@@ -1252,7 +1267,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ConfigureSidebarTabActions(views::View* row, const std::string& pin,
                                   bool favorite);
   ResolvedRowTarget ResolveSidebarTarget(std::string_view workspace,std::array<uint64_t,2> identity,std::string_view pin) const;
-  void HandleSidebarDrop(std::string workspace,std::optional<size_t> tab,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
+  void HandleSidebarDrop(std::string workspace,std::array<uint64_t,2> identity,std::string pin,gfx::Point point);
   // Where a row dragged within the sidebar would land, in screen coordinates.
   struct SidebarReorder {
     gfx::Rect indicator;
@@ -1363,6 +1378,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void OnOnlineSuggestions(std::string query, std::optional<std::string> body);
   void AddressEdited();
   void ApplyAppearance(bool refresh_theme = true);
+  SkColor WorkspaceSidebarBackground(SkColor base, SkColor card, SkColor accent) const;
+  void SetWorkspaceSidebarBackground(SkColor color);
   bool HandleAppearanceEditorKey(bool emoji,const ui::KeyEvent& event);
   void RefreshWorkspaceHeading();
   void RestorePageFocus(std::optional<size_t> pane = std::nullopt);
@@ -1448,6 +1465,11 @@ class WorkspaceShell final : public ui::EventHandler,
   raw_ptr<EditorControl> assistant_add_model_ = nullptr;
   std::vector<std::string> assistant_add_providers_;
   std::string assistant_preferences_snapshot_;
+  void BuildBookmarkSync(views::View* parent, bool welcome);
+  struct SyncControls {
+    views::ViewTracker status, folder, dropbox, disable;
+  };
+  std::array<SyncControls, 2> sync_controls_;
   views::ViewTracker welcome_assistant_backends_;
   std::string welcome_assistant_snapshot_;
   std::string welcome_assistant_provider_;
@@ -1654,9 +1676,13 @@ class WorkspaceShell final : public ui::EventHandler,
   std::string swipe_source_, swipe_commit_target_;
   std::vector<std::string> swipe_workspace_ids_;
   raw_ptr<views::View> swipe_overlay_ = nullptr;
-  base::OneShotTimer swipe_idle_timer_, swipe_settle_timer_;
+  base::OneShotTimer swipe_idle_timer_;
+  base::RepeatingTimer swipe_settle_timer_;
+  std::optional<SkColor> swipe_frame_color_, swipe_sidebar_color_;
   void UpdateWorkspaceSwipePreview();
+  void PaintWorkspaceSwipe(double position);
   void FinishWorkspaceSwipe();
+  void CommitWorkspaceSwipe();
   void CancelWorkspaceSwipe(bool reset_state = true);
   size_t workspace_animation_generation_ = 0;
   bool workspace_animation_pending_ = false;
@@ -1671,6 +1697,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void FinishUpdateCheck(std::u16string message, GURL release_url);
   void RunUpdateAction();
   void RefreshUpdateControls();
+  void RefreshSidebarUpdate();
   void SetAutomaticUpdates();
   bool UpdatePreferencesVisible() const;
   std::u16string UpdateStatus() const;
@@ -1682,6 +1709,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::u16string update_check_message_;
   std::u16string update_offer_message_;
   std::u16string update_offer_label_;
+  raw_ptr<views::View> sidebar_update_ = nullptr;
   raw_ptr<views::View> update_preferences_status_ = nullptr;
   raw_ptr<views::Throbber> update_preferences_spinner_ = nullptr;
   raw_ptr<views::View> update_preferences_progress_ = nullptr;

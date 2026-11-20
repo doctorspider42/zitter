@@ -1,11 +1,12 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 // Automatic updates for an installed Windows Content build: WindowsUpdater
-// (chromium/app/updater_win.cc) behind Settings and the update toasts.
+// (chromium/app/updater_win.cc) behind Settings and the sidebar update card.
 
 #ifndef ZITTER_CONTENT_UPDATES_WIN_H_
 #define ZITTER_CONTENT_UPDATES_WIN_H_
 
 #include <memory>
+#include <string>
 
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
@@ -37,7 +38,9 @@ class WindowsContentUpdates final {
   using UpdateCheckDone = prototype::WorkspaceShell::UpdateCheckDone;
   void Configure(bool check, bool download);
   void CheckInBackground();
-  void Check(bool download, UpdateCheckDone done);
+  void Check(bool download, UpdateCheckDone done, std::string requested_version = {});
+  void StartDownload(std::string version);
+  void ReportDownloadProgress(const std::string& version, double progress);
 
   const raw_ref<prototype::WorkspaceShell> shell_;
   std::unique_ptr<WindowsUpdater> updater_;

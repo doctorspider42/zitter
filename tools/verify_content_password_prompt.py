@@ -203,7 +203,7 @@ def verify_saving_preference(root, run, saved_ciphertext, legacy_snapshot, prefi
         raise SystemExit("Changing preferences altered the saved password")
 
 
-def open_interactive_reauth(executable, root, theme, renderer):
+def open_interactive_reauth(executable, root, theme):
     print("Open Passwords in Work and use Reveal password on the synthetic login.", flush=True)
     print("Cancel once and check that it stays masked. Reopen and authenticate to check reveal.",
           flush=True)
@@ -212,11 +212,10 @@ def open_interactive_reauth(executable, root, theme, renderer):
         str(executable), "--zitter-content-workspace",
         f"--zitter-content-workspace-root={root}", "--no-proxy-server",
         f"--zitter-content-workspace-theme={theme}",
-        f"--zitter-rust-raster={renderer}",
     ], check=True)
 
 
-def verify_clear_passwords(executable, root, theme, renderer):
+def verify_clear_passwords(executable, root, theme):
     work, personal = (root / profile / "Login Data" for profile in PROFILES)
     old_user = USERNAME + "-old"
     with closing(sqlite3.connect(work)) as db:
@@ -258,7 +257,7 @@ def verify_clear_passwords(executable, root, theme, renderer):
                 session_path.write_text(json.dumps(session), encoding="utf-8")
                 result = launch(executable, root, origin, (
                     f"--zitter-content-clear-data-smoke-test={phase}",
-                    f"--zitter-content-workspace-theme={theme}", f"--zitter-rust-raster={renderer}",
+                    f"--zitter-content-workspace-theme={theme}",
                 ))
                 require(result, marker, phase)
                 if saved(work) != remaining or saved(personal) != original:
@@ -267,14 +266,13 @@ def verify_clear_passwords(executable, root, theme, renderer):
         finally:
             server.shutdown()
             thread.join()
-    print(f"Content cleared saved passwords by time range in {theme} with {renderer}")
+    print(f"Content cleared saved passwords by time range in {theme}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     parser.add_argument("--clear-passwords", action="store_true",
                         help="verify Advanced saved-password clearing and cancellation")
     parser.add_argument("--password-manager", action="store_true",
@@ -293,8 +291,6 @@ def main():
         parser.error("--legacy-app requires macOS and --password-preference")
     if args.previous_content_app and (windows or args.clear_passwords):
         parser.error("--previous-content-app requires the macOS password prompt suite")
-    if windows and args.renderer == "metal":
-        parser.error("Metal requires macOS")
     executable = args.app.resolve() if windows else (
         args.app / "Contents/MacOS/Zitter Content Lab"
     ).resolve()
@@ -324,7 +320,6 @@ def main():
                 result = launch(app, root, origin, (
                     f"--zitter-content-workspace-password-probe={action}",
                     f"--zitter-content-workspace-theme={args.theme}",
-                    f"--zitter-rust-raster={args.renderer}",
                 ))
                 require(result, MARKER, action)
                 print(f"Verified workspace password {action}", flush=True)
@@ -332,7 +327,7 @@ def main():
             if args.clear_passwords:
                 run("save")
                 read_ciphertext(root, prefix)
-                verify_clear_passwords(executable, root, args.theme, args.renderer)
+                verify_clear_passwords(executable, root, args.theme)
                 return
 
             original = None
@@ -369,7 +364,7 @@ def main():
                 )
                 verify_saving_preference(root, run, original, legacy, prefix)
             if args.interactive_reauth:
-                open_interactive_reauth(executable, root, args.theme, args.renderer)
+                open_interactive_reauth(executable, root, args.theme)
         finally:
             server.shutdown()
             thread.join()

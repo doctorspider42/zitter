@@ -307,7 +307,7 @@ def clear_media_rules(profile):
 
 
 def run_site_permission_probe(executable, root, phase, origin, *,
-                              theme="light", renderer="compositor", rejected=False,
+                              theme="light", rejected=False,
                               env=None, missing_clipboard_fixture=False):
     command = [
         executable, "--zitter-content-workspace", "--no-proxy-server",
@@ -315,7 +315,6 @@ def run_site_permission_probe(executable, root, phase, origin, *,
         f"--zitter-content-workspace-probe={origin}/",
         f"--zitter-content-workspace-site-permission-probe={phase}",
         f"--zitter-content-workspace-theme={theme}",
-        f"--zitter-rust-raster={renderer}",
     ]
     if phase.startswith("media-"):
         command.append("--vmodule=workspace_media_access=1")
@@ -375,7 +374,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, help="Zitter Content Lab.app or zitter.exe")
     parser.add_argument("--theme", choices=("light", "dark"), default="light")
-    parser.add_argument("--renderer", choices=("compositor", "metal"), default="compositor")
     parser.add_argument("--workspace-only", action="store_true",
                         help="Use the Workspace entry point and omit the standalone private probe")
     mode = parser.add_mutually_exclusive_group()
@@ -395,8 +393,6 @@ def main():
         parser.error("The Windows probe captures only its disposable window fixture")
     if args.read_clipboard and sys.platform != "darwin":
         parser.error("--read-clipboard requires macOS")
-    if windows and args.renderer == "metal":
-        parser.error("Metal is only available on macOS")
     executable = args.app if windows else args.app / "Contents/MacOS/Zitter Content Lab"
     executable = executable.resolve()
     if not executable.is_file():
@@ -412,7 +408,7 @@ def main():
 
         def run(phase, origin, *, rejected=False, env=None):
             run_site_permission_probe(executable, root, phase, origin,
-                                      theme=args.theme, renderer=args.renderer, rejected=rejected,
+                                      theme=args.theme, rejected=rejected,
                                       env=env)
 
         def require_rules(work_rules, personal_rules):
@@ -451,7 +447,7 @@ def main():
             for phase in TAB_CAPTURE_PHASES:
                 case_root = create_probe_root(stack, windows)
                 run_site_permission_probe(executable, case_root, f"media-tab-{phase}", primary,
-                                          theme=args.theme, renderer=args.renderer)
+                                          theme=args.theme)
                 if any(clipboard_rules(case_root / name) for name in
                        ("workspace-work", "workspace-personal")):
                     raise SystemExit("Tab capture changed the clipboard permission stores")
@@ -516,7 +512,7 @@ def main():
                 require_rules({}, {primary: 2})
                 run_site_permission_probe(
                     executable, root, "prompt-read", primary,
-                    theme=args.theme, renderer=args.renderer, env=loader_environment(),
+                    theme=args.theme, env=loader_environment(),
                     missing_clipboard_fixture=True,
                 )
                 require_rules({}, {primary: 2})
@@ -529,7 +525,7 @@ def main():
         run("reopen", primary, rejected=True)
         if damaged.read_bytes() != invalid or clipboard_rules(personal) != {primary: 2}:
             raise SystemExit("Rejecting malformed permissions changed a profile")
-        print(f"Content Clipboard site permissions passed in {args.theme} with {args.renderer}")
+        print(f"Content Clipboard site permissions passed in {args.theme}")
 
 
 if __name__ == "__main__":

@@ -117,23 +117,12 @@ class SidebarMetal {
   virtual gfx::Rect screen_bounds_for_testing() const = 0;
   virtual bool contains_rect_for_testing(gfx::RectF bounds, gfx::RectF clip) const = 0;
 };
-// Compositor raster by default; Metal with --zitter-rust-raster=metal on macOS.
-// Never returns null.
+// Supplies viewport projection for the Chromium compositor path.
 std::unique_ptr<SidebarMetal> CreateSidebarMetal();
-#if BUILDFLAG(IS_MAC)
-// The in-process Metal overlay; null when Metal is unavailable.
-std::unique_ptr<SidebarMetal> CreateMetalSidebarSurface();
-#endif
-// Diagnostics for memory budgeting: live/visible surfaces, cached text tile
-// bytes and current drawable bytes (drawableSize x 4 x maximumDrawableCount).
-struct SidebarMetalStats { size_t surfaces = 0, visible = 0, text_bytes = 0, drawable_bytes = 0, device_bytes = 0, frames = 0; double drawable_wait_ms = 0, render_ms = 0; };
-SidebarMetalStats GetSidebarMetalStatsForTesting();
-// Platform text services. macOS implements them with CoreText in
-// sidebar_metal.mm; other platforms with gfx::RenderText in
-// text_services_skia.cc.
+// CoreText on macOS and gfx::RenderText on other platforms.
 // Paints an editor scene (untruncated shaped lines) on the compositor canvas.
 void PaintEditorSceneFallback(gfx::Canvas* canvas,base::span<const sidebar::Primitive> scene);
-// Typography adapter, matching the font used for GPU text tiles.
+// Typography adapter for paragraph wrapping.
 // Returns complete UTF-8 line fragments, without any native View/Label layout.
 std::vector<std::string> ShapeSidebarParagraph(std::string_view text,float font_size,int width,bool bold = false);
 std::vector<std::string> ShapeSidebarParagraphWeight(std::string_view text,float font_size,int width,int weight);

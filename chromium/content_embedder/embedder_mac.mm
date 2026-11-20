@@ -285,6 +285,11 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
   command(view, u"Wstecz", @"back");
   command(view, u"Dalej", @"forward");
   command(view, u"Odśwież stronę", @"reload");
+  [view addItem:NSMenuItem.separatorItem];
+  command(view, u"Powiększ stronę", @"page_zoom_in");
+  command(view, u"Zmniejsz stronę", @"page_zoom_out");
+  command(view, u"Domyślne powiększenie", @"page_zoom_reset");
+  [view addItem:NSMenuItem.separatorItem];
   command(view, u"Przełącz pełny ekran", @"toggle_window_fullscreen");
 
   NSMenu* developer = submenu(u"Narzędzia developerskie");
@@ -740,6 +745,33 @@ std::unique_ptr<StagedMacUpdate> StageMacUpdate(const MacInstaller& installer,
   }
 }
 
+// A Dock pin bookmarks the bundle directory itself. Exchange the signed
+// Contents trees so the pin still resolves to the installed app after restart.
+bool ExchangeMacUpdate(const StagedMacUpdate& update) {
+  auto has_only_contents = [](const base::FilePath& app) {
+    NSArray<NSString*>* entries = [NSFileManager.defaultManager
+        contentsOfDirectoryAtPath:base::apple::FilePathToNSString(app) error:nullptr];
+    return entries.count == 1 && [entries.firstObject isEqualToString:@"Contents"] &&
+           !base::IsLink(app.AppendASCII("Contents")) &&
+           base::DirectoryExists(app.AppendASCII("Contents"));
+  };
+  if (has_only_contents(update.installed) && has_only_contents(update.app) &&
+      renamex_np(update.app.AppendASCII("Contents").value().c_str(),
+                 update.installed.AppendASCII("Contents").value().c_str(),
+                 RENAME_SWAP) == 0) {
+    // The installed directory retains its own metadata across the exchange.
+    if (removexattr(update.installed.value().c_str(), "com.apple.quarantine", 0) != 0 &&
+        errno != ENOATTR) {
+      PLOG(WARNING) << "Could not clear quarantine on the updated application";
+    }
+    return true;
+  }
+  // Older layouts and read-only bundle directories can still be replaced
+  // atomically when the containing Applications directory is writable.
+  return renamex_np(update.app.value().c_str(), update.installed.value().c_str(),
+                    RENAME_SWAP) == 0;
+}
+
 using OpenEncryptionCallback = base::OnceCallback<os_crypt_async::OSCryptAsync*(
     const base::FilePath&, base::FilePath, std::vector<base::FilePath>,
     std::vector<base::FilePath>, bool)>;
@@ -1048,6 +1080,15 @@ class LabMainParts final : public content::BrowserMainParts,
       return;
     }
     if (!workspace_root_.empty()) {
+      if (ordinary_prepared_startup_ && !install_file_keychain_fixture_) {
+        // Read the policy while the Keychain and encrypted stores are being
+        // checked. Both results must be ready before any page can navigate.
+        base::ThreadPool::PostTaskAndReplyWithResult(
+            FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+            base::BindOnce(&zitter::LoadSafeBrowsingKeyFile),
+            base::BindOnce(&LabMainParts::DownloadPolicyReady,
+                           weak_factory_.GetWeakPtr()));
+      }
       std::move(check_encryption_).Run(
           base::BindOnce(
               [](base::WeakPtr<LabMainParts> self, bool verified) {
@@ -1113,7 +1154,11 @@ class LabMainParts final : public content::BrowserMainParts,
       [app setWorkspaceMenuAction:base::BindRepeating(
           &WorkspaceLab::HandleNativeMenuCommand,
           base::Unretained(workspace_.get()))];
-      if (workspace_probe_url_.is_valid()) {
+      const auto& command_line = *base::CommandLine::ForCurrentProcess();
+      const bool background_automation =
+          ui_automation_allowed_ && command_line.HasSwitch(kUiAutomation) &&
+          command_line.GetSwitchValueASCII(kUiAutomation) != "front";
+      if (workspace_probe_url_.is_valid() && !background_automation) {
         workspace_->SetNativeMenuProbe(base::BindRepeating([](std::string command) {
           return [static_cast<ZitterContentApplication*>(NSApp)
               activateWorkspaceMenuForTesting:command];
@@ -1219,8 +1264,7 @@ class LabMainParts final : public content::BrowserMainParts,
     if (install_mac_update_on_exit_ && staged_mac_update_) {
       auto update = std::move(staged_mac_update_);
       // Keep the profile locked until the atomic bundle exchange completes.
-      if (renamex_np(update->app.value().c_str(), update->installed.value().c_str(),
-                     RENAME_SWAP) != 0) {
+      if (!ExchangeMacUpdate(*update)) {
         PLOG(ERROR) << "Could not replace the installed Zitter application";
       }
       restart = update->installed;
@@ -1310,11 +1354,9 @@ class LabMainParts final : public content::BrowserMainParts,
         (workspace_session_.empty() ||
          workspace_session_.FindBool("startup_import_pending").value_or(false));
     bool dark = command_line.GetSwitchValueASCII("zitter-content-workspace-theme") == "dark";
-    bool metal = command_line.GetSwitchValueASCII("zitter-rust-raster") == "metal";
     if (!startup_import_probe_.empty()) {
       auto env = base::Environment::Create();
       dark = env->GetVar("ZITTER_CONTENT_STARTUP_IMPORT_THEME") == "dark";
-      metal = env->GetVar("ZITTER_CONTENT_STARTUP_IMPORT_RENDERER") == "metal";
     }
     workspace_ = std::make_unique<WorkspaceLab>(
         WorkspaceSettingsPath(root), directory_.GetPath(),
@@ -1322,7 +1364,7 @@ class LabMainParts final : public content::BrowserMainParts,
         std::move(workspace_session_), std::move(workspace_timeline_),
         workspace_probe_url_, *context_,
         personal_context_.get(),
-        dark, metal,
+        dark,
         workspace_smoke_, nullptr, additional_profiles_, os_crypt_,
         std::move(user_download_directory), std::move(download_safe_browsing_key),
         offer_startup_import, startup_import_probe_);
@@ -1335,6 +1377,18 @@ class LabMainParts final : public content::BrowserMainParts,
     }
     CreateWorkspace(std::move(download_safe_browsing_key));
     StartWorkspace();
+  }
+
+  void DownloadPolicyReady(std::string key) {
+    startup_safe_browsing_key_ = std::move(key);
+    StartWorkspaceWhenReady();
+  }
+
+  void StartWorkspaceWhenReady() {
+    if (workspace_encryption_ready_ && startup_safe_browsing_key_) {
+      auto key = std::exchange(startup_safe_browsing_key_, std::nullopt);
+      StartWorkspaceWithDownloadPolicy(std::move(*key));
+    }
   }
 
   bool WorkspaceEncryptionReady(bool verified) {
@@ -1382,11 +1436,8 @@ class LabMainParts final : public content::BrowserMainParts,
       }
     }
     if (ordinary_prepared_startup_ && !install_file_keychain_fixture_) {
-      base::ThreadPool::PostTaskAndReplyWithResult(
-          FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
-          base::BindOnce(&zitter::LoadSafeBrowsingKeyFile),
-          base::BindOnce(&LabMainParts::StartWorkspaceWithDownloadPolicy,
-                         weak_factory_.GetWeakPtr()));
+      workspace_encryption_ready_ = true;
+      StartWorkspaceWhenReady();
     } else {
       StartWorkspaceWithDownloadPolicy({});
     }
@@ -2162,6 +2213,8 @@ class LabMainParts final : public content::BrowserMainParts,
   base::DictValue workspace_session_;
   std::unique_ptr<prototype::TimelineStore> workspace_timeline_;
   const bool ordinary_prepared_startup_;
+  bool workspace_encryption_ready_ = false;
+  std::optional<std::string> startup_safe_browsing_key_;
   bool fresh_startup_ = false;
   std::string startup_import_probe_;
   GURL workspace_probe_url_;
