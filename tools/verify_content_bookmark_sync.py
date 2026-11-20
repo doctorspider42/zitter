@@ -373,14 +373,14 @@ def verify_first_imports(executable):
             for replace in (False, True):
                 with (temporary_workspace() as root,
                       tempfile.TemporaryDirectory() as shared):
-                    verify_initial_import(executable, Path(root), Path(shared), fixture,
-                                          seen_icon, replace)
+                    verify_initial_import(executable, Path(root).resolve(), Path(shared).resolve(),
+                                          fixture, seen_icon, replace)
             with (tempfile.TemporaryDirectory() as shared,
                   temporary_workspace() as first,
                   temporary_workspace() as second,
                   temporary_workspace() as receiver):
-                verify_concurrent_tabs(executable, Path(shared), Path(first), Path(second),
-                                       Path(receiver), fixture)
+                verify_concurrent_tabs(executable, Path(shared).resolve(), Path(first).resolve(),
+                                       Path(second).resolve(), Path(receiver).resolve(), fixture)
         finally:
             server.shutdown()
             thread.join()

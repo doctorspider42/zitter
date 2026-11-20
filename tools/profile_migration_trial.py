@@ -798,9 +798,9 @@ def write_history(candidate, profile, entries, destination, *, windows):
         if db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             raise ValueError("Legacy History database failed its integrity check")
         download_tables = {"downloads", "downloads_url_chains", "downloads_slices"}
-        tables = dict(db.execute("SELECT name, type FROM sqlite_schema"))
+        tables = dict(db.execute("SELECT name, type FROM sqlite_master"))
         if (any(tables.get(name) != "table" for name in download_tables | {"urls", "visits"})
-                or db.execute("SELECT 1 FROM sqlite_schema WHERE type = 'trigger'").fetchone()):
+                or db.execute("SELECT 1 FROM sqlite_master WHERE type = 'trigger'").fetchone()):
             raise ValueError("Unsupported legacy History tables or triggers")
         if db.execute("PRAGMA journal_mode=DELETE").fetchone() != ("delete",):
             raise ValueError("Could not checkpoint the copied History database")
@@ -819,9 +819,9 @@ def write_favicons(candidate, profile, entries, destination):
             raise ValueError("Unsupported legacy Favicons schema")
         if db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             raise ValueError("Legacy Favicons database failed its integrity check")
-        tables = dict(db.execute("SELECT name, type FROM sqlite_schema"))
+        tables = dict(db.execute("SELECT name, type FROM sqlite_master"))
         if (any(tables.get(name) != "table" for name in ("icon_mapping", "favicons", "favicon_bitmaps"))
-                or db.execute("SELECT 1 FROM sqlite_schema WHERE type = 'trigger'").fetchone()):
+                or db.execute("SELECT 1 FROM sqlite_master WHERE type = 'trigger'").fetchone()):
             raise ValueError("Unsupported legacy Favicons tables or triggers")
         if db.execute("PRAGMA journal_mode=DELETE").fetchone() != ("delete",):
             raise ValueError("Could not checkpoint the copied Favicons database")
