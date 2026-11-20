@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from verify_content_automation import ROOT, expect, request, wait
+from windows_test_desktop import parse_probe_args
 
 
 def read_json(path):
@@ -60,7 +61,13 @@ def running(executable, root, panel="settings"):
                 raise AssertionError((root / "test.log").read_text(errors="replace")[-3000:])
             yield channel
         finally:
-            process.terminate()
+            if process.poll() is None:
+                if os.name == "nt":
+                    # Chromium child processes can retain the log and profile files.
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                   capture_output=True, timeout=10)
+                else:
+                    process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -71,7 +78,7 @@ def running(executable, root, panel="settings"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, nargs="?", default=ROOT / "build/ZitterContentLab.app")
-    app = parser.parse_args().app.resolve(strict=True)
+    app = parse_probe_args(parser, __file__).app.resolve(strict=True)
     executable = app
     if app.is_dir():
         executable = app / "Contents/MacOS" / plistlib.loads(
