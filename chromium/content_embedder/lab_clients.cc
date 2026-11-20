@@ -17,6 +17,8 @@
 #include "federated_identity.h"
 #include "page_password_manager.h"
 #include "content/public/browser/webid/identity_request_dialog_controller.h"
+#include "mojo/public/cpp/bindings/binder_map.h"
+#include "third_party/blink/public/mojom/badging/badging.mojom.h"
 #include "third_party/blink/public/mojom/credentialmanagement/credential_manager.mojom.h"
 
 #include "base/functional/callback_helpers.h"
@@ -36,7 +38,6 @@
 #include "printing/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PRINTING) && BUILDFLAG(ENABLE_PDF)
-#include "mojo/public/cpp/bindings/binder_map.h"
 #include "zitter_content/pdf_preview.mojom.h"
 #endif
 
@@ -1342,6 +1343,8 @@ void LabBrowserClientBase::CreateThrottlesForNavigation(
 void LabBrowserClientBase::RegisterBrowserInterfaceBindersForFrame(
     content::RenderFrameHost* frame,
     mojo::BinderMapWithContext<content::RenderFrameHost*>* map) {
+  // Blink exposes best-effort app badges even without a platform badge UI.
+  map->Add<blink::mojom::BadgeService>(base::DoNothing());
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   map->Add<mojom::LocalSpelling>(base::BindRepeating(
       [](content::RenderFrameHost* frame, mojo::PendingReceiver<mojom::LocalSpelling> receiver) {
@@ -1353,6 +1356,13 @@ void LabBrowserClientBase::RegisterBrowserInterfaceBindersForFrame(
   map->Add<mojom::ScriptedPrint>(base::BindRepeating(&BindScriptedPrint));
 #endif
   map->Add<blink::mojom::CredentialManager>(base::BindRepeating(&BindPageCredentialManager));
+}
+
+void LabBrowserClientBase::RegisterBrowserInterfaceBindersForServiceWorker(
+    content::BrowserContext* browser_context,
+    const content::ServiceWorkerVersionBaseInfo& worker,
+    mojo::BinderMapWithContext<const content::ServiceWorkerVersionBaseInfo&>* map) {
+  map->Add<blink::mojom::BadgeService>(base::DoNothing());
 }
 
 void LabBrowserClientBase::RegisterAssociatedInterfaceBindersForRenderFrameHost(

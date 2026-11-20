@@ -878,10 +878,16 @@ window.addEventListener('load', () => {
             favicon_link = '<link rel="icon" href="/work/renewed.png">'
         check_viewport = (self.path == "/work/active"
                           and getattr(self.server, "check_favorite_viewport", False))
+        badge_script = """
+  const updateBadge = () => document.hidden ? navigator.setAppBadge(1) : navigator.clearAppBadge();
+  document.addEventListener('visibilitychange', updateBadge);
+  updateBadge();
+""" if check_viewport else ""
         body = f"""<!doctype html>
 <meta charset="utf-8">
 {rss_link}{favicon_link}
 <script>
+  {badge_script}
   const profile = {json.dumps(profile)};
   const expected = {json.dumps(expected)};
   const cookie = document.cookie.split('; ')

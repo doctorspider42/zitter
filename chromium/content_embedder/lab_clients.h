@@ -208,6 +208,10 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
   void RegisterBrowserInterfaceBindersForFrame(
       content::RenderFrameHost* frame,
       mojo::BinderMapWithContext<content::RenderFrameHost*>* map) override;
+  void RegisterBrowserInterfaceBindersForServiceWorker(
+      content::BrowserContext* browser_context,
+      const content::ServiceWorkerVersionBaseInfo& worker,
+      mojo::BinderMapWithContext<const content::ServiceWorkerVersionBaseInfo&>* map) override;
   void RegisterAssociatedInterfaceBindersForRenderFrameHost(
       content::RenderFrameHost& frame,
       blink::AssociatedInterfaceRegistry& registry) override;
