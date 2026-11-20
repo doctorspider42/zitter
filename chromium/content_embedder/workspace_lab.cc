@@ -14729,6 +14729,12 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
       if ((ready = loaded(first, kPaths[2]))) {
         if (native_menu_probe_ && !zoom_probe) {
           first->widget_->Activate();
+          // AppKit switches the key window asynchronously after a private
+          // window closes. Dispatch the menu action after its target is ready.
+          if (!first->widget_->IsActive() || !first->CanEditWorkspace()) {
+            ready = false;
+            break;
+          }
           if (!native_menu_probe_.Run("about") ||
               !first->shell_->about_widget_for_testing() ||
               !first->shell_->about_widget_for_testing()->IsVisible() ||
