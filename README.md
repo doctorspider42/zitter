@@ -111,6 +111,18 @@ The [`zitter-dev`](tools/claude-plugins/zitter-dev/README.md) mod adds Content b
 </details>
 
 <details>
+<summary><strong>Developing with Codex</strong></summary>
+
+[Zitter Dev for Codex](tools/codex-plugins/zitter-dev/README.md) adds a live build panel, a local job queue and shell guards for Content development.
+
+```sh
+codex plugin marketplace add .
+codex plugin add zitter-dev@zitter-tools
+```
+
+</details>
+
+<details>
 <summary><strong>Explore the core without building Chromium</strong></summary>
 
 The workspace model and controller build independently with CMake and a C++20 compiler. This runs their contract tests; it does not build the browser.

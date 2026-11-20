@@ -7,7 +7,7 @@ goes through one of these subcommands. Each prints plain text or JSON and
 exits 0 unless it says otherwise.
 
   zjob.py info                      {"platform", "jobsDir"}
-  zjob.py start <script> <log>      start a job detached in its own process group; print its pid
+  zjob.py start <script> <log> [root]  start a detached job, with the Chromium lock if root is given
   zjob.py alive <pid>               exit 0 while the process runs, 1 once it is gone
   zjob.py kill <pid>                stop the job and everything it started
   zjob.py tail <file> <bytes>       the last bytes of a file, as text
@@ -19,6 +19,8 @@ exits 0 unless it says otherwise.
   zjob.py sleep <seconds>           wait
   zjob.py open <file>               open a file in the default text editor
 """
+from contextlib import contextmanager
+import hashlib
 import json
 import os
 import re
@@ -26,6 +28,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 WINDOWS = sys.platform == "win32"
@@ -41,6 +44,46 @@ def jobs_dir() -> Path:
     else:
         base = Path.home() / "Library/Caches"
     return base / "zitter-dev" / "jobs"
+
+
+@contextmanager
+def file_lock(path: Path):
+    """Yield whether an exclusive, process-owned lock was acquired."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as handle:
+        if WINDOWS:
+            import msvcrt
+
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as error:
+                if error.errno != 13:
+                    raise
+                yield False
+                return
+        else:
+            import fcntl
+
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+        yield True
+
+
+def chromium_lock(root: Path) -> Path:
+    # Staging writes to the Chromium source tree even when the output dirs differ.
+    source = os.path.normcase(str((root / ".chromium" / "src").resolve()))
+    key = hashlib.sha256(os.fsencode(source)).hexdigest()
+    return jobs_dir().parent / "locks" / f"{key}.lock"
+
+
+def script_command(script):
+    if WINDOWS:
+        return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]
+    return ["/bin/zsh", script]
 
 
 def app_path(root: Path) -> Path:
@@ -122,7 +165,6 @@ def kill_tree(pid: int):
 
 
 def quit_app(root: Path):
-    import time
     pids = list(app_processes(root))
     for pid in pids:
         kill_tree(pid) if WINDOWS else os.kill(pid, signal.SIGTERM)
@@ -164,16 +206,26 @@ def main(argv):
         jobs_dir().mkdir(parents=True, exist_ok=True)
         print(json.dumps({"platform": "windows" if WINDOWS else "macos", "jobsDir": jobs_dir().as_posix()}))
     elif command == "start":
-        script, log = args
-        out = open(log, "wb")
-        if WINDOWS:
-            flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW
-            proc = subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
-                                    stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=flags)
-        else:
-            proc = subprocess.Popen(["/bin/zsh", script], stdout=out, stderr=subprocess.STDOUT,
-                                    stdin=subprocess.DEVNULL, start_new_session=True)
+        script, log, *root = args
+        argv = [sys.executable, __file__, "locked", root[0], script] if root else script_command(script)
+        options = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS}
+                   if WINDOWS else {"start_new_session": True})
+        with open(log, "wb") as out:
+            proc = subprocess.Popen(argv, stdout=out, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, **options)
         print(proc.pid)
+    elif command == "locked":
+        root, script = args
+        lock = chromium_lock(Path(root))
+        while True:
+            with file_lock(lock) as acquired:
+                if acquired:
+                    child = subprocess.Popen(script_command(script))
+                    if not WINDOWS:
+                        # Ctrl+Stop signals the whole group. Keep the lock until the script exits.
+                        signal.signal(signal.SIGTERM, lambda *_: None)
+                    return child.wait()
+            time.sleep(0.25)
     elif command == "alive":
         return 0 if alive(int(args[0])) else 1
     elif command == "kill":
@@ -209,7 +261,6 @@ def main(argv):
         for name in args:
             Path(name).unlink(missing_ok=True)
     elif command == "sleep":
-        import time
         time.sleep(float(args[0]))
     elif command == "open":
         if WINDOWS:
