@@ -1341,10 +1341,15 @@ class LabMainParts final : public content::BrowserMainParts,
       user_download_directory = install_file_keychain_fixture_
           ? root : base::GetHomeDir().AppendASCII("Downloads");
     }
-    const bool offer_startup_import = ordinary_prepared_startup_ && durable &&
-        (!install_file_keychain_fixture_ || !startup_import_probe_.empty()) &&
-        (workspace_session_.empty() ||
-         workspace_session_.FindBool("startup_import_pending").value_or(false));
+    const bool preview_welcome = ui_automation_allowed_ &&
+        command_line.HasSwitch(kUiAutomation) &&
+        command_line.GetSwitchValueASCII("zitter-open-panel") == "welcome";
+    const bool offer_startup_import = durable &&
+        (preview_welcome ||
+         (ordinary_prepared_startup_ &&
+          (!install_file_keychain_fixture_ || !startup_import_probe_.empty()) &&
+          (workspace_session_.empty() ||
+           workspace_session_.FindBool("startup_import_pending").value_or(false))));
     bool dark = command_line.GetSwitchValueASCII("zitter-content-workspace-theme") == "dark";
     if (!startup_import_probe_.empty()) {
       auto env = base::Environment::Create();

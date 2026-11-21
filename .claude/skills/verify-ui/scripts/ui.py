@@ -204,6 +204,8 @@ def stop():
 
 
 def launch(a):
+    if a.open_panel == "welcome" and sys.platform != "darwin":
+        sys.exit("The welcome screen preview requires macOS.")
     if a.hidden and sys.platform != "darwin":
         sys.exit("--hidden requires macOS.")
     if os.name == "nt":
@@ -358,7 +360,7 @@ def shot(a):
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 sub = parser.add_subparsers(dest="command", required=True)
-l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads", "history", "rss", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "night-shift", "ad-blocking", "menu", "app-menu", "dialog", "toast", "update", "update-about", "add", "space-end", "space-new", "remove", "drop", "passwords", "site", "site-data", "permission"],
+l = sub.add_parser("launch"); l.add_argument("--open-panel", choices=["welcome", "assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads", "history", "rss", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "night-shift", "ad-blocking", "menu", "app-menu", "dialog", "toast", "update", "update-about", "add", "space-end", "space-new", "remove", "drop", "passwords", "site", "site-data", "permission"],
     help="open this panel once the window is up (no mouse needed)")
 l.add_argument("--theme", choices=["dark", "light"], help="Noc (dark) or Papier (light); default: the saved setting")
 l.add_argument("--scale", type=float, help="force a device scale factor (HiDPI checks)")
