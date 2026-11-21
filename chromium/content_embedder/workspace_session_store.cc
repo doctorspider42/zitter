@@ -13,6 +13,7 @@
 #include "base/files/important_file_writer.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
+#include "base/logging.h"
 #include "base/strings/string_util.h"
 #include "base/uuid.h"
 #include "chromium/prototype/workspace_session.h"
@@ -23,6 +24,11 @@ namespace zitter::content_embedder {
 namespace {
 
 constexpr size_t kMaxSessionBytes = 16 * 1024 * 1024;
+
+bool IsExtraProfileId(std::string_view id) {
+  return id.starts_with("profile-") &&
+         base::Uuid::ParseLowercase(id.substr(8)).is_valid();
+}
 
 std::optional<std::array<std::string, kWorkspaceIds.size()>> ReadBuiltinNames(
     const base::DictValue& session, std::string_view key) {
@@ -51,6 +57,7 @@ bool IsValidSession(const base::DictValue& session) {
                                          session.contains("extra_profiles") +
                                          session.contains("workspace_names") +
                                          session.contains("profile_names") +
+                                         session.contains("removed_profiles") +
                                          session.contains("removed_workspaces") +
                                          session.contains("timeline_epochs") +
                                          session.contains("profile_favorites") +
@@ -220,6 +227,7 @@ std::optional<std::vector<Workspace>> ReadContentWorkspaces(
   if (!profiles || !names)
     return std::nullopt;
   const auto* removed = session.FindDict("removed_workspaces");
+  const auto* removed_profiles = session.FindDict("removed_profiles");
   if (session.contains("removed_workspaces") && (!removed || removed->empty()))
     return std::nullopt;
   if (removed) {
@@ -228,8 +236,9 @@ std::optional<std::vector<Workspace>> ReadContentWorkspaces(
       if ((!builtin && (!id.starts_with("space-") ||
                         !base::Uuid::ParseLowercase(id.substr(6)).is_valid())) ||
           session.contains(id) || !profile.is_string() ||
-          !std::ranges::contains(*profiles, profile.GetString(),
-                                 &ContentProfileInfo::id)) {
+          (!std::ranges::contains(*profiles, profile.GetString(),
+                                  &ContentProfileInfo::id) &&
+           (!removed_profiles || !removed_profiles->contains(profile.GetString())))) {
         return std::nullopt;
       }
     }
@@ -247,6 +256,8 @@ std::optional<std::vector<Workspace>> ReadContentWorkspaces(
     const auto id = kWorkspaceIds[i];
     const auto* entry = session.FindDict(id);
     const auto* profile = entry ? entry->FindString("profile_id") : nullptr;
+    if (!entry && !std::ranges::contains(*profiles, id, &ContentProfileInfo::id))
+      return std::nullopt;
     if (entry &&
         (!profile || !std::ranges::contains(*profiles, *profile, &ContentProfileInfo::id) ||
          (*profile != id && (!epochs || !epochs->contains(id))))) {
@@ -288,8 +299,21 @@ std::optional<std::vector<ContentProfileInfo>> ReadContentProfiles(
   const auto names = ReadBuiltinNames(session, "profile_names");
   if (!names)
     return std::nullopt;
+  const auto* removed = session.FindDict("removed_profiles");
+  if (session.contains("removed_profiles") && (!removed || removed->empty()))
+    return std::nullopt;
+  if (removed) {
+    const auto* overrides = session.FindDict("profile_names");
+    for (const auto [id, pending] : *removed) {
+      if ((!std::ranges::contains(kWorkspaceIds, id) && !IsExtraProfileId(id)) ||
+          !pending.is_bool() || (overrides && overrides->contains(id)))
+        return std::nullopt;
+    }
+  }
   std::vector<ContentProfileInfo> profiles;
   for (size_t i = 0; i < kWorkspaceIds.size(); ++i) {
+    if (removed && removed->contains(kWorkspaceIds[i]))
+      continue;
     profiles.push_back({std::string(kWorkspaceIds[i]),
                         (*names)[i]});
   }
@@ -309,8 +333,7 @@ std::optional<std::vector<ContentProfileInfo>> ReadContentProfiles(
     const auto* source = entry ? entry->FindString("import_source") : nullptr;
     const auto separate_network = entry ? entry->FindBool("separate_network")
                                         : std::nullopt;
-    if (!id || !id->starts_with("profile-") ||
-        !base::Uuid::ParseLowercase(std::string_view(*id).substr(8)).is_valid() ||
+    if (!id || !IsExtraProfileId(*id) || (removed && removed->contains(*id)) ||
         !ids.insert(*id).second || !name || !IsContentWorkspaceName(*name) ||
         entry->size() != 2u + separate_network.has_value() + (source != nullptr) ||
         (source && (!IsContentWorkspaceName(*source) ||
@@ -519,6 +542,40 @@ bool WriteContentWorkspaceSession(const base::FilePath& path,
   const auto json = base::WriteJson(session);
   return json && json->size() <= kMaxSessionBytes && !base::IsLink(path) &&
          base::ImportantFileWriter::WriteFileAtomically(path, *json);
+}
+
+void CleanRemovedContentProfiles(
+    const base::FilePath& session_path,
+    const std::array<const char*, kWorkspaceIds.size()>& builtin_directories,
+    base::DictValue& session) {
+  // The caller has validated the catalogue and holds the workspace lock.
+  const auto* removed = session.FindDict("removed_profiles");
+  if (!removed)
+    return;
+  auto cleaned = removed->Clone();
+  const auto root = session_path.DirName();
+  const auto network_root = root.AppendASCII(kWorkspaceNetworkRoot);
+  for (const auto [id, pending] : *removed) {
+    if (!pending.GetBool())
+      continue;
+    const auto builtin = std::ranges::find(kWorkspaceIds, id);
+    const bool extra = builtin == kWorkspaceIds.end();
+    const auto path = root.AppendASCII(
+        extra ? id : builtin_directories[builtin - kWorkspaceIds.begin()]);
+    if (base::IsLink(path) || !base::DeletePathRecursively(path) ||
+        (extra && (base::IsLink(network_root) ||
+                   !base::DeletePathRecursively(network_root.AppendASCII(id))))) {
+      LOG(WARNING) << "Could not clean up a removed Content profile";
+      continue;
+    }
+    cleaned.Set(id, false);
+  }
+  if (cleaned == *removed)
+    return;
+  auto candidate = session.Clone();
+  candidate.Set("removed_profiles", std::move(cleaned));
+  if (WriteContentWorkspaceSession(session_path, candidate))
+    session = std::move(candidate);
 }
 
 bool IsPreparedContentWorkspace(const base::FilePath& root,

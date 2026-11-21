@@ -172,6 +172,7 @@ class WorkspaceWebApps final : public content::WebContentsObserver {
   bool RunPaletteCommand(const prototype::PaletteResult& result);
   // "app:<profile>/<id>" from another zitter.exe or the Start menu.
   bool RunExternalCommand(std::string_view command);
+  bool HasOpenWindows(std::string_view profile_id) const;
 
   // Opens the app's window (or brings an open one forward) at `url` when it
   // is in the app's scope, at its start URL otherwise.

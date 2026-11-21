@@ -373,6 +373,9 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
       WriteStderr("Invalid Content workspace session or settings path\n");
       return false;
     }
+    CleanRemovedContentProfiles(root->AppendASCII(kWorkspaceSession),
+                                kProfileDirectories, *session);
+    const auto* removed = session->FindDict("removed_profiles");
     workspace_timeline_ = ReadWorkspaceTimeline(
         WorkspaceTimelinePath(root->AppendASCII(kWorkspaceSession)), *session);
     if (!workspace_timeline_) {
@@ -383,6 +386,8 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     bool can_create_key = true;
     std::vector<base::FilePath> network_paths;
     for (size_t index = 0; index < kProfileDirectories.size(); ++index) {
+      if (removed && removed->contains(kWorkspaceIds[index]))
+        continue;
       const auto profile = root->AppendASCII(kProfileDirectories[index]);
       const auto network = profile.AppendASCII(kNetworkData);
       network_paths.push_back(network);
@@ -408,8 +413,10 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
       can_create_key = false;
     }
     const auto profiles = ReadContentProfiles(*session).value();
-    for (size_t index = kWorkspaceIds.size(); index < profiles.size(); ++index) {
-      const auto profile_path = root->AppendASCII(profiles[index].id);
+    for (const auto& profile : profiles) {
+      if (std::ranges::contains(kWorkspaceIds, profile.id))
+        continue;
+      const auto profile_path = root->AppendASCII(profile.id);
       const auto network = profile_path.AppendASCII(kNetworkData);
       const auto bootstrap = profile_path.AppendASCII(kNetworkBootstrap);
       const auto safe_directory = [](const base::FilePath& directory) {
@@ -418,7 +425,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
                (attributes & FILE_ATTRIBUTE_DIRECTORY) &&
                !(attributes & FILE_ATTRIBUTE_REPARSE_POINT);
       };
-      if (profiles[index].separate_network ||
+      if (profile.separate_network ||
           !safe_directory(profile_path) || !safe_directory(network) ||
           !safe_directory(bootstrap) || !base::IsDirectoryEmpty(bootstrap)) {
         LOG(ERROR) << "Invalid additional Content profile directory or preferences";
@@ -444,6 +451,8 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
       return false;
     }
     for (size_t index = 0; index < kProfileDirectories.size(); ++index) {
+      if (removed && removed->contains(kWorkspaceIds[index]))
+        continue;
       const auto profile = root->AppendASCII(kProfileDirectories[index]);
       if (!base::CreateDirectory(profile.AppendASCII(kNetworkData)) ||
           !base::CreateDirectory(profile.AppendASCII(kNetworkBootstrap))) {
@@ -484,27 +493,23 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     const auto& root = durable ? workspace_root_ : directory_.GetPath();
     const auto mode = durable ? ProfileContext::Mode::kPersistent
                               : ProfileContext::Mode::kPrivate;
-    context_ = std::make_unique<ProfileContext>(
-        root.AppendASCII(kProfileDirectories[0]), mode, std::nullopt, os_crypt_,
-        password_saving_defaults_[0]);
-    personal_context_ = std::make_unique<ProfileContext>(
-        root.AppendASCII(kProfileDirectories[1]), mode, std::nullopt, os_crypt_,
-        password_saving_defaults_[1]);
-    if (durable) {
-      context_->SetFileChooserPreferences(std::move(file_chooser_prefs_[0]));
-      personal_context_->SetFileChooserPreferences(
-          std::move(file_chooser_prefs_[1]));
-      context_->SetPageZoomPreferences(std::move(page_zoom_prefs_[0]));
-      personal_context_->SetPageZoomPreferences(std::move(page_zoom_prefs_[1]));
-      context_->SetFingerprintPreferences(std::move(fingerprint_prefs_[0]));
-      personal_context_->SetFingerprintPreferences(
-          std::move(fingerprint_prefs_[1]));
-      context_->SetAdblockPreferences(std::move(adblock_prefs_[0]));
-      personal_context_->SetAdblockPreferences(std::move(adblock_prefs_[1]));
-      context_->site_permissions().SetSitePermissionPreferences(
-          std::move(site_permission_prefs_[0]));
-      personal_context_->site_permissions().SetSitePermissionPreferences(
-          std::move(site_permission_prefs_[1]));
+    const auto* removed = workspace_session_.FindDict("removed_profiles");
+    const std::array profiles = {&context_, &personal_context_};
+    for (size_t index = 0; index < profiles.size(); ++index) {
+      if (removed && removed->contains(kWorkspaceIds[index]))
+        continue;
+      auto& profile = *profiles[index];
+      profile = std::make_unique<ProfileContext>(
+          root.AppendASCII(kProfileDirectories[index]), mode, std::nullopt,
+          os_crypt_, password_saving_defaults_[index]);
+      if (durable) {
+        profile->SetFileChooserPreferences(std::move(file_chooser_prefs_[index]));
+        profile->SetPageZoomPreferences(std::move(page_zoom_prefs_[index]));
+        profile->SetFingerprintPreferences(std::move(fingerprint_prefs_[index]));
+        profile->SetAdblockPreferences(std::move(adblock_prefs_[index]));
+        profile->site_permissions().SetSitePermissionPreferences(
+            std::move(site_permission_prefs_[index]));
+      }
     }
     const auto& command_line = *base::CommandLine::ForCurrentProcess();
     const bool dark =
@@ -530,7 +535,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         root.AppendASCII("WorkspaceSettings.json"), directory_.GetPath(),
         durable ? root.AppendASCII(kWorkspaceSession) : base::FilePath(),
         std::move(workspace_session_), std::move(workspace_timeline_),
-        workspace_probe_url_, *context_,
+        workspace_probe_url_, context_.get(),
         personal_context_.get(), dark, workspace_smoke_,
         nullptr, additional_profiles_, os_crypt_, std::move(user_downloads),
         safe_browsing_key_, offer_startup_import);

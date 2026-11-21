@@ -18216,7 +18216,7 @@ void WorkspaceShell::SetProfileStatus(ProfileStatusEvent event) {
       T(u"Nazwa profilu zapisana."),
       T(u"Nie udało się zapisać nazwy profilu."),
       T(u"Usuwanie profilu…"),
-      T(u"Profil usunięty. Dane przeglądania zostaną wyczyszczone."),
+      T(u"Profil usunięty. Dane przeglądania znikną po ponownym uruchomieniu Zittera."),
       T(u"Nie udało się zapisać zmian. Profil nie został usunięty."),
       T(u"Nie udało się wczytać profili. Uruchom aplikację ponownie.")};
   const auto index = static_cast<size_t>(event);

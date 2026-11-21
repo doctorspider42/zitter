@@ -277,6 +277,7 @@ base::DictValue WorkspaceLab::CaptureBookmarks() {
     }
   }
   for (const auto& profile : profiles_) {
+    if (removed_profiles_.contains(profile.id)) continue;
     auto found = profile_favorites_.find(profile.id);
     result.Set("profile/" + profile.id, found == profile_favorites_.end()
         ? base::ListValue() : WriteWorkspacePins(SyncablePins(found->second)));
@@ -309,6 +310,7 @@ base::DictValue WorkspaceLab::CaptureBookmarkScopes() const {
   }
   for (size_t i = 0; i < profiles_.size(); ++i) {
     const auto& profile = profiles_[i];
+    if (removed_profiles_.contains(profile.id)) continue;
     base::ListValue extensions;
     for (const auto& extension : GetConfiguredExtensions(*contexts_[i])) {
       if (extension->from_webstore() && extensions.size() < 128)
@@ -474,10 +476,11 @@ bool WorkspaceLab::PrepareBookmarkScopes(const base::DictValue& ledger,
     const auto* profile = info->FindString("profile");
     const auto* name = info->FindString("name");
     if (!profile || !name || !IsContentWorkspaceName(*name)) continue;
-    if (!std::ranges::contains(profiles_, *profile, &ContentProfileInfo::id)) {
+    if (removed_profiles_.contains(*profile)) continue;
+    if (!HasProfile(*profile)) {
       if (!profile->starts_with("profile-") ||
           !base::Uuid::ParseLowercase(std::string_view(*profile).substr(8)).is_valid() ||
-          profiles_.size() >= kMaxContentProfiles) return false;
+          ProfileCount() >= kMaxContentProfiles) return false;
       const auto* group = ledger.FindDict("profile/" + *profile);
       const auto* descriptor = group ? group->FindDict("") : nullptr;
       const auto* identity = descriptor ? descriptor->FindDict("scope") : nullptr;
@@ -524,6 +527,7 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
     if (list.GetList().empty() && (!info || !info->contains("position"))) continue;
     if (!info || !info->FindString("profile") || !info->FindString("name")) return false;
     Workspace space{id, *info->FindString("profile"), *info->FindString("name")};
+    if (removed_profiles_.contains(space.profile_id)) continue;
     AppendWorkspaceMetadata(candidate, space, {});
     candidate.Set(id, base::DictValue().Set("profile_id", space.profile_id).Set("active", 0)
         .Set("tabs", base::ListValue().Append(prototype::WriteWorkspaceSessionTab(GURL(), u""))));
@@ -566,8 +570,10 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
   };
   for (size_t i = 0; i < pins.size(); ++i)
     if (!update("space/" + spaces[i].id, pins[i], false, spaces[i].profile_id)) return false;
-  for (const auto& profile : profiles_)
+  for (const auto& profile : profiles_) {
+    if (removed_profiles_.contains(profile.id)) continue;
     if (!update("profile/" + profile.id, favorites[profile.id], true, profile.id)) return false;
+  }
   candidate.Remove("profile_favorites");
   for (const auto& [id, items] : favorites)
     if (!items.empty()) candidate.EnsureDict("profile_favorites")->Set(id, WriteWorkspacePins(items));
@@ -770,6 +776,7 @@ WorkspaceLab::BookmarkExtensionCandidates(const base::DictValue& ledger) const {
     const auto* ids = scope ? scope->FindList("extensions") : nullptr;
     if (!ids || ids->empty()) continue;
     const std::string profile(key.substr(8));
+    if (removed_profiles_.contains(profile)) continue;
     const auto owner = std::ranges::find(profiles_, profile, &ContentProfileInfo::id);
     const auto installed = owner == profiles_.end()
         ? std::vector<scoped_refptr<const extensions::Extension>>()
@@ -944,6 +951,7 @@ void WorkspaceLab::InstallNextBookmarkExtension() {
   while (!bookmark_extension_import_.empty()) {
     auto [profile, id] = std::move(bookmark_extension_import_.back());
     bookmark_extension_import_.pop_back();
+    if (removed_profiles_.contains(profile)) continue;
     const auto owner = std::ranges::find(profiles_, profile, &ContentProfileInfo::id);
     if (owner == profiles_.end()) continue;
     const size_t index = owner - profiles_.begin();

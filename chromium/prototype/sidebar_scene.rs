@@ -1294,7 +1294,7 @@ fn profile_status_copy(event:ffi::ProfileStatusEvent)->String{
         E::Renamed=>t("Nazwa profilu zapisana."),
         E::RenameFailed=>t("Nie udało się zapisać nazwy profilu."),
         E::Deleting=>t("Usuwanie profilu…"),
-        E::Deleted=>t("Profil usunięty. Dane przeglądania zostaną wyczyszczone."),
+        E::Deleted=>t("Profil usunięty. Dane przeglądania znikną po ponownym uruchomieniu Zittera."),
         E::DeleteNotSaved=>t("Nie udało się zapisać zmian. Profil nie został usunięty."),
         E::LoadFailed=>t("Nie udało się wczytać profili. Uruchom aplikację ponownie."),
         _=>"",

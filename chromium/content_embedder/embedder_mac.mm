@@ -1311,27 +1311,23 @@ class LabMainParts final : public content::BrowserMainParts,
     const auto root = durable ? workspace_root_ : directory_.GetPath();
     const auto mode = durable ? ProfileContext::Mode::kPersistent
                               : ProfileContext::Mode::kPrivate;
-    context_ = std::make_unique<ProfileContext>(
-        root.AppendASCII(WorkspaceProfileDirectory(0, durable)), mode,
-        std::nullopt, os_crypt_, password_saving_defaults_[0]);
-    personal_context_ = std::make_unique<ProfileContext>(
-        root.AppendASCII(WorkspaceProfileDirectory(1, durable)), mode,
-        std::nullopt, os_crypt_, password_saving_defaults_[1]);
-    if (durable) {
-      context_->SetFileChooserPreferences(std::move(file_chooser_prefs_[0]));
-      personal_context_->SetFileChooserPreferences(
-          std::move(file_chooser_prefs_[1]));
-      context_->SetPageZoomPreferences(std::move(page_zoom_prefs_[0]));
-      personal_context_->SetPageZoomPreferences(std::move(page_zoom_prefs_[1]));
-      context_->SetFingerprintPreferences(std::move(fingerprint_prefs_[0]));
-      personal_context_->SetFingerprintPreferences(
-          std::move(fingerprint_prefs_[1]));
-      context_->SetAdblockPreferences(std::move(adblock_prefs_[0]));
-      personal_context_->SetAdblockPreferences(std::move(adblock_prefs_[1]));
-      context_->site_permissions().SetSitePermissionPreferences(
-          std::move(site_permission_prefs_[0]));
-      personal_context_->site_permissions().SetSitePermissionPreferences(
-          std::move(site_permission_prefs_[1]));
+    const auto* removed = workspace_session_.FindDict("removed_profiles");
+    const std::array profiles = {&context_, &personal_context_};
+    for (size_t index = 0; index < profiles.size(); ++index) {
+      if (removed && removed->contains(kWorkspaceIds[index]))
+        continue;
+      auto& profile = *profiles[index];
+      profile = std::make_unique<ProfileContext>(
+          root.AppendASCII(WorkspaceProfileDirectory(index, durable)), mode, std::nullopt,
+          os_crypt_, password_saving_defaults_[index]);
+      if (durable) {
+        profile->SetFileChooserPreferences(std::move(file_chooser_prefs_[index]));
+        profile->SetPageZoomPreferences(std::move(page_zoom_prefs_[index]));
+        profile->SetFingerprintPreferences(std::move(fingerprint_prefs_[index]));
+        profile->SetAdblockPreferences(std::move(adblock_prefs_[index]));
+        profile->site_permissions().SetSitePermissionPreferences(
+            std::move(site_permission_prefs_[index]));
+      }
     }
     for (auto& startup : additional_profile_startup_)
       additional_profiles_.push_back(startup->Open(*os_crypt_));
@@ -1359,7 +1355,7 @@ class LabMainParts final : public content::BrowserMainParts,
         WorkspaceSettingsPath(root), directory_.GetPath(),
         durable ? WorkspaceSessionPath(root) : base::FilePath(),
         std::move(workspace_session_), std::move(workspace_timeline_),
-        workspace_probe_url_, *context_,
+        workspace_probe_url_, context_.get(),
         personal_context_.get(),
         dark,
         workspace_smoke_, nullptr, additional_profiles_, os_crypt_,
@@ -1398,7 +1394,10 @@ class LabMainParts final : public content::BrowserMainParts,
     }
     if (workspace_legacy_keychain_) {
       base::ScopedAllowBlockingForTesting allow_directory_io;
+      const auto* removed = workspace_session_.FindDict("removed_profiles");
       for (size_t index = 0; index < kWorkspaceIds.size(); ++index) {
+        if (removed && removed->contains(kWorkspaceIds[index]))
+          continue;
         if (!base::CreateDirectory(workspace_root_
                 .AppendASCII(WorkspaceProfileDirectory(index, true))
                 .AppendASCII("Network"))) {
@@ -1559,6 +1558,11 @@ class LabMainParts final : public content::BrowserMainParts,
       return false;
     }
 
+    CleanRemovedContentProfiles(
+        WorkspaceSessionPath(root),
+        {WorkspaceProfileDirectory(0, true), WorkspaceProfileDirectory(1, true)},
+        *restored);
+    const auto* removed = restored->FindDict("removed_profiles");
     workspace_timeline_ = ReadWorkspaceTimeline(
         WorkspaceTimelinePath(WorkspaceSessionPath(root)), *restored);
     if (!workspace_timeline_) {
@@ -1574,6 +1578,8 @@ class LabMainParts final : public content::BrowserMainParts,
     std::vector<base::FilePath> network_paths;
     std::vector<base::FilePath> login_paths;
     for (size_t index = 0; index < kWorkspaceIds.size(); ++index) {
+      if (removed && removed->contains(kWorkspaceIds[index]))
+        continue;
       const auto profile =
           root.AppendASCII(WorkspaceProfileDirectory(index, true));
       const auto network = profile.AppendASCII("Network");
@@ -1588,10 +1594,12 @@ class LabMainParts final : public content::BrowserMainParts,
       login_paths.push_back(profile);
     }
     const auto profiles = ReadContentProfiles(*restored).value();
-    for (size_t index = kWorkspaceIds.size(); index < profiles.size(); ++index) {
-      const auto path = root.AppendASCII(profiles[index].id);
-      const auto separate = profiles[index].separate_network
-                                ? network_root.AppendASCII(profiles[index].id)
+    for (const auto& profile : profiles) {
+      if (std::ranges::contains(kWorkspaceIds, profile.id))
+        continue;
+      const auto path = root.AppendASCII(profile.id);
+      const auto separate = profile.separate_network
+                                ? network_root.AppendASCII(profile.id)
                                 : base::FilePath();
       auto startup = WorkspaceProfileStartup::Read(path, separate);
       if (!startup) {
@@ -1627,6 +1635,8 @@ class LabMainParts final : public content::BrowserMainParts,
     }
 
     for (size_t index = 0; index < kWorkspaceIds.size(); ++index) {
+      if (removed && removed->contains(kWorkspaceIds[index]))
+        continue;
       const auto profile_path = root.AppendASCII(WorkspaceProfileDirectory(index, true));
       file_chooser_prefs_[index] =
           ProfileContext::OpenFileChooserPreferences(profile_path);

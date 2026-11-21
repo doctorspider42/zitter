@@ -193,7 +193,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
                base::DictValue session,
                std::unique_ptr<prototype::TimelineStore> timeline,
                GURL session_probe_url,
-               ProfileContext& work,
+               ProfileContext* work,
                ProfileContext* personal,
                bool dark,
                bool smoke,
@@ -459,6 +459,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool RunShortcut(std::string id, bool show_tab_switcher = false);
   std::optional<size_t> WorkspaceIndex(std::string_view id) const;
   size_t WorkspaceProfileIndex(size_t workspace) const;
+  bool HasProfile(std::string_view id) const;
+  size_t ProfileCount() const;
+  bool RemoveProfile(std::string id);
   ProfileContext* WorkspaceProfile(size_t workspace) const;
   bool OpenNightShiftSettings(content::RenderFrameHost* document = nullptr,
                               bool quick_panel = false);
@@ -1034,6 +1037,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::vector<ContentProfileInfo> profiles_;
   std::map<std::string, std::string> imported_workspace_sources_;
   base::DictValue removed_workspaces_;
+  base::DictValue removed_profiles_;
   base::DictValue timeline_epochs_;
   base::DictValue link_rules_;
   struct RemovedWorkspace {

@@ -271,7 +271,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Profil o tej nazwie już istnieje.", "A profile with this name already exists."),
     ("Profil przeglądania", "Browsing profile"),
     ("Profil przestrzeni", "Space profile"),
-    ("Profil usunięty. Dane przeglądania zostaną wyczyszczone.", "Profile deleted. Its browsing data will be cleared."),
+    ("Profil usunięty. Dane przeglądania znikną po ponownym uruchomieniu Zittera.", "Profile deleted. Its browsing data will be cleared when Zitter restarts."),
     ("Profil utworzony. Możesz przypisać go do przestrzeni.", "Profile created. You can assign it to a space."),
     ("Profil: {}", "Profile: {}"),
     ("Profil: {} · Ustawienia wspólne dla aplikacji są oznaczone w opisach.", "Profile: {} · App-wide settings are marked in their descriptions."),

@@ -923,6 +923,12 @@ void WorkspaceWebApps::Uninstall(std::string profile_id, std::string app_id) {
 
 // Windows.
 
+bool WorkspaceWebApps::HasOpenWindows(std::string_view profile_id) const {
+  return std::ranges::any_of(windows_, [profile_id](const auto& window) {
+    return window->profile_id() == profile_id;
+  });
+}
+
 bool WorkspaceWebApps::Launch(const std::string& profile_id, const std::string& app_id,
                               const GURL& url) {
   if (!IsWebAppId(app_id) || !host_.find_profile.Run(profile_id))

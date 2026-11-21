@@ -65,6 +65,10 @@ std::optional<base::DictValue> ReadContentWorkspaceSession(
     const base::FilePath& path);
 bool WriteContentWorkspaceSession(const base::FilePath& path,
                                   const base::DictValue& session);
+void CleanRemovedContentProfiles(
+    const base::FilePath& session_path,
+    const std::array<const char*, kWorkspaceIds.size()>& builtin_directories,
+    base::DictValue& session);
 
 }  // namespace zitter::content_embedder
 

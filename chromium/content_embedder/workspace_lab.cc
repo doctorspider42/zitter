@@ -949,7 +949,7 @@ void SetUnavailable(base::RepeatingCallback<Result(Args...)>& callback) {
 void SetUnavailableActions(prototype::WorkspaceShell::Callbacks& callbacks) {
   auto set = [&](auto&... fields) { (SetUnavailable(fields), ...); };
   set(callbacks.add_workspace, callbacks.edit_workspace, callbacks.remove_workspace,
-      callbacks.create_profile, callbacks.rename_profile, callbacks.remove_profile,
+      callbacks.create_profile, callbacks.rename_profile,
       callbacks.move_profile_workspaces,
       callbacks.assign_profile, callbacks.preview_import, callbacks.invalidate_import,
       callbacks.apply_import, callbacks.dismiss_import, callbacks.open_pin,
@@ -1943,7 +1943,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                            base::DictValue session,
                            std::unique_ptr<prototype::TimelineStore> timeline,
                            GURL session_probe_url,
-                           ProfileContext& work,
+                           ProfileContext* work,
                            ProfileContext* personal,
                            bool dark,
                            bool smoke,
@@ -1966,9 +1966,10 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       smoke_(smoke),
       private_owner_(private_owner),
       os_crypt_(os_crypt),
-      contexts_{&work},
       startup_import_pending_(offer_startup_import),
       startup_import_probe_(std::move(startup_import_probe)) {
+  if (work)
+    contexts_.push_back(work);
   if (personal)
     contexts_.push_back(personal);
   for (const auto& profile : extra_profiles)
@@ -1983,7 +1984,9 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
         imported_workspace_sources_.emplace(*entry.GetDict().FindString("id"), *source);
     }
   }
-  CHECK(private_owner_ ? !personal && work.IsOffTheRecord() : personal != nullptr);
+  CHECK(!private_owner_ || (!personal && work && work->IsOffTheRecord()));
+  if (const auto* removed = session.FindDict("removed_profiles"))
+    removed_profiles_ = removed->Clone();
   if (!views::LayoutProvider::Get())
     layout_provider_ = std::make_unique<views::LayoutProvider>();
   if (!views::ViewsDelegate::GetInstance())
@@ -2176,6 +2179,12 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       [](base::WeakPtr<WorkspaceLab> lab, std::string id, std::string name) {
         return lab && lab->RenameProfile(std::move(id), std::move(name));
       }, weak);
+  if (!private_owner_) {
+    callbacks.remove_profile = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, std::string id) {
+          return lab && lab->RemoveProfile(std::move(id));
+        }, weak);
+  }
   callbacks.move_profile_workspaces =
       base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, std::string source,
                              std::string destination) {
@@ -2519,7 +2528,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   fingerprint_button_ = trailing->AddChildView(
       fingerprint_toolbar_->CreateButton(/*private_mode=*/false));
   fingerprint_button_->SetVisible(false);
-  if (!private_owner_ && BundledNightShiftSettingsPage(work).is_valid()) {
+  if (!private_owner_ && BundledNightShiftSettingsPage(*contexts_.front()).is_valid()) {
     night_shift_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
         kNightShiftMoon, u"Night Shift",
         base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
@@ -2532,7 +2541,7 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     apps.find_profile = base::BindRepeating(
         [](base::WeakPtr<WorkspaceLab> lab, std::string_view id) -> ProfileContext* {
           for (size_t index = 0; lab && index < lab->profiles_.size(); ++index) {
-            if (lab->profiles_[index].id == id)
+            if (lab->profiles_[index].id == id && !lab->removed_profiles_.contains(id))
               return lab->contexts_[index].get();
           }
           return nullptr;
@@ -2607,8 +2616,8 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   }
   if (private_owner_) {
     if (extensions_toolbar_button_)
-      extensions_toolbar_button_->SetVisible(CanLoadExtensionProbeResources(work));
-    private_fingerprint_subscription_ = work.ObserveFingerprintProtection(
+      extensions_toolbar_button_->SetVisible(CanLoadExtensionProbeResources(*work));
+    private_fingerprint_subscription_ = work->ObserveFingerprintProtection(
         base::BindRepeating(&WorkspaceLab::UpdateFingerprintToolbar, weak));
   }
   shell_->SetHeaderTrailing(std::move(trailing));
@@ -2917,7 +2926,7 @@ bool WorkspaceLab::AddWorkspace(std::string name, std::string profile_id,
   base::TrimWhitespaceASCII(name, base::TRIM_ALL, &name);
   if (smoke_ || private_owner_ || !CanEditWorkspace() || !model_.active() ||
       tabs_.size() >= kMaxContentWorkspaces || !IsContentWorkspaceName(name) ||
-      !std::ranges::contains(profiles_, profile_id, &ContentProfileInfo::id)) {
+      !HasProfile(profile_id)) {
     if (committed)
       std::move(committed).Run({});
     return false;
@@ -2977,11 +2986,12 @@ bool WorkspaceLab::CreateProfile(std::string name, std::string workspace_id) {
   base::TrimWhitespaceASCII(name, base::TRIM_ALL, &name);
   if (smoke_ || private_owner_ || !os_crypt_ || session_path_.empty() ||
       !workspace_id.empty() || !CanEditWorkspace() || !model_.active() ||
-      profiles_.size() >= kMaxContentProfiles || !IsContentWorkspaceName(name)) {
+      ProfileCount() >= kMaxContentProfiles || !IsContentWorkspaceName(name)) {
     return false;
   }
   if (std::ranges::any_of(profiles_, [&](const auto& profile) {
-        return base::EqualsCaseInsensitiveASCII(name, profile.name);
+        return !removed_profiles_.contains(profile.id) &&
+               base::EqualsCaseInsensitiveASCII(name, profile.name);
       })) {
     shell_->SetProfileStatus(Event::kDuplicateName);
     return false;
@@ -3143,6 +3153,8 @@ bool WorkspaceLab::RestoreWorkspace(std::string id) {
     return false;
   }
   const auto& removed = *removed_workspace_;
+  if (removed_profiles_.contains(removed.workspace.profile_id))
+    return false;
   if (!removed.import_source.empty() &&
       std::ranges::any_of(imported_workspace_sources_, [&](const auto& source) {
         return source.second == removed.import_source;
@@ -3201,7 +3213,7 @@ bool WorkspaceLab::UpdateWorkspace(std::string id, std::string name,
   const auto index = WorkspaceIndex(id);
   if (smoke_ || private_owner_ || !CanEditWorkspace() || !index ||
       !IsContentWorkspaceName(name) ||
-      !std::ranges::contains(profiles_, profile_id, &ContentProfileInfo::id)) {
+      !HasProfile(profile_id)) {
     return false;
   }
   const auto& workspace = model_.workspaces()[*index];
@@ -3267,7 +3279,7 @@ void WorkspaceLab::SaveWorkspaceUpdate(std::string id, std::string name,
 
 bool WorkspaceLab::MoveProfileWorkspaces(std::string source, std::string destination) {
   if (!CanEditWorkspace() || private_owner_ || source == destination ||
-      !std::ranges::contains(profiles_, destination, &ContentProfileInfo::id))
+      !HasProfile(source) || !HasProfile(destination))
     return false;
   std::vector<content::WebContents*> pages;
   for (size_t index = 0; index < tabs_.size(); ++index) {
@@ -3409,10 +3421,11 @@ bool WorkspaceLab::RenameProfile(std::string id, std::string name) {
     return false;
   }
   const auto profile = std::ranges::find(profiles_, id, &ContentProfileInfo::id);
-  if (profile == profiles_.end())
+  if (profile == profiles_.end() || removed_profiles_.contains(id))
     return false;
   if (std::ranges::any_of(profiles_, [&](const auto& other) {
-        return other.id != id && base::EqualsCaseInsensitiveASCII(name, other.name);
+        return other.id != id && !removed_profiles_.contains(other.id) &&
+               base::EqualsCaseInsensitiveASCII(name, other.name);
       })) {
     shell_->SetProfileStatus(Event::kDuplicateName);
     return false;
@@ -3438,6 +3451,78 @@ bool WorkspaceLab::RenameProfile(std::string id, std::string name) {
         lab->RefreshShell();
         lab->shell_->SetProfileStatus(ok ? Event::kRenamed : Event::kRenameFailed);
       }, weak_factory_.GetWeakPtr(), profile - profiles_.begin(), std::move(name)));
+  return true;
+}
+
+bool WorkspaceLab::HasProfile(std::string_view id) const {
+  return !removed_profiles_.contains(id) &&
+         std::ranges::contains(profiles_, id, &ContentProfileInfo::id);
+}
+
+size_t WorkspaceLab::ProfileCount() const {
+  return std::ranges::count_if(profiles_, [&](const auto& profile) {
+    return !removed_profiles_.contains(profile.id);
+  });
+}
+
+bool WorkspaceLab::RemoveProfile(std::string id) {
+  using Event = prototype::WorkspaceShell::ProfileStatusEvent;
+  if (smoke_ || private_owner_ || session_path_.empty() || !CanEditWorkspace() ||
+      !model_.active() || !HasProfile(id) ||
+      std::ranges::contains(model_.workspaces(), id, &Workspace::profile_id)) {
+    return false;
+  }
+  const auto profile = std::ranges::find(profiles_, id, &ContentProfileInfo::id);
+  const size_t index = profile - profiles_.begin();
+  if (PrivateSessionForProfile(index) || pending_private_windows_.contains(index) ||
+      contexts_[index]->BlockingDownloadCount() ||
+      (web_apps_ && web_apps_->HasOpenWindows(id))) {
+    shell_->SetProfileStatus(prototype::T(
+        u"Zamknij okna aplikacji i okna prywatne oraz zakończ pobieranie w tym profilu."));
+    return false;
+  }
+  auto session = CaptureSession();
+  session.EnsureDict("removed_profiles")->Set(id, true);
+  for (const char* key : {"profile_names", "profile_favorites"}) {
+    if (auto* entries = session.FindDict(key)) {
+      entries->Remove(id);
+      if (entries->empty())
+        session.Remove(key);
+    }
+  }
+  if (auto* extras = session.FindList("extra_profiles")) {
+    extras->EraseIf([&](const base::Value& entry) {
+      return *entry.GetDict().FindString("id") == id;
+    });
+    if (extras->empty())
+      session.Remove("extra_profiles");
+  }
+  auto night_shift = night_shift_config_;
+  night_shift.profiles.erase(id);
+  night_shift.profile_overrides.erase(id);
+  if (night_shift.managed)
+    session.Set("night_shift", night_shift.ToValue());
+  SaveCatalogueChange(std::move(session), base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab, std::string id,
+         prototype::NightShiftConfig night_shift, bool ok) {
+        if (!lab)
+          return;
+        if (ok) {
+          // Keep the live context and its index until shutdown. Chromium
+          // services may still hold it or have writes queued to its directory.
+          lab->removed_profiles_.Set(id, true);
+          lab->profile_favorites_.erase(id);
+          lab->imported_favicon_urls_.erase(id);
+          lab->night_shift_config_ = std::move(night_shift);
+          if (lab->removed_workspace_ && lab->removed_workspace_->workspace.profile_id == id) {
+            lab->removed_workspace_.reset();
+            lab->shell_->HideToast();
+          }
+        }
+        lab->RefreshShell();
+        lab->shell_->SetProfileStatus(ok ? Event::kDeleted : Event::kDeleteNotSaved);
+      }, weak_factory_.GetWeakPtr(), std::move(id), std::move(night_shift)));
+  shell_->SetProfileStatus(Event::kDeleting);
   return true;
 }
 
@@ -3752,8 +3837,9 @@ bool WorkspaceLab::ApplyBrowserImport() {
                                &prototype::ImportedSpace::profile_id)) {
       continue;
     }
-    const auto existing = std::ranges::find(profiles_, info.id,
-                                            &ContentProfileInfo::import_source);
+    const auto existing = std::ranges::find_if(profiles_, [&](const auto& profile) {
+      return profile.import_source == info.id && !removed_profiles_.contains(profile.id);
+    });
     if (existing != profiles_.end()) {
       destinations.emplace(info.id, existing->id);
       continue;
@@ -3821,7 +3907,7 @@ bool WorkspaceLab::ApplyBrowserImport() {
     job->session.Set(workspace.id, std::move(entry));
     job->spaces.push_back({std::move(workspace), space.id, space.emoji});
   }
-  if (profiles_.size() + job->profiles.size() > kMaxContentProfiles ||
+  if (ProfileCount() + job->profiles.size() > kMaxContentProfiles ||
       tabs_.size() + job->spaces.size() > kMaxContentWorkspaces ||
       !ValidateContentWorkspaceSession(job->session)) {
     shell_->SetImportStatus(prototype::T(u"Import się nie powiódł. Dotychczasowe przestrzenie pozostały bez zmian. Spróbuj ponownie."),
@@ -5323,7 +5409,7 @@ void WorkspaceLab::OpenPendingPrivateWindows(size_t source) {
   for (size_t index = 0; index < count; ++index) {
     auto window = std::make_unique<WorkspaceLab>(
         directory.AppendASCII("Settings.json"), directory, base::FilePath(),
-        base::DictValue(), nullptr, GURL(), *session->profile, nullptr,
+        base::DictValue(), nullptr, GURL(), session->profile.get(), nullptr,
         /*dark=*/true, /*smoke=*/false, this);
     auto* child = window.get();
     child->private_source_index_ = source;
@@ -12315,6 +12401,8 @@ void WorkspaceLab::RefreshShell() {
       state.sleeping_workspaces.insert(model_.workspaces()[workspace].id);
   }
   for (const auto& profile : profiles_) {
+    if (removed_profiles_.contains(profile.id))
+      continue;
     state.profiles.push_back({profile.id,
                               private_owner_ ? base::UTF16ToUTF8(state.profile_name)
                                              : profile.name,
@@ -13347,6 +13435,8 @@ base::DictValue WorkspaceLab::CaptureSession() const {
     session.Set("startup_import_pending", true);
   if (!removed_workspaces_.empty())
     session.Set("removed_workspaces", removed_workspaces_.Clone());
+  if (!removed_profiles_.empty())
+    session.Set("removed_profiles", removed_profiles_.Clone());
   if (!timeline_epochs_.empty())
     session.Set("timeline_epochs", timeline_epochs_.Clone());
   if (!link_rules_.empty())
@@ -13375,12 +13465,15 @@ base::DictValue WorkspaceLab::CaptureSession() const {
     if (!favorites.empty())
       session.EnsureDict("profile_favorites")->Set(profile, WriteWorkspacePins(favorites));
   }
-  for (size_t i = 0; i < std::min(profiles_.size(), kWorkspaceIds.size()); ++i) {
-    if (profiles_[i].name != kBuiltinProfileNames[i])
-      session.EnsureDict("profile_names")->Set(profiles_[i].id, profiles_[i].name);
-  }
-  for (size_t i = kWorkspaceIds.size(); i < profiles_.size(); ++i) {
-    session.EnsureList("extra_profiles")->Append(WriteProfileMetadata(profiles_[i]));
+  for (const auto& profile : profiles_) {
+    if (removed_profiles_.contains(profile.id))
+      continue;
+    const auto builtin = std::ranges::find(kWorkspaceIds, profile.id);
+    if (builtin == kWorkspaceIds.end()) {
+      session.EnsureList("extra_profiles")->Append(WriteProfileMetadata(profile));
+    } else if (profile.name != kBuiltinProfileNames[builtin - kWorkspaceIds.begin()]) {
+      session.EnsureDict("profile_names")->Set(profile.id, profile.name);
+    }
   }
   for (size_t index = 0; index < tabs_.size(); ++index) {
     const auto& workspace = model_.workspaces()[index];
@@ -18384,6 +18477,8 @@ void WorkspaceLab::CheckWebStoreUpdates() {
   }
   web_store_updates_.clear();
   for (size_t i = 0; i < contexts_.size(); ++i) {
+    if (removed_profiles_.contains(profiles_[i].id))
+      continue;
     for (const auto& extension : GetConfiguredExtensions(*contexts_[i])) {
       if (extension->from_webstore())
         web_store_updates_.emplace_back(profiles_[i].id, extension->id());
@@ -18397,7 +18492,7 @@ void WorkspaceLab::CheckNextWebStoreUpdate() {
     auto [profile_id, id] = std::move(web_store_updates_.back());
     web_store_updates_.pop_back();
     const auto profile = std::ranges::find(profiles_, profile_id, &ContentProfileInfo::id);
-    if (profile == profiles_.end())
+    if (profile == profiles_.end() || removed_profiles_.contains(profile_id))
       continue;
     const size_t index = profile - profiles_.begin();
     auto& context = *contexts_[index];
@@ -19089,6 +19184,8 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
   base::ListValue profiles;
   const auto& current = model_.active()->profile_id;
   for (const auto& profile : profiles_) {
+    if (removed_profiles_.contains(profile.id))
+      continue;
     const auto spaces = std::ranges::count(model_.workspaces(), profile.id,
                                            &Workspace::profile_id);
     profiles.Append(base::DictValue()
@@ -19224,10 +19321,10 @@ void WorkspaceLab::ApplyNightShiftSettings(base::DictValue value) {
     return;
   auto config = prototype::NightShiftConfig::FromValue(&value);
   std::erase_if(config.profiles, [&](const std::string& id) {
-    return !std::ranges::contains(profiles_, id, &ContentProfileInfo::id);
+    return !HasProfile(id);
   });
   std::erase_if(config.profile_overrides, [&](const auto& entry) {
-    return !std::ranges::contains(profiles_, entry.first, &ContentProfileInfo::id);
+    return !HasProfile(entry.first);
   });
   night_shift_config_ = std::move(config);
   PersistWorkspaceChanges();
