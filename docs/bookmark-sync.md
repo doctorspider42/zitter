@@ -64,7 +64,8 @@ closing stay open until the workspace can safely apply the remote layout.
 
 While running, Zitter reconciles changes on startup and every 30 seconds.
 Choose **Sync now** under **Settings → Passwords and profiles → Workspace sync**
-to check for changes immediately.
+to save the current session and then check for changes. If the session fails
+to save, Zitter skips that sync attempt.
 Independent edits to different bookmarks merge. Concurrent updates to the same
 bookmark resolve by version, with a stable device ID as the tiebreaker.
 Deletion records survive offline periods. Dropbox uploads use the file's

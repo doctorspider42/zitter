@@ -445,7 +445,32 @@ def main():
                 "space/work": {"manual": {"clock": 100, "device": device,
                                           "pin": pin("manual"), "position": 0}}})
             assert "manual" not in ids(first)
-            click({"Synchronizuj teraz", "Sync now"})
+            sync_now = {"Synchronizuj teraz", "Sync now"}
+            local_index = device_index(first, folder)
+            index_before = local_index.read_bytes()
+            session_path = first / "ContentWorkspaceSession.json"
+            backup = session_path.with_suffix(".backup")
+            session_path.replace(backup)
+            # Block the atomic session write without changing the in-memory workspace.
+            session_path.mkdir()
+            try:
+                click(sync_now)
+                failure = {
+                    "Nie udało się zapisać sesji. Synchronizacja nie została uruchomiona.",
+                    "Could not save the session. Sync did not start.",
+                }
+
+                def save_failed():
+                    tree = expect(request(channel, {"cmd": "tree", "window": window}), "tree")
+                    return any(view["name"] in failure for view in tree["views"])
+
+                assert wait(save_failed, 8), "Sync now did not report the save failure"
+                assert local_index.read_bytes() == index_before, "Sync published changes after a failed save"
+            finally:
+                session_path.rmdir()
+                backup.replace(session_path)
+
+            click(sync_now)
             assert wait(lambda: "manual" in ids(first), 8), "Sync now did not import a remote bookmark"
             click({"Wyłącz synchronizację", "Turn off sync"})
             assert wait(lambda: not read_json(first / "BookmarkSync.json").get("method"), 10)

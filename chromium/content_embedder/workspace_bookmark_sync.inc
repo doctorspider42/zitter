@@ -151,13 +151,24 @@ void WorkspaceLab::SetSyncStatus(std::u16string message) {
 void WorkspaceLab::ConfigureBookmarkSync(std::string method) {
   if (!sync_prefs_ || !CanEditWorkspace()) return;
   if (method == "now") {
-    if (sync_prefs_->GetString("method").empty()) return;
-    if (base::Time::Now() < sync_retry_after_) {
-      SetSyncStatus(prototype::T(u"Synchronizacja wstrzymana. Zitter spróbuje ponownie."));
-      return;
-    }
-    SetSyncStatus(prototype::T(u"Synchronizowanie…"));
-    RunBookmarkSync();
+    if (sync_prefs_->GetString("method").empty() || sync_busy_) return;
+    sync_busy_ = true;
+    SetSyncStatus(prototype::T(u"Zapisywanie sesji…"));
+    SaveSession(base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool saved) {
+      if (!lab) return;
+      lab->sync_busy_ = false;
+      if (!saved) {
+        lab->SetSyncStatus(prototype::T(
+            u"Nie udało się zapisać sesji. Synchronizacja nie została uruchomiona."));
+        return;
+      }
+      if (!lab->CanEditWorkspace() || base::Time::Now() < lab->sync_retry_after_) {
+        lab->SetSyncStatus(prototype::T(u"Synchronizacja wstrzymana. Zitter spróbuje ponownie."));
+        return;
+      }
+      lab->SetSyncStatus(prototype::T(u"Synchronizowanie…"));
+      lab->RunBookmarkSync();
+    }, sync_weak_.GetWeakPtr()));
     return;
   }
   dropbox_login_.InvalidateWeakPtrs();

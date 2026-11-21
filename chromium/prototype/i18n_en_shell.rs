@@ -45,6 +45,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Zsynchronizowano", "Synced at"),
     ("Synchronizuj teraz", "Sync now"),
     ("Synchronizowanie…", "Syncing…"),
+    ("Zapisywanie sesji…", "Saving session…"),
+    ("Nie udało się zapisać sesji. Synchronizacja nie została uruchomiona.", "Could not save the session. Sync did not start."),
     ("Synchronizacja wstrzymana. Zitter spróbuje ponownie.", "Sync paused. Zitter will try again."),
     ("Nie udało się połączyć z Dropbox. Sprawdź połączenie lub połącz konto ponownie.", "Dropbox connection failed. Check your connection or reconnect your account."),
     ("Powiększenie strony", "Page zoom"),
