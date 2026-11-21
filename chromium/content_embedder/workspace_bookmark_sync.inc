@@ -150,6 +150,16 @@ void WorkspaceLab::SetSyncStatus(std::u16string message) {
 
 void WorkspaceLab::ConfigureBookmarkSync(std::string method) {
   if (!sync_prefs_ || !CanEditWorkspace()) return;
+  if (method == "now") {
+    if (sync_prefs_->GetString("method").empty()) return;
+    if (base::Time::Now() < sync_retry_after_) {
+      SetSyncStatus(prototype::T(u"Synchronizacja wstrzymana. Zitter spróbuje ponownie."));
+      return;
+    }
+    SetSyncStatus(prototype::T(u"Synchronizowanie…"));
+    RunBookmarkSync();
+    return;
+  }
   dropbox_login_.InvalidateWeakPtrs();
   dropbox_login_timeout_.Stop();
   if (method == "off") {

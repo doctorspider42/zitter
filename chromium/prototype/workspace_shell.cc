@@ -11511,10 +11511,18 @@ void ShowAssistantDialog(views::Widget* owner, std::unique_ptr<ui::DialogModel> 
 
 void WorkspaceShell::BuildBookmarkSync(views::View* parent, bool welcome) {
   auto& controls = sync_controls_[welcome ? 1 : 0];
+  auto* status_row = parent->AddChildView(std::make_unique<views::View>());
   views::View* status = welcome || !preferences_chrome_
-      ? static_cast<views::View*>(parent->AddChildView(std::make_unique<SceneParagraph>(u"", 0, false, kMuted)))
-      : AddPreferenceCopy(parent, u"", kMuted, 0, static_cast<int>(gfx::Font::Weight::NORMAL), true);
+      ? static_cast<views::View*>(status_row->AddChildView(std::make_unique<SceneParagraph>(u"", 0, false, kMuted)))
+      : AddPreferenceCopy(status_row, u"", kMuted, 0, static_cast<int>(gfx::Font::Weight::NORMAL), true);
   controls.status.SetView(status);
+  if (!welcome) {
+    auto* sync_now = PreferenceAction(
+        status_row, base::BindRepeating(callbacks_.bookmark_sync_action, std::string("now")),
+        T(u"Synchronizuj teraz"));
+    controls.sync_now.SetView(sync_now->parent());
+  }
+  SetSidebarPanelLayout(status_row, false, gfx::Insets(), 12, status, true);
   const auto action = [&](views::ViewTracker& tracker, const char* method,
                           std::u16string detail, std::u16string label) {
     auto* row = parent->AddChildView(std::make_unique<views::View>());
@@ -11546,6 +11554,8 @@ void WorkspaceShell::RefreshBookmarkSync() {
     const bool enabled = callbacks_.bookmark_sync_enabled.Run();
     controls.folder.view()->SetVisible(!enabled);
     controls.dropbox.view()->SetVisible(!enabled);
+    if (auto* sync_now = controls.sync_now.view())
+      sync_now->SetVisible(enabled);
     controls.disable.view()->SetVisible(enabled);
   }
 }

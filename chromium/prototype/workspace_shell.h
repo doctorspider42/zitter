@@ -1485,7 +1485,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::string assistant_preferences_snapshot_;
   void BuildBookmarkSync(views::View* parent, bool welcome);
   struct SyncControls {
-    views::ViewTracker status, folder, dropbox, disable;
+    views::ViewTracker status, folder, dropbox, sync_now, disable;
   };
   std::array<SyncControls, 2> sync_controls_;
   views::ViewTracker welcome_assistant_backends_;

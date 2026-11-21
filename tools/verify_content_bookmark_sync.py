@@ -440,11 +440,18 @@ def main():
                 assert name, f"Missing control {names}"
                 expect(request(channel, {"cmd": "click", "name": name, "window": window}), name)
             click({"Hasła i profile", "Passwords and profiles"})
+            device = str(uuid.uuid4())
+            write_partition_fixture(folder, device, "space/work", {
+                "space/work": {"manual": {"clock": 100, "device": device,
+                                          "pin": pin("manual"), "position": 0}}})
+            assert "manual" not in ids(first)
+            click({"Synchronizuj teraz", "Sync now"})
+            assert wait(lambda: "manual" in ids(first), 8), "Sync now did not import a remote bookmark"
             click({"Wyłącz synchronizację", "Turn off sync"})
             assert wait(lambda: not read_json(first / "BookmarkSync.json").get("method"), 10)
-            assert ids(first) == {"second"}
-            assert len(list(shard_directory(folder).glob("index-*.json"))) == 2
-    print("Folder sync passed first merge, custom workspace, nested pins, offline deletion and disable.")
+            assert ids(first) == {"second", "manual"}
+            assert len(list(shard_directory(folder).glob("index-*.json"))) == 3
+    print("Folder sync passed first merge, custom workspace, nested pins, offline deletion, manual sync and disable.")
     verify_first_imports(executable)
 
 

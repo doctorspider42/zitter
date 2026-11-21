@@ -43,6 +43,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Połączenie z Dropbox jest niedostępne w tej wersji.", "Dropbox is unavailable in this build."),
     ("Łączenie…", "Connecting…"),
     ("Zsynchronizowano", "Synced at"),
+    ("Synchronizuj teraz", "Sync now"),
+    ("Synchronizowanie…", "Syncing…"),
     ("Synchronizacja wstrzymana. Zitter spróbuje ponownie.", "Sync paused. Zitter will try again."),
     ("Nie udało się połączyć z Dropbox. Sprawdź połączenie lub połącz konto ponownie.", "Dropbox connection failed. Check your connection or reconnect your account."),
     ("Powiększenie strony", "Page zoom"),
