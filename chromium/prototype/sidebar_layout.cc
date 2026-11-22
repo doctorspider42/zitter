@@ -384,16 +384,8 @@ void SetSidebarPanelLayout(views::View* host,bool vertical,gfx::Insets insets,in
 std::unique_ptr<views::LayoutManager> CreatePaletteInputLayout() {
   return std::make_unique<RustPaletteInputLayout>();
 }
-class ProfileFavoritesLayout final : public views::LayoutManager {
+class ProfileFavoritesGeometry {
  public:
-  void Layout(views::View* host) override {
-    const auto bounds = Bounds(host->width(), VisibleCount(host));
-    int index = 0;
-    for (const auto& child : host->children()) {
-      if (!child->GetVisible()) continue;
-      child->SetBoundsRect(bounds[index++]);
-    }
-  }
   static std::vector<gfx::Rect> Bounds(int width, int count) {
     const auto grid = Measure(width, count);
     std::vector<gfx::Rect> bounds;
@@ -406,23 +398,6 @@ class ProfileFavoritesLayout final : public views::LayoutManager {
     }
     return bounds;
   }
-  gfx::Size GetPreferredSize(const views::View* host) const override {
-    return gfx::Size(kPreferredWidth, GetPreferredHeightForWidth(host, kPreferredWidth));
-  }
-  gfx::Size GetPreferredSize(const views::View* host,
-                             const views::SizeBounds& available) const override {
-    const int width = available.width().is_bounded() ? available.width().value() : kPreferredWidth;
-    return gfx::Size(width, GetPreferredHeightForWidth(host, width));
-  }
-  int GetPreferredHeightForWidth(const views::View* host, int width) const override {
-    const int count = VisibleCount(host);
-    const auto grid = Measure(width, count);
-    const int rows = (count + grid.columns - 1) / grid.columns;
-    return rows ? rows * (grid.cell_height + kGap) - kGap : 0;
-  }
-  void ViewAdded(views::View* host,views::View*) override {host->InvalidateLayout();}
-  void ViewRemoved(views::View* host,views::View*) override {host->InvalidateLayout();}
-
  private:
   struct Grid {
     int columns;
@@ -432,12 +407,6 @@ class ProfileFavoritesLayout final : public views::LayoutManager {
   };
   static constexpr int kGap = 8;
   static constexpr int kMinCellWidth = 48;
-  static constexpr int kPreferredWidth = 200;
-  static int VisibleCount(const views::View* host) {
-    return static_cast<int>(std::ranges::count_if(host->children(), [](const auto& child) {
-      return child->GetVisible();
-    }));
-  }
   // Favorites always span the whole sidebar: fewer favorites than fit in a row
   // share its width. Tiles keep the height of a full row's cells.
   static Grid Measure(int width, int count) {
@@ -449,9 +418,8 @@ class ProfileFavoritesLayout final : public views::LayoutManager {
     return {columns, cell, full_cell - full_cell / 6, available % columns};
   }
 };
-std::unique_ptr<views::LayoutManager> CreateProfileFavoritesLayout(){return std::make_unique<ProfileFavoritesLayout>();}
 std::vector<gfx::Rect> ProfileFavoriteTileBounds(int width, int count) {
-  return ProfileFavoritesLayout::Bounds(width, count);
+  return ProfileFavoritesGeometry::Bounds(width, count);
 }
 std::unique_ptr<views::LayoutManager> CreateSidebarColumnLayout(int spacing) {
   return std::make_unique<RustColumnLayout>(spacing);

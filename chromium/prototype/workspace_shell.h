@@ -219,6 +219,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(std::string, std::string)> add_workspace;
     base::RepeatingCallback<bool(std::string, std::string)> edit_workspace;
     base::RepeatingCallback<bool(std::string)> remove_workspace;
+    base::RepeatingCallback<void(std::string, size_t)> reorder_workspace;
     base::RepeatingCallback<bool(std::string, std::string)> create_profile;
     base::RepeatingCallback<bool(std::string, std::string)> rename_profile;
     base::RepeatingCallback<bool(std::string, std::string)> assign_profile;
@@ -518,6 +519,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void ResizeSidebar(int amount, bool done);
   int sidebar_width() const { return sidebar_width_; }
   bool CloseOverlays(bool keep_sidebar = false);
+  bool CancelWorkspaceReorder();
   // With `query`, the list opens filtered to it.
   void OpenGeneralSettings(std::u16string_view query = {});
   bool DismissPreferencesTab();
@@ -1284,6 +1286,7 @@ class WorkspaceShell final : public ui::EventHandler,
     gfx::Rect indicator;
     bool into_folder = false;
     bool profile_slot = false;
+    std::optional<size_t> profile_index;
     bool pinned = false;
     std::string parent, before_pin;  // Pinned target: folder and next sibling ("" appends).
     size_t before_tab = 0;           // Tab target: host tab index (or count to append).
@@ -1291,6 +1294,7 @@ class WorkspaceShell final : public ui::EventHandler,
   std::optional<SidebarReorder> SidebarReorderAt(gfx::Point screen_point,
                                                bool allow_profile = true) const;
   void SetSidebarReorder(std::optional<SidebarReorder> reorder);
+  views::View* ProfileFavoritesView() const;
   void SetProfileDropSlotVisible(bool visible);
   void StepProfileDropPreview();
   void UpdateSidebarDragOverlay();
@@ -1299,6 +1303,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void HandleSidebarDrag(views::View* row, gfx::Point grab, std::optional<gfx::Point> screen_point);
   std::optional<SidebarReorder> sidebar_reorder_;
   views::ViewTracker profile_drop_slot_;
+  views::ViewTracker profile_drop_grid_;
+  views::ViewTracker empty_profile_drop_slot_;
   base::TimeTicks profile_drop_preview_start_;
   base::RepeatingTimer profile_drop_preview_timer_;
   // The dragged row follows the pointer as a lifted copy; the original dims.

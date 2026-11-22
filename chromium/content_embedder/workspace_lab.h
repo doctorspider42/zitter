@@ -472,6 +472,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool AddWorkspace(std::string name, std::string profile_id,
                     base::OnceCallback<void(std::string)> committed = {});
   bool RemoveWorkspace(std::string id);
+  void ReorderWorkspace(std::string id, size_t destination);
   void CommitWorkspaceRemoval(std::string id);
   bool RestoreWorkspace(std::string id);
   bool UpdateWorkspace(std::string id, std::string name, std::string profile_id);

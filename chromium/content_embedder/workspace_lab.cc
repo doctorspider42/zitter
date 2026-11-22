@@ -2456,6 +2456,8 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       [](base::WeakPtr<WorkspaceLab> lab, const GURL& url, std::string workspace) {
         return lab && lab->SetLinkRule(url, std::move(workspace));
       }, weak);
+  if (sync_prefs_)
+    callbacks.reorder_workspace = base::BindRepeating(&WorkspaceLab::ReorderWorkspace, weak);
   callbacks.remove_workspace = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, std::string id) {
         return lab && lab->RemoveWorkspace(std::move(id));
@@ -3022,6 +3024,28 @@ bool WorkspaceLab::CreateProfile(std::string name, std::string workspace_id) {
           lab->RequestClose();
       }, weak_factory_.GetWeakPtr(), profile));
   return true;
+}
+
+void WorkspaceLab::ReorderWorkspace(std::string id, size_t destination) {
+  if (!sync_prefs_ || !CanEditWorkspace() ||
+      sync_prefs_->GetInitializationStatus() == PrefService::INITIALIZATION_STATUS_WAITING)
+    return;
+  const auto workspaces = OrderedBookmarkWorkspaces();
+  const auto source = std::ranges::find(workspaces, id, &Workspace::id);
+  if (source == workspaces.end() || destination >= workspaces.size() ||
+      source == workspaces.begin() + destination)
+    return;
+
+  // Use the same order for the switcher and workspace sync.
+  base::ListValue order;
+  for (const auto& workspace : workspaces) {
+    if (workspace.id != id)
+      order.Append(workspace.id);
+  }
+  order.Insert(order.begin() + destination, base::Value(std::move(id)));
+  sync_prefs_->SetList("workspace_order", std::move(order));
+  sync_prefs_->CommitPendingWrite();
+  RefreshShell();
 }
 
 bool WorkspaceLab::RemoveWorkspace(std::string id) {
@@ -4627,7 +4651,7 @@ bool WorkspaceLab::AcceleratorPressed(const ui::Accelerator& accelerator) {
   if (!CanHandleAccelerators() || accelerator.key_state() != ui::Accelerator::KeyState::PRESSED)
     return false;
   if (accelerator.key_code() == ui::VKEY_ESCAPE && accelerator.modifiers() == 0) {
-    if (ExitPageFullscreen())
+    if (shell_->CancelWorkspaceReorder() || ExitPageFullscreen())
       return true;
     if (PeekPage()) {
       ClosePeek();

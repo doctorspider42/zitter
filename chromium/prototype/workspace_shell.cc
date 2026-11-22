@@ -29,6 +29,7 @@
 #include <optional>
 #include <utility>
 
+#include "base/auto_reset.h"
 #include "base/check.h"
 #include "base/scoped_observation.h"
 #include "base/scoped_multi_source_observation.h"
@@ -123,6 +124,7 @@
 #include "ui/compositor/closure_animation_observer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/animation/animation.h"
+#include "ui/views/animation/bounds_animator.h"
 #include "ui/gfx/geometry/transform.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -959,7 +961,100 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
 class WorkspaceRail final : public views::View {
   METADATA_HEADER(WorkspaceRail, views::View)
  public:
-  explicit WorkspaceRail(base::RepeatingCallback<bool()> scene_visible) : scene_visible_(std::move(scene_visible)) {}
+  WorkspaceRail(PanelViewport* viewport,
+                base::RepeatingCallback<bool()> scene_visible,
+                base::RepeatingCallback<bool()> animations_enabled,
+                base::RepeatingClosure changed,
+                base::RepeatingCallback<void(std::string, size_t)> reorder)
+      : viewport_(viewport), scene_visible_(std::move(scene_visible)),
+        animations_enabled_(std::move(animations_enabled)),
+        changed_(std::move(changed)), reorder_(std::move(reorder)) {
+    animator_.SetAnimationDuration(base::Milliseconds(220));
+  }
+
+  void Press(views::View* view, const gfx::Point& screen_point, bool editable) {
+    if (!reorder_ || !editable || children().size() < 2)
+      return;
+    pressed_ = view;
+    press_point_ = screen_point;
+    grab_offset_ = LogicalX(screen_point) - view->x();
+  }
+
+  bool Drag(views::View* view, const gfx::Point& screen_point) {
+    if (pressed_ != view)
+      return false;
+    if (!dragging_) {
+      if (std::abs(screen_point.x() - press_point_.x()) < GetHorizontalDragThreshold())
+        return false;
+      animator_.StopAnimatingView(view);
+      gap_ = std::ranges::find(children(), view) - children().begin();
+      dragging_ = true;
+      scroll_timer_.Start(FROM_HERE, base::Milliseconds(16), this,
+                          &WorkspaceRail::ScrollAtEdge);
+    }
+    pointer_ = screen_point;
+    UpdateDrag();
+    return true;
+  }
+
+  bool Release(views::View* view, const std::string& id, const gfx::Point& point) {
+    if (pressed_ != view)
+      return false;
+    if (!dragging_) {
+      pressed_ = nullptr;
+      return false;
+    }
+    const bool inside = DropBounds().Contains(point);
+    if (inside) {
+      pointer_ = point;
+      UpdateDrag();
+    }
+    const size_t destination = gap_;
+    ResetDrag();
+    base::AutoReset<bool> settling(&settling_, true);
+    if (inside)
+      reorder_.Run(id, destination);
+    PlaceChildren();
+    return true;
+  }
+
+  bool CancelDrag() {
+    const bool was_dragging = dragging_;
+    ResetDrag();
+    if (was_dragging) {
+      base::AutoReset<bool> settling(&settling_, true);
+      PlaceChildren();
+    }
+    return was_dragging;
+  }
+
+  bool IsLifted(const views::View* view) const { return dragging_ && view == pressed_; }
+  bool dragging() const { return dragging_; }
+
+  Views GetChildrenInZOrder() override {
+    auto order = View::GetChildrenInZOrder();
+    if (dragging_) {
+      std::erase(order, pressed_.get());
+      order.push_back(pressed_.get());
+    }
+    return order;
+  }
+
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    const auto layout = Measure(children(), -1, -1);
+    return {layout.width, layout.height};
+  }
+
+  void Layout(PassKey) override {
+    PlaceChildren();
+    LayoutSuperclass<views::View>(this);
+  }
+
+  void VisibilityChanged(views::View* starting, bool visible) override {
+    View::VisibilityChanged(starting, visible);
+    if (!visible)
+      CancelDrag();
+  }
   void OnPaint(gfx::Canvas* canvas) override {
     if (scene_visible_ && scene_visible_.Run()) return;
     if (children().empty()) return;
@@ -972,9 +1067,233 @@ class WorkspaceRail final : public views::View {
     canvas->DrawRoundRect(rail, rail.height() / 2, flags);
   }
  private:
+  static sidebar::ColumnLayout Measure(const Views& order, int width, int height) {
+    std::vector<sidebar::ColumnChild> sizes;
+    sizes.reserve(order.size());
+    for (const auto& view : order) {
+      const auto size = view->GetPreferredSize();
+      sizes.push_back({size.width(), size.height(), 0, 0, 0, 0});
+    }
+    return sidebar::strip_layout(width, height, 4, {sizes.data(), sizes.size()});
+  }
+
+  Views PreviewOrder() const {
+    Views order = children();
+    if (dragging_) {
+      std::erase(order, pressed_.get());
+      order.insert(order.begin() + gap_, pressed_.get());
+    }
+    return order;
+  }
+
+  int LogicalX(gfx::Point point) const {
+    ConvertPointFromScreen(this, &point);
+    return GetMirroredXInView(point.x());
+  }
+
+  int DragX(int icon_width) const {
+    return std::clamp(LogicalX(pointer_) - grab_offset_,
+                      0, std::max(0, width() - icon_width));
+  }
+
+  gfx::Rect DropBounds() const {
+    auto bounds = parent()->GetBoundsInScreen();
+    bounds.Inset(gfx::Insets::VH(-16, -12));
+    return bounds;
+  }
+
+  void ResetDrag() {
+    auto* lifted = dragging_ ? pressed_.get() : nullptr;
+    pressed_ = nullptr;
+    dragging_ = false;
+    scroll_timer_.Stop();
+    if (lifted)
+      lifted->SchedulePaint();
+  }
+
+  void UpdateDrag() {
+    if (DropBounds().Contains(pointer_)) {
+      // Hit-test the destination slots, which stay stable while the icons animate.
+      const auto slots = Measure(PreviewOrder(), width(), height()).children;
+      // Open the gap once the leading edge of the dragged icon reaches a
+      // neighbor's center, regardless of where the icon was grabbed.
+      const int icon_width = slots[gap_].width;
+      const int left = DragX(icon_width);
+      const int right = left + icon_width;
+      const auto center = [&](size_t i) { return slots[i].x + slots[i].width / 2; };
+      if (gap_ > 0 && left <= center(gap_ - 1)) {
+        do { --gap_; } while (gap_ > 0 && left <= center(gap_ - 1));
+      } else {
+        while (gap_ + 1 < slots.size() && right >= center(gap_ + 1))
+          ++gap_;
+      }
+    }
+    PlaceChildren();
+  }
+
+  void PlaceChildren() {
+    const auto order = PreviewOrder();
+    const auto slots = Measure(order, width(), height()).children;
+    const bool animate = (dragging_ || settling_ || animator_.IsAnimating()) &&
+                         animations_enabled_.Run();
+    for (size_t i = 0; i < order.size(); ++i) {
+      auto* view = order[i].get();
+      const auto& slot = slots[i];
+      gfx::Rect target(slot.x, slot.y, slot.width, slot.height);
+      if (IsLifted(view)) {
+        target.set_x(DragX(target.width()));
+        view->SetBoundsRect(target);
+        view->SchedulePaint();
+      } else if (animate && !view->bounds().IsEmpty()) {
+        if (animator_.GetTargetBounds(view) != target)
+          animator_.AnimateViewTo(view, target);
+      } else {
+        animator_.StopAnimatingView(view);
+        view->SetBoundsRect(target);
+      }
+    }
+    changed_.Run();
+  }
+
+  void ScrollAtEdge() {
+    const auto bounds = parent()->GetBoundsInScreen();
+    if (viewport_->maximum() == 0 || !DropBounds().Contains(pointer_))
+      return;
+    const int edge = std::min(20, bounds.width() / 3);
+    const int left = pointer_.x() - bounds.x();
+    const int right = bounds.right() - 1 - pointer_.x();
+    const int distance = std::min(left, right);
+    if (edge == 0 || distance >= edge)
+      return;
+    const int direction = (left < right) == base::i18n::IsRTL() ? 1 : -1;
+    const double previous = viewport_->offset();
+    const double proximity = 1.0 - static_cast<double>(std::max(0, distance)) / edge;
+    viewport_->ScrollTo(previous + direction * (1.0 + 4.0 * proximity));
+    if (viewport_->offset() != previous)
+      UpdateDrag();
+  }
+
+  raw_ptr<PanelViewport> viewport_;
   base::RepeatingCallback<bool()> scene_visible_;
+  base::RepeatingCallback<bool()> animations_enabled_;
+  base::RepeatingClosure changed_;
+  base::RepeatingCallback<void(std::string, size_t)> reorder_;
+  views::BoundsAnimator animator_{this};
+  base::RepeatingTimer scroll_timer_;
+  raw_ptr<views::View> pressed_ = nullptr;
+  gfx::Point press_point_;
+  gfx::Point pointer_;
+  int grab_offset_ = 0;
+  size_t gap_ = 0;
+  bool dragging_ = false;
+  bool settling_ = false;
 };
 BEGIN_METADATA(WorkspaceRail)
+END_METADATA
+
+class ProfileFavoritesGrid final : public views::View {
+  METADATA_HEADER(ProfileFavoritesGrid, views::View)
+ public:
+  ProfileFavoritesGrid(base::RepeatingCallback<bool()> animations_enabled)
+      : animations_enabled_(std::move(animations_enabled)) {
+    animator_.SetAnimationDuration(base::Milliseconds(220));
+  }
+
+  views::View* ShowPreview(size_t index, views::View* source) {
+    if (preview_.view() && index_ == index)
+      return preview_.view();
+    if (!preview_.view()) {
+      if (source) {
+        preview_.SetView(source);
+      } else {
+        auto slot = std::make_unique<views::View>();
+        slot->SetCanProcessEventsWithinSubtree(false);
+        slot->GetViewAccessibility().SetIsIgnored(true);
+        preview_.SetView(AddChildView(std::move(slot)));
+        extra_slot_ = true;
+        PreferredSizeChanged();
+      }
+    }
+    index_ = index;
+    InvalidateLayout();
+    return preview_.view();
+  }
+
+  void ClearPreview() {
+    auto* preview = preview_.view();
+    if (!preview)
+      return;
+    preview_.SetView(nullptr);
+    if (std::exchange(extra_slot_, false)) {
+      RemoveChildViewT(preview);
+      PreferredSizeChanged();
+    }
+    settling_ = true;
+    InvalidateLayout();
+  }
+
+  // Use the geometry of the completed grid even while its tiles are moving.
+  size_t InsertionIndex(gfx::Point point, bool moving) const {
+    ConvertPointFromScreen(this, &point);
+    point.set_x(GetMirroredXInView(point.x()));
+    const auto slots = ProfileFavoriteTileBounds(
+        width(), children().size() + (!moving && !extra_slot_));
+    if (!moving && slots.size() > 1) {
+      const auto& last_favorite = slots[slots.size() - 2];
+      // Keep the trailing edge of the last tile an append target when
+      // inserting a favorite opens another row.
+      if (slots.back().y() > last_favorite.y() &&
+          point.y() >= last_favorite.y() && point.y() < last_favorite.bottom() &&
+          point.x() > last_favorite.CenterPoint().x()) {
+        return slots.size() - 1;
+      }
+    }
+    const auto distance = [&](const auto& slot) {
+      return std::pair(std::abs(point.y() - slot.CenterPoint().y()),
+                       std::abs(point.x() - slot.CenterPoint().x()));
+    };
+    return std::ranges::min_element(slots, {}, distance) - slots.begin();
+  }
+
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override {
+    const int width = available.width().value_or(200);
+    const auto bounds = ProfileFavoriteTileBounds(width, children().size());
+    return {width, bounds.empty() ? 0 : bounds.back().bottom()};
+  }
+
+  void Layout(PassKey) override {
+    Views order = children();
+    auto* preview = preview_.view();
+    if (preview && preview->parent() == this) {
+      std::erase(order, preview);
+      order.insert(order.begin() + std::min(index_, order.size()), preview);
+    }
+    const auto slots = ProfileFavoriteTileBounds(width(), order.size());
+    const bool animate = (preview || settling_ || animator_.IsAnimating()) &&
+                         animations_enabled_.Run();
+    settling_ = false;
+    for (size_t i = 0; i < order.size(); ++i) {
+      auto* holder = order[i].get();
+      if (animate && holder != preview && !holder->bounds().IsEmpty()) {
+        if (animator_.GetTargetBounds(holder) != slots[i])
+          animator_.AnimateViewTo(holder, slots[i]);
+      } else {
+        animator_.StopAnimatingView(holder);
+        holder->SetBoundsRect(slots[i]);
+      }
+    }
+    LayoutSuperclass<views::View>(this);
+  }
+
+ private:
+  base::RepeatingCallback<bool()> animations_enabled_;
+  views::BoundsAnimator animator_{this};
+  views::ViewTracker preview_;
+  size_t index_ = 0;
+  bool extra_slot_ = false;
+  bool settling_ = false;
+};
+BEGIN_METADATA(ProfileFavoritesGrid)
 END_METADATA
 
 // 32×32 icon button with a soft hover wash, used for chrome-level commands.
@@ -1186,7 +1505,17 @@ class RustActionView : public views::View {
     if(glyph_==ControlGlyph::kDot&&!pill_name_.empty()&&state_->action_snapshot().on)return gfx::Size(WorkspacePillWidth(pill_name_,!label_.empty()),r.height);
     return gfx::Size(r.width,r.height);}
   sidebar::Item SceneItem(gfx::RectF rect,gfx::RectF clip){SyncEnabled();const auto s=state_->action_snapshot();auto item=GlyphSceneData(this,glyph_,icon_,s.on,label_,color_,s.enabled&&(s.visual==sidebar::RowVisual::Hovered||s.visual==sidebar::RowVisual::Pressed),s.focused,rect,clip);
-    if(glyph_==ControlGlyph::kDot&&s.on){const auto p=Palette(this);item.title=base::UTF16ToUTF8(pill_name_);item.fill=p.bg_raised;item.edge=p.line;}return item;}
+    if(glyph_==ControlGlyph::kDot&&s.on){const auto p=Palette(this);item.title=base::UTF16ToUTF8(pill_name_);item.fill=p.bg_raised;item.edge=p.line;}
+    if (glyph_ == ControlGlyph::kDot) {
+      if (auto* rail = views::AsViewClass<WorkspaceRail>(parent());
+          rail && rail->IsLifted(this)) {
+        const auto p = Palette(this);
+        item.fill = p.bg_raised;
+        if (s.on)
+          item.edge = p.line_strong;
+      }
+    }
+    return item;}
   void OnDidSchedulePaint(const gfx::Rect& rect) override{views::View::OnDidSchedulePaint(rect);if(changed_)changed_.Run();}
   bool OnMousePressed(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Press,event);}
   bool OnMouseDragged(const ui::MouseEvent& event) override{return Pointer(sidebar::PointerPhase::Drag,event);}
@@ -1252,6 +1581,65 @@ END_METADATA
 std::unique_ptr<views::View> CreateSceneAction(views::Button::PressedCallback callback,std::u16string name,ControlGlyph glyph,const gfx::VectorIcon* icon,base::RepeatingCallback<bool()> visible,base::RepeatingClosure changed,bool native_focus_ring=true,SidebarNodeBinding binding={}){
   return std::make_unique<RustActionView>(std::move(callback),std::move(name),glyph,icon,std::move(visible),std::move(changed),native_focus_ring,AcquireSidebarInput(binding));
 }
+class WorkspaceDot final : public RustActionView {
+  METADATA_HEADER(WorkspaceDot, RustActionView)
+ public:
+  WorkspaceDot(views::Button::PressedCallback callback, std::u16string name,
+               base::RepeatingCallback<bool()> visible,
+               base::RepeatingClosure changed,
+               base::RepeatingCallback<bool()> editable,
+               const SidebarNodeBinding& binding)
+      : RustActionView(std::move(callback), std::move(name), ControlGlyph::kDot,
+                       nullptr, std::move(visible), changed, true,
+                       AcquireSidebarInput(binding)),
+        id_(binding.name), changed_(std::move(changed)), editable_(std::move(editable)) {}
+
+  bool OnMousePressed(const ui::MouseEvent& event) override {
+    const bool handled = RustActionView::OnMousePressed(event);
+    if (handled && event.IsOnlyLeftMouseButton())
+      rail()->Press(this, ScreenPoint(event), editable_.Run());
+    return handled;
+  }
+
+  bool OnMouseDragged(const ui::MouseEvent& event) override {
+    if (rail()->Drag(this, ScreenPoint(event))) {
+      CancelInput();
+      return true;
+    }
+    return RustActionView::OnMouseDragged(event);
+  }
+
+  void OnMouseReleased(const ui::MouseEvent& event) override {
+    if (!rail()->Release(this, id_, ScreenPoint(event)))
+      RustActionView::OnMouseReleased(event);
+  }
+
+  void OnMouseCaptureLost() override {
+    if (auto* host = rail())
+      host->CancelDrag();
+    RustActionView::OnMouseCaptureLost();
+  }
+
+  void OnBoundsChanged(const gfx::Rect& previous) override {
+    RustActionView::OnBoundsChanged(previous);
+    changed_.Run();
+  }
+
+ private:
+  WorkspaceRail* rail() { return views::AsViewClass<WorkspaceRail>(parent()); }
+  gfx::Point ScreenPoint(const ui::MouseEvent& event) {
+    auto point = event.location();
+    ConvertPointToScreen(this, &point);
+    return point;
+  }
+
+  std::string id_;
+  base::RepeatingClosure changed_;
+  base::RepeatingCallback<bool()> editable_;
+};
+BEGIN_METADATA(WorkspaceDot)
+END_METADATA
+
 void SetActionColor(views::View* view,SkColor color){
   if(auto* control=views::AsViewClass<RustActionView>(view)){control->SetColor(color);return;}
   static_cast<GlyphButton*>(view)->set_color(color);
@@ -5421,12 +5809,16 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
       {.horizontal = true, .edge_hover_scroll = true}, std::move(workspace_bar)));
   workspace_scroll_=workspace_viewport;
   dot_scroll->SetPreferredSize(gfx::Size(0,32));
-  auto dots = std::make_unique<WorkspaceRail>(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak));
-  dots->SetLayoutManager(std::make_unique<views::BoxLayout>(
-      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 0));
-  workspace_dots_=dots.get();
+  auto dots = std::make_unique<WorkspaceRail>(
+      workspace_scroll_, footer_visible,
+      base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+        return shell && shell->workspace_animations_ &&
+               gfx::Animation::ShouldRenderRichAnimation();
+      }, weak),
+      base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak),
+      callbacks_.reorder_workspace);
+  workspace_dots_ = dots.get();
   workspace_scroll_->SetPanelContents(std::move(dots));
-  workspace_dots_->SetLayoutManager(CreateSidebarDotsLayout(4));
   Spacer(footer, 1);
   // Design: Downloads — the footer opens with the Downloads icon, mirroring
   // „+”; while files arrive it turns into their ring. It opens the list above it.
@@ -6898,7 +7290,8 @@ void WorkspaceShell::UpdateMetalSidebar() {
     const size_t index = nodes.size();
     nodes.push_back({parent, view == tab_list_ ? gfx::Rect(view->size()) : view->GetMirroredBounds(), view->GetVisible()});
     native_views.push_back(view);
-    if (!view->GetVisible() || IsRow(view) || views::AsViewClass<views::Label>(view)) return;
+    if (!view->GetVisible() || view == profile_drop_slot_.view() || IsRow(view) ||
+        views::AsViewClass<views::Label>(view)) return;
     for (const auto& child : view->children()) self(self, child.get(), index);
   };
   gather(gather, tab_list_, SidebarTree::kRoot);
@@ -7017,7 +7410,9 @@ void WorkspaceShell::UpdateMetalSidebar() {
     if(workspace_dots_->width()>0)items.push_back(std::move(item));
   }
   std::vector<SidebarViewportNode> dot_nodes{{SidebarTree::kRoot,gfx::Rect(workspace_dots_->size()),true}};
-  for (const auto& child : workspace_dots_->children()) dot_nodes.push_back({0,child->GetMirroredBounds(),child->GetVisible()});
+  const auto dots_in_paint_order = workspace_dots_->GetChildrenInZOrder();
+  for (const auto& child : dots_in_paint_order)
+    dot_nodes.push_back({0, child->GetMirroredBounds(), child->GetVisible()});
   // Nodes are physical (mirrored) content bounds; in RTL the visible window
   // starts at maximum-offset, so project with the physical offset.
   const bool dot_rtl=base::i18n::IsRTL();const double dot_max=workspace_scroll_->maximum();
@@ -7030,7 +7425,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   const auto dot_origin=local_rect(dot_viewport).OffsetFromOrigin();
   for (const auto& node : dot_projection.nodes) if (node.index>0) {
     auto rect=node.bounds;rect.Offset(dot_origin);auto clip=node.clip;clip.Offset(dot_origin);
-    append_glyph(workspace_dots_->children()[node.index-1].get(),rect,clip);
+    append_glyph(dots_in_paint_order[node.index-1].get(),rect,clip);
   }
   const auto horizontal=GetSidebarScrollBarSnapshot(workspace_scroll_->horizontal_scroll_bar());
   if (horizontal.visible) {
@@ -7573,8 +7968,11 @@ void WorkspaceShell::AppendPinnedItems(views::View* root, const std::vector<Pinn
   std::set<std::string> peeking;for(const auto& pin:pins)if(sidebar_tree_.Revealed(workspace,pin.id))peeking.insert(pin.parent_id);
   views::View* favorites=nullptr;
   if (std::ranges::any_of(pins,&PinnedItem::profile_pin)) {
-    favorites=root->AddChildView(std::make_unique<views::View>());
-    favorites->SetLayoutManager(CreateProfileFavoritesLayout());
+    favorites = root->AddChildView(std::make_unique<ProfileFavoritesGrid>(
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          return shell && shell->workspace_animations_ &&
+                 gfx::Animation::ShouldRenderRichAnimation();
+        }, weak_factory_.GetWeakPtr())));
     root->ReorderChildView(favorites, 0);
   }
   for(const auto& entry:plan){
@@ -7713,7 +8111,13 @@ void WorkspaceShell::ReconcileChromeNodes() {
   for(const auto& workspace:state_.workspaces)items.push_back({workspace.id,units(base::UTF8ToUTF16(workspace.name)),units(workspace_emoji(workspace.id)),state_.sleeping_workspaces.contains(workspace.id),workspace.id==state_.workspace_id,state_.configuration_ready});
   CHECK(chrome_node_graph_->graph->reconcile_chrome(std::move(items)).admitted)<<"Invalid window chrome scene projection";
 }
+bool WorkspaceShell::CancelWorkspaceReorder() {
+  auto* rail = views::AsViewClass<WorkspaceRail>(workspace_dots_.get());
+  return rail && rail->CancelDrag();
+}
+
 void WorkspaceShell::RebuildWorkspaceDots() {
+  CancelWorkspaceReorder();
   ReconcileChromeNodes();
   auto press = [weak = weak_factory_.GetWeakPtr()](const std::string& id) {
     return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,
@@ -7729,6 +8133,19 @@ void WorkspaceShell::RebuildWorkspaceDots() {
             event.IsKeyEvent() ? ui::mojom::MenuSourceType::kKeyboard : ui::mojom::MenuSourceType::kMouse);
     }, weak, id);
   };
+  auto create_dot = [&](const std::string& id, std::u16string name) {
+    auto weak = weak_factory_.GetWeakPtr();
+    return std::make_unique<WorkspaceDot>(
+        press(id), std::move(name),
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          return shell && shell->metal_sidebar_visible();
+        }, weak),
+        base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar, weak),
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          return shell && shell->state_.configuration_ready && !shell->state_.profiles_busy;
+        }, weak),
+        SidebarNodeBinding{chrome_node_graph_, 3, {}, id});
+  };
   if(chrome_node_graph_){
     const auto scene=chrome_node_graph_->graph->workspace_scene();CHECK_NE(scene.root,0u);
     std::map<uint64_t,views::View*> existing;std::set<uint64_t> wanted;
@@ -7742,7 +8159,7 @@ void WorkspaceShell::RebuildWorkspaceDots() {
     auto text=[](const rust::Vec<uint16_t>& units){return std::u16string(units.begin(),units.end());};
     for(const auto& child:scene.children){const std::string key(child.key);auto found=existing.find(child.id);views::View* button=nullptr;
       if(found!=existing.end())button=found->second;
-      else button=workspace_dots_->AddChildView(CreateSceneAction(press(key),text(child.name),GlyphButton::Glyph::kDot,nullptr,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){return shell&&shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},key}));
+      else button = workspace_dots_->AddChildView(create_dot(key, text(child.name)));
       if(child.cancel_input)CancelActionInput(button);
       workspace_dots_->ReorderChildView(button,index++);button->SetTooltipText(text(child.name));button->GetViewAccessibility().SetName(text(child.name));SetActionLabel(button,text(child.label));SetActionColor(button,workspace_color(key));if(auto* action=views::AsViewClass<RustActionView>(button)){std::u16string pill;for(const auto& w:state_.workspaces)if(w.id==key&&workspace_names_)pill=base::UTF8ToUTF16(w.name);action->SetPillName(std::move(pill));}SetActionOn(button,child.active);button->SetEnabled(child.enabled);
       // Rust may update input enablement before the native setter sees a delta.
@@ -7752,23 +8169,8 @@ void WorkspaceShell::RebuildWorkspaceDots() {
       // canvas fallback even when SetOn/CancelInput now see no state delta.
       button->SchedulePaint();button->set_context_menu_controller(this);workspace_buttons_[key]=button;
     }
-    ScheduleMetalSidebar();return;
+    ScheduleMetalSidebar();
   }
-  workspace_buttons_.clear();
-  {std::vector<views::View*> dots;for(const auto& child:workspace_dots_->children())dots.push_back(child.get());for(auto* dot:dots)workspace_dots_->RemoveChildViewT(dot);}
-  for (const auto& workspace : state_.workspaces) {
-    auto* button = workspace_dots_->AddChildView(CreateSceneAction(
-        press(workspace.id),
-        state_.sleeping_workspaces.contains(workspace.id) ? TF(u"Przestrzeń: {} · uśpiona", {base::UTF8ToUTF16(workspace.name)}) : TF(u"Przestrzeń: {}", {base::UTF8ToUTF16(workspace.name)}), GlyphButton::Glyph::kDot,nullptr,
-        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {return shell && shell->metal_sidebar_visible();},weak_factory_.GetWeakPtr()),base::BindRepeating(&WorkspaceShell::ScheduleMetalSidebar,weak_factory_.GetWeakPtr()),true,{chrome_node_graph_,3,{},workspace.id}));
-    SetActionLabel(button,workspace_emoji(workspace.id));
-    SetActionColor(button,workspace_color(workspace.id));
-    if(auto* action=views::AsViewClass<RustActionView>(button))action->SetPillName(workspace_names_?base::UTF8ToUTF16(workspace.name):std::u16string());
-    SetActionOn(button,workspace.id == state_.workspace_id);
-    button->set_context_menu_controller(this);
-    workspace_buttons_[workspace.id] = button;
-  }
-  ScheduleMetalSidebar();
 }
 
 namespace {
@@ -9170,51 +9572,43 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
     return std::nullopt;
   const auto list = tab_list_->parent()->GetBoundsInScreen();
   if (!list.Contains(point)) return std::nullopt;
-  const auto* profile_slot = profile_drop_slot_.view();
-  if (allow_profile && state_.configuration_ready && !state_.profiles_busy &&
-      profile_slot && profile_slot->IsDrawn() &&
-      profile_slot->GetBoundsInScreen().Contains(point)) {
-    SidebarReorder out;
-    out.pinned = true;
-    out.parent = "@profile";
-    out.profile_slot = true;
-    return out;
-  }
-  const auto found=tab_lists_.find(state_.workspace_id);
-  if(found==tab_lists_.end()||!found->second.node_graph)return std::nullopt;
-  const auto& cache=found->second;
-  // Favorites are a grid. Resolve their insertion edge before testing the
-  // vertical list, whose rows can share the same Y coordinate here.
-  std::vector<std::pair<const PinnedItem*, gfx::Rect>> favorites;
-  if (allow_profile) {
-    for (const auto& pin : state_.pins) {
-      if (!pin.profile_pin) continue;
-      const auto button = cache.pin_buttons.find(pin.id);
-      if (button == cache.pin_buttons.end() || !button->second->IsDrawn())
-        continue;
-      auto* holder = button->second->parent();
-      if (holder->parent()->GetBoundsInScreen().Contains(point))
-        favorites.emplace_back(&pin, holder->GetBoundsInScreen());
+  const auto found = tab_lists_.find(state_.workspace_id);
+  if (found == tab_lists_.end() || !found->second.node_graph)
+    return std::nullopt;
+  const auto& cache = found->second;
+  if (allow_profile && state_.configuration_ready && !state_.profiles_busy) {
+    auto* grid = views::AsViewClass<ProfileFavoritesGrid>(ProfileFavoritesView());
+    if (grid && grid->IsDrawn() && grid->GetBoundsInScreen().Contains(point)) {
+      auto* row = drag_row_.view();
+      const bool moving = row && row->parent() && row->parent()->parent() == grid;
+      SidebarReorder out;
+      out.pinned = true;
+      out.parent = "@profile";
+      out.profile_slot = true;
+      out.profile_index = grid->InsertionIndex(point, moving);
+      size_t index = 0;
+      for (const auto& pin : state_.pins) {
+        if (!pin.profile_pin)
+          continue;
+        const auto button = cache.pin_buttons.find(pin.id);
+        if (moving && button != cache.pin_buttons.end() && button->second == row)
+          continue;
+        if (index++ == *out.profile_index) {
+          out.before_pin = pin.id;
+          break;
+        }
+      }
+      return out;
     }
-  }
-  if (!favorites.empty()) {
-    const auto distance = [&](const auto& favorite) {
-      const auto center = favorite.second.CenterPoint();
-      return std::pair(std::abs(point.y() - center.y()),
-                       std::abs(point.x() - center.x()));
-    };
-    const auto nearest = std::ranges::min_element(favorites, {}, distance);
-    const auto& bounds = nearest->second;
-    const bool after = (point.x() >= bounds.CenterPoint().x()) != base::i18n::IsRTL();
-    const auto before = after ? std::next(nearest) : nearest;
-    SidebarReorder out;
-    out.pinned = true;
-    out.parent = "@profile";
-    if (before != favorites.end()) out.before_pin = before->first->id;
-    const bool right_edge = after != base::i18n::IsRTL();
-    out.indicator = gfx::Rect(right_edge ? bounds.right() : bounds.x() - 2,
-                              bounds.y(), 2, bounds.height());
-    return out;
+    const auto* slot = profile_drop_slot_.view();
+    if (!grid && slot && slot->IsDrawn() &&
+        slot->GetBoundsInScreen().Contains(point)) {
+      SidebarReorder out;
+      out.pinned = true;
+      out.parent = "@profile";
+      out.profile_slot = true;
+      return out;
+    }
   }
   // Rows in visual order with what a drop before or after each one means.
   struct Meta {bool pinned;std::string pin,parent;bool folder,expanded;size_t before_tab,after_tab;gfx::Rect bounds;};
@@ -9422,6 +9816,9 @@ void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::opt
   const bool allow_profile = !rust_row || !rust_row->PinBinding().folder;
   SetProfileDropSlotVisible(point && allow_profile && state_.configuration_ready &&
                             !state_.profiles_busy);
+  drag_row_.SetView(point ? row : nullptr);
+  drag_grab_ = grab;
+  drag_point_ = point;
   const auto reorder = point ? SidebarReorderAt(*point, allow_profile) : std::nullopt;
   // Another tab's row under the pointer: wait, then focus it and preview the split.
   std::optional<std::array<uint64_t,2>> hovered;
@@ -9439,7 +9836,6 @@ void WorkspaceShell::HandleSidebarDrag(views::View* row,gfx::Point grab,std::opt
     drag_hover_tab_=hovered;drag_hover_split_=false;drag_hover_timer_.Stop();
     if(hovered)drag_hover_timer_.Start(FROM_HERE,base::Milliseconds(450),base::BindOnce(&WorkspaceShell::DragHoverSettled,weak_factory_.GetWeakPtr()));
   }
-  drag_row_.SetView(point?row:nullptr);drag_grab_=grab;drag_point_=point;
   SetSidebarReorder(reorder);
   if (drag_hover_split_) return;
   ShowSplitDrop(point&&!sidebar_reorder_?SplitDropSlot(*point):std::nullopt,row?std::u16string(row->GetViewAccessibility().GetCachedName()):std::u16string());
@@ -9449,34 +9845,58 @@ namespace {
 constexpr auto kProfileDropReveal = base::Milliseconds(120);
 }  // namespace
 
+views::View* WorkspaceShell::ProfileFavoritesView() const {
+  const auto found = tab_lists_.find(state_.workspace_id);
+  if (found == tab_lists_.end())
+    return nullptr;
+  const auto& cache = found->second;
+  const auto favorite = std::ranges::find(cache.pins, true, &PinnedItem::profile_pin);
+  if (favorite == cache.pins.end())
+    return nullptr;
+  const auto button = cache.pin_buttons.find(favorite->id);
+  return button == cache.pin_buttons.end() ? nullptr : button->second->parent()->parent();
+}
+
 void WorkspaceShell::SetProfileDropSlotVisible(bool visible) {
-  if (visible == (profile_drop_slot_.view() != nullptr)) return;
   if (!visible) {
-    auto* slot = profile_drop_slot_.view();
-    slot->parent()->RemoveChildViewT(slot);
+    if (auto* grid = views::AsViewClass<ProfileFavoritesGrid>(profile_drop_grid_.view())) {
+      grid->ClearPreview();
+      profile_drop_grid_.SetView(nullptr);
+    }
+    if (auto* slot = empty_profile_drop_slot_.view()) {
+      slot->parent()->RemoveChildViewT(slot);
+    }
+    profile_drop_slot_.SetView(nullptr);
     return;
   }
+  if (ProfileFavoritesView() || profile_drop_slot_.view())
+    return;
   const auto found = tab_lists_.find(state_.workspace_id);
-  if (found == tab_lists_.end()) return;
-  auto& cache = found->second;
-  auto* parent = cache.root.get();
-  size_t index = 0;
-  const auto favorite = std::ranges::find(cache.pins, true, &PinnedItem::profile_pin);
-  if (favorite != cache.pins.end()) {
-    const auto button = cache.pin_buttons.find(favorite->id);
-    if (button == cache.pin_buttons.end()) return;
-    parent = button->second->parent()->parent();
-    index = parent->children().size();
-  }
+  if (found == tab_lists_.end())
+    return;
   auto slot = std::make_unique<views::View>();
   slot->SetPreferredSize(gfx::Size(0, 44));
   slot->SetCanProcessEventsWithinSubtree(false);
   slot->GetViewAccessibility().SetIsIgnored(true);
-  profile_drop_slot_.SetView(parent->AddChildViewAt(std::move(slot), index));
+  auto* view = found->second.root->AddChildViewAt(std::move(slot), 0);
+  empty_profile_drop_slot_.SetView(view);
+  profile_drop_slot_.SetView(view);
   if (sidebar_widget_) sidebar_widget_->LayoutRootViewIfNecessary();
 }
 
 void WorkspaceShell::SetSidebarReorder(std::optional<SidebarReorder> reorder) {
+  if (reorder && reorder->profile_index) {
+    auto* grid = views::AsViewClass<ProfileFavoritesGrid>(ProfileFavoritesView());
+    if (grid) {
+      auto* row = drag_row_.view();
+      auto* source = row && row->parent() && row->parent()->parent() == grid
+                         ? row->parent() : nullptr;
+      profile_drop_grid_.SetView(grid);
+      profile_drop_slot_.SetView(grid->ShowPreview(*reorder->profile_index, source));
+    }
+  } else if (profile_drop_grid_.view()) {
+    SetProfileDropSlotVisible(false);
+  }
   const bool was_over_profile = sidebar_reorder_ && sidebar_reorder_->profile_slot;
   const bool over_profile = reorder && reorder->profile_slot;
   sidebar_reorder_ = std::move(reorder);
@@ -9584,6 +10004,8 @@ bool WorkspaceShell::DragTabToProfileForTesting(size_t tab) {
     return false;
   row->OnMouseDragged(send(ui::EventType::kMouseDragged, start + gfx::Vector2d(15, 0)));
   const auto* slot = profile_drop_slot_.view();
+  if (!slot)
+    slot = ProfileFavoritesView();
   if (!slot || !slot->IsDrawn()) {
     row->OnMouseCaptureLost();
     return false;
@@ -14756,7 +15178,9 @@ void WorkspaceShell::HideSidebar() {
 void WorkspaceShell::PollSidebar() {
   if (!sidebar_visible() || pinned_ || content_fullscreen_) { sidebar_hover_timer_.Stop(); return; }
   const bool blocked = web_drawer_ || (sidebar_rename_widget_ && sidebar_rename_widget_->IsVisible()) ||
-      sidebar_resizing_ || drag_row_.view() || settings_visible() || address_visible() ||
+      sidebar_resizing_ || drag_row_.view() ||
+      static_cast<WorkspaceRail*>(workspace_dots_.get())->dragging() ||
+      settings_visible() || address_visible() ||
       (tools_widget_ && tools_widget_->IsVisible()) ||
       (time_machine_widget_ && time_machine_widget_->IsVisible()) ||
       (workspace_menu_runner_ && workspace_menu_runner_->IsRunning()) ||
