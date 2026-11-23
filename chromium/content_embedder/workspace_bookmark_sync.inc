@@ -579,7 +579,7 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
       for (size_t i = 0; i < model_.workspaces().size(); ++i) {
         const auto& space = spaces[i];
         if (remote(space) || std::ranges::any_of(pins_[i], [](const auto& pin) {
-              return pin.live_folder;
+              return pin.live_folder.has_value();
             })) {
           continue;
         }
