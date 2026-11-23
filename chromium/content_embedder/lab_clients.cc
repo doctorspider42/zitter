@@ -68,6 +68,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/escape.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chromium/app/zitter_version.h"
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/page_dialogs.h"
 #include "content/public/browser/frame_tree_node_id.h"
@@ -798,11 +799,24 @@ std::string LabBrowserClientBase::GetProduct() {
 }
 
 std::string LabBrowserClientBase::GetUserAgent() {
-  return embedder_support::GetUserAgent();
+  if (auto override = embedder_support::GetUserAgentFromCommandLine())
+    return *override;
+  return base::StrCat({embedder_support::GetUserAgent(),
+                       " Zitter/" ZITTER_VERSION_STRING});
 }
 
 blink::UserAgentMetadata LabBrowserClientBase::GetUserAgentMetadata() {
-  return embedder_support::GetUserAgentMetadata();
+  auto metadata = embedder_support::GetUserAgentMetadata();
+  if (embedder_support::GetUserAgentFromCommandLine())
+    return metadata;
+
+  const std::string version = ZITTER_VERSION_STRING;
+  metadata.brand_version_list = embedder_support::GetUserAgentBrandMajorVersionList(
+      blink::UserAgentBrandVersion{"Zitter", version.substr(0, version.find('.'))});
+  metadata.brand_full_version_list =
+      embedder_support::GetUserAgentBrandFullVersionList(
+          blink::UserAgentBrandVersion{"Zitter", version});
+  return metadata;
 }
 
 
