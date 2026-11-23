@@ -303,6 +303,7 @@ DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kLiveFolderRemoveTokenField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantApiKeyField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kAssistantSetupField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kBookmarkSyncReplaceField);
+DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kBookmarkSyncCloudRemovalField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kBookmarkSyncExtensionsField);
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kProfileDestinationField);
 // Color roles. The values only name a role: Tone() resolves each one from the
@@ -11980,6 +11981,31 @@ void WorkspaceShell::RefreshBookmarkSync() {
       sync_now->SetVisible(enabled);
     controls.disable.view()->SetVisible(enabled);
   }
+}
+
+void WorkspaceShell::ReviewSyncRemoval(
+    views::Widget* owner, base::OnceCallback<void(std::optional<bool>)> done) {
+  if (!owner || !owner->IsVisible()) owner = widget_.get();
+  auto [accept, decline] = base::SplitOnceCallback(
+      base::BindPostTaskToCurrentDefault(std::move(done)));
+  auto [cancel, close] = base::SplitOnceCallback(std::move(decline));
+  ui::DialogModel::Builder builder;
+  auto* model = builder.model();
+  builder.SetTitle(T(u"Usunąć także z synchronizacji?"))
+      .AddParagraph(ui::DialogModelLabel(T(
+          u"Domyślnie usuniesz dane tylko z tego urządzenia. Usunięcia z chmury nie można cofnąć.")))
+      .AddCheckbox(kBookmarkSyncCloudRemovalField,
+                   ui::DialogModelLabel(T(u"Usuń również z chmury")))
+      .AddOkButton(base::BindOnce(
+          [](ui::DialogModel* model, base::OnceCallback<void(std::optional<bool>)> done) {
+            std::move(done).Run(
+                model->GetCheckboxByUniqueId(kBookmarkSyncCloudRemovalField)->is_checked());
+          }, base::Unretained(model), std::move(accept)),
+          ui::DialogModel::Button::Params().SetLabel(T(u"Usuń")))
+      .AddCancelButton(base::BindOnce(std::move(cancel), std::nullopt),
+          ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")))
+      .SetCloseActionCallback(base::BindOnce(std::move(close), std::nullopt));
+  ShowAssistantDialog(owner, builder.Build());
 }
 
 void WorkspaceShell::ReviewBookmarkImport(

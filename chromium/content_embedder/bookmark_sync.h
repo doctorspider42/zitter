@@ -36,6 +36,13 @@ base::DictValue RecordEdits(const base::DictValue& previous,
                             const base::DictValue& ledger,
                             const std::string& device);
 bool Merge(base::DictValue& target, const base::DictValue& source);
+void RecordScopeEdits(const base::DictValue& previous,
+                      const base::DictValue& current,
+                      base::DictValue& ledger,
+                      const std::string& device);
+bool ScopeDeleted(const base::DictValue& ledger, std::string_view key);
+void RecordScopeDeletion(base::DictValue& ledger, std::string_view key,
+                         const std::string& device);
 std::optional<base::DictValue> Materialize(const base::DictValue& ledger);
 struct FolderResult {
   base::DictValue ledger;

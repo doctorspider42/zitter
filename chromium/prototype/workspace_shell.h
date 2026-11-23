@@ -647,6 +647,8 @@ class WorkspaceShell final : public ui::EventHandler,
     size_t extensions = 0;
     std::vector<std::u16string> workspace_names;
   };
+  void ReviewSyncRemoval(views::Widget* owner,
+                         base::OnceCallback<void(std::optional<bool>)> done);
   void ReviewBookmarkImport(BookmarkImportPreview preview, bool has_local_data,
                             base::OnceCallback<void(std::optional<bool>, bool)> done);
   bool SuspendWelcomeForLogin();

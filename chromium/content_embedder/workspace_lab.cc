@@ -2808,6 +2808,8 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
 
   if (const auto* removed = session.FindDict("removed_workspaces"))
     removed_workspaces_ = removed->Clone();
+  if (const auto* deletions = session.FindDict("sync_deletions"))
+    sync_deletions_ = deletions->Clone();
   if (const auto* epochs = session.FindDict("timeline_epochs"))
     timeline_epochs_ = epochs->Clone();
   if (const auto* rules = session.FindDict("link_rules"))
@@ -3048,7 +3050,7 @@ void WorkspaceLab::ReorderWorkspace(std::string id, size_t destination) {
   RefreshShell();
 }
 
-bool WorkspaceLab::RemoveWorkspace(std::string id) {
+bool WorkspaceLab::RemoveWorkspace(std::string id, std::optional<bool> from_cloud) {
   const auto index = WorkspaceIndex(id);
   if (smoke_ || private_owner_ || !CanEditWorkspace() || !index ||
       model_.workspaces().size() <= 1) {
@@ -3058,15 +3060,28 @@ bool WorkspaceLab::RemoveWorkspace(std::string id) {
     shell_->SetOperationStatus(prototype::WorkspaceShell::OperationStatusEvent::kStopCapture);
     return false;
   }
+  if (!from_cloud && CanDeleteSyncedScope("space/" + id)) {
+    shell_->ReviewSyncRemoval(widget_.get(), base::BindOnce(
+        [](base::WeakPtr<WorkspaceLab> lab, std::string id, std::optional<bool> choice) {
+          if (!lab) return;
+          if (!choice || *choice)
+            lab->shell_->CancelPendingWorkspaceRemoval();
+          if (choice && !lab->RemoveWorkspace(std::move(id), choice))
+            lab->shell_->CancelPendingWorkspaceRemoval();
+        }, weak_factory_.GetWeakPtr(), std::move(id)));
+    return true;
+  }
+  if (from_cloud.value_or(false) && !CanDeleteSyncedScope("space/" + id))
+    return false;
   const auto pages = WorkspacePages(*index);
   if (std::ranges::none_of(pages, [](auto* page) {
         return page->NeedToFireBeforeUnload();
       })) {
-    CommitWorkspaceRemoval(std::move(id));
+    CommitWorkspaceRemoval(std::move(id), from_cloud.value_or(false));
   } else {
     CheckBeforeUnload(
         pages, base::BindOnce(&WorkspaceLab::CommitWorkspaceRemoval,
-                              weak_factory_.GetWeakPtr(), std::move(id)),
+                              weak_factory_.GetWeakPtr(), std::move(id), from_cloud.value_or(false)),
         base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
           if (lab)
             lab->shell_->CancelPendingWorkspaceRemoval();
@@ -3075,7 +3090,7 @@ bool WorkspaceLab::RemoveWorkspace(std::string id) {
   return true;
 }
 
-void WorkspaceLab::CommitWorkspaceRemoval(std::string id) {
+void WorkspaceLab::CommitWorkspaceRemoval(std::string id, bool from_cloud) {
   const size_t index = WorkspaceIndex(id).value();
   if (WorkspaceHasCapture(index)) {
     shell_->CancelPendingWorkspaceRemoval();
@@ -3108,6 +3123,9 @@ void WorkspaceLab::CommitWorkspaceRemoval(std::string id) {
   }
   session.Remove(id);
   session.EnsureDict("removed_workspaces")->Set(id, workspace.profile_id);
+  const auto device = from_cloud ? sync_prefs_->GetString("device") : std::string();
+  if (!device.empty())
+    session.EnsureDict("sync_deletions")->Set("space/" + id, device);
   if (auto* names = session.FindDict("workspace_names")) {
     names->Remove(id);
     if (names->empty())
@@ -3122,7 +3140,7 @@ void WorkspaceLab::CommitWorkspaceRemoval(std::string id) {
   }
   SaveCatalogueChange(std::move(session), base::BindOnce(
       [](base::WeakPtr<WorkspaceLab> lab, size_t index, std::string fallback,
-         RemovedWorkspace removed, bool ok) {
+         RemovedWorkspace removed, std::string device, bool ok) {
         if (!lab)
           return;
         if (!ok) {
@@ -3147,10 +3165,17 @@ void WorkspaceLab::CommitWorkspaceRemoval(std::string id) {
         lab->removed_workspaces_.Set(id, removed.workspace.profile_id);
         for (const auto [host, target] : removed.link_rules)
           lab->link_rules_.Remove(host);
-        lab->removed_workspace_ = std::move(removed);
+        if (device.empty()) {
+          lab->removed_workspace_ = std::move(removed);
+        } else {
+          lab->sync_deletions_.Set("space/" + id, device);
+          lab->removed_workspace_.reset();
+          lab->shell_->HideToast();
+        }
         lab->RefreshShell();
         lab->tabs_[lab->active_index_][lab->selected_[lab->active_index_]].view->RequestFocus();
-      }, weak_factory_.GetWeakPtr(), index, fallback, std::move(removed)));
+        if (!device.empty()) lab->RunBookmarkSync();
+      }, weak_factory_.GetWeakPtr(), index, fallback, std::move(removed), device));
 }
 
 void WorkspaceLab::EraseWorkspaceAt(size_t index) {
@@ -3496,7 +3521,7 @@ size_t WorkspaceLab::ProfileCount() const {
   });
 }
 
-bool WorkspaceLab::RemoveProfile(std::string id) {
+bool WorkspaceLab::RemoveProfile(std::string id, std::optional<bool> from_cloud) {
   using Event = prototype::WorkspaceShell::ProfileStatusEvent;
   if (smoke_ || private_owner_ || session_path_.empty() || !CanEditWorkspace() ||
       !model_.active() || !HasProfile(id) ||
@@ -3512,8 +3537,20 @@ bool WorkspaceLab::RemoveProfile(std::string id) {
         u"Zamknij okna aplikacji i okna prywatne oraz zakończ pobieranie w tym profilu."));
     return false;
   }
+  if (!from_cloud && CanDeleteSyncedScope("profile/" + id)) {
+    shell_->ReviewSyncRemoval(shell_->profiles_widget(), base::BindOnce(
+        [](base::WeakPtr<WorkspaceLab> lab, std::string id, std::optional<bool> choice) {
+          if (lab && choice) lab->RemoveProfile(std::move(id), choice);
+        }, weak_factory_.GetWeakPtr(), std::move(id)));
+    return true;
+  }
+  if (from_cloud.value_or(false) && !CanDeleteSyncedScope("profile/" + id))
+    return false;
   auto session = CaptureSession();
   session.EnsureDict("removed_profiles")->Set(id, true);
+  const auto device = from_cloud.value_or(false) ? sync_prefs_->GetString("device") : std::string();
+  if (!device.empty())
+    session.EnsureDict("sync_deletions")->Set("profile/" + id, device);
   for (const char* key : {"profile_names", "profile_favorites"}) {
     if (auto* entries = session.FindDict(key)) {
       entries->Remove(id);
@@ -3535,10 +3572,11 @@ bool WorkspaceLab::RemoveProfile(std::string id) {
     session.Set("night_shift", night_shift.ToValue());
   SaveCatalogueChange(std::move(session), base::BindOnce(
       [](base::WeakPtr<WorkspaceLab> lab, std::string id,
-         prototype::NightShiftConfig night_shift, bool ok) {
+         prototype::NightShiftConfig night_shift, std::string device, bool ok) {
         if (!lab)
           return;
         if (ok) {
+          if (!device.empty()) lab->sync_deletions_.Set("profile/" + id, device);
           // Keep the live context and its index until shutdown. Chromium
           // services may still hold it or have writes queued to its directory.
           lab->removed_profiles_.Set(id, true);
@@ -3552,7 +3590,8 @@ bool WorkspaceLab::RemoveProfile(std::string id) {
         }
         lab->RefreshShell();
         lab->shell_->SetProfileStatus(ok ? Event::kDeleted : Event::kDeleteNotSaved);
-      }, weak_factory_.GetWeakPtr(), std::move(id), std::move(night_shift)));
+        if (ok && !device.empty()) lab->RunBookmarkSync();
+      }, weak_factory_.GetWeakPtr(), std::move(id), std::move(night_shift), device));
   shell_->SetProfileStatus(Event::kDeleting);
   return true;
 }
@@ -13484,6 +13523,8 @@ base::DictValue WorkspaceLab::CaptureSession() const {
     session.Set("removed_workspaces", removed_workspaces_.Clone());
   if (!removed_profiles_.empty())
     session.Set("removed_profiles", removed_profiles_.Clone());
+  if (!sync_deletions_.empty())
+    session.Set("sync_deletions", sync_deletions_.Clone());
   if (!timeline_epochs_.empty())
     session.Set("timeline_epochs", timeline_epochs_.Clone());
   if (!link_rules_.empty())

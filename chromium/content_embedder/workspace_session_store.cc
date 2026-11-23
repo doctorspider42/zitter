@@ -59,6 +59,7 @@ bool IsValidSession(const base::DictValue& session) {
                                          session.contains("profile_names") +
                                          session.contains("removed_profiles") +
                                          session.contains("removed_workspaces") +
+                                         session.contains("sync_deletions") +
                                          session.contains("timeline_epochs") +
                                          session.contains("profile_favorites") +
                                          session.contains("link_rules") +
@@ -79,6 +80,19 @@ bool IsValidSession(const base::DictValue& session) {
   if (session.contains("startup_import_pending") &&
       !session.FindBool("startup_import_pending").value_or(false)) {
     return false;
+  }
+  if (session.contains("sync_deletions")) {
+    const auto* entries = session.FindDict("sync_deletions");
+    if (!entries || entries->empty()) return false;
+    for (const auto [scope, device] : *entries) {
+      const bool space = scope.starts_with("space/");
+      if (!space && !scope.starts_with("profile/")) return false;
+      const auto id = scope.substr(space ? 6 : 8);
+      const auto* removed =
+          session.FindDict(space ? "removed_workspaces" : "removed_profiles");
+      if (!removed || !removed->contains(id) || !device.is_string() ||
+          !base::Uuid::ParseLowercase(device.GetString()).is_valid()) return false;
+    }
   }
   if (session.contains("window_placement")) {
     const auto* placement = session.FindDict("window_placement");

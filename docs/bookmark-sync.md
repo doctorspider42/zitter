@@ -71,12 +71,30 @@ Choose **Sync now** under **Settings → Passwords and profiles → Workspace sy
 to save the current session and then check for changes. If the session fails
 to save, Zitter skips that sync attempt.
 Independent edits to different bookmarks merge. Concurrent updates to the same
-bookmark resolve by version, with a stable device ID as the tiebreaker.
+bookmark resolve by version. A deletion wins over an update at the same
+version. Removing a bookmark does not rewrite the positions of the remaining
+bookmarks. Workspace names, colors, icons, positions and profile assignments
+reconcile separately.
 Deletion records survive offline periods. Dropbox uploads use the file's
 revision so concurrent writers can retry against the newest version. Open tabs
 have stable IDs. Two devices can add, update, or close different tabs in the
 same space and keep both changes. If two devices edit the same tab, the version
 and device ID determine which edit applies.
+
+### Remove a space or profile from sync
+
+When deleting a synced space or an unused browsing profile, select **Also
+remove from the cloud** to remove it from the shared copy. The deletion is
+queued while offline and survives a restart. Turning off sync cancels any
+deletion that has yet to be published. Update every connected device so it
+recognizes shared deletions.
+
+Other devices close a removed space when its tabs can safely close. Spaces
+with live folders and the last local space can remain available locally.
+Deleting a profile from sync removes its synced favorites and extension list
+from the shared copy. Other devices keep their local browsing profile and its
+credentials. Spaces still associated with the deleted profile are omitted from
+sync until assigned to another synced profile.
 
 ## Storage and scaling
 
@@ -91,6 +109,9 @@ complete index can be read.
 
 Each data file is limited to 5 MiB. The limit applies per workspace or profile.
 Deletion records and previously published immutable file versions are retained.
+If concurrent changes exceed the local tab or bookmark limit, the shared copy
+keeps the overflow and the device opens the items that fit. Other spaces can
+continue syncing.
 
 ### Upgrade from the original format
 

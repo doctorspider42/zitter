@@ -65,25 +65,6 @@ bool HasBookmarkWorkspace(const base::DictValue& ledger,
          (tabs && !tabs->empty());
 }
 
-void RecordBookmarkScopes(const base::DictValue& previous,
-                          const base::DictValue& current, base::DictValue& ledger,
-                          const std::string& device) {
-  int clock = 0;
-  for (const auto [key, records] : ledger)
-    for (const auto [id, record] : records.GetDict())
-      clock = std::max(clock, record.GetDict().FindInt("clock").value_or(0));
-  for (const auto [key, value] : current) {
-    const auto* remote = BookmarkScope(ledger, key);
-    const auto* before = previous.Find(key);
-    if (remote && (*remote == value.GetDict() ||
-                   (before ? *before == value : remote->contains("position") ||
-                                                   remote->contains("extensions"))))
-      continue;
-    ledger.EnsureDict(key)->Set("", base::DictValue().Set("clock", clock + 1)
-        .Set("device", device).Set("scope", value.Clone()));
-  }
-}
-
 // A login attempt belongs to the tab that started it, even when the user
 // switches tabs or signs in through an identity provider.
 class DropboxLogin final : public content::WebContentsUserData<DropboxLogin> {
@@ -158,6 +139,13 @@ void WorkspaceLab::SetSyncStatus(std::u16string message) {
   if (shell_) shell_->RefreshBookmarkSync();
 }
 
+bool WorkspaceLab::CanDeleteSyncedScope(std::string_view scope) const {
+  if (!sync_prefs_ || sync_prefs_->GetString("method").empty() ||
+      sync_prefs_->GetBoolean("import_pending")) return false;
+  const auto& ledger = sync_prefs_->GetDict("ledger");
+  return ledger.contains(scope) && !bookmark_sync::ScopeDeleted(ledger, scope);
+}
+
 void WorkspaceLab::ConfigureBookmarkSync(std::string method) {
   if (!sync_prefs_ || !CanEditWorkspace()) return;
   if (method == "now") {
@@ -197,6 +185,10 @@ void WorkspaceLab::ConfigureBookmarkSync(std::string method) {
                             "ledger", "scope_snapshot", "import_pending"})
       sync_prefs_->ClearPref(key);
     sync_prefs_->CommitPendingWrite();
+    if (!sync_deletions_.empty()) {
+      sync_deletions_.clear();
+      PersistWorkspaceChanges();
+    }
     SetSyncStatus(prototype::T(u"Synchronizacja wyłączona. Zakładki pozostały na tym urządzeniu."));
     return;
   }
@@ -505,9 +497,10 @@ bool WorkspaceLab::PrepareBookmarkScopes(const base::DictValue& ledger,
       continue;
     }
     if (!HasProfile(*profile)) {
+      if (ProfileCount() >= kMaxContentProfiles) continue;
       if (!profile->starts_with("profile-") ||
-          !base::Uuid::ParseLowercase(std::string_view(*profile).substr(8)).is_valid() ||
-          ProfileCount() >= kMaxContentProfiles) return false;
+          !base::Uuid::ParseLowercase(std::string_view(*profile).substr(8)).is_valid())
+        return false;
       const auto* group = ledger.FindDict("profile/" + *profile);
       const auto* descriptor = group ? group->FindDict("") : nullptr;
       const auto* identity = descriptor ? descriptor->FindDict("scope") : nullptr;
@@ -556,7 +549,7 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
     if (list.GetList().empty() && (!info || !info->contains("position"))) continue;
     if (!info || !info->FindString("profile") || !info->FindString("name")) return false;
     Workspace space{id, *info->FindString("profile"), *info->FindString("name")};
-    if (removed_profiles_.contains(space.profile_id)) continue;
+    if (!HasProfile(space.profile_id)) continue;
     if (builtin)
       SetCatalogueName(candidate, id, space.name, "workspace_names", "extra_workspaces");
     else
@@ -569,16 +562,23 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
   std::vector<size_t> discarded;
   std::optional<std::string> fallback;
   auto rules = link_rules_.Clone();
-  if (replace) {
+  {
     // Older backups can contain only profile favorites. Keep the catalogue
     // when the backup has no spaces to restore.
     const auto remote = [&](const Workspace& space) {
       return HasBookmarkWorkspace(ledger, collections, space.id);
     };
-    if (std::ranges::any_of(spaces, remote)) {
+    const bool replace_catalogue = replace && std::ranges::any_of(spaces, remote);
+    if (replace_catalogue ||
+        std::ranges::any_of(spaces, [&](const Workspace& space) {
+          return bookmark_sync::ScopeDeleted(ledger, "space/" + space.id);
+        })) {
       for (size_t i = 0; i < model_.workspaces().size(); ++i) {
         const auto& space = spaces[i];
-        if (remote(space) || std::ranges::any_of(pins_[i], [](const auto& pin) {
+        const bool deleted = bookmark_sync::ScopeDeleted(ledger, "space/" + space.id);
+        if ((!deleted && (!replace_catalogue || remote(space))) ||
+            spaces.size() - discarded.size() <= 1 ||
+            std::ranges::any_of(pins_[i], [](const auto& pin) {
               return pin.live_folder.has_value();
             })) {
           continue;
@@ -587,7 +587,8 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
             std::ranges::any_of(WorkspacePages(i), [](auto* page) {
               return page->NeedToFireBeforeUnload() || page->GetController().GetPendingEntry();
             })) {
-          return false;
+          if (replace) return false;
+          continue;
         }
         discarded.push_back(i);
         tombstones.Set(space.id, space.profile_id);
@@ -608,7 +609,9 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
         }
       }
       if (std::ranges::contains(discarded, active_index_)) {
-        const auto first = std::ranges::find_if(spaces, remote);
+        const auto first = std::ranges::find_if(spaces, [&](const Workspace& space) {
+          return candidate.contains(space.id);
+        });
         fallback = first->id;
         candidate.Set("active_workspace", *fallback);
         candidate.FindDict(*fallback)->Remove("sleeping");
@@ -616,9 +619,28 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
       if (rules.empty()) candidate.Remove("link_rules");
       else candidate.Set("link_rules", rules.Clone());
     }
-    if (tombstones.empty()) candidate.Remove("removed_workspaces");
-    else candidate.Set("removed_workspaces", tombstones.Clone());
   }
+  // The ledger can contain more live spaces than a single installation can
+  // open. Leave the overflow in sync and apply everything that fits.
+  while (spaces.size() - discarded.size() > kMaxContentWorkspaces) {
+    const auto& space = spaces.back();
+    candidate.Remove(space.id);
+    if (const auto* old = removed_workspaces_.Find(space.id))
+      tombstones.Set(space.id, old->Clone());
+    if (auto* names = candidate.FindDict("workspace_names")) {
+      names->Remove(space.id);
+      if (names->empty()) candidate.Remove("workspace_names");
+    }
+    if (auto* extras = candidate.FindList("extra_workspaces")) {
+      extras->EraseIf([&](const base::Value& item) {
+        return *item.GetDict().FindString("id") == space.id;
+      });
+      if (extras->empty()) candidate.Remove("extra_workspaces");
+    }
+    spaces.pop_back();
+  }
+  if (tombstones.empty()) candidate.Remove("removed_workspaces");
+  else candidate.Set("removed_workspaces", tombstones.Clone());
   auto pins = pins_;
   pins.resize(spaces.size());
   auto favorites = profile_favorites_;
@@ -655,18 +677,52 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
     return !!ReadWorkspacePins(base::DictValue().Set("pins", WriteWorkspacePins(dest)));
   };
   for (size_t i = 0; i < pins.size(); ++i)
-    if (!update("space/" + spaces[i].id, pins[i], false, spaces[i].profile_id)) return false;
+    if (!bookmark_sync::ScopeDeleted(ledger, "space/" + spaces[i].id) &&
+        !update("space/" + spaces[i].id, pins[i], false, spaces[i].profile_id)) return false;
   for (const auto& profile : profiles_) {
-    if (removed_profiles_.contains(profile.id)) continue;
+    if (removed_profiles_.contains(profile.id) ||
+        bookmark_sync::ScopeDeleted(ledger, "profile/" + profile.id)) continue;
     if (!update("profile/" + profile.id, favorites[profile.id], true, profile.id)) return false;
   }
   candidate.Remove("profile_favorites");
   for (const auto& [id, items] : favorites)
     if (!items.empty()) candidate.EnsureDict("profile_favorites")->Set(id, WriteWorkspacePins(items));
+  std::map<std::string, std::string> moved;
+  std::map<std::string, std::string> profile_names;
+  for (const auto& profile : profiles_) {
+    if (removed_profiles_.contains(profile.id) ||
+        bookmark_sync::ScopeDeleted(ledger, "profile/" + profile.id)) continue;
+    const auto* info = BookmarkScope(ledger, "profile/" + profile.id);
+    const auto* name = info ? info->FindString("name") : nullptr;
+    if (name && *name != profile.name) {
+      SetCatalogueName(candidate, profile.id, *name, "profile_names", "extra_profiles");
+      profile_names.emplace(profile.id, *name);
+    }
+  }
   for (size_t i = 0; i < spaces.size(); ++i) {
     auto* entry = candidate.FindDict(spaces[i].id);
     if (!entry) continue;
     entry->Set("pins", WriteWorkspacePins(pins[i]));
+    const auto* info = BookmarkScope(ledger, "space/" + spaces[i].id);
+    const auto* owner = info ? info->FindString("profile") : nullptr;
+    if (i < tabs_.size() && owner && *owner != spaces[i].profile_id && HasProfile(*owner) &&
+        !bookmark_sync::ScopeDeleted(ledger, "profile/" + *owner) &&
+        !bookmark_sync::ScopeDeleted(ledger, "space/" + spaces[i].id) &&
+        !WorkspaceHasCapture(i) && !(peek_workspace_id_ == spaces[i].id && PeekPage()) &&
+        std::ranges::none_of(WorkspacePages(i), [](auto* page) {
+          return page->NeedToFireBeforeUnload() || page->GetController().GetPendingEntry();
+        })) {
+      auto epoch = base::Uuid::GenerateRandomV4().AsLowercaseString();
+      candidate.EnsureDict("timeline_epochs")->Set(spaces[i].id, epoch);
+      moved.emplace(spaces[i].id, std::move(epoch));
+      spaces[i].profile_id = *owner;
+      entry->Set("profile_id", *owner);
+      entry->Set("active", 0);
+      entry->Set("tabs", base::ListValue().Append(
+          prototype::WriteWorkspaceSessionTab(GURL(), u"")));
+      entry->Remove("split");
+      entry->Remove("sleeping");
+    }
     for (auto& value : *entry->FindList("tabs")) {
       auto& tab = value.GetDict();
       const auto* id = tab.FindString("pin");
@@ -679,6 +735,16 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
   for (size_t i = pins_.size(); i < spaces.size(); ++i) AppendWorkspace(spaces[i], nullptr);
   pins_ = std::move(pins);
   profile_favorites_ = std::move(favorites);
+  for (auto& profile : profiles_) {
+    const auto name = profile_names.find(profile.id);
+    if (name != profile_names.end()) profile.name = name->second;
+  }
+  for (const auto& [id, epoch] : moved) {
+    const size_t index = WorkspaceIndex(id).value();
+    const auto& space = spaces[index];
+    CHECK(model_.Update(id, space.name, space.profile_id));
+    ReplaceWorkspaceProfile(index, epoch);
+  }
   if (fallback) CHECK(controller_.Activate(*fallback));
   for (auto it = discarded.rbegin(); it != discarded.rend(); ++it)
     EraseWorkspaceAt(*it);
@@ -688,6 +754,7 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
     removed_workspace_.reset();
   std::vector<std::pair<int, std::string>> order;
   for (const auto& space : model_.workspaces()) {
+    if (bookmark_sync::ScopeDeleted(ledger, "space/" + space.id)) continue;
     const auto* info = BookmarkScope(ledger, "space/" + space.id);
     if (!info) continue;
     const auto position = info->FindInt("position");
@@ -754,8 +821,11 @@ void WorkspaceLab::RunBookmarkSync() {
     ledger = bookmark_sync::RecordEdits(sync_prefs_->GetDict("snapshot"), snapshot,
                                        validated, sync_prefs_->GetString("device"));
     sync_sent_scopes_ = CaptureBookmarkScopes();
-    RecordBookmarkScopes(sync_prefs_->GetDict("scope_snapshot"), sync_sent_scopes_,
-                         ledger, sync_prefs_->GetString("device"));
+    bookmark_sync::RecordScopeEdits(sync_prefs_->GetDict("scope_snapshot"), sync_sent_scopes_,
+                                   ledger, sync_prefs_->GetString("device"));
+    for (const auto [scope, owner] : sync_deletions_)
+      if (owner.GetString() == device.AsLowercaseString())
+        bookmark_sync::RecordScopeDeletion(ledger, scope, owner.GetString());
   }
   if (method == "folder") {
     session_writer_->PostTaskAndReplyWithResult(FROM_HERE, base::BindOnce(
@@ -807,25 +877,36 @@ void WorkspaceLab::FinishBookmarkSync(base::DictValue snapshot,
     auto current_scopes = CaptureBookmarkScopes();
     auto reconciled = bookmark_sync::RecordEdits(snapshot, current, *ledger,
                                                 sync_prefs_->GetString("device"));
-    RecordBookmarkScopes(sync_sent_scopes_, current_scopes,
-                         reconciled, sync_prefs_->GetString("device"));
+    bookmark_sync::RecordScopeEdits(sync_sent_scopes_, current_scopes,
+                                   reconciled, sync_prefs_->GetString("device"));
     auto merged = bookmark_sync::Materialize(reconciled);
     if (merged && !PrepareBookmarkScopes(reconciled, *merged)) {
       if (!saving_catalogue_) SetSyncStatus(prototype::T(u"Synchronizacja wstrzymana. Zitter spróbuje ponownie."));
       return;
     }
-    const bool changed = merged && std::ranges::any_of(*merged, [&](const auto& entry) {
+    const bool deleted_space = std::ranges::any_of(model_.workspaces(), [&](const Workspace& space) {
+      return bookmark_sync::ScopeDeleted(reconciled, "space/" + space.id);
+    });
+    const bool changed = merged && (deleted_space || std::ranges::any_of(*merged, [&](const auto& entry) {
       const auto [scope, items] = entry;
       const auto* local = current.FindList(scope);
       const auto* info = BookmarkScope(reconciled, scope);
       const auto* local_info = current_scopes.FindDict(scope);
       if (info && info->contains("position") && (!local_info || *info != *local_info))
         return true;
+      if (scope.starts_with("profile/") && info && local_info &&
+          *info->FindString("name") != *local_info->FindString("name"))
+        return true;
       return local ? items != *local : !items.GetList().empty();
-    });
+    }));
     const auto previous_order = sync_prefs_->GetList("workspace_order").Clone();
     if (merged && (!changed || ApplyBookmarks(reconciled, *merged, false))) {
       const bool tabs_applied = ApplyBookmarkTabs(*merged);
+      std::vector<std::string> acknowledged;
+      for (const auto [scope, device] : sync_deletions_)
+        if (bookmark_sync::ScopeDeleted(*ledger, scope)) acknowledged.emplace_back(scope);
+      for (const auto& scope : acknowledged)
+        sync_deletions_.Remove(scope);
       auto after = changed ? CaptureBookmarks() : current.Clone();
       auto scopes = changed || tabs_applied ? CaptureBookmarkScopes() : current_scopes.Clone();
       const bool applied = tabs_applied || after != current || scopes != current_scopes ||
@@ -849,7 +930,7 @@ void WorkspaceLab::FinishBookmarkSync(base::DictValue snapshot,
                            u" " + base::TimeFormatTimeOfDay(base::Time::Now()));
       }, sync_weak_.GetWeakPtr(), after.Clone(), std::move(scopes), std::move(reconciled));
       // Commit the baseline only after its matching workspace state is durable.
-      if (applied || sync_prefs_->GetDict("snapshot") != after) {
+      if (applied || !acknowledged.empty() || sync_prefs_->GetDict("snapshot") != after) {
         sync_busy_ = true;
         if (applied) RefreshShell();
         SaveSession(std::move(commit));

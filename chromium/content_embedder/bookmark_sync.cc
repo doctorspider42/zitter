@@ -54,6 +54,77 @@ auto Version(const base::DictValue& entry) {
   return std::tuple(*entry.FindInt("clock"), *entry.FindString("device"));
 }
 
+bool ValidVersion(const base::DictValue& entry) {
+  const auto clock = entry.FindInt("clock");
+  const auto* device = entry.FindString("device");
+  return clock && *clock >= 1 && *clock < 2000000000 && device &&
+         base::Uuid::ParseLowercase(*device).is_valid();
+}
+
+int NextClock(const base::DictValue& ledger) {
+  int clock = 0;
+  for (const auto [scope, records] : ledger)
+    for (const auto [id, value] : records.GetDict())
+      clock = std::max(clock, *value.GetDict().FindInt("clock"));
+  return clock + 1;
+}
+
+base::DictValue Stamp(int clock, const std::string& device) {
+  return base::DictValue().Set("clock", clock).Set("device", device);
+}
+
+constexpr char kDeletedScope[] = "@deleted";
+constexpr std::string_view kScopeFields[] = {
+    "name", "profile", "position", "color", "emoji", "extensions"};
+
+const base::DictValue& FieldVersion(const base::DictValue& record,
+                                   std::string_view field) {
+  const auto* versions = record.FindDict("versions");
+  const auto* stamp = versions ? versions->FindDict(field) : nullptr;
+  return stamp ? *stamp : record;
+}
+
+void SetField(base::DictValue& record, std::string_view field,
+              const base::Value& value, const base::DictValue& stamp) {
+  record.EnsureDict("scope")->Set(field, value.Clone());
+  record.EnsureDict("versions")->Set(
+      field, Stamp(*stamp.FindInt("clock"), *stamp.FindString("device")));
+}
+
+base::DictValue MergeScope(const base::DictValue& first,
+                           const base::DictValue& second) {
+  const auto& newer = Version(first) >= Version(second) ? first : second;
+  auto result = newer.Clone();
+  for (const auto field : kScopeFields) {
+    const auto* left = first.FindDict("scope")->Find(field);
+    const auto* right = second.FindDict("scope")->Find(field);
+    if (!left && !right) continue;
+    const auto& left_stamp = FieldVersion(first, field);
+    const auto& right_stamp = FieldVersion(second, field);
+    if (left && (!right || Version(left_stamp) >= Version(right_stamp)))
+      SetField(result, field, *left, left_stamp);
+    else
+      SetField(result, field, *right, right_stamp);
+  }
+  return result;
+}
+
+std::string SpaceScopeForTabs(std::string_view key) {
+  return base::StrCat({"space/", key.substr(IsTabScope(key) ? 6 : 5)});
+}
+
+bool SuppressedScope(const base::DictValue& ledger, std::string_view key) {
+  const auto space_key = (IsTabScope(key) || key.starts_with("tabs/"))
+      ? SpaceScopeForTabs(key) : std::string(key);
+  if (ScopeDeleted(ledger, space_key)) return true;
+  if (!space_key.starts_with("space/")) return false;
+  const auto* space = ledger.FindDict(space_key);
+  const auto* record = space ? space->FindDict("") : nullptr;
+  const auto* scope = record ? record->FindDict("scope") : nullptr;
+  const auto* profile = scope ? scope->FindString("profile") : nullptr;
+  return profile && ScopeDeleted(ledger, "profile/" + *profile);
+}
+
 std::vector<std::string> SharedOrder(const base::ListValue& list,
                                      const base::DictValue& other) {
   std::vector<std::string> order;
@@ -177,11 +248,9 @@ base::DictValue RecordEdits(const base::DictValue& previous,
                             const base::DictValue& ledger,
                             const std::string& device) {
   auto result = ledger.Clone();
-  int clock = 0;
-  for (const auto [scope, records] : ledger)
-    for (const auto [id, entry] : records.GetDict())
-      clock = std::max(clock, *entry.GetDict().FindInt("clock"));
+  const int clock = NextClock(ledger);
   for (const auto [scope, items] : current) {
+    if (SuppressedScope(ledger, scope)) continue;
     const bool tabs = IsTabScope(scope);
     const std::string_view kind = tabs ? "tab" : "pin";
     const auto* previous_items = previous.FindList(scope);
@@ -192,22 +261,86 @@ base::DictValue RecordEdits(const base::DictValue& previous,
       anchored = AnchorTabPositions(*previous_items, items.GetList(), prior, now, ledger.FindDict(scope));
       if (!anchored) now = Index(items.GetList(), kind);
     }
+    // Closing a pin only shifts the remaining indices. It is not a reorder.
+    const bool removed_pins = !tabs && previous_items && now.size() < prior.size() &&
+        SharedOrder(*previous_items, now) == SharedOrder(items.GetList(), prior) &&
+        std::ranges::all_of(now, [&](const auto& item) { return prior.contains(item.first); });
     auto put = [&](std::string_view id, base::DictValue value) {
-      value.Set("clock", clock + 1);
+      value.Set("clock", clock);
       value.Set("device", device);
       result.EnsureDict(scope)->Set(id, std::move(value));
     };
     for (const auto [id, entry] : now) {
       const auto* old = prior.Find(id);
-      if (!old || (anchored ? *old->GetDict().Find(kind) != *entry.GetDict().Find(kind)
-                            : *old != entry))
-        put(id, entry.GetDict().Clone());
+      if (old && (anchored || removed_pins
+                      ? *old->GetDict().Find(kind) == *entry.GetDict().Find(kind)
+                      : *old == entry)) continue;
+      auto changed = entry.GetDict().Clone();
+      if (removed_pins && old) {
+        const auto* saved = ledger.FindDict(scope);
+        const auto* record = saved ? saved->FindDict(id) : nullptr;
+        if (const auto position = record ? record->FindInt("position") : std::nullopt)
+          changed.Set("position", *position);
+      }
+      put(id, std::move(changed));
     }
     for (const auto [id, entry] : prior)
       if (!now.contains(id)) put(id, {});
     if (tabs) result.EnsureDict(scope);
   }
   return result;
+}
+
+bool ScopeDeleted(const base::DictValue& ledger, std::string_view key) {
+  const auto* records = ledger.FindDict(key);
+  return records && records->contains(kDeletedScope);
+}
+
+void RecordScopeDeletion(base::DictValue& ledger, std::string_view key,
+                         const std::string& device) {
+  if (!ScopeDeleted(ledger, key))
+    ledger.EnsureDict(key)->Set(kDeletedScope, Stamp(NextClock(ledger), device));
+}
+
+void RecordScopeEdits(const base::DictValue& previous,
+                      const base::DictValue& current,
+                      base::DictValue& ledger,
+                      const std::string& device) {
+  const auto stamp = Stamp(NextClock(ledger), device);
+  for (const auto [key, value] : current) {
+    const auto* owner = value.GetDict().FindString("profile");
+    if (ScopeDeleted(ledger, key) ||
+        (key.starts_with("space/") && owner && ScopeDeleted(ledger, "profile/" + *owner)))
+      continue;
+    auto* group = ledger.EnsureDict(key);
+    const auto* record = group->FindDict("");
+    const auto* before = previous.FindDict(key);
+    if (!record) {
+      group->Set("", stamp.Clone().Set("scope", value.Clone()));
+      continue;
+    }
+    const auto& remote = *record->FindDict("scope");
+    auto updated = record->Clone();
+    for (const auto field : kScopeFields) {
+      const auto* local = value.GetDict().Find(field);
+      const auto* old = before ? before->Find(field) : nullptr;
+      const auto* theirs = remote.Find(field);
+      if (!local || (theirs && (*theirs == *local || !old || *old == *local)))
+        continue;
+      SetField(updated, field, *local, stamp);
+    }
+    if (updated != *record) {
+      // Keep the original fallback stamp for untouched legacy fields.
+      for (const auto field : kScopeFields) {
+        const auto* original = remote.Find(field);
+        if (original && !updated.FindDict("versions")->contains(field))
+          SetField(updated, field, *original, *record);
+      }
+      updated.Set("clock", *stamp.FindInt("clock"));
+      updated.Set("device", device);
+      group->Set("", std::move(updated));
+    }
+  }
 }
 
 bool Merge(base::DictValue& target, const base::DictValue& source) {
@@ -220,10 +353,9 @@ bool Merge(base::DictValue& target, const base::DictValue& source) {
     for (const auto [id, value] : records.GetDict()) {
       if (!value.is_dict() || id.size() > 256) return false;
       const auto& entry = value.GetDict();
-      const auto clock = entry.FindInt("clock");
-      const auto* device = entry.FindString("device");
-      if (!clock || *clock < 1 || *clock >= 2000000000 || !device ||
-          !base::Uuid::ParseLowercase(*device).is_valid()) return false;
+      if (!ValidVersion(entry)) return false;
+      if (id == kDeletedScope && (IsTabScope(scope) || entry.size() != 2))
+        return false;
       if (IsTabScope(scope)) {
         if (!ValidTabId(id)) return false;
         const auto* tab = entry.FindDict("tab");
@@ -241,6 +373,18 @@ bool Merge(base::DictValue& target, const base::DictValue& source) {
         if (!scope_info || entry.contains("pin") || !scope_info->FindString("profile") ||
             !scope_info->FindString("name") || !IsContentWorkspaceName(*scope_info->FindString("name")))
           return false;
+        if (entry.contains("versions")) {
+          const auto* versions = entry.FindDict("versions");
+          if (!versions || scope.starts_with("tabs/")) return false;
+          for (const auto [field, stamp] : *versions) {
+            if (!std::ranges::contains(kScopeFields, field) || !scope_info->contains(field) ||
+                !stamp.is_dict() || stamp.GetDict().size() != 2 ||
+                !ValidVersion(stamp.GetDict()) ||
+                Version(stamp.GetDict()) > Version(entry)) {
+              return false;
+            }
+          }
+        }
         if (scope_info->contains("position")) {
           const int position = scope_info->FindInt("position").value_or(-1);
           const int color = scope_info->FindInt("color").value_or(-1);
@@ -281,7 +425,16 @@ bool Merge(base::DictValue& target, const base::DictValue& source) {
             !entry.FindInt("position")) return false;
       }
       const auto* existing = dest->FindDict(id);
-      if (!existing || Version(entry) > Version(*existing))
+      if (existing && id.empty() &&
+          (entry.contains("versions") || existing->contains("versions"))) {
+        dest->Set(id, MergeScope(*existing, entry));
+        continue;
+      }
+      auto item_version = [](const base::DictValue& record) {
+        return std::tuple(*record.FindInt("clock"), record.size() == 2,
+                          *record.FindString("device"));
+      };
+      if (!existing || item_version(entry) > item_version(*existing))
         dest->Set(id, entry.Clone());
     }
   }
@@ -291,14 +444,16 @@ bool Merge(base::DictValue& target, const base::DictValue& source) {
 std::optional<base::DictValue> Materialize(const base::DictValue& ledger) {
   base::DictValue result;
   for (const auto [scope, records] : ledger) {
+    if (SuppressedScope(ledger, scope)) continue;
     if (IsTabScope(scope)) {
       std::vector<std::tuple<double, std::string_view, const base::DictValue*>> ordered;
       for (const auto [id, entry] : records.GetDict()) {
         if (const auto* tab = entry.GetDict().FindDict("tab"))
           ordered.emplace_back(*entry.GetDict().FindDouble("position"), id, tab);
       }
-      if (ordered.size() > prototype::kMaxWorkspaceSessionTabs) return std::nullopt;
       std::ranges::sort(ordered);
+      if (ordered.size() > prototype::kMaxWorkspaceSessionTabs)
+        ordered.resize(prototype::kMaxWorkspaceSessionTabs);
       auto* list = result.EnsureList(scope);
       for (const auto& [position, id, tab] : ordered) list->Append(tab->Clone());
       continue;
@@ -310,7 +465,8 @@ std::optional<base::DictValue> Materialize(const base::DictValue& ledger) {
     }
     std::stable_sort(ordered.begin(), ordered.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
-    if (ordered.size() > prototype::kMaxWorkspaceSessionTabs) return std::nullopt;
+    if (ordered.size() > prototype::kMaxWorkspaceSessionTabs)
+      ordered.resize(prototype::kMaxWorkspaceSessionTabs);
     std::map<std::string, const base::DictValue*> items;
     for (const auto& [position, pin] : ordered) items.emplace(*pin->FindString("id"), pin);
     base::ListValue list;
@@ -358,6 +514,12 @@ std::optional<ShardSet> WriteShards(const base::DictValue& ledger) {
   for (const auto [scope, value] : ledger) {
     auto key = ShardKey(scope);
     if (!ValidShardKey(key)) return std::nullopt;
+    if (ScopeDeleted(ledger, key)) {
+      if (scope == key)
+        groups[key].Set(scope, base::DictValue().Set(
+            kDeletedScope, value.GetDict().Find(kDeletedScope)->Clone()));
+      continue;
+    }
     groups[key].Set(scope, value.Clone());
   }
   ShardSet result;

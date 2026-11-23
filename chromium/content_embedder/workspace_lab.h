@@ -461,7 +461,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   size_t WorkspaceProfileIndex(size_t workspace) const;
   bool HasProfile(std::string_view id) const;
   size_t ProfileCount() const;
-  bool RemoveProfile(std::string id);
+  bool RemoveProfile(std::string id, std::optional<bool> from_cloud = std::nullopt);
   ProfileContext* WorkspaceProfile(size_t workspace) const;
   bool OpenNightShiftSettings(content::RenderFrameHost* document = nullptr,
                               bool quick_panel = false);
@@ -471,9 +471,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void AppendWorkspace(Workspace workspace, const base::DictValue* session);
   bool AddWorkspace(std::string name, std::string profile_id,
                     base::OnceCallback<void(std::string)> committed = {});
-  bool RemoveWorkspace(std::string id);
+  bool RemoveWorkspace(std::string id, std::optional<bool> from_cloud = std::nullopt);
   void ReorderWorkspace(std::string id, size_t destination);
-  void CommitWorkspaceRemoval(std::string id);
+  void CommitWorkspaceRemoval(std::string id, bool from_cloud);
   void EraseWorkspaceAt(size_t index);
   bool RestoreWorkspace(std::string id);
   bool UpdateWorkspace(std::string id, std::string name, std::string profile_id);
@@ -497,6 +497,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ConfigureBookmarkSync(std::string method);
   void StartBookmarkSync(std::string method);
   void RunBookmarkSync();
+  bool CanDeleteSyncedScope(std::string_view scope) const;
   base::DictValue CaptureBookmarks();
   base::DictValue CaptureBookmarkScopes() const;
   GURL BookmarkTabUrl(size_t workspace, size_t tab) const;
@@ -1044,6 +1045,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::map<std::string, std::string> imported_workspace_sources_;
   base::DictValue removed_workspaces_;
   base::DictValue removed_profiles_;
+  base::DictValue sync_deletions_;
   base::DictValue timeline_epochs_;
   base::DictValue link_rules_;
   struct RemovedWorkspace {

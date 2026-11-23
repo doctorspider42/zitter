@@ -302,7 +302,7 @@ def verify_concurrent_tabs(executable, folder, first, second, receiver, fixture)
         prepare(root, folder, "local")
         set_tabs(root, initial)
         with running(executable, root):
-            assert wait(device_index(root, folder).exists, 30)
+            assert wait(lambda: device_index(root, folder).exists(), 30)
             assert wait(lambda: read_json(root / "BookmarkSync.json").get("snapshot"), 15)
 
     ref_a, ref_b = (device_index(root, folder) for root in (first, second))
@@ -381,6 +381,131 @@ def verify_concurrent_tabs(executable, folder, first, second, receiver, fixture)
           "Missing and corrupt files failed safely.")
 
 
+def verify_concurrent_workspace_edits(executable, folder, first, second, fixture):
+    first_device = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    second_device = "11111111-1111-4111-8111-111111111111"
+    session_name = "ContentWorkspaceSession.json"
+    prefs_name = "BookmarkSync.json"
+    settings_name = "WorkspaceSettings.json"
+    bookmarks = [pin(label, url=fixture + "/" + label) for label in ("alpha", "beta")]
+
+    def edit(root, pins, name=None, profile=None):
+        state = read_json(root / session_name)
+        state["work"]["pins"] = pins
+        if name:
+            state["workspace_names"] = {"work": name}
+        if profile:
+            state["work"]["profile_id"] = profile
+            state["timeline_epochs"] = {"work": str(uuid.uuid4())}
+        write_json(root / session_name, state)
+
+    for root, device in ((first, first_device), (second, second_device)):
+        prepare(root, folder, "alpha")
+        edit(root, bookmarks)
+        write_json(root / prefs_name, {**read_json(root / prefs_name), "device": device})
+    with running(executable, first):
+        assert wait(lambda: read_json(first / prefs_name).get("ledger"), 25)
+    write_json(second / prefs_name, {**read_json(first / prefs_name), "device": second_device})
+
+    edit(first, bookmarks[1:], name="Editorial")
+    edit(second, bookmarks[:1], profile="personal")
+    write_json(second / settings_name, {"work": "#123456"})
+    with running(executable, first):
+        assert wait(lambda: "pin" not in read_partition(
+            device_index(first, folder), "space/work")["space/work"]["alpha"], 25)
+
+    def reconciled(root):
+        state = read_json(root / session_name)
+        return (not state["work"].get("pins") and
+                state.get("workspace_names", {}).get("work") == "Editorial" and
+                state["work"]["profile_id"] == "personal" and
+                read_json(root / settings_name).get("work", "").lower() == "#123456")
+
+    with running(executable, second):
+        assert wait(lambda: reconciled(second), 25)
+    with running(executable, first):
+        assert wait(lambda: reconciled(first), 25)
+    print("Independent bookmark deletions, space appearance, name and profile changes merged.")
+
+
+def verify_sync_removal(executable, folder, first, second):
+    profile = "profile-" + str(uuid.uuid4())
+    space = "space-" + str(uuid.uuid4())
+    session_name = "ContentWorkspaceSession.json"
+    prefs_name = "BookmarkSync.json"
+    shared = folder / "shared"
+    shared.mkdir()
+    peer = str(uuid.uuid4())
+    write_partition_fixture(shared, peer, "profile/" + profile, {
+        "profile/" + profile: {"": {"clock": 1, "device": peer, "scope": {
+            "profile": profile, "name": "Unused Sync Profile", "extensions": [],
+        }}}})
+    for root in (first, second):
+        prepare(root, shared, "keep", extra=space)
+        session = read_json(root / session_name)
+        session["active_workspace"] = space
+        write_json(root / session_name, session)
+        with running(executable, root):
+            assert wait(lambda: read_json(root / prefs_name).get("ledger") and
+                        any(item["id"] == profile for item in
+                            read_json(root / session_name).get("extra_profiles", [])), 25)
+
+    cloud_dialog = {"Remove from sync as well?", "Usunąć także z synchronizacji?"}
+    cloud_checkbox = {"Also remove from the cloud", "Usuń również z chmury"}
+    remove = {"Delete", "Remove", "Usuń"}
+    disconnected = folder / "disconnected"
+    shared.rename(disconnected)
+    with running(executable, first, panel="remove", theme="dark") as channel:
+        click_control(channel, {"Remove space", "Usuń przestrzeń"},
+                      {"Remove space “Reading”?", "Usunąć przestrzeń „Reading”?"})
+        click_control(channel, cloud_checkbox, cloud_dialog)
+        click_control(channel, remove, cloud_dialog)
+        assert wait(lambda: "space/" + space in read_json(first / session_name).get(
+            "sync_deletions", {}), 25)
+    assert space not in read_json(first / session_name)
+    disconnected.rename(shared)
+
+    with running(executable, first, panel="profiles") as channel:
+        assert wait(lambda: "@deleted" in read_partition(
+            device_index(first, shared), "space/" + space)["space/" + space], 25)
+        titles = {"Zitter — Profiles", "Zitter — Profile"}
+        click_control(channel, {"Delete profile Unused Sync Profile",
+                                "Usuń profil Unused Sync Profile"}, titles)
+        click_control(channel, {"Delete profile and data", "Usuń profil i dane"}, titles)
+        click_control(channel, cloud_checkbox, cloud_dialog)
+        click_control(channel, remove, cloud_dialog)
+        assert wait(lambda: "@deleted" in read_partition(
+            device_index(first, shared), "profile/" + profile)["profile/" + profile], 25)
+    assert profile in read_json(first / session_name)["removed_profiles"]
+
+    with running(executable, second):
+        assert wait(lambda: space not in read_json(second / session_name), 25)
+        assert wait(lambda: set(read_partition(device_index(second, shared), "profile/" + profile)[
+            "profile/" + profile]) == {"@deleted"}, 25)
+        assert any(item["id"] == profile for item in read_json(second / session_name)["extra_profiles"])
+    print("Confirmed shared space and profile deletions survived an offline device returning.")
+
+
+def verify_overflow(executable, folder, root):
+    prepare(root, folder, "independent")
+    peer = str(uuid.uuid4())
+    tabs = {}
+    for position in range(501):
+        tab = str(uuid.uuid4())
+        tabs[tab] = {"clock": 1, "device": peer, "position": position,
+                     "tab": {"id": tab, "url": f"http://127.0.0.1:9/{position}"}}
+    write_partition_fixture(folder, peer, "space/personal", {"tabs2/personal": tabs})
+    with running(executable, root):
+        index = wait(lambda: device_index(root, folder) if device_index(root, folder).exists()
+                     else None, 25)
+        assert index
+        assert len(read_partition(index, "space/personal")["tabs2/personal"]) == 501
+        assert "pin" in read_partition(index, "space/work")["space/work"]["independent"]
+        assert wait(lambda: len(read_json(root / "ContentWorkspaceSession.json")[
+            "personal"]["tabs"]) == 500, 25)
+    print("Overflow remained in the shared copy while the other space continued syncing.")
+
+
 def verify_first_imports(executable):
     seen_icon = threading.Event()
 
@@ -428,6 +553,19 @@ def verify_first_imports(executable):
                   temporary_workspace() as receiver):
                 verify_concurrent_tabs(executable, Path(shared).resolve(), Path(first).resolve(),
                                        Path(second).resolve(), Path(receiver).resolve(), fixture)
+            with (tempfile.TemporaryDirectory() as shared,
+                  temporary_workspace() as first,
+                  temporary_workspace() as second):
+                verify_concurrent_workspace_edits(
+                    executable, Path(shared).resolve(), Path(first).resolve(),
+                    Path(second).resolve(), fixture)
+            with (tempfile.TemporaryDirectory() as shared,
+                  temporary_workspace() as first,
+                  temporary_workspace() as second):
+                verify_sync_removal(executable, Path(shared).resolve(),
+                                    Path(first).resolve(), Path(second).resolve())
+            with tempfile.TemporaryDirectory() as shared, temporary_workspace() as root:
+                verify_overflow(executable, Path(shared).resolve(), Path(root).resolve())
         finally:
             server.shutdown()
             thread.join()
