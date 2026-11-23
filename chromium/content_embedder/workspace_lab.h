@@ -474,6 +474,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool RemoveWorkspace(std::string id);
   void ReorderWorkspace(std::string id, size_t destination);
   void CommitWorkspaceRemoval(std::string id);
+  void EraseWorkspaceAt(size_t index);
   bool RestoreWorkspace(std::string id);
   bool UpdateWorkspace(std::string id, std::string name, std::string profile_id);
   void SaveWorkspaceUpdate(std::string id, std::string name,
@@ -502,7 +503,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool ApplyBookmarkTabs(const base::DictValue& collections);
   std::vector<Workspace> OrderedBookmarkWorkspaces() const;
   bool PrepareBookmarkScopes(const base::DictValue& ledger, const base::DictValue& collections,
-                             base::OnceClosure resume = {});
+                             base::OnceClosure resume = {}, bool restore = false);
   bool ApplyBookmarks(const base::DictValue& ledger, const base::DictValue& collections,
                       bool replace);
   void FinishBookmarkSync(base::DictValue snapshot, std::optional<base::DictValue> ledger);

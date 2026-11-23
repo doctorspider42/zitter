@@ -12,8 +12,11 @@ the number of incoming profiles, spaces, tabs, and bookmarks, along with the
 space names and their tab counts. You can merge this copy with your local
 bookmarks and tabs or replace the local sync data with the downloaded copy.
 Merging keeps both sets, with synced items first.
-Replacing requires a separate confirmation and can remove local bookmarks or
-close local tabs. Passwords and live folders stay local.
+Replacing requires a separate confirmation. When the download contains spaces,
+it removes local-only spaces and can restore spaces previously removed on this
+device. Spaces containing live folders are kept. If the download contains only
+profile favorites, the local space list is kept. Passwords and live folders stay
+local.
 
 The first import can also install missing Chrome Web Store extensions for the
 corresponding profiles. This option is off by default. Zitter downloads the

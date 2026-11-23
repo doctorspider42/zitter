@@ -133,11 +133,17 @@ def click_control(channel, names, titles):
 
 
 def verify_initial_import(executable, root, folder, fixture, seen_icon, replace):
-    prepare(root, folder, "local")
+    local_space = "space-" + str(uuid.uuid4())
+    prepare(root, folder, "local", extra=local_space)
     session_path = root / "ContentWorkspaceSession.json"
     session = read_json(session_path)
     local_tab = fixture + "/local-tab"
     session["work"]["tabs"] = [{"title": "", "url": local_tab}]
+    if replace:
+        session["active_workspace"] = local_space
+        session["link_rules"] = {"example.com": local_space}
+        session["removed_workspaces"] = {"personal": "personal"}
+        del session["personal"]
     write_json(session_path, session)
     prefs_path = root / "BookmarkSync.json"
     prefs = read_json(prefs_path)
@@ -177,8 +183,8 @@ def verify_initial_import(executable, root, folder, fixture, seen_icon, replace)
     with running(executable, root, theme="dark" if replace else "light") as channel:
         chooser = {"Workspace sync preview", "Podgląd synchronizacji przestrzeni"}
         warning = {"Replace local sync data?", "Zastąpić lokalne dane synchronizacji?"}
-        choose_replace = {"Replace local bookmarks and open tabs",
-                          "Zastąp lokalne zakładki i otwarte karty"}
+        choose_replace = {"Replace local spaces, bookmarks, and tabs",
+                          "Zastąp lokalne przestrzenie, zakładki i karty"}
         window = wait(lambda: visible_window(channel, chooser), 15)
         assert window, "Missing initial sync preview"
         tree = expect(request(channel, {"cmd": "tree", "window": window}), "preview")["views"]
@@ -209,7 +215,13 @@ def verify_initial_import(executable, root, folder, fixture, seen_icon, replace)
         assert settings[reading].lower() == "#225588", settings
         assert settings["work"].lower() == "#112233", settings
         assert session["workspace_names"]["work"] == "Research"
-        assert {item["id"] for item in session["extra_workspaces"]} == {reading, empty}
+        expected_spaces = {reading, empty} if replace else {reading, empty, local_space}
+        assert {item["id"] for item in session["extra_workspaces"]} == expected_spaces
+        if replace:
+            assert session["removed_workspaces"] == {local_space: "personal"}
+            assert session["active_workspace"] in {"personal", "work", reading, empty}
+            assert "personal" in session and local_space not in session
+            assert "link_rules" not in session
         assert [item["id"] for item in session["extra_profiles"]] == [profile]
         assert read_json(prefs_path)["workspace_order"] == ["personal", empty, reading, "work"]
         assert [item["id"] for item in session["work"]["pins"]] == (
@@ -231,6 +243,7 @@ def verify_initial_import(executable, root, folder, fixture, seen_icon, replace)
                 return [tab["url"] for tab in tabs if tab["url"].startswith(fixture + "/tab-")] == [
                     fixture + "/tab-two"]
             assert wait(remote_close_applied, 30), "A remote tab closure did not reach the workspace"
+            assert local_space not in read_json(session_path)
 
 
 def verify_concurrent_tabs(executable, folder, first, second, receiver, fixture):

@@ -12012,7 +12012,7 @@ void WorkspaceShell::ReviewBookmarkImport(
   if (has_local_data) {
     builder.AddParagraph(ui::DialogModelLabel(T(u"Połącz zakładki i otwarte karty z obu urządzeń albo zastąp lokalne dane synchronizacji pobraną kopią.")));
     builder.AddCheckbox(kBookmarkSyncReplaceField, ui::DialogModelLabel(
-        T(u"Zastąp lokalne zakładki i otwarte karty")));
+        T(u"Zastąp lokalne przestrzenie, zakładki i karty")));
   }
   if (preview.extensions) {
     builder.AddCheckbox(kBookmarkSyncExtensionsField, ui::DialogModelLabel(

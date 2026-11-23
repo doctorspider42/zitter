@@ -3143,24 +3143,7 @@ void WorkspaceLab::CommitWorkspaceRemoval(std::string id) {
           lab->history_panel_.reset();
           lab->passwords_panel_.reset();
         }
-        {
-          base::AutoReset<bool> updating(&lab->updating_panes_, true);
-          for (auto& tab : lab->tabs_[index]) {
-            HideTabView(*tab.view);
-            if (tab.view->parent())
-              tab.detached_view = lab->shell_->content_host()->RemoveChildViewT(tab.view.get());
-          }
-          const auto erase = [index](auto& list) { list.erase(list.begin() + index); };
-          erase(lab->tabs_);
-          erase(lab->closed_tabs_);
-          erase(lab->pins_);
-          erase(lab->splits_);
-          erase(lab->selected_);
-          erase(lab->sleeping_);
-          CHECK(lab->model_.Remove(id));
-          lab->active_index_ = lab->WorkspaceIndex(fallback).value();
-        }
-        lab->imported_workspace_sources_.erase(id);
+        lab->EraseWorkspaceAt(index);
         lab->removed_workspaces_.Set(id, removed.workspace.profile_id);
         for (const auto [host, target] : removed.link_rules)
           lab->link_rules_.Remove(host);
@@ -3168,6 +3151,30 @@ void WorkspaceLab::CommitWorkspaceRemoval(std::string id) {
         lab->RefreshShell();
         lab->tabs_[lab->active_index_][lab->selected_[lab->active_index_]].view->RequestFocus();
       }, weak_factory_.GetWeakPtr(), index, fallback, std::move(removed)));
+}
+
+void WorkspaceLab::EraseWorkspaceAt(size_t index) {
+  const auto id = model_.workspaces()[index].id;
+  CHECK_NE(active_index_, index);
+  if (peek_workspace_id_ == id)
+    DiscardPeek();
+  base::AutoReset<bool> updating(&updating_panes_, true);
+  for (auto& tab : tabs_[index]) {
+    HideTabView(*tab.view);
+    if (tab.view->parent())
+      tab.detached_view = shell_->content_host()->RemoveChildViewT(tab.view.get());
+  }
+  const auto erase = [index](auto& list) { list.erase(list.begin() + index); };
+  erase(tabs_);
+  erase(closed_tabs_);
+  erase(pins_);
+  erase(splits_);
+  erase(selected_);
+  erase(sleeping_);
+  CHECK(model_.Remove(id));
+  if (index < active_index_)
+    --active_index_;
+  imported_workspace_sources_.erase(id);
 }
 
 bool WorkspaceLab::RestoreWorkspace(std::string id) {
