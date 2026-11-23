@@ -2,7 +2,7 @@
 
 import "./site_policy.js";
 
-const {defaults, siteSettings} = globalThis.NightShiftPolicy;
+const {active, defaults, siteSettings} = globalThis.NightShiftPolicy;
 const strings = {
     en: {
         subtitle: "Dark pages where there are none", enable: "Turn on Night Shift",
@@ -13,8 +13,10 @@ const strings = {
         sitesHint: "In this profile.", look: "Default look", lookHint: "For every site without its own settings.",
         repairTitle: "Assistant proposal", repairBefore: "Before", repairPreview: "Preview",
         repairHint: "The preview appears in the site tab.", repairDiscard: "Discard", repairSave: "Save for this site", repairUndo: "Undo last repair",
-        modeDefault: "Default", modeDark: "Dark", modeLight: "Light",
-        automatic: "Automatic", unavailable: "Unavailable on this page",
+        modeOn: "On", modeOff: "Off", profileToggle: "Night Shift for this profile",
+        siteToggle: "Night Shift for this site", inheritsProfile: "Follows profile setting",
+        siteOverride: "Site override", followProfile: "Use profile setting",
+        unavailable: "Unavailable on this page",
         fixSite: "Fix this site", openSettings: "Night Shift settings", resetTuning: "Reset tuning",
         siteLook: "Site appearance", brightness: "Brightness", contrast: "Contrast", sepia: "Sepia", grayscale: "Grayscale",
         force: "Also on sites with their own dark mode", forceHint: "By default a site's own dark theme stays",
@@ -33,8 +35,10 @@ const strings = {
         sitesHint: "W tym profilu.", look: "Domyślny wygląd", lookHint: "Dla każdej strony bez własnych ustawień.",
         repairTitle: "Propozycja Asystenta", repairBefore: "Przed", repairPreview: "Podgląd",
         repairHint: "Podgląd pojawi się w karcie witryny.", repairDiscard: "Odrzuć", repairSave: "Zapisz dla tej witryny", repairUndo: "Cofnij ostatnią poprawkę",
-        modeDefault: "Domyślnie", modeDark: "Ciemna", modeLight: "Jasna",
-        automatic: "Tryb automatyczny", unavailable: "Niedostępne na tej stronie",
+        modeOn: "Wł.", modeOff: "Wył.", profileToggle: "Night Shift w tym profilu",
+        siteToggle: "Night Shift dla tej witryny", inheritsProfile: "Zgodnie z ustawieniem profilu",
+        siteOverride: "Wyjątek dla witryny", followProfile: "Użyj ustawienia profilu",
+        unavailable: "Niedostępne na tej stronie",
         fixSite: "Popraw dla tej strony", openSettings: "Ustawienia Night Shift", resetTuning: "Przywróć ustawienia",
         siteLook: "Wygląd witryny", brightness: "Jasność", contrast: "Kontrast", sepia: "Sepia", grayscale: "Skala szarości",
         force: "Stosuj też na stronach z trybem ciemnym", forceHint: "Domyślnie zostaje własny motyw strony",
@@ -228,7 +232,7 @@ async function openSiteTuning(key) {
 
     const fields = ["brightness", "contrast"];
     const inputs = fields.map(field => get("site-" + field));
-    const values = await chrome.storage.local.get([key, "defaults"]);
+    const values = await chrome.storage.local.get([key, "defaults", "enabled"]);
     const ownDefaults = defaults(values.defaults);
     const saved = values[key] ?? {};
     const show = (input, value) => {
@@ -257,28 +261,35 @@ async function openSiteTuning(key) {
     if (quickPanel) {
         const modes = [...get("quick-modes").querySelectorAll("button")];
         const force = get("quick-force");
-        const select = mode => {
+        const inherit = get("quick-inherit");
+        const renderSiteMode = () => {
+            const settings = siteSettings(values[key], values.defaults);
+            const enabled = active(values.enabled === true, settings);
             for (const button of modes) {
-                button.setAttribute("aria-pressed",
-                    String(button.value === (mode === "on" ? "dark" : mode)));
+                button.setAttribute("aria-pressed", String((button.value === "dark") === enabled));
             }
-            force.checked = mode === "on" || (mode === "auto" && ownDefaults.force);
-            force.disabled = mode === "off";
-            get("quick-state").textContent = mode === "auto" ? copy.automatic
-                : mode === "off" ? copy.modeLight : copy.modeDark;
+            force.checked = settings.force;
+            force.disabled = !enabled;
+            inherit.hidden = settings.mode === "auto";
+            get("quick-state").textContent = inherit.hidden ? copy.inheritsProfile : copy.siteOverride;
         };
-        select(siteSettings(saved).mode);
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area !== "local" || (!changes[key] && !changes.enabled && !changes.defaults)) return;
+            for (const field of [key, "enabled", "defaults"]) {
+                if (changes[field]) values[field] = changes[field].newValue;
+            }
+            renderSiteMode();
+        });
+        renderSiteMode();
         for (const button of modes) {
             button.addEventListener("click", () => {
-                const mode = button.value === "dark" && force.checked ? "on" : button.value;
-                select(mode);
-                update({mode, force: mode === "on"});
+                const forceTheme = button.value === "dark" && force.checked;
+                update({mode: forceTheme ? "on" : button.value, force: forceTheme});
             });
         }
+        inherit.addEventListener("click", () => update({mode: null, force: null}));
         force.addEventListener("change", () => {
-            const mode = force.checked ? "on" : "dark";
-            select(mode);
-            update({mode, force: force.checked});
+            update({mode: force.checked ? "on" : "dark", force: force.checked});
         });
         get("quick-host").textContent = key.slice(5);
         get("quick-modes").hidden = false;
@@ -417,6 +428,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 try {
     if (quickPanel) {
+        toggle.setAttribute("aria-label", copy.profileToggle);
         get("quick-settings").hidden = false;
         get("quick-settings").addEventListener("click", () => history.replaceState(null, "", "#settings"));
         get("quick-site").hidden = false;

@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlencode
 
 import websocket
 
@@ -131,6 +132,50 @@ def check_contrast_sample(browser, site):
     print("The Night Shift sample identifies low-contrast text without returning its contents")
 
 
+def check_quick_panel(browser, key, page, other, message):
+    state = {"profiles": [{"id": "test", "name": "Test", "current": True}]}
+
+    def open_panel(appearance):
+        params = urlencode({"presentation": "panel", "language": "en", "appearance": appearance,
+                            "site": key, "state": json.dumps(state)})
+        return browser.tab(MANAGER + "?" + params)
+
+    def selected(panel, label):
+        return panel.eval("document.querySelector('#quick-modes [aria-pressed=true]')?.textContent") == label
+
+    dark_panel = open_panel("dark")
+    light_panel = open_panel("light")
+    for panel, appearance in ((dark_panel, "dark"), (light_panel, "light")):
+        until(lambda: selected(panel, "Off"), f"the inherited Off state in the {appearance} panel")
+        assert panel.eval("getComputedStyle(document.documentElement).colorScheme") == appearance
+        assert panel.eval("document.querySelector('#quick-inherit').hidden")
+
+    dark_panel.eval("document.querySelector('#quick-modes button[value=dark]').click()")
+    until(lambda: selected(light_panel, "On") and page.eval(DARK), "a site override while the profile is off")
+    assert not other.eval(DARK)
+    assert not light_panel.eval("document.querySelector('#quick-inherit').hidden")
+
+    message(type="set-global", enabled=True)
+    light_panel.eval("document.querySelector('#quick-modes button[value=off]').click()")
+    until(lambda: selected(dark_panel, "Off") and not page.eval(DARK) and other.eval(DARK),
+          "a disabled site while the profile is on")
+    dark_panel.eval("""(() => {
+        const slider = document.querySelector('#site-brightness');
+        slider.value = '105';
+        slider.dispatchEvent(new Event('change'));
+    })()""")
+    dark_panel.eval("document.querySelector('#quick-inherit').click()")
+    until(lambda: selected(light_panel, "On") and page.eval(DARK), "restoring the profile setting")
+    assert light_panel.eval("document.querySelector('#quick-inherit').hidden")
+    assert light_panel.eval("chrome.storage.local.get(" + json.dumps(key) + ")") == {
+        key: {"brightness": 105},
+    }
+
+    message(type="set-global", enabled=False)
+    until(lambda: selected(light_panel, "Off") and not page.eval(DARK), "following a profile change")
+    print("Quick panel On, Off and Use profile setting passed in light and dark appearance")
+
+
 def check_extension(browser, port):
     site = f"http://127.0.0.1:{port}"
     check_contrast_sample(browser, site)
@@ -153,6 +198,7 @@ def check_extension(browser, port):
     assert message(type="tab-settings", tabId=tab_id)["enabled"] is False
     assert registered() == 0 and not page.eval(DARK)
     key = "site:127.0.0.1:" + str(port)
+    check_quick_panel(browser, key, page, other, message)
     message(type="set-site", tabId=tab_id, key=key, settings={"mode": "dark", "brightness": 105})
     until(lambda: page.eval(DARK) and registered() == 2, "site override with profile default off")
     assert not other.eval(DARK)

@@ -8126,10 +8126,9 @@ bool WorkspaceLab::ShowPageMenu(content::RenderFrameHost& frame,
                   }
                 }, weak_factory_.GetWeakPtr(), document.GetWeakDocumentPtr(), mode)});
       };
-      add_mode(prototype::T(u"Jak w profilu"), NightShiftSiteMode::kAuto);
-      add_mode(prototype::T(u"Ciemny motyw witryny"), NightShiftSiteMode::kDark);
-      add_mode(prototype::T(u"Wymuś ciemny"), NightShiftSiteMode::kForce);
+      add_mode(prototype::T(u"Włącz dla witryny"), NightShiftSiteMode::kDark);
       add_mode(prototype::T(u"Wyłącz dla witryny"), NightShiftSiteMode::kOff);
+      add_mode(prototype::T(u"Jak w profilu"), NightShiftSiteMode::kAuto);
       night_shift.children.push_back({
           .title = prototype::T(u"Dostrój wygląd witryny…"),
           .run = base::BindRepeating(

@@ -15,7 +15,7 @@ class RenderFrameHost;
 
 namespace zitter::content_embedder {
 
-enum class NightShiftSiteMode { kAuto, kDark, kForce, kOff };
+enum class NightShiftSiteMode { kAuto, kDark, kOff };
 
 std::string NightShiftSiteKey(const GURL& url);
 bool CanSetNightShiftSiteMode(content::RenderFrameHost& document);

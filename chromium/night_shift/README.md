@@ -25,16 +25,21 @@ its URL fragment with `#apply=<json>`; Zitter reads it only from this
 extension's `settings.html`, saves it in `ZitterWorkspaces.json` and writes
 `enabled` and `defaults` into every profile's extension storage. Until the
 settings are saved once, each profile keeps the switch it had before. When
-disabled, Night Shift removes its existing page styles and unregisters both
-content scripts. A site's own tuning overrides only the values it sets; the
-rest follow the defaults.
+disabled for a profile, Night Shift removes its styles from sites that follow
+the profile and keeps running on sites explicitly turned on. It unregisters
+its content scripts when the profile is off and has no enabled exceptions.
+A site's own tuning overrides only the values it sets; the rest follow the
+defaults.
 
 The extension has no toolbar action or popup page. Zitter shows a native moon
-button in the header and a native panel under it. The panel reads and writes
-the site's record in the extension's local storage
-(`chromium/content_embedder/night_shift_site.cc`), so it opens without starting an extension page. The page's
-content script follows each change through `storage.onChanged`. The moon can be
-unpinned from the extensions menu, where Night Shift keeps its own row.
+button in the header and hosts an extension settings page in the panel beneath
+it. On and Off in that panel save an override for the current site. Use profile
+setting clears the override and keeps the site's tuning and repairs. The page's
+content script follows each change through `storage.onChanged`. The moon can
+be unpinned from the extensions menu, where Night Shift keeps its own row.
+
+Sites read Zitter's current theme through Blink's `prefers-color-scheme` media
+query. Night Shift applies its own styles independently of this preference.
 
 When CORS prevents access to an already-loaded linked stylesheet,
 the extension can read an anonymous CSS response with limits on origin,

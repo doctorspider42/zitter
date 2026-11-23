@@ -1480,6 +1480,17 @@ bool LabBrowserClientBase::AreV8OptimizationsEnabledForSite(
   return !SiteBlocked(context, "javascript-optimizer", site_url);
 }
 
+namespace {
+
+blink::mojom::PreferredColorScheme PageColorScheme(
+    content::WebContents& web_contents) {
+  return web_contents.GetColorMode() == ui::ColorProviderKey::ColorMode::kDark
+             ? blink::mojom::PreferredColorScheme::kDark
+             : blink::mojom::PreferredColorScheme::kLight;
+}
+
+}  // namespace
+
 void LabBrowserClientBase::OverrideWebPreferences(
     content::WebContents* web_contents,
     content::SiteInstance& main_frame_site,
@@ -1487,6 +1498,7 @@ void LabBrowserClientBase::OverrideWebPreferences(
   auto& permissions =
       static_cast<ProfileContext*>(web_contents->GetBrowserContext())->site_permissions();
   ApplyBrowsingWebPreferences(permissions, *prefs);
+  prefs->preferred_color_scheme = PageColorScheme(*web_contents);
   const auto origin = web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin();
   prefs->allow_running_insecure_content =
       !origin.opaque() && permissions.SiteSetting("mixed-script", origin) == 1;
@@ -1505,6 +1517,13 @@ bool LabBrowserClientBase::OverrideWebPreferencesAfterNavigation(
               ->site_permissions()
               .SiteSetting("mixed-script", origin) == 1;
   return before != prefs->allow_running_insecure_content;
+}
+
+bool LabBrowserClientBase::WebPreferencesNeedUpdateForColorRelatedStateChanges(
+    content::WebContents& web_contents,
+    const content::SiteInstance&) const {
+  return web_contents.GetOrCreateWebPreferences().preferred_color_scheme !=
+         PageColorScheme(web_contents);
 }
 
 network::mojom::IPAddressSpace LabBrowserClientBase::DetermineAddressSpaceFromURL(

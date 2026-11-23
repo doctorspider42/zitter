@@ -36,8 +36,6 @@ const char* ModeValue(NightShiftSiteMode mode) {
       return "auto";
     case NightShiftSiteMode::kDark:
       return "dark";
-    case NightShiftSiteMode::kForce:
-      return "on";
     case NightShiftSiteMode::kOff:
       return "off";
   }
@@ -81,8 +79,12 @@ void SetNightShiftSiteMode(content::RenderFrameHost& document,
             base::DictValue record;
             if (const auto* saved = result.data->FindDict(key))
               record = saved->Clone();
-            record.Set("mode", ModeValue(mode));
-            record.Set("force", mode == NightShiftSiteMode::kForce);
+            const auto* saved_mode = record.FindString("mode");
+            const bool already_forced = saved_mode && *saved_mode == "on";
+            if (!already_forced || mode != NightShiftSiteMode::kDark) {
+              record.Set("mode", ModeValue(mode));
+              record.Remove("force");
+            }
             storage->Set(
                 std::move(extension), extensions::StorageAreaNamespace::kLocal,
                 base::DictValue().Set(key, std::move(record)),

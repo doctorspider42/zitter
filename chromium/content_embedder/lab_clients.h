@@ -199,6 +199,9 @@ class LabBrowserClientBase : public content::ContentBrowserClient {
       content::WebContents* web_contents,
       content::SiteInstance& main_frame_site,
       blink::web_pref::WebPreferences* prefs) override;
+  bool WebPreferencesNeedUpdateForColorRelatedStateChanges(
+      content::WebContents& web_contents,
+      const content::SiteInstance& main_frame_site) const override;
   content::mojom::AlternativeErrorPageOverrideInfoPtr
   GetAlternativeErrorPageOverrideInfo(
       content::NavigationHandle& navigation,

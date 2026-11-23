@@ -20,12 +20,14 @@
             </header>
 
             <section id="quick-site" class="group" hidden>
-                <small id="quick-state" role="status"></small>
                 <strong id="quick-host"></strong>
-                <div class="segmented" id="quick-modes" role="group" data-label="siteLook">
-                    <button type="button" value="auto" data-text="modeDefault">Default</button>
-                    <button type="button" value="dark" data-text="modeDark">Dark</button>
-                    <button type="button" value="off" data-text="modeLight">Light</button>
+                <div class="segmented" id="quick-modes" role="group" data-label="siteToggle">
+                    <button type="button" value="dark" data-text="modeOn">On</button>
+                    <button type="button" value="off" data-text="modeOff">Off</button>
+                </div>
+                <div class="quick-policy">
+                    <small id="quick-state" role="status"></small>
+                    <button type="button" id="quick-inherit" class="quiet" data-text="followProfile" hidden>Use profile setting</button>
                 </div>
             </section>
             <section class="group" id="scope-group">

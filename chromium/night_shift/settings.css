@@ -193,6 +193,14 @@ input { accent-color: var(--accent); }
 :root[data-presentation="panel"] #quick-modes button { flex: 1; border-radius: 7px; }
 :root[data-presentation="panel"] #quick-modes [aria-pressed="true"] { background: var(--accent); color: var(--surface); }
 :root[data-presentation="panel"] #quick-host { overflow-wrap: anywhere; }
+:root[data-presentation="panel"] .quick-policy {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+}
+:root[data-presentation="panel"] #quick-inherit { padding: 3px 4px; }
 :root[data-presentation="panel"] #quick-force-row { margin: 5px 0; }
 :root[data-presentation="panel"] .quick-action,
 :root[data-presentation="panel"] #site-tuning-reset {

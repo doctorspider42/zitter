@@ -415,7 +415,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Wymuś ciemny", "Force dark"),
     ("Dostrój wygląd witryny…", "Tune site appearance…"),
     ("Popraw kolory z Asystentem…", "Fix colors with Assistant…"),
-    ("Ciemny motyw witryny", "Darken this site"),
+    ("Włącz dla witryny", "Turn on for this site"),
     ("Wyłącz dla witryny", "Turn off for this site"),
     ("Następna przestrzeń", "Next space"),
     ("Przełącz pełny ekran", "Toggle Full Screen"),
