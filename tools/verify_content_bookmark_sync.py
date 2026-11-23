@@ -14,7 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -136,7 +136,9 @@ def click_control(channel, names, titles):
 def has_favicon(root, url):
     for database in (root / "workspace-work").rglob("Favicons"):
         try:
-            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1) as db:
+            # Chromium keeps the database locked while the app is running.
+            # Read its committed test fixture without acquiring a second lock.
+            with closing(sqlite3.connect(database.as_uri() + "?immutable=1", uri=True)) as db:
                 if db.execute(
                     "SELECT 1 FROM icon_mapping JOIN favicon_bitmaps USING (icon_id) WHERE page_url = ?",
                     (url,),
