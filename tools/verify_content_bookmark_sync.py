@@ -506,8 +506,39 @@ def verify_overflow(executable, folder, root):
     print("Overflow remained in the shared copy while the other space continued syncing.")
 
 
+def verify_local_batch(executable, folder, root, fixture, start, done):
+    prepare(root, folder, "local")
+    session_path = root / "ContentWorkspaceSession.json"
+    session = read_json(session_path)
+    session["work"]["tabs"] = [{"title": "", "url": fixture + "/batch"}]
+    write_json(session_path, session)
+    with running(executable, root, panel="sidebar"):
+        assert wait(lambda: read_json(root / "BookmarkSync.json").get("ledger"), 15)
+        index = device_index(root, folder)
+        before = index.read_bytes()
+        revisions = {before}
+        start.set()
+        # Sample the folder index while the page makes several same-document
+        # navigations. Only the final URL should be published.
+        def final_revision():
+            data = index.read_bytes()
+            revisions.add(data)
+            partition = read_partition(index, "space/work")
+            records = partition["tabs2/work"].values()
+            return any(record.get("tab", {}).get("url", "") == fixture + "/batch#5"
+                       for record in records)
+
+        assert done.wait(8), "Fixture navigation burst did not finish"
+        assert index.read_bytes() == before, "An intermediate edit was published"
+        assert wait(final_revision, 8), "Local edits did not sync before the periodic check"
+        assert len(revisions) == 2, "The navigation burst produced multiple publications"
+    print("Five local navigation changes were published in one batch before the periodic check.")
+
+
 def verify_first_imports(executable):
     seen_icon = threading.Event()
+    start_batch = threading.Event()
+    batch_done = threading.Event()
 
     class Fixture(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -522,6 +553,26 @@ def verify_first_imports(executable):
                         b'<title>Synced article &amp; notes</title>'
                         b'<link rel="icon" href="/synced-favicon.png">')
                 mime = "text/html"
+            elif self.path == "/batch":
+                body = b"""<!doctype html><title>Batch fixture</title><script>
+                fetch('/start-batch').then(() => {
+                  for (let i = 1; i <= 5; i++) {
+                    setTimeout(() => {
+                      location.hash = i;
+                      if (i === 5) fetch('/batch-done');
+                    }, i * 120);
+                  }
+                });
+                </script>"""
+                mime = "text/html"
+            elif self.path == "/start-batch":
+                start_batch.wait(15)
+                body = b""
+                mime = "text/plain"
+            elif self.path == "/batch-done":
+                batch_done.set()
+                body = b""
+                mime = "text/plain"
             elif self.path in ("/first", "/second"):
                 body = b'<!doctype html><link rel="icon" href="/synced-favicon.png">'
                 mime = "text/html"
@@ -542,6 +593,9 @@ def verify_first_imports(executable):
         thread.start()
         try:
             fixture = f"http://127.0.0.1:{server.server_port}"
+            with tempfile.TemporaryDirectory() as shared, temporary_workspace() as root:
+                verify_local_batch(executable, Path(shared).resolve(), Path(root).resolve(),
+                                   fixture, start_batch, batch_done)
             for replace in (False, True):
                 with (temporary_workspace() as root,
                       tempfile.TemporaryDirectory() as shared):

@@ -2026,11 +2026,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       if (!ok || !lab || !lab->ready_for_external_urls_) return;
       if (!lab->sync_prefs_->GetList("workspace_order").empty()) lab->RefreshShell();
       if (lab->sync_prefs_->GetString("method").empty()) return;
-      lab->sync_timer_.Start(FROM_HERE, base::Seconds(30), lab.get(), &WorkspaceLab::RunBookmarkSync);
+      lab->sync_timer_.Start(FROM_HERE, base::Seconds(30), lab.get(),
+                             &WorkspaceLab::RunPeriodicBookmarkSync);
       lab->RunBookmarkSync();
     }, weak_factory_.GetWeakPtr()));
     callbacks.bookmark_sync_action = base::BindRepeating(
         &WorkspaceLab::ConfigureBookmarkSync, weak_factory_.GetWeakPtr());
+    callbacks.bookmark_sync_appearance_changed = base::BindRepeating(
+        &WorkspaceLab::ScheduleBookmarkSync, weak_factory_.GetWeakPtr());
     callbacks.bookmark_sync_status = base::BindRepeating([](WorkspaceLab* lab) {
       if (!lab->sync_status_.empty()) return lab->sync_status_;
       return prototype::T(u"Synchronizuj przestrzenie, otwarte karty i zakładki między urządzeniami.");
@@ -2975,6 +2978,7 @@ bool WorkspaceLab::AddWorkspace(std::string name, std::string profile_id,
           lab->shell_->SetWorkspaceColor(id, appearance.first);
           if (!appearance.second.empty())
             lab->shell_->SetWorkspaceEmoji(id, std::move(appearance.second));
+          lab->ScheduleBookmarkSync();
         }
         if (committed)
           std::move(committed).Run(ok ? id : std::string());
@@ -3019,6 +3023,7 @@ bool WorkspaceLab::CreateProfile(std::string name, std::string workspace_id) {
         if (ok) {
           auto context = lab->OpenNewProfile(profile);
           lab->PublishProfile(std::move(profile), std::move(context));
+          lab->ScheduleBookmarkSync();
         }
         lab->RefreshShell();
         lab->shell_->SetProfileStatus(ok ? Event::kCreated : Event::kCreateNotSaved);
@@ -3048,6 +3053,7 @@ void WorkspaceLab::ReorderWorkspace(std::string id, size_t destination) {
   sync_prefs_->SetList("workspace_order", std::move(order));
   sync_prefs_->CommitPendingWrite();
   RefreshShell();
+  ScheduleBookmarkSync();
 }
 
 bool WorkspaceLab::RemoveWorkspace(std::string id, std::optional<bool> from_cloud) {
@@ -3174,7 +3180,6 @@ void WorkspaceLab::CommitWorkspaceRemoval(std::string id, bool from_cloud) {
         }
         lab->RefreshShell();
         lab->tabs_[lab->active_index_][lab->selected_[lab->active_index_]].view->RequestFocus();
-        if (!device.empty()) lab->RunBookmarkSync();
       }, weak_factory_.GetWeakPtr(), index, fallback, std::move(removed), device));
 }
 
@@ -3590,7 +3595,6 @@ bool WorkspaceLab::RemoveProfile(std::string id, std::optional<bool> from_cloud)
         }
         lab->RefreshShell();
         lab->shell_->SetProfileStatus(ok ? Event::kDeleted : Event::kDeleteNotSaved);
-        if (ok && !device.empty()) lab->RunBookmarkSync();
       }, weak_factory_.GetWeakPtr(), std::move(id), std::move(night_shift), device));
   shell_->SetProfileStatus(Event::kDeleting);
   return true;
@@ -3613,6 +3617,8 @@ void WorkspaceLab::SaveCatalogueChange(base::DictValue session,
           return;
         lab->saving_catalogue_ = false;
         std::move(done).Run(ok);
+        if (ok && lab) lab->ScheduleBookmarkSync();
+        if (!lab) return;
         if (std::exchange(lab->close_after_catalogue_save_, false))
           lab->RequestClose();
       }, weak_factory_.GetWeakPtr(), std::move(done)));
@@ -4603,7 +4609,8 @@ void WorkspaceLab::StartWorkspace() {
   }
   ready_for_external_urls_ = true;
   if (sync_prefs_ && !sync_prefs_->GetString("method").empty()) {
-    sync_timer_.Start(FROM_HERE, base::Seconds(30), this, &WorkspaceLab::RunBookmarkSync);
+    sync_timer_.Start(FROM_HERE, base::Seconds(30), this,
+                      &WorkspaceLab::RunPeriodicBookmarkSync);
     RunBookmarkSync();
   }
   for (auto& url : std::exchange(startup_external_urls_, {}))
@@ -9969,6 +9976,10 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View* host) {
       }, weak_factory_.GetWeakPtr()));
   view->SetActivatePageCallback(
       base::BindRepeating(&WorkspaceLab::ActivatePage, weak_factory_.GetWeakPtr()));
+  view->SetNavigationChangedCallback(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, content::WebContents*) {
+        if (lab) lab->ScheduleBookmarkSync();
+      }, weak_factory_.GetWeakPtr()));
   view->SetPresentationChangedCallback(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab) {
         if (!lab || std::exchange(lab->tab_audio_refresh_pending_, true))
@@ -13665,6 +13676,7 @@ void WorkspaceLab::PinSessionSaved(bool crash_probe, bool ok) {
   }
   if (!ok && !saving_session_)
     shell_->ShowFolderSaveError();
+  if (ok) ScheduleBookmarkSync();
 }
 
 void WorkspaceLab::SessionSaved(bool ok) {
@@ -19569,6 +19581,7 @@ void WorkspaceLab::ConfirmUninstallExtension(std::string id) {
                       return extension->OwnsProfile(*lab->contexts_[profile]) &&
                              extension->id() == id;
                     });
+                    lab->ScheduleBookmarkSync();
                   }
                   lab->RefreshShell();
                   if (lab->WorkspaceProfileIndex(lab->active_index_) == profile)
@@ -19865,6 +19878,7 @@ void WorkspaceLab::InstallReviewedExtension(
 
 void WorkspaceLab::OnInstalledExtension(size_t profile, std::string id,
                                          bool active) {
+  ScheduleBookmarkSync();
   auto& context = *contexts_[profile];
   auto* manager = ManagedExtensionForProfile(context, id);
   if (active && manager && manager->has_action() &&

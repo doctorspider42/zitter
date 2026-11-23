@@ -15640,6 +15640,8 @@ void WorkspaceShell::SetWorkspaceColor(std::string_view id, SkColor color) {
         if (!shell) return;
         --shell->pending_writes_;
         if (!ok) shell->ShowWorkspaceAppearanceError(1);
+        else if (shell->callbacks_.bookmark_sync_appearance_changed)
+          shell->callbacks_.bookmark_sync_appearance_changed.Run();
       }, weak_factory_.GetWeakPtr()));
 }
 std::u16string WorkspaceShell::workspace_emoji(std::string_view id) const {
@@ -15696,6 +15698,8 @@ void WorkspaceShell::SetWorkspaceEmoji(std::string_view id, std::u16string text)
         if (!shell) return;
         --shell->pending_writes_;
         if (!ok) shell->ShowWorkspaceAppearanceError(2);
+        else if (shell->callbacks_.bookmark_sync_appearance_changed)
+          shell->callbacks_.bookmark_sync_appearance_changed.Run();
       }, weak_factory_.GetWeakPtr()));
 }
 SkColor WorkspaceShell::workspace_color(std::string_view id) const {

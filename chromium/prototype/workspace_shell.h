@@ -269,6 +269,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool()> clear_timeline;
     base::RepeatingCallback<bool(std::string)> run_shortcut;
     base::RepeatingCallback<void(std::string)> bookmark_sync_action;
+    base::RepeatingClosure bookmark_sync_appearance_changed;
     base::RepeatingCallback<std::u16string()> bookmark_sync_status;
     base::RepeatingCallback<bool()> bookmark_sync_enabled;
     base::RepeatingCallback<BrowserPreferences()> read_preferences;

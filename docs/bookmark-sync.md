@@ -41,8 +41,10 @@ local profile. The Dropbox desktop application is optional.
 
 The official build uses the public client ID for Zitter Sync. To distribute a fork with a separate Dropbox app, register a scoped **App folder** application in
 the [Dropbox App Console](https://www.dropbox.com/developers/apps). Enable
-public clients and the `files.content.read` and `files.content.write`
-permissions. Register the exact redirect URI `http://127.0.0.1:53682/dropbox/callback`. Set the public client ID in the existing
+public clients and select `files.content.read`, `files.content.write`, and
+`files.metadata.read` in the app's permissions. Zitter uses the permissions
+configured for that app when authorizing Dropbox. Register the exact redirect
+URI `http://127.0.0.1:53682/dropbox/callback`. Set the public client ID in the existing
 Chromium output directory's GN arguments before building:
 
 ```gn
@@ -66,7 +68,14 @@ windows, internal pages, form submissions, browsing history, cookies, passwords,
 and live-folder credentials stay local. Tabs that need confirmation before
 closing stay open until the workspace can safely apply the remote layout.
 
-While running, Zitter reconciles changes on startup and every 30 seconds.
+While running, Zitter reconciles changes on startup. Local changes are sent
+about 1.5 seconds after the last edit. For Dropbox, Zitter keeps one long
+poll open and checks the shared copy when the sync index changes. The
+periodic check runs every five minutes while Dropbox notifications work,
+or every 30 seconds without them or when using a shared folder. Existing
+Dropbox connections without `files.metadata.read` can be reconnected to
+authorize notifications once that permission is enabled for the Dropbox app.
+
 Choose **Sync now** under **Settings → Passwords and profiles → Workspace sync**
 to save the current session and then check for changes. If the session fails
 to save, Zitter skips that sync attempt.

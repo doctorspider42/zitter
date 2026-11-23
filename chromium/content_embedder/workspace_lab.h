@@ -497,6 +497,9 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ConfigureBookmarkSync(std::string method);
   void StartBookmarkSync(std::string method);
   void RunBookmarkSync();
+  void RunPeriodicBookmarkSync();
+  void ScheduleBookmarkSync();
+  void RunDebouncedBookmarkSync();
   bool CanDeleteSyncedScope(std::string_view scope) const;
   base::DictValue CaptureBookmarks();
   base::DictValue CaptureBookmarkScopes() const;
@@ -523,11 +526,18 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void MergeDropboxShards();
   void UploadNextDropboxShard();
   void CompleteDropboxExchange(bool success);
+  enum class DropboxWatchStep { kCursor, kWait, kChanges };
+  void PumpDropboxWatch();
+  void OnDropboxWatchResponse(DropboxWatchStep step,
+                              std::optional<std::string> body);
   using DropboxReply = base::OnceCallback<void(int, std::string, std::string)>;
   void DropboxRequest(std::string endpoint, std::string argument, std::string body,
                       std::string mime, DropboxReply reply);
   std::unique_ptr<PrefService> sync_prefs_;
   base::RepeatingTimer sync_timer_;
+  base::OneShotTimer sync_batch_timer_;
+  base::TimeTicks sync_last_success_;
+  bool sync_followup_pending_ = false;
   std::u16string sync_status_;
   bool sync_busy_ = false;
   base::DictValue sync_sent_scopes_;
@@ -540,6 +550,15 @@ class WorkspaceLab final : private WorkspaceRuntime,
   struct DropboxSyncExchange;
   std::unique_ptr<DropboxSyncExchange> dropbox_exchange_;
   base::DictValue dropbox_shard_cache_;
+  std::unique_ptr<network::SimpleURLLoader> dropbox_watch_loader_;
+  base::OneShotTimer dropbox_watch_timer_;
+  DropboxWatchStep dropbox_watch_step_ = DropboxWatchStep::kCursor;
+  std::string dropbox_watch_cursor_;
+  std::string dropbox_synced_revision_;
+  std::optional<std::string> dropbox_notified_revision_;
+  base::TimeTicks dropbox_wait_after_;
+  bool dropbox_watch_healthy_ = false;
+  bool dropbox_watch_missing_scope_ = false;
   class SyncPicker;
   std::unique_ptr<SyncPicker> sync_picker_;
   void ImportFromWelcome(prototype::BrowserImportOptions options,

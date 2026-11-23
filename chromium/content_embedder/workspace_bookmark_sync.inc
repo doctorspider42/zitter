@@ -7,6 +7,12 @@ constexpr char kDropboxRedirect[] = "http://127.0.0.1:53682/dropbox/callback";
 constexpr char kDropboxSyncIndex[] = "/sync-v2-index.json";
 constexpr char kDropboxDownload[] = "https://content.dropboxapi.com/2/files/download";
 constexpr char kDropboxUpload[] = "https://content.dropboxapi.com/2/files/upload";
+constexpr char kDropboxCursor[] = "https://api.dropboxapi.com/2/files/list_folder/get_latest_cursor";
+constexpr char kDropboxChanges[] = "https://api.dropboxapi.com/2/files/list_folder/continue";
+constexpr char kDropboxLongPoll[] = "https://notify.dropboxapi.com/2/files/list_folder/longpoll";
+constexpr int kDropboxWaitSeconds = 90;
+constexpr auto kBookmarkBatchDelay = base::Milliseconds(1500);
+constexpr auto kBookmarkSafetyCheck = base::Minutes(5);
 
 std::string DropboxShardPath(const std::string& digest) {
   return "/sync-v2-" + digest + ".json";
@@ -29,6 +35,38 @@ bool DropboxError(int status, const std::string& body, std::string_view prefix) 
   const auto json = base::JSONReader::ReadDict(body, base::JSON_PARSE_RFC);
   const auto* error = json ? json->FindString("error_summary") : nullptr;
   return error && error->starts_with(prefix);
+}
+
+std::unique_ptr<network::SimpleURLLoader> MakeDropboxLoader(
+    std::string endpoint, std::string_view access, std::string argument,
+    std::string body, std::string_view mime, base::TimeDelta timeout) {
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL(endpoint);
+  request->method = "POST";
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  request->redirect_mode = network::mojom::RedirectMode::kError;
+  request->load_flags = net::LOAD_DISABLE_CACHE;
+  if (!access.empty())
+    request->headers.SetHeader("Authorization", base::StrCat({"Bearer ", access}));
+  if (!argument.empty()) request->headers.SetHeader("Dropbox-API-Arg", argument);
+  constexpr auto annotation = net::DefineNetworkTrafficAnnotation("zitter_dropbox_bookmarks", R"(
+    semantics { sender: "Bookmark sync" description: "Synchronizes workspace data and waits for Dropbox changes."
+      trigger: "The user connects Dropbox." data: "Authorization tokens, folder cursors and workspace data."
+      destination: OTHER destination_other: "Dropbox" }
+    policy { cookies_allowed: NO setting: "Disable bookmark sync in Settings."
+      policy_exception_justification: "User-initiated desktop feature." })");
+  auto loader = network::SimpleURLLoader::Create(std::move(request), annotation);
+  loader->SetAllowHttpErrorResults(true);
+  loader->SetTimeoutDuration(timeout);
+  if (!mime.empty()) loader->AttachStringForUpload(std::move(body), mime);
+  return loader;
+}
+
+base::TimeDelta DropboxRetryAfter(const net::HttpResponseHeaders& headers) {
+  int seconds = 60;
+  if (const auto delay = headers.GetNormalizedHeader("Retry-After"))
+    base::StringToInt(*delay, &seconds);
+  return base::Seconds(std::max(30, seconds));
 }
 
 std::string DropboxAppKey() {
@@ -174,6 +212,18 @@ void WorkspaceLab::ConfigureBookmarkSync(std::string method) {
   if (method == "off") {
     sync_weak_.InvalidateWeakPtrs();
     sync_timer_.Stop();
+    sync_batch_timer_.Stop();
+    sync_followup_pending_ = false;
+    sync_last_success_ = {};
+    dropbox_watch_timer_.Stop();
+    dropbox_watch_loader_.reset();
+    dropbox_watch_step_ = DropboxWatchStep::kCursor;
+    dropbox_watch_cursor_.clear();
+    dropbox_synced_revision_.clear();
+    dropbox_notified_revision_.reset();
+    dropbox_wait_after_ = {};
+    dropbox_watch_healthy_ = false;
+    dropbox_watch_missing_scope_ = false;
     sync_loader_.reset();
     folder_shard_cache_.clear();
     dropbox_exchange_.reset();
@@ -208,7 +258,7 @@ void WorkspaceLab::ConfigureBookmarkSync(std::string method) {
   base::Base64UrlEncode(base::RandBytesAsVector(32), base::Base64UrlEncodePolicy::OMIT_PADDING, &verifier);
   base::Base64UrlEncode(crypto::hash::Sha256(verifier), base::Base64UrlEncodePolicy::OMIT_PADDING, &challenge);
   const GURL authorization_url("https://www.dropbox.com/oauth2/authorize?response_type=code"
-      "&token_access_type=offline&scope=files.content.read%20files.content.write&code_challenge_method=S256&client_id=" +
+      "&token_access_type=offline&code_challenge_method=S256&client_id=" +
       base::EscapeQueryParamValue(key, false) + "&code_challenge=" + challenge);
   const auto state = base::Uuid::GenerateRandomV4().AsLowercaseString();
   if (!model_.active() || !web_contents() ||
@@ -260,7 +310,8 @@ void WorkspaceLab::StartBookmarkSync(std::string method) {
   sync_prefs_->CommitPendingWrite();
   sync_busy_ = false;
   sync_retry_after_ = {};
-  sync_timer_.Start(FROM_HERE, base::Seconds(30), this, &WorkspaceLab::RunBookmarkSync);
+  sync_timer_.Start(FROM_HERE, base::Seconds(30), this,
+                    &WorkspaceLab::RunPeriodicBookmarkSync);
   SetSyncStatus(prototype::T(u"Łączenie…"));
   RunBookmarkSync();
 }
@@ -786,6 +837,59 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
   return true;
 }
 
+void WorkspaceLab::RunPeriodicBookmarkSync() {
+  if (dropbox_watch_healthy_ && !sync_last_success_.is_null() &&
+      base::TimeTicks::Now() - sync_last_success_ < kBookmarkSafetyCheck) {
+    return;
+  }
+  RunBookmarkSync();
+}
+
+void WorkspaceLab::ScheduleBookmarkSync() {
+  if (!sync_prefs_ || !ready_for_external_urls_ ||
+      sync_prefs_->GetString("method").empty() ||
+      sync_prefs_->GetBoolean("import_pending")) return;
+  sync_batch_timer_.Start(FROM_HERE, kBookmarkBatchDelay, this,
+                          &WorkspaceLab::RunDebouncedBookmarkSync);
+}
+
+void WorkspaceLab::RunDebouncedBookmarkSync() {
+  if (sync_prefs_->GetString("method").empty() ||
+      sync_prefs_->GetBoolean("import_pending")) return;
+  const auto retry_delay = sync_retry_after_ - base::Time::Now();
+  if (sync_busy_ || !CanEditWorkspace() || !shell_->appearance_ready() ||
+      retry_delay.is_positive()) {
+    sync_batch_timer_.Start(FROM_HERE, std::max(kBookmarkBatchDelay, retry_delay),
+                            this, &WorkspaceLab::RunDebouncedBookmarkSync);
+    return;
+  }
+  const bool local_changed = CaptureBookmarks() != sync_prefs_->GetDict("snapshot") ||
+      CaptureBookmarkScopes() != sync_prefs_->GetDict("scope_snapshot") ||
+      !sync_deletions_.empty();
+  const bool remote_changed = dropbox_notified_revision_ &&
+      *dropbox_notified_revision_ != dropbox_synced_revision_;
+  dropbox_notified_revision_.reset();
+  const bool followup = std::exchange(sync_followup_pending_, false);
+  if (!local_changed) {
+    if (remote_changed || followup) RunBookmarkSync();
+    return;
+  }
+  sync_busy_ = true;
+  SaveSession(base::BindOnce(
+      [](base::WeakPtr<WorkspaceLab> lab, bool followup, bool saved) {
+        if (!lab) return;
+        lab->sync_busy_ = false;
+        if (saved && lab->CanEditWorkspace()) {
+          lab->RunBookmarkSync();
+        } else if (saved) {
+          lab->sync_followup_pending_ |= followup;
+          lab->ScheduleBookmarkSync();
+        } else {
+          lab->FinishBookmarkSync({}, std::nullopt);
+        }
+      }, sync_weak_.GetWeakPtr(), remote_changed || followup));
+}
+
 void WorkspaceLab::RunBookmarkSync() {
   if (!sync_prefs_ || sync_busy_ || !CanEditWorkspace() || base::Time::Now() < sync_retry_after_) return;
   const auto method = sync_prefs_->GetString("method");
@@ -859,13 +963,21 @@ void WorkspaceLab::RunBookmarkSync() {
     }, sync_weak_.GetWeakPtr()));
     return;
   }
+  PumpDropboxWatch();
   DownloadDropboxBookmarks(std::move(snapshot), std::move(ledger));
 }
 
 void WorkspaceLab::FinishBookmarkSync(base::DictValue snapshot,
                                        std::optional<base::DictValue> ledger) {
   sync_busy_ = false;
-  if (!CanEditWorkspace()) return;
+  if (!CanEditWorkspace()) {
+    sync_last_success_ = {};
+    if (ledger) {
+      sync_followup_pending_ = true;
+      ScheduleBookmarkSync();
+    }
+    return;
+  }
   if (ledger) {
     bookmark_sync::UpgradeLegacyTabs(*ledger);
     if (sync_prefs_->GetBoolean("import_pending")) {
@@ -911,11 +1023,14 @@ void WorkspaceLab::FinishBookmarkSync(base::DictValue snapshot,
       auto scopes = changed || tabs_applied ? CaptureBookmarkScopes() : current_scopes.Clone();
       const bool applied = tabs_applied || after != current || scopes != current_scopes ||
                            previous_order != sync_prefs_->GetList("workspace_order");
+      const bool followup = reconciled != *ledger;
       auto commit = base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, base::DictValue after,
-                                      base::DictValue scopes, base::DictValue reconciled, bool ok) {
+                                      base::DictValue scopes, base::DictValue reconciled,
+                                      bool followup, bool ok) {
         if (!lab) return;
         lab->sync_busy_ = false;
         if (!ok) { lab->FinishBookmarkSync({}, std::nullopt); return; }
+        lab->sync_last_success_ = base::TimeTicks::Now();
         auto& prefs = *lab->sync_prefs_;
         if (prefs.GetDict("snapshot") != after || prefs.GetDict("scope_snapshot") != scopes ||
             prefs.GetDict("ledger") != reconciled) {
@@ -928,7 +1043,11 @@ void WorkspaceLab::FinishBookmarkSync(base::DictValue snapshot,
             ? prefs.GetFilePath("folder").LossyDisplayName() : u"Dropbox";
         lab->SetSyncStatus(destination + u" · " + prototype::T(u"Zsynchronizowano") +
                            u" " + base::TimeFormatTimeOfDay(base::Time::Now()));
-      }, sync_weak_.GetWeakPtr(), after.Clone(), std::move(scopes), std::move(reconciled));
+        if (followup) {
+          lab->sync_followup_pending_ = true;
+          lab->ScheduleBookmarkSync();
+        }
+      }, sync_weak_.GetWeakPtr(), after.Clone(), std::move(scopes), std::move(reconciled), followup);
       // Commit the baseline only after its matching workspace state is durable.
       if (applied || !acknowledged.empty() || sync_prefs_->GetDict("snapshot") != after) {
         sync_busy_ = true;
@@ -938,6 +1057,7 @@ void WorkspaceLab::FinishBookmarkSync(base::DictValue snapshot,
       return;
     }
   }
+  sync_last_success_ = {};
   SetSyncStatus(prototype::T(u"Synchronizacja wstrzymana. Zitter spróbuje ponownie."));
 }
 
@@ -1177,6 +1297,7 @@ void WorkspaceLab::DropboxToken(std::string form, bool connecting) {
         const auto* refresh = data ? data->FindString("refresh_token") : nullptr;
         if (status != 200 || !access || (connecting && !refresh)) {
           lab->sync_busy_ = false;
+          lab->sync_last_success_ = {};
           lab->SetSyncStatus(prototype::T(u"Nie udało się połączyć z Dropbox. Sprawdź połączenie lub połącz konto ponownie."));
           return;
         }
@@ -1203,26 +1324,9 @@ void WorkspaceLab::DropboxToken(std::string form, bool connecting) {
 
 void WorkspaceLab::DropboxRequest(std::string endpoint, std::string argument, std::string body,
                                   std::string mime, DropboxReply reply) {
-  auto request = std::make_unique<network::ResourceRequest>();
-  request->url = GURL(endpoint);
-  request->method = "POST";
-  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
-  request->redirect_mode = network::mojom::RedirectMode::kError;
-  request->load_flags = net::LOAD_DISABLE_CACHE;
-  if (!argument.empty()) {
-    request->headers.SetHeader("Authorization", "Bearer " + dropbox_access_);
-    request->headers.SetHeader("Dropbox-API-Arg", argument);
-  }
-  constexpr auto annotation = net::DefineNetworkTrafficAnnotation("zitter_dropbox_bookmarks", R"(
-    semantics { sender: "Bookmark sync" description: "Synchronizes bookmarks with Dropbox."
-      trigger: "The user connects Dropbox." data: "Authorization tokens and bookmark data."
-      destination: OTHER destination_other: "Dropbox" }
-    policy { cookies_allowed: NO setting: "Disable bookmark sync in Settings."
-      policy_exception_justification: "User-initiated desktop feature." })");
-  sync_loader_ = network::SimpleURLLoader::Create(std::move(request), annotation);
-  sync_loader_->SetAllowHttpErrorResults(true);
-  sync_loader_->SetTimeoutDuration(base::Seconds(30));
-  if (!mime.empty()) sync_loader_->AttachStringForUpload(std::move(body), mime);
+  const std::string_view access = argument.empty() ? std::string_view() : dropbox_access_;
+  sync_loader_ = MakeDropboxLoader(std::move(endpoint), access, std::move(argument),
+                                   std::move(body), mime, base::Seconds(30));
   sync_loader_->DownloadToString(WorkspaceProfile(active_index_)->GetDefaultStoragePartition()
       ->GetURLLoaderFactoryForBrowserProcess().get(), base::BindOnce(
       [](base::WeakPtr<WorkspaceLab> lab, DropboxReply reply, std::optional<std::string> data) {
@@ -1232,15 +1336,128 @@ void WorkspaceLab::DropboxRequest(std::string endpoint, std::string argument, st
         auto headers = info ? info->headers : nullptr;
         int status = headers && data ? headers->response_code() : 0;
         if (status == 401) lab->dropbox_access_.clear();
-        if (status == 429) {
-          int seconds = 60;
-          if (auto delay = headers->GetNormalizedHeader("Retry-After"))
-            base::StringToInt(*delay, &seconds);
-          lab->sync_retry_after_ = base::Time::Now() + base::Seconds(std::max(30, seconds));
-        }
+        if (status == 429)
+          lab->sync_retry_after_ = std::max(
+              lab->sync_retry_after_, base::Time::Now() + DropboxRetryAfter(*headers));
         std::move(reply).Run(status, headers ? headers->GetNormalizedHeader("Dropbox-API-Result")
             .value_or("") : "", std::move(data).value_or(""));
       }, sync_weak_.GetWeakPtr(), std::move(reply)), network::SimpleURLLoader::kMaxBoundedStringDownloadSize);
+}
+
+void WorkspaceLab::PumpDropboxWatch() {
+  if (sync_prefs_->GetString("method") != "dropbox" ||
+      dropbox_watch_missing_scope_ || dropbox_watch_loader_ ||
+      dropbox_watch_timer_.IsRunning() || sync_prefs_->GetBoolean("import_pending")) return;
+  const auto step = dropbox_watch_step_;
+  const bool long_poll = step == DropboxWatchStep::kWait;
+  if (!long_poll && (dropbox_access_.empty() || dropbox_expires_ <= base::Time::Now())) {
+    dropbox_watch_healthy_ = false;
+    return;
+  }
+  auto delay = sync_retry_after_ - base::Time::Now();
+  if (long_poll)
+    delay = std::max(delay, dropbox_wait_after_ - base::TimeTicks::Now());
+  if (delay.is_positive()) {
+    dropbox_watch_timer_.Start(FROM_HERE, delay, this, &WorkspaceLab::PumpDropboxWatch);
+    return;
+  }
+
+  const char* endpoint = kDropboxCursor;
+  base::DictValue args;
+  if (step == DropboxWatchStep::kCursor) {
+    args.Set("path", "");
+    args.Set("include_deleted", true);
+    args.Set("limit", 200);
+  } else {
+    args.Set("cursor", dropbox_watch_cursor_);
+    endpoint = long_poll ? kDropboxLongPoll : kDropboxChanges;
+    if (long_poll) args.Set("timeout", kDropboxWaitSeconds);
+  }
+  auto body = base::WriteJson(args);
+  if (!body) return;
+  // Dropbox can add up to 90 seconds of jitter to the requested wait time.
+  dropbox_watch_loader_ = MakeDropboxLoader(
+      endpoint, long_poll ? std::string_view() : dropbox_access_, {},
+      std::move(*body), "application/json",
+      base::Seconds(long_poll ? kDropboxWaitSeconds + 100 : 30));
+  dropbox_watch_loader_->DownloadToString(
+      WorkspaceProfile(active_index_)->GetDefaultStoragePartition()
+          ->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WorkspaceLab::OnDropboxWatchResponse, sync_weak_.GetWeakPtr(), step),
+      network::SimpleURLLoader::kMaxBoundedStringDownloadSize);
+}
+
+void WorkspaceLab::OnDropboxWatchResponse(DropboxWatchStep step,
+                                         std::optional<std::string> body) {
+  auto loader = std::move(dropbox_watch_loader_);
+  const auto* info = loader->ResponseInfo();
+  const auto* headers = info ? info->headers.get() : nullptr;
+  const int status = headers ? headers->response_code() : 0;
+  const auto response = body ? base::JSONReader::ReadDict(*body, base::JSON_PARSE_RFC)
+                             : std::nullopt;
+  const auto* error = response ? response->FindDict("error") : nullptr;
+  const auto* tag = error ? error->FindString(".tag") : nullptr;
+
+  if (status != 200 || !response) {
+    dropbox_watch_healthy_ = false;
+    if ((status == 401 || status == 403) && tag && *tag == "missing_scope") {
+      dropbox_watch_missing_scope_ = true;
+      return;
+    }
+    if (status == 409 && tag && *tag == "reset") {
+      dropbox_watch_cursor_.clear();
+      dropbox_watch_step_ = DropboxWatchStep::kCursor;
+    }
+    const auto delay = status == 429 ? DropboxRetryAfter(*headers) : base::Seconds(30);
+    if (status == 429)
+      sync_retry_after_ = std::max(sync_retry_after_, base::Time::Now() + delay);
+    dropbox_watch_timer_.Start(FROM_HERE, delay, this, &WorkspaceLab::PumpDropboxWatch);
+    return;
+  }
+
+  if (step == DropboxWatchStep::kWait) {
+    if (const auto changes = response->FindBool("changes")) {
+      dropbox_watch_healthy_ = true;
+      dropbox_wait_after_ = base::TimeTicks::Now() +
+          base::Seconds(std::max(1, response->FindInt("backoff").value_or(0)));
+      dropbox_watch_step_ = *changes ? DropboxWatchStep::kChanges : DropboxWatchStep::kWait;
+      PumpDropboxWatch();
+      return;
+    }
+  } else if (const auto* cursor = response->FindString("cursor"); cursor && !cursor->empty()) {
+    const auto* entries = response->FindList("entries");
+    const auto more = response->FindBool("has_more");
+    if (step == DropboxWatchStep::kCursor || (entries && more)) {
+      dropbox_watch_healthy_ = true;
+      dropbox_watch_cursor_ = *cursor;
+      dropbox_watch_step_ = more.value_or(false) ? DropboxWatchStep::kChanges
+                                                : DropboxWatchStep::kWait;
+      if (step == DropboxWatchStep::kCursor) {
+        // Catch updates between the last index read and creation of the cursor.
+        sync_followup_pending_ = true;
+      } else {
+        for (const auto& value : *entries) {
+          const auto* entry = value.GetIfDict();
+          const auto* path = entry ? entry->FindString("path_lower") : nullptr;
+          if (!path || *path != kDropboxSyncIndex) continue;
+          const auto* revision = entry->FindString("rev");
+          dropbox_notified_revision_ = revision ? *revision : std::string();
+        }
+      }
+      if (!more.value_or(false) &&
+          (sync_followup_pending_ ||
+           (dropbox_notified_revision_ && *dropbox_notified_revision_ != dropbox_synced_revision_)) &&
+          !sync_batch_timer_.IsRunning()) {
+        sync_batch_timer_.Start(FROM_HERE, base::TimeDelta(), this,
+                                &WorkspaceLab::RunDebouncedBookmarkSync);
+      }
+      PumpDropboxWatch();
+      return;
+    }
+  }
+  dropbox_watch_healthy_ = false;
+  dropbox_watch_timer_.Start(FROM_HERE, base::Seconds(30), this,
+                            &WorkspaceLab::PumpDropboxWatch);
 }
 
 void WorkspaceLab::DownloadDropboxBookmarks(base::DictValue snapshot, base::DictValue ledger) {
@@ -1400,6 +1617,11 @@ void WorkspaceLab::UploadNextDropboxShard() {
             lab->FetchDropboxIndex();
             return;
           }
+          if (status == 200) {
+            const auto info = base::JSONReader::ReadDict(body, base::JSON_PARSE_RFC);
+            const auto* revision = info ? info->FindString("rev") : nullptr;
+            lab->dropbox_exchange_->revision = revision ? *revision : std::string();
+          }
           lab->CompleteDropboxExchange(status == 200);
         }, sync_weak_.GetWeakPtr()));
     return;
@@ -1448,6 +1670,7 @@ void WorkspaceLab::UploadNextDropboxShard() {
 void WorkspaceLab::CompleteDropboxExchange(bool success) {
   auto flow = std::move(dropbox_exchange_);
   if (success) {
+    dropbox_synced_revision_ = flow->revision;
     const auto& index = flow->outgoing ? flow->outgoing->index : flow->index;
     dropbox_shard_cache_.clear();
     for (const auto [key, value] : index) {
