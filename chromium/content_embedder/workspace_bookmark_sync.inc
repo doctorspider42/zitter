@@ -460,7 +460,9 @@ bool WorkspaceLab::ApplyBookmarkTabs(const base::DictValue& collections) {
     }
     for (const auto& [index, name] : renamed) tabs[index].custom_title = name;
     for (const auto* tab : added) {
-      AddTab(workspace, GURL(*tab->FindString("url")));
+      const GURL url(*tab->FindString("url"));
+      AddTab(workspace, url);
+      imported_favicon_urls_[space.profile_id].insert(url);
       tabs.back().sync_id = *tab->FindString("id");
       if (const auto* title = tab->FindString("title"))
         tabs.back().custom_title = base::UTF8ToUTF16(*title);
@@ -481,6 +483,7 @@ bool WorkspaceLab::ApplyBookmarkTabs(const base::DictValue& collections) {
     if (active) ShowTab();
     changed = true;
   }
+  PumpImportedFavicons();
   return changed;
 }
 
@@ -713,7 +716,6 @@ bool WorkspaceLab::ApplyBookmarks(const base::DictValue& ledger,
         tab.pin.clear();
   }
   for (auto& [profile, urls] : icons) imported_favicon_urls_[profile].merge(urls);
-  PumpImportedFavicons();
   return true;
 }
 

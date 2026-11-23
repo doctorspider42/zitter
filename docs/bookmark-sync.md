@@ -58,7 +58,8 @@ production approval in the Dropbox App Console for public distribution.
 Zitter synchronizes profile favorites, pinned pages, their custom titles,
 folders and ordering. It also carries workspace names, colors, icons and order,
 and the IDs of Chrome Web Store extensions available for the first import.
-Zitter fetches favicons for incoming bookmarks without sending site cookies.
+Zitter fetches page titles and favicons for incoming tabs and favicons for
+incoming bookmarks without sending site cookies or opening the tabs.
 A new device can create the matching workspaces and profiles and reopen web tabs
 in their saved order. Sync transfers their HTTP and HTTPS addresses. Private
 windows, internal pages, form submissions, browsing history, cookies, passwords,

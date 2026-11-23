@@ -41,15 +41,15 @@ std::unique_ptr<network::SimpleURLLoader> MakeIconLoader(const GURL& url) {
       "zitter_content_favicon_refresh", R"(
     semantics {
       sender: "Zitter Content Workspace icon refresh"
-      description: "Fetches markup and icons for tabs and pinned pages."
-      trigger: "The user imports bookmarks or selects Refresh all favicons."
+      description: "Fetches titles and icons for tabs and pinned pages."
+      trigger: "The user imports bookmarks, syncs tabs, or selects Refresh all favicons."
       data: "The page URL, without cookies or authentication."
       destination: WEBSITE
     }
     policy {
       cookies_allowed: NO
-      setting: "The user chooses whether to import bookmarks or refresh icons."
-      policy_exception_justification: "User initiated bookmark import or icon refresh."
+      setting: "The user controls bookmark import, workspace sync, and icon refresh."
+      policy_exception_justification: "User initiated import, sync setup, or icon refresh."
     })");
   auto loader = network::SimpleURLLoader::Create(std::move(request), annotation);
   loader->SetTimeoutDuration(base::Seconds(10));
@@ -60,12 +60,13 @@ std::unique_ptr<network::SimpleURLLoader> MakeIconLoader(const GURL& url) {
 
 WorkspaceFaviconRefresh::WorkspaceFaviconRefresh(
     content::WebContents& source, std::map<GURL, GURL> pages, Publish publish,
-    base::OnceClosure done)
+    PublishTitle publish_title, base::OnceClosure done)
     : source_(source.GetWeakPtr()),
       factory_(source.GetBrowserContext()->GetDefaultStoragePartition()
                    ->GetURLLoaderFactoryForBrowserProcess()),
       pages_(std::move(pages)),
-      publish_(std::move(publish)), done_(std::move(done)) {}
+      publish_(std::move(publish)), publish_title_(std::move(publish_title)),
+      done_(std::move(done)) {}
 
 WorkspaceFaviconRefresh::~WorkspaceFaviconRefresh() = default;
 
@@ -96,8 +97,11 @@ void WorkspaceFaviconRefresh::OnMarkup(std::optional<std::string> markup) {
   const GURL final_url = loader_->GetFinalURL();
   loader_.reset();
   const GURL& base_url = final_url.SchemeIsHTTPOrHTTPS() ? final_url : page_;
-  candidates_ = markup ? prototype::WorkspaceIconCandidates(*markup, base_url)
+  std::u16string title;
+  candidates_ = markup ? prototype::WorkspaceIconCandidates(*markup, base_url, title)
                        : std::vector<GURL>();
+  if (!title.empty())
+    publish_title_.Run(page_, title);
   for (const auto& icon : {known_icon_, base_url.Resolve("/favicon.ico")}) {
     if (prototype::IsWorkspaceFaviconUrl(icon) &&
         !std::ranges::contains(candidates_, icon)) {

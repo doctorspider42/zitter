@@ -28,8 +28,11 @@ class WorkspaceFaviconRefresh {
   using Publish = base::RepeatingCallback<void(const GURL& page,
                                                const GURL& icon,
                                                const gfx::Image& image)>;
+  using PublishTitle = base::RepeatingCallback<void(const GURL& page,
+                                                    const std::u16string& title)>;
   WorkspaceFaviconRefresh(content::WebContents& source,
                           std::map<GURL, GURL> pages, Publish publish,
+                          PublishTitle publish_title,
                           base::OnceClosure done = {});
   ~WorkspaceFaviconRefresh();
 
@@ -46,6 +49,7 @@ class WorkspaceFaviconRefresh {
   scoped_refptr<network::SharedURLLoaderFactory> factory_;
   std::map<GURL, GURL> pages_;
   Publish publish_;
+  PublishTitle publish_title_;
   base::OnceClosure done_;
   GURL page_;
   GURL known_icon_;

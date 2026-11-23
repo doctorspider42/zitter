@@ -776,6 +776,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool RefreshWorkspaceFavicons();
   void PublishWorkspaceFavicon(const GURL& page, const GURL& icon,
                                const gfx::Image& image);
+  void StoreWorkspaceFavicon(const std::string& profile, const GURL& page,
+                             const GURL& icon, const gfx::Image& image);
+  void PublishDeferredTabTitle(const std::string& profile, const GURL& page,
+                               const std::u16string& title);
   void SwitchTo(size_t index);
   void CheckPresentation();
   bool CheckSessionProbeSetup() const;

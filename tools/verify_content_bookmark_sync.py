@@ -8,6 +8,7 @@ import json
 import os
 import plistlib
 import secrets
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -132,8 +133,23 @@ def click_control(channel, names, titles):
     expect(request(channel, {"cmd": "click", "window": window, "name": name, "index": 0}), name)
 
 
+def has_favicon(root, url):
+    for database in (root / "workspace-work").rglob("Favicons"):
+        try:
+            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=0.1) as db:
+                if db.execute(
+                    "SELECT 1 FROM icon_mapping JOIN favicon_bitmaps USING (icon_id) WHERE page_url = ?",
+                    (url,),
+                ).fetchone():
+                    return True
+        except sqlite3.OperationalError:
+            continue
+    return False
+
+
 def verify_initial_import(executable, root, folder, fixture, seen_icon, replace):
     local_space = "space-" + str(uuid.uuid4())
+    reading = "space-" + str(uuid.uuid4())
     prepare(root, folder, "local", extra=local_space)
     session_path = root / "ContentWorkspaceSession.json"
     session = read_json(session_path)
@@ -142,7 +158,7 @@ def verify_initial_import(executable, root, folder, fixture, seen_icon, replace)
     if replace:
         session["active_workspace"] = local_space
         session["link_rules"] = {"example.com": local_space}
-        session["removed_workspaces"] = {"personal": "personal"}
+        session["removed_workspaces"] = {"personal": "personal", reading: "work"}
         del session["personal"]
     write_json(session_path, session)
     prefs_path = root / "BookmarkSync.json"
@@ -151,7 +167,6 @@ def verify_initial_import(executable, root, folder, fixture, seen_icon, replace)
     write_json(prefs_path, prefs)
 
     remote_device = str(uuid.uuid4())
-    reading = "space-" + str(uuid.uuid4())
     empty = "space-" + str(uuid.uuid4())
     profile = "profile-" + str(uuid.uuid4())
 
@@ -204,6 +219,18 @@ def verify_initial_import(executable, root, folder, fixture, seen_icon, replace)
             click_control(channel, {"Continue", "Kontynuuj"}, chooser)
         assert wait(lambda: not read_json(prefs_path).get("import_pending"), 30)
         assert seen_icon.wait(15), "Sync did not request a favicon for the incoming bookmarks"
+
+        def deferred_tab_metadata():
+            work = read_json(session_path)["work"]
+            return (any(tab["url"] == fixture + "/tab-one" and
+                        tab["title"] == "Synced article & notes"
+                        for tab in work["tabs"]) and has_favicon(root, fixture + "/tab-one"))
+
+        assert wait(deferred_tab_metadata, 30), "The dormant synced tab did not get its title and icon"
+        sidebar = wait(lambda: visible_window(channel, {"Zitter — Tabs", "Zitter — Karty"}), 10)
+        assert sidebar, "Missing sidebar after sync"
+        assert wait(lambda: any(row["name"] == "Synced article & notes"
+                                for row in request(channel, {"cmd": "tree", "window": sidebar}).get("views", [])), 10)
 
         def appearance_saved():
             path = root / "WorkspaceSettings.json"
@@ -363,6 +390,11 @@ def verify_first_imports(executable):
                     "EDRg0YNWAwGQAAAJACh9zWzYwAAAAASUVORK5CYII=")
                 mime = "image/png"
                 seen_icon.set()
+            elif self.path == "/tab-one":
+                body = (b'<!doctype html><!-- <title>Wrong</title> -->'
+                        b'<title>Synced article &amp; notes</title>'
+                        b'<link rel="icon" href="/synced-favicon.png">')
+                mime = "text/html"
             elif self.path in ("/first", "/second"):
                 body = b'<!doctype html><link rel="icon" href="/synced-favicon.png">'
                 mime = "text/html"
@@ -397,8 +429,8 @@ def verify_first_imports(executable):
         finally:
             server.shutdown()
             thread.join()
-    print("First import and ongoing sync passed bookmark and tab order, replacement, remote tab closure, "
-          "workspace appearance and favicon refresh.")
+    print("First import and ongoing sync passed replacement, bookmark and tab order, remote tab closure, "
+          "workspace appearance, and titles and favicons on dormant tabs.")
 
 
 def main():

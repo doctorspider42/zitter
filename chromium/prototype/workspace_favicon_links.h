@@ -24,17 +24,22 @@ inline bool IsWorkspaceFaviconUrl(const GURL& icon) {
 }
 
 // Inspect markup without running scripts or loading other page resources.
-inline std::vector<GURL> WorkspaceIconCandidates(std::string_view html, const GURL& page_url) {
+inline std::vector<GURL> WorkspaceIconCandidates(std::string_view html, const GURL& page_url,
+                                                std::u16string& title) {
   static const base::NoDestructor<RE2> tag(
-      R"re((?is)<!--.*?-->|<(?:script|style|title|textarea)\b[^>]*>.*?</(?:script|style|title|textarea)\s*>|<(link|base)\b((?:"[^"]*"|'[^']*'|[^'">])*)>)re");
+      R"re((?is)<!--.*?-->|<script\b[^>]*>.*?</script\s*>|<style\b[^>]*>.*?</style\s*>|<textarea\b[^>]*>.*?</textarea\s*>|<title\b[^>]*>(.*?)</title\s*>|<(link|base)\b((?:"[^"]*"|'[^']*'|[^'">])*)>)re");
   static const base::NoDestructor<RE2> attribute(
       R"re(([^\s=/"'<>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+)))?)re");
   constexpr size_t kMaxDeclaredIcons = 6;
   std::vector<std::string> paths;
   GURL base_url = page_url;
   bool has_base = false;
-  std::string_view name, attributes;
-  while (RE2::FindAndConsume(&html, *tag, &name, &attributes)) {
+  std::string_view page_title, name, attributes;
+  while (RE2::FindAndConsume(&html, *tag, &page_title, &name, &attributes)) {
+    if (title.empty() && !page_title.empty() && page_title.size() <= 8192) {
+      title = base::CollapseWhitespace(
+          base::UnescapeForHTML(base::UTF8ToUTF16(page_title)), false);
+    }
     if (name.empty()) continue;
     std::string_view key, quoted, single_quoted, unquoted, href, rel;
     while (RE2::FindAndConsume(&attributes, *attribute, &key, &quoted, &single_quoted, &unquoted)) {

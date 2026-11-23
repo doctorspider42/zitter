@@ -12055,29 +12055,10 @@ void WorkspaceLab::StartImportedFaviconRefresh(std::string profile,
     pages.try_emplace(url);
   imported_favicon_refresh_ = std::make_unique<WorkspaceFaviconRefresh>(
       *imported_favicon_page_, std::move(pages),
-      base::BindRepeating(
-          [](base::WeakPtr<WorkspaceLab> lab, const std::string& profile, const GURL& page,
-             const GURL& icon, const gfx::Image& image) {
-            if (!lab)
-              return;
-            const auto owner = std::ranges::find(lab->profiles_, profile, &ContentProfileInfo::id);
-            if (owner == lab->profiles_.end())
-              return;
-            if (auto* service = lab->contexts_[owner - lab->profiles_.begin()]->GetFaviconService())
-              service->SetFavicons({page}, icon, favicon_base::IconType::kFavicon, image);
-            if (auto cache = lab->cached_favicons_.find(profile);
-                cache != lab->cached_favicons_.end()) {
-              if (auto cached = cache->second.find(page);
-                  cached != cache->second.end()) {
-                if (cached->second.task != base::CancelableTaskTracker::kBadTaskId)
-                  lab->favicon_tasks_.TryCancel(cached->second.task);
-                cached->second.task = base::CancelableTaskTracker::kBadTaskId;
-                cached->second.pixels = FaviconPixels(image);
-              }
-            }
-            if (lab->model_.active() && lab->model_.active()->profile_id == profile)
-              lab->RefreshShell();
-          }, weak_factory_.GetWeakPtr(), std::move(profile)),
+      base::BindRepeating(&WorkspaceLab::StoreWorkspaceFavicon,
+                          weak_factory_.GetWeakPtr(), profile),
+      base::BindRepeating(&WorkspaceLab::PublishDeferredTabTitle,
+                          weak_factory_.GetWeakPtr(), profile),
       base::BindPostTaskToCurrentDefault(base::BindOnce(
           &WorkspaceLab::FinishImportedFaviconRefresh, weak_factory_.GetWeakPtr())));
   imported_favicon_refresh_->Start();
@@ -12140,6 +12121,8 @@ void WorkspaceLab::StartWorkspaceFaviconRefresh(std::map<GURL, GURL> pages, bool
       *favicon_refresh_page_, std::move(pages),
       base::BindRepeating(&WorkspaceLab::PublishWorkspaceFavicon,
                           weak_factory_.GetWeakPtr()),
+      base::BindRepeating(&WorkspaceLab::PublishDeferredTabTitle,
+                          weak_factory_.GetWeakPtr(), favicon_refresh_scope_.second),
       base::BindPostTaskToCurrentDefault(base::BindOnce(
           [](base::WeakPtr<WorkspaceLab> lab, base::WeakPtr<content::WebContents> decoder) {
             if (lab && decoder)
@@ -12171,14 +12154,45 @@ void WorkspaceLab::PublishWorkspaceFavicon(const GURL& url, const GURL& icon,
       favicon.image = image;
     }
   }
-  if (auto* service = WorkspaceProfile(active_index_)->GetFaviconService())
+  StoreWorkspaceFavicon(model_.active()->profile_id, url, icon, image);
+}
+
+void WorkspaceLab::StoreWorkspaceFavicon(const std::string& profile, const GURL& url,
+                                        const GURL& icon, const gfx::Image& image) {
+  const auto owner = std::ranges::find(profiles_, profile, &ContentProfileInfo::id);
+  if (owner == profiles_.end() || removed_profiles_.contains(profile))
+    return;
+  if (auto* service = contexts_[owner - profiles_.begin()]->GetFaviconService())
     service->SetFavicons({url}, icon, favicon_base::IconType::kFavicon, image);
-  auto& cached = cached_favicons_[model_.active()->profile_id][url];
-  if (cached.task != base::CancelableTaskTracker::kBadTaskId)
-    favicon_tasks_.TryCancel(cached.task);
-  cached.task = base::CancelableTaskTracker::kBadTaskId;
-  cached.pixels = FaviconPixels(image);
-  RefreshShell();
+  if (model_.active() && model_.active()->profile_id == profile) {
+    auto& cached = cached_favicons_[profile][url];
+    if (cached.task != base::CancelableTaskTracker::kBadTaskId)
+      favicon_tasks_.TryCancel(cached.task);
+    cached.task = base::CancelableTaskTracker::kBadTaskId;
+    cached.pixels = FaviconPixels(image);
+    RefreshShell();
+  }
+}
+
+void WorkspaceLab::PublishDeferredTabTitle(const std::string& profile, const GURL& url,
+                                           const std::u16string& title) {
+  bool changed = false;
+  for (size_t workspace = 0; workspace < tabs_.size(); ++workspace) {
+    if (model_.workspaces()[workspace].profile_id != profile)
+      continue;
+    for (auto& tab : tabs_[workspace]) {
+      if (tab.deferred_url == url && tab.deferred_title.empty() &&
+          (!tab.view->web_contents() ||
+           tab.view->web_contents()->GetController().IsInitialNavigation())) {
+        tab.deferred_title = title;
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    RefreshShell();
+    PersistWorkspaceChanges();
+  }
 }
 
 void WorkspaceLab::ReadCachedFavicons(prototype::ShellState& state,
@@ -12509,7 +12523,9 @@ void WorkspaceLab::PopulateSidebarState(size_t workspace,
     if (!tabs[index].custom_title.empty())
       title = tabs[index].custom_title;
     const bool untitled = title.empty();
-    prototype::ShellTab row{untitled ? u"New tab" : std::move(title),
+    if (untitled && url.SchemeIsHTTPOrHTTPS())
+      title = base::UTF8ToUTF16(url.host());
+    prototype::ShellTab row{title.empty() ? u"New tab" : std::move(title),
                             url, index, tabs[index].pin, {tabs[index].id, 1},
                             page && page->IsCurrentlyAudible(), 0,
                             !tabs[index].custom_title.empty(), refresh_icons && TabMuted(index)};
