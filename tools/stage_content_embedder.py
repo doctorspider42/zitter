@@ -136,6 +136,36 @@ def main():
         plan = content_blocking.prepare(
             checkout, include_chrome=False, previous_plan=fingerprint_patch
         )
+        worker_lifecycle_fixes = (
+            (
+                "content/browser/service_worker/service_worker_fetch_dispatcher.cc",
+                b"  if (version_->is_endpoint_ready()) {\n",
+                b"  // An endpoint may still be marked ready while a worker is stopping.\n"
+                b"  // In that case, let DidStartWorker handle the restart or fallback.\n"
+                b"  const auto running_status = version_->running_status();\n"
+                b"  if (!IsEventDispatched() && version_->is_endpoint_ready() &&\n"
+                b"      (running_status == blink::EmbeddedWorkerStatus::kStarting ||\n"
+                b"       running_status == blink::EmbeddedWorkerStatus::kRunning)) {\n",
+            ),
+            (
+                "extensions/browser/api/messaging/extension_message_port.cc",
+                b"  if (!browser_client || !browser_client->IsValidContext(browser_context_)) {\n"
+                b"    return;\n  }\n\n  // Emit per connect dispatch IPC metric",
+                b"  if (!browser_client || !browser_client->IsValidContext(browser_context_) ||\n"
+                b"      browser_context_->ShutdownStarted()) {\n"
+                b"    return;\n  }\n\n  // Emit per connect dispatch IPC metric",
+            ),
+        )
+        for relative_path, before, after in worker_lifecycle_fixes:
+            path = checkout / relative_path
+            if path.is_symlink() or not path.resolve().is_relative_to(checkout):
+                raise ValueError(f"Worker lifecycle path escapes the checkout: {path}")
+            original = path.read_bytes()
+            if original.count(after) == 1:
+                continue
+            if original.count(before) != 1:
+                raise ValueError(f"Unexpected worker lifecycle logic: {path}")
+            plan[path] = (original, original.replace(before, after, 1))
         menu_config = checkout / "ui/views/controls/menu/menu_config.cc"
         if menu_config.is_symlink() or not menu_config.resolve().is_relative_to(checkout):
             raise ValueError("Menu config path escapes the checkout")
