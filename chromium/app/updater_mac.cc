@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/version.h"
@@ -12,11 +13,14 @@
 #include "chromium/prototype/i18n.h"
 #include "chromium/prototype/workspace_shell.h"
 #include "net/base/load_flags.h"
+#include "net/base/net_errors.h"
+#include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "url/gurl.h"
 
 namespace zitter {
@@ -81,6 +85,7 @@ void MacUpdater::Configure(bool check, bool download) {
 void MacUpdater::StartMacCheck(CheckDone done, bool background) {
   auto factory = factory_.Run();
   if (!factory) {
+    LOG(WARNING) << "Zitter update check could not start: network context unavailable";
     if (done) std::move(done).Run(prototype::T(u"Nie udało się sprawdzić aktualizacji."), {});
     return;
   }
@@ -94,6 +99,7 @@ void MacUpdater::StartMacCheck(CheckDone done, bool background) {
   request->redirect_mode = network::mojom::RedirectMode::kError;
   request->load_flags = net::LOAD_DISABLE_CACHE | net::LOAD_DO_NOT_SAVE_COOKIES;
   request->headers.SetHeader("Accept", "application/vnd.github+json");
+  request->headers.SetHeader("User-Agent", "Zitter/" + version_);
   constexpr auto annotation = net::DefineNetworkTrafficAnnotation("zitter_manual_update", R"(
     semantics {
       sender: "Zitter update check"
@@ -109,12 +115,24 @@ void MacUpdater::StartMacCheck(CheckDone done, bool background) {
     })");
   update_loader_ = network::SimpleURLLoader::Create(std::move(request), annotation);
   update_loader_->SetTimeoutDuration(base::Seconds(15));
+  update_loader_->SetRetryOptions(
+      1, network::SimpleURLLoader::RETRY_ON_5XX |
+             network::SimpleURLLoader::RETRY_ON_NETWORK_CHANGE |
+             network::SimpleURLLoader::RETRY_ON_NAME_NOT_RESOLVED);
   update_loader_->DownloadToString(
       factory.get(), base::BindOnce(&MacUpdater::MacUpdateChecked, weak_factory_.GetWeakPtr()),
       2 * 1024 * 1024);
 }
 
 void MacUpdater::MacUpdateChecked(std::optional<std::string> body) {
+  const auto* response = update_loader_->ResponseInfo();
+  if (!body) {
+    const int status =
+        response && response->headers ? response->headers->response_code() : 0;
+    LOG(WARNING) << "Zitter update metadata request failed: "
+                 << net::ErrorToString(update_loader_->NetError())
+                 << ", HTTP status " << status;
+  }
   update_loader_.reset();
   const bool background = std::exchange(background_update_check_, false) && update_timer_.IsRunning();
 #if defined(ARCH_CPU_ARM64)
@@ -125,6 +143,9 @@ void MacUpdater::MacUpdateChecked(std::optional<std::string> body) {
   auto [has_stable_release, latest, release_url, installer] =
       SelectMacRelease(body.value_or(""), base::Version(version_), backend_,
                        architecture, cache_);
+  if (body && !has_stable_release) {
+    LOG(WARNING) << "Zitter update metadata contains no valid stable releases";
+  }
   std::u16string message = prototype::T(u"Nie udało się sprawdzić aktualizacji.");
   if (latest.IsValid()) {
     if (release_url.is_valid()) {

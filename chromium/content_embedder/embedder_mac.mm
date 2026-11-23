@@ -80,6 +80,8 @@
 #include "components/safe_browsing/core/common/safebrowsing_switches.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/network_context_client_base.h"
+#include "content/public/browser/network_service_instance.h"
 #include "net/base/net_errors.h"
 #include "net/base/apple/url_conversions.h"
 #include "content/public/browser/render_frame_host.h"
@@ -92,6 +94,11 @@
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/isolated_world_ids.h"
+#include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
+#include "services/network/public/cpp/originating_process_id.h"
+#include "services/network/public/cpp/wrapper_shared_url_loader_factory.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "ui/base/clipboard/clipboard_metadata.h"
@@ -1173,10 +1180,7 @@ class LabMainParts final : public content::BrowserMainParts,
           workspace_root_.AppendASCII("Updates"),
           base::BindRepeating([](base::WeakPtr<LabMainParts> self)
               -> scoped_refptr<network::SharedURLLoaderFactory> {
-            if (!self || !self->context_)
-              return nullptr;
-            return self->context_->GetDefaultStoragePartition()
-                ->GetURLLoaderFactoryForBrowserProcess();
+            return self ? self->GetUpdateURLLoaderFactory() : nullptr;
           }, weak_factory_.GetWeakPtr()),
           base::BindRepeating([](WorkspaceLab* workspace, const GURL& url) {
             workspace->OpenExternalUrl(url);
@@ -1236,6 +1240,7 @@ class LabMainParts final : public content::BrowserMainParts,
     ui_automation_.reset();
     download_probe_.reset();
     updater_.reset();
+    update_network_context_.reset();
     workspace_.reset();
     additional_profiles_.clear();
     personal_context_.reset();
@@ -1667,6 +1672,35 @@ class LabMainParts final : public content::BrowserMainParts,
     ui_automation_allowed_ = IsProbeRoot(root);
     workspace_session_ = std::move(*restored);
     return true;
+  }
+
+  scoped_refptr<network::SharedURLLoaderFactory> GetUpdateURLLoaderFactory() {
+    // App updates must work even when the built-in profiles have been removed.
+    if (!update_network_context_ || !update_network_context_.is_connected()) {
+      update_network_context_.reset();
+      auto params = network::mojom::NetworkContextParams::New();
+      params->http_cache_enabled = false;
+      params->cert_verifier_params = content::GetCertVerifierParams(
+          cert_verifier::mojom::CertVerifierCreationParams::New());
+      content::CreateNetworkContextInNetworkService(
+          update_network_context_.BindNewPipeAndPassReceiver(), std::move(params));
+      mojo::PendingRemote<network::mojom::NetworkContextClient> client;
+      mojo::MakeSelfOwnedReceiver(
+          std::make_unique<content::NetworkContextClientBase>(),
+          client.InitWithNewPipeAndPassReceiver());
+      update_network_context_->SetClient(std::move(client));
+    }
+
+    auto params = network::mojom::URLLoaderFactoryParams::New();
+    params->process_id = network::OriginatingProcessId::browser();
+    params->automatically_assign_isolation_info = true;
+    params->is_orb_enabled = false;
+    params->is_trusted = true;
+    mojo::PendingRemote<network::mojom::URLLoaderFactory> factory;
+    update_network_context_->CreateURLLoaderFactory(
+        factory.InitWithNewPipeAndPassReceiver(), std::move(params));
+    return base::MakeRefCounted<network::WrapperSharedURLLoaderFactory>(
+        std::move(factory));
   }
 
   void InstallMacUpdate(const MacInstaller& installer) {
@@ -2263,6 +2297,7 @@ class LabMainParts final : public content::BrowserMainParts,
   std::vector<base::FilePath> workspace_extension_profiles_;
   std::vector<std::unique_ptr<ProfileContext>> additional_profiles_;
   std::unique_ptr<WorkspaceLab> workspace_;
+  mojo::Remote<network::mojom::NetworkContext> update_network_context_;
   std::unique_ptr<MacUpdater> updater_;
   std::unique_ptr<StagedMacUpdate> staged_mac_update_;
   std::string staged_mac_update_version_;
