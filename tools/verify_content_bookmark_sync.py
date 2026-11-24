@@ -275,6 +275,63 @@ def verify_initial_import(executable, root, folder, fixture, seen_icon, replace)
             assert local_space not in read_json(session_path)
 
 
+def verify_pinned_tabs(executable, folder, first, second, fixture):
+    session_name = "ContentWorkspaceSession.json"
+    tabs = [
+        {"title": "", "url": fixture + "/" + label, "sync_id": str(uuid.uuid4())}
+        for label in ("workspace-pin", "profile-favorite", "ordinary-tab")
+    ]
+    # An independent tab at the same URL must survive the favorite's promotion.
+    tabs[-1]["url"] = tabs[1]["url"]
+    for root in (first, second):
+        prepare(root, folder, "local")
+        session = read_json(root / session_name)
+        session["work"]["tabs"].extend(tabs)
+        write_json(root / session_name, session)
+        with running(executable, root):
+            assert wait(lambda: len(read_json(root / "BookmarkSync.json")
+                                    .get("snapshot", {}).get("tabs2/work", [])) == 3, 30)
+
+    path = first / session_name
+    session = read_json(path)
+    session["work"]["pins"].append(pin("workspace-pin", url=tabs[0]["url"]))
+    session["profile_favorites"] = {
+        "work": [pin("profile-favorite", url=tabs[1]["url"], profile_pin=True)]
+    }
+    pin_by_tab = {tabs[0]["sync_id"]: "workspace-pin", tabs[1]["sync_id"]: "profile-favorite"}
+    for tab in session["work"]["tabs"]:
+        if tab.get("sync_id") in pin_by_tab:
+            tab["pin"] = pin_by_tab[tab["sync_id"]]
+    write_json(path, session)
+
+    with running(executable, first):
+        def promoted_tabs_removed_from_sync():
+            synced = read_partition(device_index(first, folder), "space/work")["tabs2/work"]
+            return all("tab" not in synced[tab["sync_id"]] for tab in tabs[:2])
+
+        assert wait(promoted_tabs_removed_from_sync, 25)
+        assert wait(lambda: len(read_json(first / "BookmarkSync.json")
+                                .get("snapshot", {}).get("tabs2/work", [])) == 1, 15)
+        assert {
+            tab["sync_id"]: tab["pin"]
+            for tab in read_json(path)["work"]["tabs"] if "pin" in tab
+        } == pin_by_tab
+
+    with running(executable, second):
+        def pins_synced_without_duplicate_tabs():
+            synced = read_json(second / session_name)
+            return (
+                "workspace-pin" in {item["id"] for item in synced["work"]["pins"]}
+                and [item["id"] for item in synced.get("profile_favorites", {}).get("work", [])]
+                == ["profile-favorite"]
+                and [item["sync_id"] for item in synced["work"]["tabs"] if "sync_id" in item]
+                == [tabs[-1]["sync_id"]]
+            )
+
+        assert wait(pins_synced_without_duplicate_tabs, 30)
+    print("Open pinned pages and profile favorites synced as bookmarks and retired their old tab records.")
+
+
 def verify_concurrent_tabs(executable, folder, first, second, receiver, fixture):
     prefix = fixture + "/concurrent-"
     session_name = "ContentWorkspaceSession.json"
@@ -596,6 +653,11 @@ def verify_first_imports(executable):
             with tempfile.TemporaryDirectory() as shared, temporary_workspace() as root:
                 verify_local_batch(executable, Path(shared).resolve(), Path(root).resolve(),
                                    fixture, start_batch, batch_done)
+            with (tempfile.TemporaryDirectory() as shared,
+                  temporary_workspace() as first,
+                  temporary_workspace() as second):
+                verify_pinned_tabs(executable, Path(shared).resolve(), Path(first).resolve(),
+                                   Path(second).resolve(), fixture)
             for replace in (False, True):
                 with (temporary_workspace() as root,
                       tempfile.TemporaryDirectory() as shared):

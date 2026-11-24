@@ -1240,10 +1240,10 @@ class ProfileFavoritesGrid final : public views::View {
     point.set_x(GetMirroredXInView(point.x()));
     const auto slots = ProfileFavoriteTileBounds(
         width(), children().size() + (!moving && !extra_slot_));
-    if (!moving && slots.size() > 1) {
+    if (slots.size() > 1) {
       const auto& last_favorite = slots[slots.size() - 2];
-      // Keep the trailing edge of the last tile an append target when
-      // inserting a favorite opens another row.
+      // Keep the trailing edge of the previous row an append target when
+      // the last slot wraps, including when moving an existing favorite.
       if (slots.back().y() > last_favorite.y() &&
           point.y() >= last_favorite.y() && point.y() < last_favorite.bottom() &&
           point.x() > last_favorite.CenterPoint().x()) {
@@ -9680,8 +9680,16 @@ std::optional<WorkspaceShell::SidebarReorder> WorkspaceShell::SidebarReorderAt(
   }
   out.parent=meta.parent;
   if(!target.after){out.before_pin=meta.pin;return out;}
-  bool next=false;
-  for(const auto& pin:state_.pins){if(pin.parent_id!=meta.parent)continue;if(next){out.before_pin=pin.id;break;}next=pin.id==meta.pin;}
+  bool next = false;
+  for (const auto& pin : state_.pins) {
+    if (pin.profile_pin || pin.parent_id != meta.parent)
+      continue;
+    if (next) {
+      out.before_pin = pin.id;
+      break;
+    }
+    next = pin.id == meta.pin;
+  }
   return out;
 }
 namespace {

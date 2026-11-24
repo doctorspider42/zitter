@@ -1270,12 +1270,22 @@ class LabMainParts final : public content::BrowserMainParts,
     if (directory_.IsValid())
       (void)directory_.Delete();
     if (!restart.empty()) {
-      // Launch Services must associate the new process with the installed
-      // bundle so later open-URL requests reach it. The old process is still
-      // exiting, so ask for a new application instance explicitly.
-      std::string output;
-      if (!base::GetAppOutput({"/usr/bin/open", "-n", "-a", restart.value()}, &output))
-        LOG(ERROR) << "Could not relaunch Zitter after the update";
+      // Wait until Launch Services can retire the running app's Dock tile
+      // before opening the installed bundle through the normal launch path.
+      constexpr char kRelaunch[] = R"(
+        attempts=0
+        while kill -0 "$1" 2>/dev/null; do
+          [ "$attempts" -lt 300 ] || exit 1
+          attempts=$((attempts + 1))
+          sleep 0.1
+        done
+        exec /usr/bin/open -a "$2"
+      )";
+      if (!base::LaunchProcess({"/bin/sh", "-c", kRelaunch, "zitter-update",
+                                std::to_string(base::GetCurrentProcId()),
+                                restart.value()}, {}).IsValid()) {
+        LOG(ERROR) << "Could not schedule Zitter relaunch after the update";
+      }
     }
   }
 

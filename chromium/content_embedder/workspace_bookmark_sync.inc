@@ -324,6 +324,10 @@ base::DictValue WorkspaceLab::CaptureBookmarks() {
     auto* tabs = result.EnsureList("tabs2/" + workspace.id);
     std::map<std::string, size_t> occurrences;
     std::set<std::string> used;
+    for (const auto& tab : tabs_[i]) {
+      if (!tab.pin.empty() && !tab.sync_id.empty())
+        used.insert(tab.sync_id);
+    }
     for (size_t index = 0; index < tabs_[i].size(); ++index) {
       const auto url = BookmarkTabUrl(i, index);
       if (!url.is_valid()) continue;
@@ -388,6 +392,10 @@ base::DictValue WorkspaceLab::CaptureBookmarkScopes() const {
 
 GURL WorkspaceLab::BookmarkTabUrl(size_t workspace, size_t index) const {
   const auto& tab = tabs_[workspace][index];
+  // Pins already sync in their own collections. The tab displaying a pin
+  // belongs to the local session, including the page it has navigated to.
+  if (!tab.pin.empty())
+    return {};
   auto* page = tab.view->web_contents();
   if (page && (DropboxLogin::FromWebContents(page) ||
                (page->GetController().GetLastCommittedEntry() &&
@@ -409,7 +417,10 @@ bool WorkspaceLab::ApplyBookmarkTabs(const base::DictValue& collections) {
     const size_t previous_count = tabs.size();
     std::vector<GURL> urls;
     base::ListValue existing;
+    std::set<std::string_view> pinned_tab_ids;
     for (size_t i = 0; i < previous_count; ++i) {
+      if (!tabs[i].pin.empty() && !tabs[i].sync_id.empty())
+        pinned_tab_ids.insert(tabs[i].sync_id);
       urls.push_back(BookmarkTabUrl(workspace, i));
       if (!urls.back().is_valid()) continue;
       auto value = base::DictValue().Set("id", tabs[i].sync_id).Set("url", urls.back().spec());
@@ -427,6 +438,9 @@ bool WorkspaceLab::ApplyBookmarkTabs(const base::DictValue& collections) {
       const auto& remote = value.GetDict();
       const GURL url(*remote.FindString("url"));
       const auto& id = *remote.FindString("id");
+      // A legacy copy of a tab already open at a local pin is redundant.
+      if (pinned_tab_ids.contains(id))
+        continue;
       size_t match = 0;
       while (match < previous_count &&
              (retained[match] || urls[match] != url || tabs[match].sync_id != id)) ++match;
@@ -442,7 +456,8 @@ bool WorkspaceLab::ApplyBookmarkTabs(const base::DictValue& collections) {
       }
     }
     const auto is_empty_placeholder = [&] {
-      if (previous_count != 1 || incoming->empty()) return false;
+      if (previous_count != 1 || incoming->empty() || !tabs.front().pin.empty())
+        return false;
       const auto url = WorkspaceTabUrl(workspace, 0);
       return url.is_empty() || url == GURL("about:blank");
     }();
