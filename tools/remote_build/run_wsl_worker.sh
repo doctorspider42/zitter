@@ -19,6 +19,8 @@ dir="$HOME/nativelink"
 pkill -f "$dir/nativelink " 2>/dev/null || true
 sleep 1
 export ZITTER_SCHEDULER_HOST="$host" ZITTER_WORKER_SLOTS="$slots"
+# WSL takes the Windows computer name, which tells the workers apart in logs.
+export ZITTER_WORKER_NAME="${ZITTER_WORKER_NAME:-wsl-$(hostname)}"
 if (( foreground )); then
   echo "NativeLink worker: $slots slots, scheduler $host (Ctrl+C stops it)"
   exec "$dir/nativelink" "$dir/nativelink_worker.json5" 2>&1 | tee "$dir/worker.log"

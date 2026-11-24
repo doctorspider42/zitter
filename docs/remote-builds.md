@@ -142,9 +142,19 @@ Checked on 2026-11-24: 12 of 48 `base` compiles ran on the Mac with
 earlier local and Linux-worker builds.
 
 Current cluster: the build PC (Threadripper 1920X, 12 slots, 192.168.100.41),
-`PPAJAK-LAP` (Ryzen 7 PRO 5850U, 16 slots, Wi-Fi at 270–350 Mbit/s, SSH alias
-`zitter-node`) and `PPAJAK-MAC` (M3 Pro, 12 slots, 192.168.100.190, SSH alias
-`zitter-mac`).
+`PPAJAK-LAP` (Ryzen 7 PRO 5850U, 16 slots, Wi-Fi at 270–350 Mbit/s,
+192.168.100.6, SSH alias `zitter-node`), `PPAJAK-MAC` (M3 Pro, 12 slots,
+192.168.100.190, SSH alias `zitter-mac`) and `DESKTOP-72UKT0Q` (Core i5-3570K,
+4 slots, 192.168.100.180, SSH alias `zitter-node2`, user `spider`), a
+proof of concept for an old PC: 14 of 96 uncached `base` compiles ran there,
+all byte-identical.
+
+WSL workers name themselves `wsl-<computer name>`; the laptop's older install
+still reports `laptop`. WSL2 needs CPU virtualization: on `DESKTOP-72UKT0Q` it
+had to be enabled in the firmware (ASUS: Advanced > CPU Configuration > Intel
+Virtualization Technology) before `wsl --install --no-distribution`. Changing
+that setting made Windows Hello's PIN unavailable; sign in with the password
+and set the PIN again.
 
 ## Building
 
