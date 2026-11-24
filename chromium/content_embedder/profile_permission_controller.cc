@@ -1071,6 +1071,23 @@ base::CallbackListSubscription ProfilePermissionController::ObserveBrowsingPrefe
   return browsing_observers_.Add(std::move(callback));
 }
 
+prototype::UserAgentSettings ProfilePermissionController::UserAgent() const {
+  return site_permission_prefs_
+             ? prototype::UserAgentSettingsFromDict(
+                   site_permission_prefs_->GetDict(kUserAgentPrefs))
+             : prototype::UserAgentSettings();
+}
+
+bool ProfilePermissionController::SetUserAgent(
+    const prototype::UserAgentSettings& settings) {
+  if (!CanClearSitePermissions() || !prototype::AreValidUserAgentSettings(settings))
+    return false;
+  site_permission_prefs_->SetDict(kUserAgentPrefs,
+                                  prototype::UserAgentSettingsToDict(settings));
+  browsing_observers_.Notify();
+  return true;
+}
+
 namespace {
 
 using Category = ProfilePermissionController::SiteCategory;

@@ -55,6 +55,8 @@ workspace_presentation_sources = [
   "chromium/prototype/time_machine_view.h",
   "chromium/prototype/toolbar_menu.cc",
   "chromium/prototype/toolbar_menu.h",
+  "chromium/prototype/user_agent_panel.cc",
+  "chromium/prototype/user_agent_panel.h",
   "chromium/prototype/workspace_shell.cc",
   "chromium/prototype/workspace_shell.h",
 ]
@@ -350,6 +352,7 @@ template("zitter_workspace_presentation") {
         ":print_options",
         ":rss_reader",
         ":sidebar_scene",
+        ":user_agent_policy",
         "//base",
         "//components/download/public/common:public",
         "//components/history/core/browser",

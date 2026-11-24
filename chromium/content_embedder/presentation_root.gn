@@ -47,6 +47,26 @@ test("network_policy_tests") {
   ]
 }
 
+source_set("user_agent_policy") {
+  sources = [
+    "chromium/prototype/user_agent_policy.cc",
+    "chromium/prototype/user_agent_policy.h",
+  ]
+  include_dirs = [ "." ]
+  public_deps = [ "//base" ]
+}
+
+test("user_agent_policy_unittests") {
+  sources = [ "chromium/prototype/user_agent_policy_unittest.cc" ]
+  include_dirs = [ "." ]
+  deps = [
+    ":user_agent_policy",
+    "//base/test:run_all_unittests",
+    "//base/test:test_support",
+    "//testing/gtest",
+  ]
+}
+
 # The importer alone, with its messages in their Polish source.
 test("arc_importer_unittests") {
   sources = [

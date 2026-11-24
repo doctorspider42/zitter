@@ -31,6 +31,7 @@
 #include "extensions/browser/user_script_manager.h"
 #include "lab_web_view.h"
 #include "page_password_manager.h"
+#include "user_agent_page.h"
 #include "profile_context.h"
 #include "profile_permission_controller.h"
 #include "profile_download_delegate.h"
@@ -110,7 +111,10 @@
 #include "chromium/prototype/page_dialogs.h"
 #include "chromium/prototype/passwords_panel.h"
 #include "chromium/prototype/time_machine_view.h"
+#include "chromium/app/zitter_version.h"
 #include "chromium/prototype/toolbar_menu.h"
+#include "chromium/prototype/user_agent_panel.h"
+#include "chromium/prototype/user_agent_policy.h"
 #include "chromium/prototype/workspace_session.h"
 #include "chromium/prototype/workspace_shell.h"
 #include "chromium/prototype/workspace_urls.h"
@@ -599,6 +603,7 @@ constexpr char kAdblockCosmeticTrialPage[] = "/work/adblock-cosmetic-trial";
 constexpr char kAdblockCosmeticTrialRule[] = "127.0.0.1##.zitter-trial-sponsor";
 constexpr char kAdblockTrialTarget[] = "/adblock-trial-target";
 constexpr int kAdblockShieldToggleId = 1;
+constexpr int kUserAgentMenuRowId = 7390;
 constexpr int kAdblockShieldRequestsId = 2;
 constexpr int kAdblockShieldEndTrialId = 3;
 
@@ -2300,6 +2305,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
       [](base::WeakPtr<WorkspaceLab> lab) {
         return lab ? lab->ReadAdBlocking() : base::DictValue();
       }, weak);
+  callbacks.read_user_agent = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab) {
+        return lab ? lab->ReadUserAgent() : base::DictValue();
+      }, weak);
+  callbacks.write_user_agent = base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, base::DictValue command) {
+        return lab ? lab->WriteUserAgent(std::move(command)) : std::string();
+      }, weak);
   callbacks.write_ad_blocking = base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, base::DictValue command) {
         return lab ? lab->WriteAdBlocking(std::move(command)) : std::string();
@@ -2533,6 +2546,30 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   fingerprint_button_ = trailing->AddChildView(
       fingerprint_toolbar_->CreateButton(/*private_mode=*/false));
   fingerprint_button_->SetVisible(false);
+  prototype::UserAgentToolbar::Callbacks user_agent;
+  user_agent.palette = palette;
+  user_agent.state = base::BindRepeating(
+      [](WorkspaceLab* lab) { return lab->BuildUserAgentPanelState(); },
+      base::Unretained(this));
+  user_agent.choose = base::BindRepeating(
+      [](WorkspaceLab* lab, const std::string& id) { lab->ChooseUserAgentForSite(id); },
+      base::Unretained(this));
+  user_agent.before_open = base::BindRepeating([](WorkspaceLab* lab) {
+    lab->CloseAdblockShield();
+    lab->CloseExtensionsToolbarMenu();
+    lab->fingerprint_toolbar_->Close();
+    lab->shell_->CloseOverlays(true);
+  }, base::Unretained(this));
+  user_agent.reload = base::BindRepeating([](WorkspaceLab* lab) {
+    lab->RunPageCommand(prototype::PageCommand::kReload);
+  }, base::Unretained(this));
+  user_agent.open_settings = base::BindRepeating([](WorkspaceLab* lab) {
+    lab->shell_->OpenUserAgentSettings();
+  }, base::Unretained(this));
+  user_agent_toolbar_ =
+      std::make_unique<prototype::UserAgentToolbar>(std::move(user_agent));
+  user_agent_button_ = trailing->AddChildView(user_agent_toolbar_->CreateButton());
+  user_agent_button_->SetVisible(false);
   if (!private_owner_ && BundledNightShiftSettingsPage(*contexts_.front()).is_valid()) {
     night_shift_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
         kNightShiftMoon, u"Night Shift",
@@ -3421,6 +3458,8 @@ void WorkspaceLab::ReplaceWorkspaceProfile(size_t index, const std::string& epoc
   if (active) {
     shell_->CloseOverlays(true);
     fingerprint_toolbar_->Close();
+    if (user_agent_toolbar_)
+      user_agent_toolbar_->Close();
     CloseAdblockShield();
     CancelPermissionPrompt();
     media_access_->Stop();
@@ -4252,6 +4291,8 @@ WorkspaceLab::~WorkspaceLab() {
   private_fingerprint_subscription_ = {};
   fingerprint_toolbar_.reset();
   fingerprint_button_ = nullptr;
+  user_agent_toolbar_.reset();
+  user_agent_button_ = nullptr;
   assistant_toolbar_button_ = nullptr;
   extensions_toolbar_button_ = nullptr;
   web_store_install_button_ = nullptr;
@@ -4660,6 +4701,8 @@ bool WorkspaceLab::Activate(std::string_view workspace_id,
       CloseNightShiftSettings();
       ExitPageFullscreen();
       fingerprint_toolbar_->Close();
+      if (user_agent_toolbar_)
+        user_agent_toolbar_->Close();
       address_history_tasks_.TryCancelAll();
       shell_->CloseOverlays(true);
       shell_->HideToast();
@@ -5066,6 +5109,8 @@ bool WorkspaceLab::RunShortcut(std::string id, bool show_tab_switcher) {
   } else if (id == "about") {
     shell_->ShowAbout(private_owner_ ? private_owner_->application_version_
                                      : application_version_);
+  } else if (id == "user_agent") {
+    return OpenUserAgentPanel();
   } else if (id == "fingerprint") {
     fingerprint_toolbar_->Toggle();
     return fingerprint_toolbar_->widget() &&
@@ -5609,6 +5654,8 @@ void WorkspaceLab::ToggleAdblockShield() {
 
   shell_->CloseOverlays(true);
   fingerprint_toolbar_->Close();
+  if (user_agent_toolbar_)
+    user_agent_toolbar_->Close();
   const auto palette = sidebar::design_palette(
       widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark,
       shell_->active_workspace_color());
@@ -9377,6 +9424,9 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
   if (const auto protection = profile.GetFingerprintProtection())
     settings["fingerprint_protection"] = {.value = *protection,
                                           .editable = true};
+  settings["user_agent_client_hints"] = {
+      .value = profile.site_permissions().UserAgent().client_hints,
+      .editable = CanEditWorkspace() && profile.site_permissions().CanClearSitePermissions()};
   if (const auto blocking = profile.GetAdblockEnabled()) {
     settings["ad_blocking"] = {.value = *blocking, .editable = true};
     if (AdblockLists()) {
@@ -9530,8 +9580,16 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
     if (!profile.SetFingerprintProtection(value == 1))
       return false;
     fingerprint_toolbar_->Close();
+    if (user_agent_toolbar_)
+      user_agent_toolbar_->Close();
     UpdateFingerprintToolbar();
     return true;
+  }
+  if (key == "user_agent_client_hints") {
+    return WriteUserAgent(base::DictValue()
+                              .Set("command", "client_hints")
+                              .Set("enabled", value == 1))
+               .empty();
   }
   if (key == "ad_blocking") {
     if (!CanEditWorkspace() || !profile.SetAdblockEnabled(value == 1))
@@ -9564,6 +9622,236 @@ void WorkspaceLab::UpdateFingerprintToolbar() {
   }
   fingerprint_toolbar_->UpdateButton(private_mode);
   fingerprint_toolbar_->Refresh();
+}
+
+std::string WorkspaceLab::UserAgentSiteKey(
+    const prototype::UserAgentSettings& settings) const {
+  auto* page = web_contents();
+  if (!page)
+    return {};
+  const GURL url = page->GetLastCommittedURL();
+  if (!url.SchemeIsHTTPOrHTTPS())
+    return {};
+  const auto resolved = prototype::ResolveUserAgent(settings, url.host());
+  return resolved.source == prototype::UserAgentSource::kSite
+             ? resolved.matched_host
+             : prototype::NormalizeUserAgentHost(url.host());
+}
+
+prototype::UserAgentPanelState WorkspaceLab::BuildUserAgentPanelState() const {
+  prototype::UserAgentPanelState state;
+  const auto& permissions = WorkspaceProfile(active_index_)->site_permissions();
+  const auto settings = permissions.UserAgent();
+  state.mode = prototype::UserAgentPresetName(settings.mode);
+  const auto key = UserAgentSiteKey(settings);
+  if (key.empty())
+    return state;
+  const GURL url = web_contents()->GetLastCommittedURL();
+  state.host = base::UTF8ToUTF16(prototype::NormalizeUserAgentHost(url.host()));
+  state.selected = prototype::FindUserAgentSiteException(settings, key)
+                       .value_or(prototype::kUserAgentAuto);
+  state.applied = CommittedUserAgentPreset(*web_contents()).value_or(std::string());
+  auto without_site = settings;
+  std::erase_if(without_site.sites, [&](const auto& site) { return site.host == key; });
+  const auto automatic = prototype::ResolveUserAgent(without_site, url.host());
+  state.catalog = automatic.source == prototype::UserAgentSource::kCatalog;
+  const int chrome_major = prototype::ChromeMajorVersion(DefaultUserAgent());
+  auto add = [&](std::string id, std::u16string detail, std::string preset) {
+    prototype::UserAgentPanelState::Option option;
+    option.name = prototype::UserAgentPresetName(id);
+    option.id = std::move(id);
+    option.detail = std::move(detail);
+    option.ua = prototype::UserAgentString(settings, preset, DefaultUserAgent(),
+                                           ZITTER_VERSION_STRING);
+    option.preset = std::move(preset);
+    state.options.push_back(std::move(option));
+  };
+  add(prototype::kUserAgentAuto,
+      prototype::UserAgentPresetName(automatic.preset) +
+          (state.catalog ? prototype::T(u" · katalog") : prototype::T(u" · domyślnie")),
+      automatic.preset);
+  add(prototype::kUserAgentChrome, u"Chrome " + base::NumberToString16(chrome_major),
+      prototype::kUserAgentChrome);
+  add(prototype::kUserAgentZitter, u"Chrome + Zitter", prototype::kUserAgentZitter);
+  add(prototype::kUserAgentFirefox, u"Firefox " + base::NumberToString16(chrome_major + 1),
+      prototype::kUserAgentFirefox);
+  add(prototype::kUserAgentSafari, u"Safari · macOS", prototype::kUserAgentSafari);
+  for (const auto& agent : settings.custom) {
+    const auto id = prototype::kUserAgentCustomPrefix + agent.name;
+    add(id, prototype::T(u"Własny"), id);
+  }
+  return state;
+}
+
+void WorkspaceLab::ChooseUserAgentForSite(const std::string& id) {
+  if (!CanEditWorkspace())
+    return;
+  auto& permissions = WorkspaceProfile(active_index_)->site_permissions();
+  auto settings = permissions.UserAgent();
+  const auto key = UserAgentSiteKey(settings);
+  if (key.empty())
+    return;
+  std::erase_if(settings.sites, [&](const auto& site) { return site.host == key; });
+  if (id != prototype::kUserAgentAuto) {
+    if (!prototype::IsKnownUserAgentPreset(settings, id) ||
+        settings.sites.size() >= prototype::kMaxUserAgentSites) {
+      return;
+    }
+    settings.sites.push_back({key, id});
+  }
+  permissions.SetUserAgent(settings);
+  UpdateUserAgentToolbar();
+}
+
+void WorkspaceLab::UpdateUserAgentToolbar() {
+  if (!user_agent_toolbar_)
+    return;
+  const auto settings = WorkspaceProfile(active_index_)->site_permissions().UserAgent();
+  if (user_agent_button_) {
+    const bool visible = !smoke_ && settings.pinned;
+    if (user_agent_button_->GetVisible() != visible) {
+      user_agent_button_->SetVisible(visible);
+      user_agent_button_->parent()->InvalidateLayout();
+    }
+  }
+  const auto key = UserAgentSiteKey(settings);
+  user_agent_toolbar_->UpdateButton(
+      !key.empty() && prototype::FindUserAgentSiteException(settings, key).has_value());
+}
+
+bool WorkspaceLab::OpenUserAgentPanel() {
+  if (!user_agent_toolbar_)
+    return false;
+  views::View* anchor = user_agent_button_ && user_agent_button_->IsDrawn()
+                            ? user_agent_button_.get()
+                            : extensions_toolbar_button_.get();
+  user_agent_toolbar_->Open(anchor);
+  return user_agent_toolbar_->widget() && !user_agent_toolbar_->widget()->IsClosed();
+}
+
+base::DictValue WorkspaceLab::ReadUserAgent() const {
+  const auto& permissions = WorkspaceProfile(active_index_)->site_permissions();
+  const auto settings = permissions.UserAgent();
+  base::ListValue catalog;
+  for (const auto& entry : prototype::UserAgentCatalog()) {
+    catalog.Append(base::DictValue()
+                       .Set("host", entry.host)
+                       .Set("name", base::UTF16ToUTF8(
+                                        prototype::UserAgentPresetName(entry.preset))));
+  }
+  base::ListValue sites;
+  for (const auto& site : settings.sites) {
+    sites.Append(base::DictValue()
+                     .Set("host", site.host)
+                     .Set("preset", site.preset)
+                     .Set("name", base::UTF16ToUTF8(
+                                      prototype::UserAgentPresetName(site.preset))));
+  }
+  base::ListValue custom;
+  for (const auto& agent : settings.custom) {
+    base::ListValue uses;
+    for (const auto& site : settings.sites) {
+      if (site.preset == prototype::kUserAgentCustomPrefix + agent.name)
+        uses.Append(site.host);
+    }
+    custom.Append(base::DictValue()
+                      .Set("name", agent.name)
+                      .Set("ua", agent.ua)
+                      .Set("uses", std::move(uses)));
+  }
+  base::ListValue presets;
+  for (const char* id : {prototype::kUserAgentChrome, prototype::kUserAgentZitter,
+                         prototype::kUserAgentFirefox, prototype::kUserAgentSafari}) {
+    presets.Append(base::DictValue().Set("id", id).Set(
+        "name", base::UTF16ToUTF8(prototype::UserAgentPresetName(id))));
+  }
+  for (const auto& agent : settings.custom) {
+    presets.Append(base::DictValue()
+                       .Set("id", prototype::kUserAgentCustomPrefix + agent.name)
+                       .Set("name", agent.name));
+  }
+  return base::DictValue()
+      .Set("editable", CanEditWorkspace() && permissions.CanClearSitePermissions())
+      .Set("mode", settings.mode)
+      .Set("client_hints", settings.client_hints)
+      .Set("pinned", settings.pinned)
+      .Set("version", ZITTER_VERSION_STRING)
+      .Set("chrome_major", prototype::ChromeMajorVersion(DefaultUserAgent()))
+      .Set("catalog", std::move(catalog))
+      .Set("sites", std::move(sites))
+      .Set("custom", std::move(custom))
+      .Set("presets", std::move(presets));
+}
+
+std::string WorkspaceLab::WriteUserAgent(base::DictValue command) {
+  const auto* action = command.FindString("command");
+  if (!action || !CanEditWorkspace())
+    return {};
+  auto& permissions = WorkspaceProfile(active_index_)->site_permissions();
+  auto settings = permissions.UserAgent();
+  const auto* value = command.FindString("value");
+  const auto* site = command.FindString("site");
+  const auto* name = command.FindString("name");
+  if (*action == "mode" && value) {
+    settings.mode = *value;
+  } else if (*action == "client_hints" || *action == "pinned") {
+    const auto enabled = command.FindBool("enabled");
+    if (!enabled)
+      return {};
+    (*action == "pinned" ? settings.pinned : settings.client_hints) = *enabled;
+  } else if (*action == "site_set" && site && value) {
+    const auto host = prototype::NormalizeUserAgentHost(*site);
+    if (host.empty())
+      return base::UTF16ToUTF8(prototype::T(u"Wpisz adres witryny, np. example.com"));
+    std::erase_if(settings.sites, [&](const auto& entry) { return entry.host == host; });
+    settings.sites.push_back({host, *value});
+  } else if (*action == "site_remove" && site) {
+    std::erase_if(settings.sites, [&](const auto& entry) { return entry.host == *site; });
+  } else if ((*action == "custom_add" || *action == "custom_edit") && name && value) {
+    const auto* previous = command.FindString("previous");
+    const std::string old_name = previous ? *previous : *name;
+    prototype::CustomUserAgent agent{
+        std::string(base::TrimWhitespaceASCII(*name, base::TRIM_ALL)),
+        std::string(base::TrimWhitespaceASCII(*value, base::TRIM_ALL))};
+    if (!prototype::IsValidCustomUserAgent(agent))
+      return base::UTF16ToUTF8(prototype::T(u"Podaj nazwę i User-Agent w jednej linii"));
+    const bool taken = std::ranges::any_of(settings.custom, [&](const auto& other) {
+      return other.name == agent.name && (*action == "custom_add" || other.name != old_name);
+    });
+    if (taken)
+      return base::UTF16ToUTF8(prototype::T(u"Masz już User-Agenta o tej nazwie"));
+    const auto it =
+        std::ranges::find(settings.custom, old_name, &prototype::CustomUserAgent::name);
+    if (*action == "custom_edit") {
+      if (it == settings.custom.end())
+        return {};
+      const auto old_id = prototype::kUserAgentCustomPrefix + old_name;
+      const auto new_id = prototype::kUserAgentCustomPrefix + agent.name;
+      for (auto& entry : settings.sites) {
+        if (entry.preset == old_id)
+          entry.preset = new_id;
+      }
+      if (settings.mode == old_id)
+        settings.mode = new_id;
+      *it = std::move(agent);
+    } else {
+      if (settings.custom.size() >= prototype::kMaxCustomUserAgents)
+        return base::UTF16ToUTF8(prototype::T(u"Masz już 20 własnych User-Agentów"));
+      settings.custom.push_back(std::move(agent));
+    }
+  } else if (*action == "custom_remove" && name) {
+    const auto id = prototype::kUserAgentCustomPrefix + *name;
+    std::erase_if(settings.custom, [&](const auto& agent) { return agent.name == *name; });
+    std::erase_if(settings.sites, [&](const auto& entry) { return entry.preset == id; });
+    if (settings.mode == id)
+      settings.mode = prototype::kUserAgentAuto;
+  } else {
+    return {};
+  }
+  if (!permissions.SetUserAgent(settings))
+    return base::UTF16ToUTF8(prototype::T(u"Nie udało się zapisać ustawień User-Agent"));
+  UpdateUserAgentToolbar();
+  return {};
 }
 
 void WorkspaceLab::SelectWorkspace(std::string id) {
@@ -12517,6 +12805,7 @@ void WorkspaceLab::RefreshShell() {
   RefreshExtensionActionAppearance();
   UpdateAdblockShield();
   UpdateFingerprintToolbar();
+  UpdateUserAgentToolbar();
 }
 
 void WorkspaceLab::PopulateSidebarState(size_t workspace,
@@ -12613,6 +12902,8 @@ void WorkspaceLab::DidStartNavigation(content::NavigationHandle* navigation) {
     shell_->ResetFind();
     find_page_.reset();
     CloseAdblockShield();
+    if (user_agent_toolbar_)
+      user_agent_toolbar_->Close();
     CancelPermissionPrompt();
     media_access_->CancelPending();
   }
@@ -12809,6 +13100,8 @@ void WorkspaceLab::LoadFingerprintProbeStep() {
       return;
     }
     fingerprint_toolbar_->Close();
+    if (user_agent_toolbar_)
+      user_agent_toolbar_->Close();
   }
 
   if ((step.action == Action::kRotate || step.action == Action::kDisable) &&
@@ -18896,6 +19189,8 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
   shell_->CloseOverlays(true);
   CloseAdblockShield();
   fingerprint_toolbar_->Close();
+  if (user_agent_toolbar_)
+    user_agent_toolbar_->Close();
 
   extensions_toolbar_menu_ = std::make_unique<views::BubbleDialogDelegate>(
       extensions_toolbar_button_, views::BubbleBorder::TOP_RIGHT);
@@ -19030,6 +19325,53 @@ void WorkspaceLab::ShowExtensionsToolbarMenu() {
   }
   if (empty)
     add_row(nullptr, prototype::T(u"Brak zainstalowanych rozszerzeń"), 36, {})->SetEnabled(false);
+  if (user_agent_toolbar_) {
+    const auto state = BuildUserAgentPanelState();
+    const auto settings = profile.site_permissions().UserAgent();
+    std::u16string status = prototype::TF(u"{} · wszędzie", {state.mode});
+    if (!state.host.empty()) {
+      const auto chosen = std::ranges::find(state.options, state.selected,
+                                            &prototype::UserAgentPanelState::Option::id);
+      if (chosen != state.options.end()) {
+        status = state.selected == prototype::kUserAgentAuto
+                     ? prototype::TF(u"Auto · tu jako {}",
+                                     {prototype::UserAgentPresetName(chosen->preset)})
+                     : prototype::TF(u"Wyjątek · tu jako {}", {chosen->name});
+      }
+    }
+    auto* row = body->AddChildView(std::make_unique<prototype::MenuRow>(
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+          if (!lab)
+            return;
+          lab->CloseExtensionsToolbarMenu();
+          lab->OpenUserAgentPanel();
+        }, weak), colors, 44));
+    row->SetID(kUserAgentMenuRowId);
+    row->Init();
+    row->SetText(u"User-Agent", std::move(status), false, 16);
+    constexpr char kIdentity[] =
+        "M3.8 3.2h8.4a2 2 0 0 1 2 2v5.6a2 2 0 0 1-2 2H3.8a2 2 0 0 1-2-2V5.2a2 2 0 0 1 2-2z"
+        "M3.8 10.6l1-1.2h2l1 1.2M9.6 6.6h2.6M9.6 9h1.8";
+    auto icon = std::make_unique<ContentToolbarButton>(
+        kIdentity, u"User-Agent", views::Button::PressedCallback(), palette);
+    icon->SetPreferredSize(gfx::Size(20, 20));
+    icon->SetCanProcessEventsWithinSubtree(false);
+    icon->GetViewAccessibility().SetIsIgnored(true);
+    row->AddChildViewAt(std::move(icon), 0);
+    constexpr char kPin[] = "M6 2.5h4l-.5 4 2 2h-7l2-2zM8 8.5V14";
+    auto pin = std::make_unique<ContentToolbarButton>(
+        kPin, settings.pinned ? prototype::T(u"Odepnij User-Agent")
+                              : prototype::T(u"Przypnij User-Agent"),
+        base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab, bool pinned) {
+          if (!lab)
+            return;
+          lab->WriteUserAgent(base::DictValue().Set("command", "pinned").Set("enabled", pinned));
+          lab->CloseExtensionsToolbarMenu();
+        }, weak, !settings.pinned), palette);
+    pin->SetToggledAppearance(settings.pinned);
+    pin->SetEnabled(CanEditWorkspace());
+    row->AddTrailing(row->AddChildView(std::move(pin)), settings.pinned);
+  }
   if (!private_owner_) {
     body->AddChildView(std::make_unique<prototype::MenuSeparator>(colors.line));
     add_row(prototype::kGearIcon, prototype::T(u"Zarządzaj rozszerzeniami"),
@@ -19229,6 +19571,8 @@ content::WebContents* WorkspaceLab::ShowExtensionBubble(
   CloseNightShiftSettings();
   CloseAdblockShield();
   fingerprint_toolbar_->Close();
+  if (user_agent_toolbar_)
+    user_agent_toolbar_->Close();
   shell_->CloseOverlays(true);
   extension_popup_delegate_ = std::make_unique<views::BubbleDialogDelegate>(
       extensions_toolbar_button_, views::BubbleBorder::TOP_RIGHT,
@@ -19348,6 +19692,8 @@ bool WorkspaceLab::OpenNightShiftSettings(content::RenderFrameHost* document,
   CloseAdblockShield();
   CloseExtensionsToolbarMenu();
   fingerprint_toolbar_->Close();
+  if (user_agent_toolbar_)
+    user_agent_toolbar_->Close();
   night_shift_widget_.reset();
   night_shift_panel_ = std::make_unique<views::BubbleDialogDelegate>(
       night_shift_button_, views::BubbleBorder::TOP_RIGHT);

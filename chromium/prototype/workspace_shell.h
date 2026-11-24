@@ -284,6 +284,10 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<base::DictValue()> read_ad_blocking;
     base::RepeatingCallback<std::string(base::DictValue)> write_ad_blocking;
     base::RepeatingClosure open_ad_blocking_rules;
+    // Settings → User-Agent: mode, catalogue, site exceptions and own agents;
+    // a write answers with an error to show, or nothing.
+    base::RepeatingCallback<base::DictValue()> read_user_agent;
+    base::RepeatingCallback<std::string(base::DictValue)> write_user_agent;
     base::RepeatingCallback<bool(std::string, std::string)> write_text_preference;
     base::RepeatingCallback<std::vector<SitePreferenceRule>()> read_site_preferences;
     base::RepeatingCallback<bool(std::string, std::string, int)> write_site_preference;
@@ -351,6 +355,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void OpenAssistantSettings();
   void ShowAssistantKeyDialog(views::Widget* owner = nullptr);
   void OpenAdBlockingSettings();
+  void OpenUserAgentSettings();
+  void RefreshUserAgentPreferences();
+  views::View* user_agent_sites_for_testing() const { return user_agent_sites_; }
   // Lists, sites or rules changed: the Settings card rebuilds after the click
   // that changed them has finished.
   void RefreshAdBlockingPreferences();
@@ -1184,6 +1191,7 @@ class WorkspaceShell final : public ui::EventHandler,
                                   std::string_view only_provider = {});
   void ShowAssistantBackendInput(views::Widget* owner, std::string provider, std::u16string value);
   void BuildAdBlockingPreferences();
+  void BuildUserAgentPreferences();
   void SaveSitePreference();
   void SaveGeneralPatch(std::optional<ThemeMode> theme, std::optional<SearchEngine> search, std::optional<bool> animations, std::optional<bool> workspace_names = std::nullopt, std::optional<bool> folders_collapsed = std::nullopt, std::optional<std::pair<bool, int>> time_machine = std::nullopt, std::optional<std::pair<bool, bool>> updates = std::nullopt, std::optional<bool> online_search_suggestions = std::nullopt);
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
@@ -1509,6 +1517,21 @@ class WorkspaceShell final : public ui::EventHandler,
   bool ad_blocking_sources_open_ = false;
   std::string ad_blocking_snapshot_;
   bool ad_blocking_refresh_pending_ = false;
+  // User-Agent cards: the mode, the catalogue, the exceptions, own agents.
+  raw_ptr<views::View> user_agent_mode_ = nullptr;
+  raw_ptr<views::View> user_agent_catalog_ = nullptr;
+  raw_ptr<views::View> user_agent_sites_ = nullptr;
+  raw_ptr<views::View> user_agent_custom_ = nullptr;
+  raw_ptr<EditorControl> user_agent_site_field_ = nullptr;
+  raw_ptr<views::View> user_agent_site_picker_ = nullptr;
+  raw_ptr<EditorControl> user_agent_name_field_ = nullptr;
+  raw_ptr<EditorControl> user_agent_ua_field_ = nullptr;
+  // The own agent open in the editor, by name.
+  std::string user_agent_editing_;
+  std::u16string user_agent_error_;
+  bool user_agent_error_in_sites_ = false;
+  std::string user_agent_snapshot_;
+  bool user_agent_refresh_pending_ = false;
   raw_ptr<views::View> site_rules_card_ = nullptr;
   std::vector<SitePreferenceRule> site_preference_rules_;
   size_t site_rules_limit_ = 50;

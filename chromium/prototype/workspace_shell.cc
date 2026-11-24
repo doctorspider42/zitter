@@ -275,7 +275,8 @@ class SceneParentNodes final {
 
 namespace {
 
-constexpr size_t kExtensionsPreferenceCategory = 12;
+constexpr size_t kUserAgentPreferenceCategory = 12;
+constexpr size_t kExtensionsPreferenceCategory = 13;
 
 sidebar::PreferenceSpec ExtensionPreference(const std::string& key,
                                             const std::u16string& title) {
@@ -6147,6 +6148,12 @@ void WorkspaceShell::Attach(views::Widget* widget, ui::AcceleratorTarget* target
                                    shell->weak_factory_.GetWeakPtr(), std::string(panel == "extensions" ? "extensions" : "night_shift")),
                     base::Seconds(4));
                 else if (panel == "ad-blocking") shell->OpenAdBlockingSettings();
+                else if (panel == "user-agent-settings") shell->OpenUserAgentSettings();
+                // After the restored page has loaded: the panel shows its site.
+                else if (panel == "user-agent") base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE,
+                    base::BindOnce([](base::WeakPtr<WorkspaceShell> shell) { if (shell) shell->callbacks_.run_shortcut.Run("user_agent"); },
+                                   shell->weak_factory_.GetWeakPtr()),
+                    base::Seconds(4));
                 else if (panel == "privacy") {shell->OpenPrivacySettings();shell->general_widget_->LayoutRootViewIfNecessary();for(auto& row:shell->preference_sections_[2].rows)if(row.keywords.find(u"fingerprint")!=std::u16string::npos)row.view->ScrollViewToVisible();}
                 else if (panel == "profiles") shell->OpenProfiles();
                 // A sample undo toast; its „Cofnij” does nothing.
@@ -6335,6 +6342,15 @@ void WorkspaceShell::Detach() {
   ad_blocking_sites_ = nullptr;
   ad_blocking_rules_ = nullptr;
   ad_blocking_update_ = nullptr;
+  user_agent_mode_ = nullptr;
+  user_agent_catalog_ = nullptr;
+  user_agent_sites_ = nullptr;
+  user_agent_custom_ = nullptr;
+  user_agent_site_field_ = nullptr;
+  user_agent_site_picker_ = nullptr;
+  user_agent_name_field_ = nullptr;
+  user_agent_ua_field_ = nullptr;
+  user_agent_snapshot_.clear();
   preferences_navigation_ = nullptr; preferences_category_picker_ = nullptr;preferences_close_=nullptr;
   install_extension_button_ = nullptr;
   preferences_search_ = nullptr; preferences_profile_ = nullptr; preferences_empty_ = nullptr; preferences_body_ = nullptr;
@@ -11068,6 +11084,8 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
       else if(spec.kind==Kind::FoldersCollapsed){folders_collapsed_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetPinnedFoldersCollapsed(ToggleOn(shell->folders_collapsed_check_));},weak));}
       else if(spec.kind==Kind::WorkspaceNames){workspace_names_check_=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell){if(shell)shell->SetWorkspaceNames(ToggleOn(shell->workspace_names_check_));},weak));}
       else{preference_toggles_[key]=control;SetActionCallback(control,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,std::string key){if(shell)shell->WritePreference(key,ToggleOn(shell->preference_toggles_.at(key)));},weak,key));}
+      // A longer explanation on hover (the client hints switch).
+      if(!spec.tooltip.empty()){row->SetTooltipText(base::UTF8ToUTF16(std::string(spec.tooltip)));control->SetTooltipText(base::UTF8ToUTF16(std::string(spec.tooltip)));}
       if (key == "spellcheck" && callbacks_.read_spelling)
         BuildSpellingPreferences(preference_sections_[spec.category].view);
       constexpr std::string_view kExtensionPrefix = "extension_enabled.";
@@ -11228,6 +11246,14 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
         PreferenceAction(row,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::Event&){
           if(shell&&shell->callbacks_.open_ad_blocking_rules)shell->callbacks_.open_ad_blocking_rules.Run();},weak),T(u"Edytuj reguły"));
         break;
+      case Kind::UserAgentMode:
+        user_agent_mode_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(user_agent_mode_,true,gfx::Insets(),6);break;
+      case Kind::UserAgentCatalog:
+        user_agent_catalog_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(user_agent_catalog_,true,gfx::Insets::TLBR(8,0,0,0),6);break;
+      case Kind::UserAgentSites:
+        user_agent_sites_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(user_agent_sites_,true,gfx::Insets::TLBR(8,0,0,0),6);break;
+      case Kind::UserAgentCustom:
+        user_agent_custom_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(user_agent_custom_,true,gfx::Insets::TLBR(8,0,0,0),6);break;
       case Kind::SiteRules:
         site_rules_card_=row;site_rules_list_=row->children().front()->AddChildView(std::make_unique<views::View>());SetSidebarPanelLayout(site_rules_list_,true,gfx::Insets(),8);break;
       case Kind::ClearData:{
@@ -11605,6 +11631,7 @@ void WorkspaceShell::RefreshGeneralControls() {
   RefreshUpdateControls();
   BuildAssistantPreferences();
   BuildAdBlockingPreferences();
+  BuildUserAgentPreferences();
 }
 void WorkspaceShell::RefreshAdBlockingPreferences() {
   if(ad_blocking_refresh_pending_)return;ad_blocking_refresh_pending_=true;
@@ -12123,6 +12150,319 @@ void WorkspaceShell::ShowAssistantBackendInput(views::Widget* owner, std::string
 void WorkspaceShell::OpenAssistantSettings() {
   OpenGeneralSettings();
   if (general_widget_ && general_widget_->IsVisible()) SelectPreferenceCategory(10);
+}
+void WorkspaceShell::OpenUserAgentSettings() {
+  OpenGeneralSettings();
+  if (general_widget_ && general_widget_->IsVisible())
+    SelectPreferenceCategory(kUserAgentPreferenceCategory);
+}
+void WorkspaceShell::RefreshUserAgentPreferences() {
+  if (user_agent_refresh_pending_)
+    return;
+  user_agent_refresh_pending_ = true;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(
+                     [](base::WeakPtr<WorkspaceShell> shell) {
+                       if (!shell)
+                         return;
+                       shell->user_agent_refresh_pending_ = false;
+                       shell->BuildUserAgentPreferences();
+                     },
+                     weak_factory_.GetWeakPtr()));
+}
+void WorkspaceShell::BuildUserAgentPreferences() {
+  if (!user_agent_mode_ || !user_agent_catalog_ || !user_agent_sites_ ||
+      !user_agent_custom_ || !callbacks_.read_user_agent) {
+    return;
+  }
+  auto data = callbacks_.read_user_agent.Run();
+  const auto snapshot = base::WriteJson(data).value_or("") + "|" + user_agent_editing_ +
+                        "|" + base::UTF16ToUTF8(user_agent_error_);
+  if (snapshot == user_agent_snapshot_)
+    return;
+  user_agent_snapshot_ = snapshot;
+  auto weak = weak_factory_.GetWeakPtr();
+  auto text = [](const base::DictValue& d, const char* key) {
+    const auto* v = d.FindString(key);
+    return v ? base::UTF8ToUTF16(*v) : std::u16string();
+  };
+  auto string = [](const base::DictValue& d, const char* key) {
+    const auto* v = d.FindString(key);
+    return v ? *v : std::string();
+  };
+  auto muted = [&](views::View* parent, std::u16string value) {
+    return AddPreferenceCopy(parent, std::move(value), kMuted, -1,
+                             static_cast<int>(gfx::Font::Weight::NORMAL), true);
+  };
+  // A write answers with an error to show, or nothing.
+  auto write = [](base::WeakPtr<WorkspaceShell> shell, base::DictValue command) {
+    if (!shell || !shell->callbacks_.write_user_agent)
+      return;
+    const auto* action = command.FindString("command");
+    shell->user_agent_error_in_sites_ = action && action->starts_with("site");
+    shell->user_agent_error_ =
+        base::UTF8ToUTF16(shell->callbacks_.write_user_agent.Run(std::move(command)));
+    shell->RefreshUserAgentPreferences();
+  };
+  const bool editable = data.FindBool("editable").value_or(false);
+  const std::string mode = string(data, "mode");
+  const int chrome_major = data.FindInt("chrome_major").value_or(0);
+  // Presets offered for a site, all built in ones and the own agents.
+  std::vector<std::pair<std::string, std::u16string>> presets;
+  if (const auto* list = data.FindList("presets")) {
+    for (const auto& item : *list) {
+      const auto& preset = item.GetDict();
+      presets.emplace_back(string(preset, "id"), text(preset, "name"));
+    }
+  }
+  auto preset_index = [&](const std::string& id) -> std::optional<size_t> {
+    for (size_t i = 0; i < presets.size(); ++i) {
+      if (presets[i].first == id)
+        return i;
+    }
+    return std::nullopt;
+  };
+  // Pickers share one width so the column keeps one edge.
+  auto preset_picker = [&](views::View* parent, std::u16string name,
+                           const std::string& selected) {
+    auto* picker = ChoicePicker(parent, std::move(name), {});
+    ReplacePickerOptions(picker, presets);
+    SetPickerIndex(picker, preset_index(selected));
+    picker->SetPreferredSize(gfx::Size(132, picker->GetPreferredSize().height()));
+    picker->SetEnabled(editable);
+    return picker;
+  };
+
+  // The mode: Auto first, then each preset; the line under it says what the
+  // choice does.
+  user_agent_mode_->RemoveAllChildViews();
+  {
+    std::vector<std::pair<std::string, std::u16string>> modes = {
+        {"auto", T(u"Auto (zalecane)")}};
+    modes.insert(modes.end(), presets.begin(), presets.end());
+    auto* line = user_agent_mode_->AddChildView(std::make_unique<views::View>());
+    auto* picker = ChoicePicker(line, T(u"Przedstawiaj się jako"), {});
+    ReplacePickerOptions(picker, modes);
+    for (size_t i = 0; i < modes.size(); ++i) {
+      if (modes[i].first == mode)
+        SetPickerIndex(picker, i);
+    }
+    picker->SetEnabled(editable);
+    SetPickerCallback(picker, base::BindRepeating(
+        [](decltype(write) write, base::WeakPtr<WorkspaceShell> shell,
+           std::vector<std::pair<std::string, std::u16string>> modes, views::View* picker) {
+          const auto index = PickerIndex(picker);
+          if (index && *index < modes.size())
+            write(shell, base::DictValue().Set("command", "mode").Set("value", modes[*index].first));
+        },
+        write, weak, modes, base::Unretained(picker)));
+    std::u16string about;
+    if (mode == "auto")
+      about = T(u"Chrome wszędzie, a tam, gdzie trzeba, preset z katalogu Zittera.");
+    else if (mode == "chrome")
+      about = TF(u"Zawsze czysty Chrome {}, także tam, gdzie katalog mówi inaczej.",
+                 {base::NumberToString16(chrome_major)});
+    else if (mode == "zitter")
+      about = TF(u"Chrome z dopiskiem Zitter/{} i marką Zitter w Client Hints.",
+                 {text(data, "version")});
+    else if (mode == "firefox" || mode == "safari")
+      about = T(u"Niektóre strony mogą wtedy działać gorzej: Zitter to nadal Chromium.");
+    else
+      about = T(u"Twój User-Agent, bez Client Hints.");
+    muted(line, about);
+    SetSidebarPanelLayout(line, true, gfx::Insets(), 6);
+  }
+
+  // The catalogue: the sites Zitter ships a preset for, then everything else.
+  user_agent_catalog_->RemoveAllChildViews();
+  if (const auto* catalog = data.FindList("catalog")) {
+    for (const auto& item : *catalog) {
+      const auto& entry = item.GetDict();
+      auto* line = user_agent_catalog_->AddChildView(std::make_unique<views::View>());
+      auto* host = AddPreferenceCopy(line, text(entry, "host"), kInk, 0,
+                                     static_cast<int>(gfx::Font::Weight::NORMAL), false);
+      muted(line, text(entry, "name"));
+      SetSidebarPanelLayout(line, false, gfx::Insets(), 12, host, true);
+    }
+    auto* rest = user_agent_catalog_->AddChildView(std::make_unique<views::View>());
+    auto* label = muted(rest, T(u"Pozostałe witryny"));
+    muted(rest, u"Chrome");
+    SetSidebarPanelLayout(rest, false, gfx::Insets(), 12, label, true);
+  }
+  if (mode != "auto")
+    muted(user_agent_catalog_, T(u"Nieaktywny: wybrałeś stały preset powyżej."));
+
+  // Site exceptions: the host, its preset and removal; then a line to add one.
+  user_agent_sites_->RemoveAllChildViews();
+  if (const auto* sites = data.FindList("sites")) {
+    for (const auto& item : *sites) {
+      const auto& site = item.GetDict();
+      const std::string host = string(site, "host");
+      auto* line = user_agent_sites_->AddChildView(std::make_unique<views::View>());
+      auto* name = AddPreferenceCopy(line, base::UTF8ToUTF16(host), kInk, 0,
+                                     static_cast<int>(gfx::Font::Weight::NORMAL), false);
+      auto* picker = preset_picker(line, TF(u"Preset dla {}", {base::UTF8ToUTF16(host)}),
+                                   string(site, "preset"));
+      SetPickerCallback(picker, base::BindRepeating(
+          [](decltype(write) write, base::WeakPtr<WorkspaceShell> shell, std::string host,
+             std::vector<std::pair<std::string, std::u16string>> presets, views::View* picker) {
+            const auto index = PickerIndex(picker);
+            if (index && *index < presets.size()) {
+              write(shell, base::DictValue().Set("command", "site_set").Set("site", host)
+                               .Set("value", presets[*index].first));
+            }
+          },
+          write, weak, host, presets, base::Unretained(picker)));
+      auto* remove = PreferenceAction(line, base::BindRepeating(
+          [](decltype(write) write, base::WeakPtr<WorkspaceShell> shell, std::string host,
+             const ui::Event&) {
+            write(shell, base::DictValue().Set("command", "site_remove").Set("site", host));
+          },
+          write, weak, host), T(u"Usuń"));
+      remove->GetViewAccessibility().SetName(TF(u"Usuń wyjątek {}", {base::UTF8ToUTF16(host)}));
+      remove->SetPreferredSize(gfx::Size(96, remove->GetPreferredSize().height()));
+      remove->SetEnabled(editable);
+      if (auto* button = views::AsViewClass<SceneTextButton>(remove))
+        button->SetKind(6);
+      SetSidebarPanelLayout(line, false, gfx::Insets(), 8, name, true);
+    }
+  }
+  {
+    auto* add = user_agent_sites_->AddChildView(std::make_unique<views::View>());
+    user_agent_site_field_ = AddEditor(add);
+    user_agent_site_field_->SetPlaceholderText(u"example.com");
+    user_agent_site_field_->GetViewAccessibility().SetName(T(u"Adres witryny dla wyjątku User-Agent"));
+    user_agent_site_picker_ = preset_picker(add, T(u"Preset dla nowej witryny"), "firefox");
+    auto submit = base::BindRepeating(
+        [](decltype(write) write, base::WeakPtr<WorkspaceShell> shell,
+           std::vector<std::pair<std::string, std::u16string>> presets) {
+          if (!shell || !shell->user_agent_site_field_)
+            return;
+          const auto site = base::UTF16ToUTF8(
+              base::TrimWhitespace(shell->user_agent_site_field_->GetText(), base::TRIM_ALL));
+          const auto index = PickerIndex(shell->user_agent_site_picker_);
+          if (site.empty() || !index || *index >= presets.size())
+            return;
+          write(shell, base::DictValue().Set("command", "site_set").Set("site", site)
+                           .Set("value", presets[*index].first));
+        },
+        write, weak, presets);
+    user_agent_site_field_->SetCallbacks({}, base::BindRepeating(
+        [](base::RepeatingClosure submit, const ui::KeyEvent& event) {
+          if (event.type() != ui::EventType::kKeyPressed || event.key_code() != ui::VKEY_RETURN)
+            return false;
+          submit.Run();
+          return true;
+        },
+        submit));
+    auto* button = PreferenceAction(add, base::BindRepeating(
+        [](base::RepeatingClosure submit, const ui::Event&) { submit.Run(); }, submit),
+        T(u"Dodaj witrynę"));
+    button->SetPreferredSize(gfx::Size(96, button->GetPreferredSize().height()));
+    button->SetEnabled(editable);
+    SetSidebarPanelLayout(add, false, gfx::Insets::TLBR(4, 0, 0, 0), 8,
+                          user_agent_site_field_->view(), true);
+    if (user_agent_error_in_sites_ && !user_agent_error_.empty()) {
+      if (auto* copy = views::AsViewClass<PreferenceCopy>(muted(user_agent_sites_, user_agent_error_)))
+        copy->SetInk(Palette(user_agent_sites_).danger);
+    }
+  }
+
+  // Own agents: name and where they are used; the string only in the editor.
+  user_agent_custom_->RemoveAllChildViews();
+  std::u16string editing_ua;
+  if (const auto* custom = data.FindList("custom")) {
+    for (const auto& item : *custom) {
+      const auto& agent = item.GetDict();
+      const std::string name = string(agent, "name");
+      if (name == user_agent_editing_)
+        editing_ua = text(agent, "ua");
+      auto* line = user_agent_custom_->AddChildView(std::make_unique<views::View>());
+      auto* labels = line->AddChildView(std::make_unique<views::View>());
+      SetSidebarPanelLayout(labels, true, gfx::Insets(), 2);
+      AddPreferenceCopy(labels, base::UTF8ToUTF16(name), kInk, 0,
+                        static_cast<int>(gfx::Font::Weight::NORMAL), false);
+      std::u16string uses;
+      if (const auto* hosts = agent.FindList("uses")) {
+        for (const auto& host : *hosts) {
+          if (host.is_string())
+            uses += (uses.empty() ? u"" : u", ") + base::UTF8ToUTF16(host.GetString());
+        }
+      }
+      muted(labels, uses.empty() ? T(u"Nieużywany") : TF(u"Używany na {}", {uses}));
+      auto* edit = PreferenceAction(line, base::BindRepeating(
+          [](base::WeakPtr<WorkspaceShell> shell, std::string name, const ui::Event&) {
+            if (!shell)
+              return;
+            shell->user_agent_editing_ = shell->user_agent_editing_ == name ? std::string() : name;
+            shell->user_agent_error_.clear();
+            shell->RefreshUserAgentPreferences();
+          },
+          weak, name), user_agent_editing_ == name ? T(u"Zamknij") : T(u"Edytuj"));
+      edit->GetViewAccessibility().SetName(TF(u"Edytuj {}", {base::UTF8ToUTF16(name)}));
+      edit->SetEnabled(editable);
+      auto* remove = PreferenceAction(line, base::BindRepeating(
+          [](decltype(write) write, base::WeakPtr<WorkspaceShell> shell, std::string name,
+             const ui::Event&) {
+            if (shell && shell->user_agent_editing_ == name)
+              shell->user_agent_editing_.clear();
+            write(shell, base::DictValue().Set("command", "custom_remove").Set("name", name));
+          },
+          write, weak, name), T(u"Usuń"));
+      remove->GetViewAccessibility().SetName(TF(u"Usuń {}", {base::UTF8ToUTF16(name)}));
+      remove->SetEnabled(editable);
+      for (auto* action : {edit, remove}) {
+        if (auto* button = views::AsViewClass<SceneTextButton>(action))
+          button->SetKind(6);
+      }
+      SetSidebarPanelLayout(line, false, gfx::Insets(), 8, labels, true);
+    }
+  }
+  // The editor: adding a new agent, or the one being edited, full text shown.
+  {
+    const bool editing = !user_agent_editing_.empty();
+    auto* form = user_agent_custom_->AddChildView(std::make_unique<views::View>());
+    SetSidebarPanelLayout(form, true, gfx::Insets::TLBR(6, 0, 0, 0), 6);
+    user_agent_name_field_ = AddEditor(form);
+    user_agent_name_field_->SetPlaceholderText(T(u"Nazwa, np. Kiosk TV"));
+    user_agent_name_field_->GetViewAccessibility().SetName(T(u"Nazwa własnego User-Agenta"));
+    user_agent_ua_field_ = AddEditor(form);
+    user_agent_ua_field_->SetPlaceholderText(u"Mozilla/5.0 (…)");
+    user_agent_ua_field_->GetViewAccessibility().SetName(T(u"Tekst User-Agenta"));
+    if (editing) {
+      user_agent_name_field_->SetText(base::UTF8ToUTF16(user_agent_editing_));
+      user_agent_ua_field_->SetText(editing_ua);
+    }
+    auto* actions = form->AddChildView(std::make_unique<views::View>());
+    auto* save = PreferenceAction(actions, base::BindRepeating(
+        [](decltype(write) write, base::WeakPtr<WorkspaceShell> shell, const ui::Event&) {
+          if (!shell || !shell->user_agent_name_field_ || !shell->user_agent_ua_field_)
+            return;
+          auto command = base::DictValue()
+              .Set("command", shell->user_agent_editing_.empty() ? "custom_add" : "custom_edit")
+              .Set("name", base::UTF16ToUTF8(shell->user_agent_name_field_->GetText()))
+              .Set("value", base::UTF16ToUTF8(shell->user_agent_ua_field_->GetText()));
+          if (!shell->user_agent_editing_.empty())
+            command.Set("previous", shell->user_agent_editing_);
+          const std::string previous = shell->user_agent_editing_;
+          write(shell, std::move(command));
+          if (shell && shell->user_agent_error_.empty())
+            shell->user_agent_editing_.clear();
+          else if (shell)
+            shell->user_agent_editing_ = previous;
+        },
+        write, weak), editing ? T(u"Zapisz") : T(u"Dodaj własny"));
+    save->SetEnabled(editable);
+    auto* status = muted(actions, user_agent_error_in_sites_ ? std::u16string() : user_agent_error_);
+    if (!user_agent_error_in_sites_ && !user_agent_error_.empty()) {
+      if (auto* copy = views::AsViewClass<PreferenceCopy>(status))
+        copy->SetInk(Palette(user_agent_custom_).danger);
+    }
+    SetSidebarPanelLayout(actions, false, gfx::Insets(), 12, status, true);
+  }
+  RefreshChoiceViewports(user_agent_mode_->parent());
+  if (general_widget_)
+    general_widget_->GetContentsView()->InvalidateLayout();
 }
 void WorkspaceShell::OpenAdBlockingSettings() {
   OpenGeneralSettings();

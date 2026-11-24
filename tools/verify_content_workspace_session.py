@@ -662,11 +662,13 @@ fetch('{target}/assets/data.bin').then(
 (async () => {{
   const headerAgent = await (await fetch('/extension-content/user-agent')).json();
   const brands = navigator.userAgentData?.brands ?? [];
-  if (!headerAgent?.includes('Chrome/') || !headerAgent.includes('Zitter/') ||
+  // In Auto mode a site outside Zitter's catalogue sees plain Chrome.
+  if (!headerAgent?.includes('Chrome/') || headerAgent.includes('Zitter/') ||
       headerAgent !== navigator.userAgent ||
       !brands.some(brand => brand.brand === 'Chromium') ||
-      !brands.some(brand => brand.brand === 'Zitter')) {{
-    throw Error('Zitter user agent did not match the request and renderer');
+      !brands.some(brand => brand.brand === 'Google Chrome') ||
+      brands.some(brand => brand.brand === 'Zitter')) {{
+    throw Error('Chrome user agent did not match the request and renderer');
   }}
   const response = await fetch('{target}/assets/data.bin');
   const bytes = new Uint8Array(await response.arrayBuffer());

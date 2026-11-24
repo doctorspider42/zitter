@@ -1514,6 +1514,7 @@ void RegisterSitePermissionPreferences(user_prefs::PrefRegistrySyncable& registr
   registry.RegisterInt64Pref(Permissions::kNotificationNextId, 0);
   registry.RegisterDictionaryPref(Permissions::kSpellingPrefs);
   registry.RegisterDictionaryPref(Permissions::kBrowsingPrefs);
+  registry.RegisterDictionaryPref(Permissions::kUserAgentPrefs);
   registry.RegisterDictionaryPref(Permissions::kSiteDefaults);
   registry.RegisterDictionaryPref(Permissions::kSiteRules);
   registry.RegisterDictionaryPref(Permissions::kSiteRuleTimes);

@@ -91,6 +91,9 @@ struct BrowsingImportResult;
 enum class PageCommand;
 struct PrintOptions;
 class FingerprintToolbar;
+class UserAgentToolbar;
+struct UserAgentPanelState;
+struct UserAgentSettings;
 class ShieldButton;
 class ShieldCard;
 class AdBlockingRulesPanel;
@@ -618,6 +621,15 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void RebuildAdblockProfiles();
   base::DictValue ReadAdBlocking() const;
   std::string WriteAdBlocking(base::DictValue command);
+  // User-Agent: the active site's key (its exception's host, or its own),
+  // the panel's state, and Settings' read and write.
+  std::string UserAgentSiteKey(const prototype::UserAgentSettings& settings) const;
+  prototype::UserAgentPanelState BuildUserAgentPanelState() const;
+  void ChooseUserAgentForSite(const std::string& id);
+  void UpdateUserAgentToolbar();
+  bool OpenUserAgentPanel();
+  base::DictValue ReadUserAgent() const;
+  std::string WriteUserAgent(base::DictValue command);
   void OpenAdBlockingRules();
   void RefreshAdBlockingRules();
   bool CanConfigureAssistant() const;
@@ -1100,6 +1112,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
 
   std::unique_ptr<prototype::FingerprintToolbar> fingerprint_toolbar_;
   raw_ptr<views::View> fingerprint_button_ = nullptr;
+  std::unique_ptr<prototype::UserAgentToolbar> user_agent_toolbar_;
+  raw_ptr<views::View> user_agent_button_ = nullptr;
   raw_ptr<views::View> assistant_toolbar_button_ = nullptr;
   raw_ptr<views::View> extensions_toolbar_button_ = nullptr;
   raw_ptr<views::View> web_store_install_button_ = nullptr;

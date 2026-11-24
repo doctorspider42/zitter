@@ -17,6 +17,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
+#include "chromium/prototype/user_agent_policy.h"
 #include "content/public/browser/permission_controller_delegate.h"
 #include "content/public/browser/weak_document_ptr.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
@@ -187,6 +188,12 @@ class ProfilePermissionController final
   bool SetBrowsingNumber(std::string_view key, int value);
   bool SetBrowsingText(std::string_view key, std::string value);
   base::CallbackListSubscription ObserveBrowsingPreferences(base::RepeatingClosure callback);
+
+  // User-Agent settings (prototype/user_agent_policy.h). Changes notify the
+  // browsing preference observers.
+  static constexpr char kUserAgentPrefs[] = "zitter.user_agent";
+  prototype::UserAgentSettings UserAgent() const;
+  bool SetUserAgent(const prototype::UserAgentSettings& settings);
 
   void OnPermissionStatusChangeSubscriptionAdded(
       content::PermissionController::SubscriptionId id) override;

@@ -4,6 +4,7 @@
 
 #include "navigation_reputation.h"
 #include "browsing_preferences.h"
+#include "user_agent_page.h"
 #include "picture_in_picture.h"
 #include "content/public/browser/site_instance.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
@@ -799,24 +800,11 @@ std::string LabBrowserClientBase::GetProduct() {
 }
 
 std::string LabBrowserClientBase::GetUserAgent() {
-  if (auto override = embedder_support::GetUserAgentFromCommandLine())
-    return *override;
-  return base::StrCat({embedder_support::GetUserAgent(),
-                       " Zitter/" ZITTER_VERSION_STRING});
+  return DefaultUserAgent();
 }
 
 blink::UserAgentMetadata LabBrowserClientBase::GetUserAgentMetadata() {
-  auto metadata = embedder_support::GetUserAgentMetadata();
-  if (embedder_support::GetUserAgentFromCommandLine())
-    return metadata;
-
-  const std::string version = ZITTER_VERSION_STRING;
-  metadata.brand_version_list = embedder_support::GetUserAgentBrandMajorVersionList(
-      blink::UserAgentBrandVersion{"Zitter", version.substr(0, version.find('.'))});
-  metadata.brand_full_version_list =
-      embedder_support::GetUserAgentBrandFullVersionList(
-          blink::UserAgentBrandVersion{"Zitter", version});
-  return metadata;
+  return DefaultUserAgentMetadata();
 }
 
 
@@ -1429,6 +1417,7 @@ void LabBrowserClientBase::OnWebContentsCreated(content::WebContents* contents) 
   AttachExtensionWebContents(*contents);
   ProfileContext::AttachPage(*contents);
   AttachBrowsingPreferences(*contents);
+  AttachUserAgentPage(*contents);
 #if BUILDFLAG(ENABLE_PRINTING)
   headless::HeadlessPrintManager::CreateForWebContents(contents);
   printing::CreateCompositeClientIfNeeded(contents, GetUserAgent());

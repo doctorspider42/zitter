@@ -122,7 +122,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     l = sub.add_parser("launch")
     l.add_argument("--open-panel", choices=["assistant", "assistant-activity", "space", "sidebar", "palette", "address", "settings", "assistant-settings", "privacy", "profiles", "downloads",
-                                            "history", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "night-shift", "ad-blocking",
+                                            "history", "time-machine", "extensions", "extension-popup", "fingerprint", "shield", "night-shift", "ad-blocking", "user-agent", "user-agent-settings",
                                             "menu", "app-menu", "dialog", "toast",
                                             "add", "space-end", "space-new", "remove", "drop"],
                    help="open this panel once the window is up (no mouse needed)")
