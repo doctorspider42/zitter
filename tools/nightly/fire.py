@@ -210,30 +210,41 @@ echo "identity=$(security find-identity -v -p codesigning | grep -c 'Developer I
         return not self.errors
 
 
-def mac_session_probe(notarize):
-    """Runs a short job in the Mac user's session: checks the Keychain and
-    notarytool there, and lets macOS ask now for the Finder automation the DMG
-    layout needs, while someone is at the Mac."""
-    finder = ("osascript -e 'tell application \"Finder\" to get name of startup disk'"
-              if notarize else "true")
-    notary = ("xcrun notarytool history --keychain-profile zitter-notary >/dev/null && "
-              "echo notary=ok || echo notary=FAILED" if notarize else "echo notary=skipped")
+PROBE = r'''
+import subprocess, sys
+notarize = sys.argv[1] == "1"
+lines = []
+def check(name, cmd):
+    ok = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    lines.append(name + "=" + ("ok" if ok else "FAILED"))
+if notarize:
+    check("notary", ["xcrun", "notarytool", "history", "--keychain-profile", "zitter-notary"])
+    # The DMG layout drives Finder; macOS asks once per requesting program.
+    check("finder", ["osascript", "-e", 'tell application "Finder" to get name of startup disk'])
+lines.append("done=1")
+open("/tmp/zitter-nightly-probe.log", "w").write(" ".join(lines) + "\n")
+'''
+
+
+def mac_session_probe(notarize, wait_s=300):
+    """Runs a short job in the Mac user's session, through /usr/bin/python3 like
+    mac_job.py: checks notarytool and the Keychain there, and lets macOS ask now
+    for the Finder automation the DMG layout needs, while someone is at the Mac."""
     script = f"""
-set -u
 probe=/tmp/zitter-nightly-probe
 rm -f $probe.log
-cat > $probe.sh <<'EOF'
-#!/bin/bash
-{{ {notary}; {finder} >/dev/null 2>&1 && echo finder=ok || echo finder=FAILED; echo done=1; }} > /tmp/zitter-nightly-probe.log 2>&1
-EOF
-chmod 755 $probe.sh
+cat > $probe.py <<'PROBE_EOF'
+{PROBE}
+PROBE_EOF
 launchctl remove {MAC_LABEL}.probe 2>/dev/null || true
-launchctl submit -l {MAC_LABEL}.probe -- $probe.sh
-for i in $(seq 1 90); do grep -q done=1 $probe.log 2>/dev/null && break; sleep 2; done
+launchctl submit -l {MAC_LABEL}.probe -- /usr/bin/python3 $probe.py {1 if notarize else 0}
+for i in $(seq 1 {wait_s // 2}); do grep -q done=1 $probe.log 2>/dev/null && break; sleep 2; done
 launchctl remove {MAC_LABEL}.probe 2>/dev/null || true
 cat $probe.log 2>/dev/null
 """
-    r = ssh(MAC, script, timeout=240)
+    print(f"Checking the Mac's session (up to {wait_s // 60} min): if the Mac asks to let "
+          "python3 control Finder, click Allow there.", flush=True)
+    r = ssh(MAC, script, timeout=wait_s + 60)
     info = dict(l.split("=", 1) for l in r.stdout.split() if "=" in l)
     problems = []
     if info.get("done") != "1":
@@ -243,7 +254,7 @@ cat $probe.log 2>/dev/null
         problems.append("notarytool cannot use the zitter-notary Keychain profile in the "
                         "Mac's session (docs/local-releases.md, one-time account setup)")
     if info.get("finder") == "FAILED":
-        problems.append("the DMG step may not control Finder: allow it on the Mac "
+        problems.append("the DMG step cannot control Finder: allow python3 on the Mac "
                         "(System Settings → Privacy & Security → Automation) and rerun --check")
     return problems
 
