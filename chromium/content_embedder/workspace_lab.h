@@ -164,6 +164,24 @@ class LabViewsDelegate final : public views::ViewsDelegate {
 #endif
 };
 
+class UiAutomation;
+
+class FactoryResetStartupDialog {
+ public:
+  FactoryResetStartupDialog(const FactoryResetError& error,
+                            bool workspace_locked,
+                            const base::FilePath& automation_root,
+                            base::RepeatingClosure quit);
+  ~FactoryResetStartupDialog();
+
+ private:
+  std::unique_ptr<UiAutomation> automation_;
+  std::unique_ptr<views::LayoutProvider> layout_provider_;
+  std::unique_ptr<LabViewsDelegate> views_delegate_;
+  std::unique_ptr<views::DialogDelegate> delegate_;
+  std::unique_ptr<views::Widget> widget_;
+};
+
 class AdblockCacheProbe;
 class WorkspaceDevTools;
 class WorkspaceWebAuthnProbe;
@@ -206,7 +224,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
                base::FilePath user_download_directory = {},
                std::string download_safe_browsing_key = {},
                bool offer_startup_import = false,
-               std::string startup_import_probe = {});
+               std::string startup_import_probe = {},
+               bool allow_factory_reset = false);
   ~WorkspaceLab() override;
 
   void Start(base::OnceCallback<void(bool)> done,
@@ -496,7 +515,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool CanImportBrowser() const;
   void ImportPasswordsCsv(gfx::NativeWindow owner,
                           base::OnceCallback<void(std::u16string)> done);
-  void ShowWelcome();
+  void ShowWelcome(bool first_run);
+  void CompleteStartupImport();
   void ConfigureBookmarkSync(std::string method);
   void StartBookmarkSync(std::string method);
   void RunBookmarkSync();
@@ -772,6 +792,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void CloseAdblockShield();
   void DestroyAdblockShield();
   void RequestClearData(BrowsingDataSelection selection);
+  void RequestFactoryReset();
+  void ConfirmFactoryReset();
   void OpenClearDataDialog(views::Widget* parent);
   void ClearData(size_t profile, BrowsingDataSelection selection);
   void ContinueClearData(bool history, bool passwords, base::Time begin, uint64_t mask,

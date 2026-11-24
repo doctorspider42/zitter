@@ -71,7 +71,7 @@ mod ffi {
     enum FormPanel { None, Workspace, Profiles, Import, Preferences, Tools }
     struct FormCommandBinding { command: FormCommand, panel: FormPanel, key: String, index: usize }
     struct FormCommandView { bound: bool, dismiss: bool, index: usize }
-    enum PreferenceActionKind { None, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, ClearTimeline }
+    enum PreferenceActionKind { None, History, Workspace, Passwords, Profiles, Import, Proxy, Certificates, Providers, Shortcuts, TimeMachine, ClearTimeline, FactoryReset }
     struct PreferenceSpec { category: usize, kind: PreferenceRowKind, key: String, title: String, detail: String, choices: Vec<String>, placeholder: String, action: PreferenceActionKind, button: String, button_ax: String, tooltip: String }
     struct PreferenceSiteCopy { origin_ax: String, placeholder: String, type_ax: String, policy_ax: String, save: String, types: Vec<String> }
     struct PreferenceClearCopy { period_ax: String, periods: Vec<String>, checks: Vec<String>, action: String }
@@ -1181,6 +1181,10 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(9,K::Text,"dns_templates",t("Adres serwera DNS-over-HTTPS"),t("Wspólny dla całej aplikacji. Wpisz szablon HTTPS, np. https://dns.google/dns-query{?dns}. Najpierw zapisz adres, następnie włącz tryb ścisły."),vec![],"https://…/dns-query{?dns}",A::None));
     rows.push(preference_spec(9,K::Action,"",t("Ustawienia proxy systemowego"),t("Zitter korzysta z konfiguracji proxy systemu operacyjnego."),vec![],"",A::Proxy));
     if system_certificates{rows.push(preference_spec(9,K::Action,"",t("Certyfikaty systemowe"),t("Otwórz systemowy magazyn certyfikatów i ustawienia zaufania."),vec![],"",A::Certificates));}
+    let mut reset = preference_spec(9, K::Action, "", t("Reset fabryczny"),
+        t("Przywróć Zitter do stanu po instalacji."), vec![], "", A::FactoryReset);
+    reset.button = t("Przywróć…").into();
+    rows.push(reset);
     rows.push(preference_spec(3,K::SiteEditor,"",t("Wyjątek dla witryny"),t("Wpisz pełny adres witryny bez ścieżki, np. https://example.com. Wyjątek zastępuje politykę domyślną w tym profilu."),vec![],"",A::None));
     rows.push(preference_spec(3,K::SiteRules,"",t("Zapisane wyjątki"),t("Własne reguły możesz usunąć, aby wrócić do ustawień domyślnych. Reguły zarządzane pozostają tylko do odczytu."),vec![],"",A::None));
     rows.push(preference_spec(8,K::ClearData,"",t("Wyczyść dane przeglądania"),t("Dotyczy wyłącznie aktywnego profilu. Pobrane pliki, zapisane hasła i przypięte karty pozostaną zachowane. Przed usunięciem zobaczysz potwierdzenie."),vec![],"",A::None));
@@ -1816,6 +1820,8 @@ fn command_catalogue(c:&ffi::CommandContext,query:&str)->Vec<ffi::CommandEntry>{
     let mut out=Vec::new();
     let mut add=|id:&str,title:String,detail:&str,aliases:&str,target:&str|{let haystack=command_fold(&format!("{title} {detail} {aliases}"));if words.iter().all(|w|haystack.contains(w)){out.push(ffi::CommandEntry{id:id.into(),title,detail:tf("Polecenie · {}",&[detail]),target:target.into()});}};
     for (id,title,detail,aliases) in [("new_tab",t("Nowa karta"),t("Otwórz pasek nowej karty"),"new tab"),("save_snapshot",t("Zapisz snapshot przestrzeni"),t("Szybki punkt przywracania w Time Machine"),"zapis sesji save snapshot backup"),("timeline","Time Machine",t("Snapshoty i zamknięte karty"),"przywróć restore historia sesji"),("settings",t("Ustawienia przeglądarki"),t("Wygląd, prywatność i ustawienia profilu"),"settings preferences"),("shortcuts",t("Konfiguruj skróty klawiszowe"),t("Nagraj lub zmień kombinacje klawiszy"),"keyboard shortcuts mouse gestures gesty myszy"),("engines",t("Konfiguruj wyszukiwarki"),t("Prefiksy i domyślna wyszukiwarka"),"search engines"),("sidebar",t("Pokaż / ukryj panel boczny"),t("Karty i przestrzenie"),"sidebar menu"),("spaces",t("Zarządzaj przestrzeniami"),t("Dodaj lub edytuj space i przypisanie profilu"),"workspace spaces"),("profiles",t("Zarządzaj profilami"),t("Dodaj profil i zarządzaj jego danymi"),"profile accounts"),("import",t("Importuj z przeglądarki"),t("Wybierz przeglądarkę i zakres importu"),"import arc chrome edge brave zakladki profile"),("history",t("Historia przeglądania"),t("Przeglądaj, szukaj i czyść historię profilu"),"history visited historia wyczysc"),("downloads",t("Pobrania"),t("Postęp, pauza, wznowienie i Finder"),"downloads pobierz pliki transfer")]{add(id,title.into(),detail,aliases,"");}
+    add("welcome", t("Otwórz ekran powitalny").into(), t("Pierwsze kroki"),
+        "welcome onboarding setup konfiguracja", "");
     add("rss",t("Czytnik RSS").into(),t("Subskrypcje RSS i Atom tego profilu"),"rss atom feeds reader czytnik wiadomosci","");
     add("developer",t("Narzędzia developerskie").into(),t("Wyłączony / Auto / Włączony · narzędzia projektu lokalnego"),"developer localhost devtools mode","");
     if only {
@@ -4351,10 +4357,10 @@ mod tests {
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
         let windows_options = usize::from(cfg!(target_os = "windows"));
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam","User-Agent"]);assert_eq!(c.descriptions.len(),13);assert_eq!(c.rows.len(),89 + windows_options);
-        let mut counts=[0;13];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[14 + windows_options,5,9,7,12,5,5,3,1,6,12,5,5]);
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam","User-Agent"]);assert_eq!(c.descriptions.len(),13);assert_eq!(c.rows.len(),90 + windows_options);
+        let mut counts=[0;13];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[14 + windows_options,5,9,7,12,5,5,3,1,7,12,5,5]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),45 + windows_options);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),88 + windows_options);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),89 + windows_options);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
@@ -4366,7 +4372,7 @@ mod tests {
     }
     #[test] fn preference_catalogue_editor_and_action_accessibility_retains_native_copy() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;let c=preference_catalogue(true);let mut actions=vec![];
-        for row in &c.rows{match row.kind{K::Text=>{assert!(!row.placeholder.is_empty());assert_eq!(row.button,"Zapisz");assert_eq!(row.button_ax,format!("Zapisz: {}",row.title));assert!(row.action==A::None);},K::Action=>{assert_eq!(row.button,if row.action==A::ClearTimeline{"Wyczyść"}else{"Otwórz →"});assert_eq!(row.button_ax,row.title);assert!(row.action!=A::None);assert!(!actions.contains(&row.action));actions.push(row.action);},K::Directory=>{assert_eq!(row.button,"Zmień…");assert_eq!(row.button_ax,"Zmień folder pobierania");},_=>{assert!(row.button.is_empty());assert!(row.action==A::None);}}}assert_eq!(actions.len(),11);
+        for row in &c.rows{match row.kind{K::Text=>{assert!(!row.placeholder.is_empty());assert_eq!(row.button,"Zapisz");assert_eq!(row.button_ax,format!("Zapisz: {}",row.title));assert!(row.action==A::None);},K::Action=>{assert_eq!(row.button,match row.action { A::ClearTimeline => "Wyczyść", A::FactoryReset => "Przywróć…", _ => "Otwórz →" });assert_eq!(row.button_ax,row.title);assert!(row.action!=A::None);assert!(!actions.contains(&row.action));actions.push(row.action);},K::Directory=>{assert_eq!(row.button,"Zmień…");assert_eq!(row.button_ax,"Zmień folder pobierania");},_=>{assert!(row.button.is_empty());assert!(row.action==A::None);}}}assert_eq!(actions.len(),12);
         assert_eq!(c.site.origin_ax,"Adres witryny dla wyjątku");assert_eq!(c.site.placeholder,"https://example.com");assert_eq!(c.site.save,"Zapisz wyjątek");assert_eq!(c.clear.checks,["Historia przeglądania","Cookies i dane witryn (może wylogować)","Pamięć podręczna"]);assert_eq!(c.clear.action,"Wyczyść…");
     }
     #[test] fn preference_catalogue_choice_indices_match_native_value_and_permission_order() {
@@ -5541,7 +5547,7 @@ mod tests {
     fn command_context()->ffi::CommandContext{ffi::CommandContext{page:true,http_page:true,split:false,can_back:true,can_forward:false,tab_count:2,reopen:true,assistant:true,workspaces:vec![ffi::CommandWorkspace{id:"home".into(),name:"Dom".into(),asleep:false,same_profile:true,capturing:false},ffi::CommandWorkspace{id:"club".into(),name:"Klub".into(),asleep:true,same_profile:false,capturing:false}]}}
     #[test] fn command_catalogue_lists_conditional_entries_with_targets() {
         let all=command_catalogue(&command_context(),">");let ids=all.iter().map(|e|e.id.as_str()).collect::<Vec<_>>();
-        assert_eq!(ids,vec!["new_tab","save_snapshot","timeline","settings","shortcuts","engines","sidebar","spaces","profiles","import","history","downloads","rss","developer","reload_workspace_icons","devtools_panel","devtools_console","devtools_inspect","hard_reload","split","reload","find","print","copy_url","back","passwords","close_tab","close_other_tabs","reopen","select_space","move_tab","sleep_space","select_space","copy_tab","sleep_others","assistant"]);
+        assert_eq!(ids,vec!["new_tab","save_snapshot","timeline","settings","shortcuts","engines","sidebar","spaces","profiles","import","history","downloads","welcome","rss","developer","reload_workspace_icons","devtools_panel","devtools_console","devtools_inspect","hard_reload","split","reload","find","print","copy_url","back","passwords","close_tab","close_other_tabs","reopen","select_space","move_tab","sleep_space","select_space","copy_tab","sleep_others","assistant"]);
         assert_eq!(all[0].detail,"Polecenie · Otwórz pasek nowej karty");assert_eq!(all.iter().find(|e|e.id=="split").unwrap().title,"Otwórz Split View");
         let wake=all.iter().find(|e|e.target=="club"&&e.id=="select_space").unwrap();assert_eq!(wake.title,"Obudź przestrzeń: Klub");assert_eq!(all.iter().find(|e|e.id=="move_tab").unwrap().target,"home");
         let mut split=command_context();split.split=true;split.can_forward=true;split.tab_count=1;split.reopen=false;split.page=true;let ids=command_catalogue(&split,">").into_iter().map(|e|e.id).collect::<Vec<_>>();
@@ -5550,7 +5556,8 @@ mod tests {
         assert!(!ids.iter().any(|i|matches!(i.as_str(),"split"|"reload"|"move_tab"|"copy_tab"|"sleep_space"|"sleep_others")));
     }
     #[test] fn command_catalogue_matches_folded_words_and_compacts_initial_view() {
-        let c=command_context();assert_eq!(command_catalogue(&c,"").len(),6);assert_eq!(command_catalogue(&c,">").len(),36);
+        let c=command_context();assert_eq!(command_catalogue(&c,"").len(),6);assert_eq!(command_catalogue(&c,">").len(),37);
+        assert_eq!(command_catalogue(&c, ">ekran powitalny")[0].id, "welcome");
         assert!(command_catalogue(&c,"favicon").is_empty());
         assert_eq!(command_catalogue(&c,"> refresh all favicons")[0].id,"reload_workspace_icons");
         let found=command_catalogue(&c,"PRZYWROC  karte");assert_eq!(found.iter().map(|e|e.id.as_str()).collect::<Vec<_>>(),vec!["reopen"]);

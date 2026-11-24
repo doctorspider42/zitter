@@ -215,6 +215,8 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     if (!display::Screen::HasScreen())
       screen_ = views::CreateDesktopScreen();
     views_delegate_ = std::make_unique<LabViewsDelegate>();
+    if (factory_reset_error_)
+      return 0;
     if (workspace_lab_) {
       const auto& command = *base::CommandLine::ForCurrentProcess();
       if (command.HasSwitch(kUiAutomation)) {
@@ -284,6 +286,12 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
 
   void WillRunMainMessageLoop(std::unique_ptr<base::RunLoop>& loop) override {
     quit_ = loop->QuitClosure();
+    if (factory_reset_error_) {
+      factory_reset_dialog_ = std::make_unique<FactoryResetStartupDialog>(
+          *factory_reset_error_, factory_reset_error_locked_,
+          ui_automation_allowed_ ? workspace_root_ : base::FilePath(), quit_);
+      return;
+    }
     if (IsWorkspaceExtensionReviewOnly()) {
       quit_.Run();
       return;
@@ -318,6 +326,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
   }
 
   void PostMainMessageLoopRun() override {
+    factory_reset_dialog_.reset();
     ui_automation_.reset();
     if (updates_)
       updates_->InstallOnExit();
@@ -365,9 +374,23 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         profile_lock_.Lock(base::File::LockMode::kExclusive) !=
             base::File::FILE_OK) {
       WriteStderr("Could not lock the Content workspace root\n");
+      if (HasPendingFactoryReset(*root)) {
+        factory_reset_error_ = FactoryResetError{*root};
+        factory_reset_error_locked_ = true;
+        return true;
+      }
       return false;
     }
 
+    const auto reset = ApplyPendingFactoryReset(*root);
+    if (!reset.has_value()) {
+      LOG(ERROR) << "Could not complete the pending Zitter factory reset at " << reset.error().path;
+      factory_reset_error_ = reset.error();
+      workspace_root_ = *root;
+      ui_automation_allowed_ = !prepared;
+      return true;
+    }
+    factory_reset_applied_ = *reset;
     auto session = ReadContentWorkspaceSession(root->AppendASCII(kWorkspaceSession));
     if (!session || base::IsLink(root->AppendASCII("WorkspaceSettings.json"))) {
       WriteStderr("Invalid Content workspace session or settings path\n");
@@ -521,7 +544,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
     // The user's own Workspace saves downloads to their Downloads folder and
     // offers a browser import on its first start, as on macOS.
     base::FilePath user_downloads;
-    bool offer_startup_import = false;
+    bool offer_startup_import = factory_reset_applied_;
     if (g_ordinary_launch && durable) {
       wchar_t* known = nullptr;
       if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_Downloads, 0, nullptr, &known)))
@@ -538,7 +561,7 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         workspace_probe_url_, context_.get(),
         personal_context_.get(), dark, workspace_smoke_,
         nullptr, additional_profiles_, os_crypt_, std::move(user_downloads),
-        safe_browsing_key_, offer_startup_import);
+        safe_browsing_key_, offer_startup_import, std::string(), durable);
   }
 
   void FinishWorkspace(bool success) {
@@ -609,6 +632,10 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
   base::FilePath workspace_root_;
   std::unique_ptr<UiAutomation> ui_automation_;
   bool ui_automation_allowed_ = false;
+  bool factory_reset_applied_ = false;
+  bool factory_reset_error_locked_ = false;
+  std::optional<FactoryResetError> factory_reset_error_;
+  std::unique_ptr<FactoryResetStartupDialog> factory_reset_dialog_;
   base::DictValue workspace_session_;
   std::unique_ptr<prototype::TimelineStore> workspace_timeline_;
   GURL workspace_probe_url_;
@@ -840,9 +867,11 @@ bool PrepareOrdinaryWorkspace(base::CommandLine& command) {
     if (!WriteWorkspaceMarker(root) || !IsPreparedContentWorkspace(root, "windows-dpapi"))
       return false;
     // Settings > Hardware acceleration takes effect at the next start.
-    if (const auto session = ReadContentWorkspaceSession(root.AppendASCII(kWorkspaceSession));
-        session && !session->FindBool("hardware_acceleration").value_or(true)) {
-      command.AppendSwitch(switches::kDisableGpu);
+    if (!HasPendingFactoryReset(root)) {
+      if (const auto session = ReadContentWorkspaceSession(root.AppendASCII(kWorkspaceSession));
+          session && !session->FindBool("hardware_acceleration").value_or(true)) {
+        command.AppendSwitch(switches::kDisableGpu);
+      }
     }
   }
   command.AppendSwitch(kWorkspaceLab);

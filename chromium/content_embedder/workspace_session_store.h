@@ -12,11 +12,12 @@
 #include <string_view>
 #include <vector>
 
+#include "base/files/file_path.h"
+#include "base/types/expected.h"
 #include "base/values.h"
 #include "chromium/prototype/browser_data.h"
 #include "zitter/core/workspace_model.h"
 
-namespace base { class FilePath; }
 class GURL;
 
 namespace zitter::content_embedder {
@@ -37,6 +38,18 @@ struct ContentProfileInfo {
 inline constexpr char kWorkspaceNetworkRoot[] = "NetworkProfiles";
 
 bool IsPreparedContentWorkspace(const base::FilePath& root, std::string_view layout);
+bool HasPendingFactoryReset(const base::FilePath& root);
+bool ScheduleFactoryReset(const base::FilePath& root);
+struct FactoryResetError {
+  base::FilePath path;
+  bool access_denied = false;
+};
+// Run while holding the workspace lock, before opening any profile stores.
+// On failure, leaves the reset pending.
+base::expected<bool, FactoryResetError> ApplyPendingFactoryReset(
+    const base::FilePath& root,
+    std::string_view replacement_layout = {},
+    bool preserve_probe_key = false);
 bool IsContentWorkspaceName(std::string_view name);
 std::optional<std::vector<ContentProfileInfo>> ReadContentProfiles(
     const base::DictValue& session);

@@ -8,6 +8,9 @@
 #include <string>
 
 #include "base/base64.h"
+#include "base/feature_list.h"
+#include "base/features.h"
+#include "base/files/file_enumerator.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -24,6 +27,8 @@ namespace zitter::content_embedder {
 namespace {
 
 constexpr size_t kMaxSessionBytes = 16 * 1024 * 1024;
+constexpr char kFactoryResetMarker[] = "FactoryResetPending";
+constexpr std::string_view kFactoryResetValue = "zitter-factory-reset-v1\n";
 
 bool IsExtraProfileId(std::string_view id) {
   return id.starts_with("profile-") &&
@@ -620,6 +625,68 @@ bool IsPreparedContentWorkspace(const base::FilePath& root,
          info.size == static_cast<int64_t>(expected.size()) &&
          base::ReadFileToStringWithMaxSize(marker, &value, expected.size()) &&
          value == expected;
+}
+
+bool HasPendingFactoryReset(const base::FilePath& root) {
+  const auto marker = root.AppendASCII(kFactoryResetMarker);
+  base::File::Info info;
+  std::string data;
+  return !base::IsLink(marker) && base::GetFileInfo(marker, &info) &&
+         !info.is_directory &&
+         info.size == static_cast<int64_t>(kFactoryResetValue.size()) &&
+         base::ReadFileToStringWithMaxSize(marker, &data, kFactoryResetValue.size()) &&
+         data == kFactoryResetValue;
+}
+
+bool ScheduleFactoryReset(const base::FilePath& root) {
+  const auto marker = root.AppendASCII(kFactoryResetMarker);
+  return !base::IsLink(marker) &&
+         base::ImportantFileWriter::WriteFileAtomically(marker, kFactoryResetValue);
+}
+
+base::expected<bool, FactoryResetError> ApplyPendingFactoryReset(
+    const base::FilePath& root,
+    std::string_view replacement_layout,
+    bool preserve_probe_key) {
+  if (!HasPendingFactoryReset(root))
+    return false;
+#if BUILDFLAG(IS_WIN)
+  if (base::FeatureList::GetInstance() &&
+      !base::FeatureList::IsEnabled(base::features::kPreventReparsePointTraversal))
+    return base::unexpected(FactoryResetError{root});
+#endif
+  base::FileEnumerator entries(root, false, base::FileEnumerator::NAMES_ONLY,
+      {}, base::FileEnumerator::FolderSearchPolicy::MATCH_ONLY,
+      base::FileEnumerator::ErrorPolicy::STOP_ENUMERATION);
+  const auto marker = root.AppendASCII(kFactoryResetMarker);
+  const auto lock = root.AppendASCII("WorkspaceLock");
+  const auto layout = root.AppendASCII("ContentWorkspaceLayout");
+  const auto probe_key = root.AppendASCII("probe-cookie-key");
+  std::vector<base::FilePath> data;
+  for (auto entry = entries.Next(); !entry.empty(); entry = entries.Next()) {
+    if (entry != marker && entry != layout &&
+        !base::FilePath::CompareEqualIgnoreCase(entry.value(), lock.value()) &&
+        (!preserve_probe_key || entry != probe_key))
+      data.push_back(std::move(entry));
+  }
+  if (entries.GetError() != base::File::FILE_OK)
+    return base::unexpected(FactoryResetError{
+        root, entries.GetError() == base::File::FILE_ERROR_ACCESS_DENIED});
+  for (const auto& entry : data) {
+    if (!base::DeletePathRecursively(entry))
+      return base::unexpected(FactoryResetError{
+          entry, base::File::GetLastFileError() == base::File::FILE_ERROR_ACCESS_DENIED});
+  }
+  if (!replacement_layout.empty() &&
+      !base::ImportantFileWriter::WriteFileAtomically(
+          layout,
+          "zitter-content-workspace-v1 " + std::string(replacement_layout) + "\n")) {
+    return base::unexpected(FactoryResetError{layout});
+  }
+  if (!base::DeleteFile(marker))
+    return base::unexpected(FactoryResetError{
+        marker, base::File::GetLastFileError() == base::File::FILE_ERROR_ACCESS_DENIED});
+  return true;
 }
 
 std::optional<base::DictValue> ReadContentWorkspaceSession(
