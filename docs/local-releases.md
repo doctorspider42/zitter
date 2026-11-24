@@ -328,6 +328,14 @@ with the version, platform and architecture, for example
 `Zitter-v0.1.0-windows-x64.zip`. Record the exact source commit, Chromium revision,
 GN arguments, signature status and checks performed.
 
+## Both platforms overnight
+
+`python tools/nightly/fire.py` on the Windows build PC runs the Windows steps
+above there and the macOS build, notarization and DMG on the Mac, from the same
+commit, and collects both platforms' release files in
+`build/nightly/<run id>/release/`. It publishes nothing. See
+[nightly-builds.md](nightly-builds.md).
+
 ## Publish or append assets
 
 Create platform-specific checksum and build metadata files, for example

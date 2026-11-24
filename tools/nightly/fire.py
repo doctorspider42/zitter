@@ -255,7 +255,7 @@ cat $probe.log 2>/dev/null
                         "Mac's session (docs/local-releases.md, one-time account setup)")
     if info.get("finder") == "FAILED":
         problems.append("the DMG step cannot control Finder: allow python3 on the Mac "
-                        "(System Settings → Privacy & Security → Automation) and rerun --check")
+                        "(System Settings > Privacy & Security > Automation) and rerun --check")
     return problems
 
 
@@ -606,6 +606,8 @@ def main():
                         "Windows stages and runs a Siso dry run")
     p.add_argument("--run-id", help=argparse.SUPPRESS)
     args = p.parse_args()
+    for stream in (sys.stdout, sys.stderr):  # a cp1250 console must not stop a run
+        stream.reconfigure(errors="replace")
 
     if args.status:
         run = latest_run()

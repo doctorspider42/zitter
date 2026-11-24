@@ -199,6 +199,11 @@ directory.
   PC's SATA SSD.
 - The build PC's own worker shares its CPU with Siso's local steps.
 
+## Overnight builds
+
+`tools/nightly/fire.py` builds Windows on this cluster and macOS on the Mac
+from one command; see [nightly-builds.md](nightly-builds.md).
+
 ## Next
 
 - Measure local vs remote on the same target, then a full build.
