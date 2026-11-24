@@ -1336,6 +1336,7 @@ void LabBrowserClientBase::CreateThrottlesForNavigation(
   AddDropboxLoginThrottle(registry);
   WorkspaceDevTools::AddNavigationThrottle(registry);
   AddHttpsOnlyThrottle(registry);
+  AddUserAgentRedirectThrottle(registry);
   prototype::LinkNavigation::CreateThrottle(registry);
   AddExtensionProbeNavigationThrottle(registry);
   if (navigation_reputation_)

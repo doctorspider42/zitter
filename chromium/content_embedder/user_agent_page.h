@@ -15,6 +15,7 @@
 class GURL;
 
 namespace content {
+class NavigationThrottleRegistry;
 class WebContents;
 }
 
@@ -47,6 +48,11 @@ UserAgentChoice DescribeUserAgent(const prototype::UserAgentSettings& settings,
 std::optional<std::string> CommittedUserAgentPreset(content::WebContents& page);
 
 void AttachUserAgentPage(content::WebContents& page);
+
+// A top-level GET redirect to a host with another preset (a site sending you
+// to accounts.google.com) starts again as a navigation to that host, so the
+// request carries the preset the target needs.
+void AddUserAgentRedirectThrottle(content::NavigationThrottleRegistry& registry);
 
 }  // namespace zitter::content_embedder
 

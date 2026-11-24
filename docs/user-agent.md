@@ -50,7 +50,10 @@ resolves the URL's host. In `DidStartNavigation` it then either:
 Content allows that call during `DidStartNavigation` without reloading. The
 committed page, its subresources and its subframes keep the override. Limits:
 
-- A redirect to another host keeps the preset chosen for the first URL.
+- A top-level GET redirect to a host with another preset (a site sending you
+  to `accounts.google.com`) is cancelled. It starts again as a navigation to
+  that host (`UserAgentRedirectThrottle`), at most 3 times between commits.
+  POST redirects keep the first preset.
 - A change applies from the next navigation. The panel offers **Odśwież**
   ("Reload").
 - `--user-agent` on the command line disables all of this.

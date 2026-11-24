@@ -7,7 +7,14 @@
 
 #include "chromium/app/zitter_version.h"
 #include "components/embedder_support/user_agent_utils.h"
+#include "base/functional/bind.h"
+#include "base/task/single_thread_task_runner.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle.h"
+#include "content/public/browser/navigation_throttle_registry.h"
+#include "content/public/common/referrer.h"
+#include "third_party/blink/public/mojom/loader/referrer.mojom.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
@@ -42,6 +49,8 @@ class UserAgentPage final : public content::WebContentsUserData<UserAgentPage>,
   ~UserAgentPage() override = default;
 
   const std::optional<std::string>& committed_preset() const { return committed_; }
+  // Redirect restarts since the last committed page; bounded against loops.
+  bool TakeRedirectRestart() { return ++redirect_restarts_ <= 3; }
 
  private:
   friend WebContentsUserData;
@@ -83,20 +92,70 @@ class UserAgentPage final : public content::WebContentsUserData<UserAgentPage>,
       }
       return;
     }
-    if (navigation->HasCommitted() && !navigation->IsErrorPage())
+    if (navigation->HasCommitted() && !navigation->IsErrorPage()) {
       committed_ = it->second;
+      redirect_restarts_ = 0;
+    }
     pending_.erase(it);
   }
 
   std::map<int64_t, std::string> pending_;
   std::optional<std::string> committed_;
+  int redirect_restarts_ = 0;
 
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
 WEB_CONTENTS_USER_DATA_KEY_IMPL(UserAgentPage);
 
+class UserAgentRedirectThrottle final : public content::NavigationThrottle {
+ public:
+  explicit UserAgentRedirectThrottle(content::NavigationThrottleRegistry& registry)
+      : NavigationThrottle(registry) {}
+
+  ThrottleCheckResult WillRedirectRequest() override {
+    auto& navigation = *navigation_handle();
+    const GURL& url = navigation.GetURL();
+    const auto& chain = navigation.GetRedirectChain();
+    if (!navigation.IsInPrimaryMainFrame() || navigation.IsPost() || chain.empty() ||
+        !url.SchemeIsHTTPOrHTTPS() || embedder_support::GetUserAgentFromCommandLine()) {
+      return PROCEED;
+    }
+    auto* contents = navigation.GetWebContents();
+    const auto settings = static_cast<ProfileContext*>(contents->GetBrowserContext())
+                              ->site_permissions()
+                              .UserAgent();
+    const auto target = prototype::ResolveUserAgent(settings, url.host());
+    const auto start = prototype::ResolveUserAgent(settings, chain.front().host());
+    auto* page = UserAgentPage::FromWebContents(contents);
+    if (target.preset == start.preset || !page || !page->TakeRedirectRestart())
+      return PROCEED;
+    // The new navigation starts at `url`, where DidStartNavigation picks its preset.
+    content::NavigationController::LoadURLParams params(url);
+    params.transition_type = navigation.GetPageTransition();
+    params.referrer = content::Referrer(navigation.GetReferrer().url,
+                                        navigation.GetReferrer().policy);
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            [](base::WeakPtr<content::WebContents> contents,
+               content::NavigationController::LoadURLParams params) {
+              if (contents)
+                contents->GetController().LoadURLWithParams(params);
+            },
+            contents->GetWeakPtr(), std::move(params)));
+    return CANCEL_AND_IGNORE;
+  }
+
+  const char* GetNameForLogging() override { return "ZitterUserAgentRedirect"; }
+};
+
 }  // namespace
+
+void AddUserAgentRedirectThrottle(content::NavigationThrottleRegistry& registry) {
+  if (registry.GetNavigationHandle().IsInPrimaryMainFrame())
+    registry.AddThrottle(std::make_unique<UserAgentRedirectThrottle>(registry));
+}
 
 std::string DefaultUserAgent() {
   if (auto override = embedder_support::GetUserAgentFromCommandLine())
