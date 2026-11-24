@@ -2,7 +2,7 @@
 
 <img src="assets/icon/zitter-1024.png" alt="Zitter" width="112" height="112">
 
-# Zitter
+# Zitter Browser
 
 **A browser for people who miss what browsing could feel like.**
 
