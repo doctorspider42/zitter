@@ -51,6 +51,7 @@ All in [`tools/remote_build/`](../tools/remote_build/):
 | `windows-remote.args.gn` | The two GN args that turn remote compiles on. |
 | `start_server.ps1`, `Dockerfile`, `nativelink_server.json5` | NativeLink server + local worker in Docker Desktop. |
 | `nativelink_worker.json5`, `install_wsl_worker.sh`, `run_wsl_worker.sh`, `install_logon_task.ps1`, `run_worker_task.ps1` | Worker on another PC in WSL2. |
+| `install_mac_worker.sh`, `mac_worker_action.sh` | Native worker on an Apple Silicon Mac. |
 | `clang_remote_wrapper`, `worker_action.sh`, `rewrapper_windows.cfg`, `backend.star` | What Siso sends and how workers run it. |
 
 ## Setup
@@ -93,9 +94,57 @@ Needs WSL2 with Ubuntu and SSH access from the build PC. From the build PC:
    installer), which keeps the PC awake while the worker runs without changing
    power settings.
 
-Current cluster: the build PC (Threadripper 1920X, 12 slots, 192.168.100.41)
-and `PPAJAK-LAP` (Ryzen 7 PRO 5850U, 16 slots, Wi-Fi at 270–350 Mbit/s, SSH alias
-`zitter-node`).
+### A Mac as a worker
+
+An Apple Silicon Mac runs the macOS build of NativeLink natively, without
+Docker or a Linux VM. It cannot run the Linux clang that every compile carries,
+so its entrypoint, `mac_worker_action.sh`, does what `clang_remote_wrapper`
+does with Chromium's Mac clang of the same revision:
+
+- It finds that clang by the SHA-256 of the Linux clang in the action
+  (`~/nativelink/clang/<package>/linux_clang.sha256`) and fails the action
+  when none matches, so a clang roll never runs a mismatched compiler. The
+  scheduler then retries it on another worker.
+- It adds `--target=x86_64-pc-windows-msvc`: clang-cl takes its default target
+  from the host, which is arm64 on a Mac.
+- The entrypoint is not an action input, so none of this changes
+  `clang_remote_wrapper` or the remote cache. Keep its clang command line in
+  sync with the wrapper.
+- The hermetic Windows SDK has directories that differ only in case
+  (`um/gl`, `um/GL`). The CAS and action directories live on a case-sensitive
+  APFS sparse image (`~/nativelink/data.sparsebundle`, mounted at
+  `~/nativelink/vol`).
+
+Setup needs SSH (System Settings → General → Sharing → Remote Login) with the
+build PC's key in `~/.ssh/authorized_keys`. From the build PC:
+
+1. Copy `install_mac_worker.sh`, `mac_worker_action.sh` and
+   `nativelink_worker.json5` to `~/zitter-nl` on the Mac and run
+   ```sh
+   bash ~/zitter-nl/install_mac_worker.sh <build PC IP> <clang package> <Linux clang SHA-256> [slots]
+   ```
+   The clang package is `CLANG_REVISION-CLANG_SUB_REVISION` from
+   `tools/clang/scripts/update.py`; the SHA-256 is that of
+   `third_party/llvm-build/Release+Asserts_linux/bin/clang`. It downloads
+   NativeLink and the Mac clang, creates the image and installs a per-user
+   LaunchAgent (`com.zitter.nativelink-worker`, no admin) that starts the worker
+   at login, restarts it, and keeps the Mac awake with `caffeinate` while it runs.
+2. Allow `nativelink` under System Settings → Privacy & Security → Local
+   Network on the Mac itself. Until then the worker logs "No route to host";
+   processes started over SSH are exempt, so a manual test there passes.
+3. Rerun the installer after a clang roll; it adds the new clang next to the old.
+
+The log is `~/nativelink/worker.log`; restart with
+`launchctl kickstart -k gui/$(id -u)/com.zitter.nativelink-worker`.
+
+Checked on 2026-11-24: 12 of 48 `base` compiles ran on the Mac with
+`-re_cache_enable_read=false`, and all 48 objects were byte-identical to the
+earlier local and Linux-worker builds.
+
+Current cluster: the build PC (Threadripper 1920X, 12 slots, 192.168.100.41),
+`PPAJAK-LAP` (Ryzen 7 PRO 5850U, 16 slots, Wi-Fi at 270–350 Mbit/s, SSH alias
+`zitter-node`) and `PPAJAK-MAC` (M3 Pro, 12 slots, 192.168.100.190, SSH alias
+`zitter-mac`).
 
 ## Building
 
@@ -153,6 +202,6 @@ directory.
 ## Next
 
 - Measure local vs remote on the same target, then a full build.
-- A Mac as a native worker (NativeLink and clang both ship for macOS ARM), and
-  Mac builds sending their compiles to this cluster
-  (`build/config/siso/mac_sdk.star`).
+- Mac builds sending their compiles to this cluster
+  (`build/config/siso/mac_sdk.star`). The Mac already works as a worker.
+- Measure a full build with the Mac in the cluster.
