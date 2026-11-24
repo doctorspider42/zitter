@@ -104,6 +104,8 @@ class PageDialogs final : public content::JavaScriptDialogManager,
   DialogClosedCallback dialog_callback_;
   base::OnceCallback<void(bool)> check_callback_;
   size_t navigation_generation_ = 0;
+  // External protocol confirmations belong to the top-level page.
+  size_t primary_navigation_generation_ = 0;
   size_t dialog_generation_ = 0;
   size_t repost_generation_ = 0;
   size_t repost_page_generation_ = 0;

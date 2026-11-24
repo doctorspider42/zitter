@@ -178,17 +178,18 @@ void PageDialogs::ConfirmExternalProtocol(std::u16string origin,
   Show(frame, content::JAVASCRIPT_DIALOG_TYPE_CONFIRM,
        {}, {}, DialogKind::kExternalProtocol,
        base::BindOnce(
-           [](base::WeakPtr<PageDialogs> dialogs, size_t navigation,
+           [](base::WeakPtr<PageDialogs> dialogs, size_t primary_navigation,
               base::OnceCallback<void(bool)> launch, bool accepted,
               const std::u16string& remember) {
              if (accepted && dialogs && dialogs->web_contents() &&
-                 dialogs->navigation_generation() == navigation &&
+                 dialogs->primary_navigation_generation_ == primary_navigation &&
                  dialogs->web_contents()->GetVisibility() ==
                      content::Visibility::VISIBLE) {
                std::move(launch).Run(!remember.empty());
              }
            },
-           weak_factory_.GetWeakPtr(), navigation_generation_, std::move(launch)),
+           weak_factory_.GetWeakPtr(), primary_navigation_generation_,
+           std::move(launch)),
        origin, scheme, can_remember);
 }
 
@@ -362,6 +363,8 @@ void PageDialogs::FinishCheck(bool proceed) {
 void PageDialogs::DidStartNavigation(content::NavigationHandle* navigation) {
   if (navigation->IsInPrimaryMainFrame()) {
     ++repost_page_generation_;
+    if (!navigation->IsSameDocument())
+      ++primary_navigation_generation_;
     if (navigation->IsSameDocument() && repost_dialog_)
       CancelDialogs(web_contents(), false);
   }
