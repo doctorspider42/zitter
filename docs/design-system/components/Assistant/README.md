@@ -6,22 +6,36 @@ focused exception to the browser chrome's generally flat color treatment.
 
 ## Layout
 
-- Right panel: 420 DIP, 20 DIP outer radius, 16 DIP inner padding, 10 DIP stack gap.
-- Header: compact 15 DIP sans identity over a 12 DIP muted session title; 28 DIP
-  icon actions with accessible labels: sessions, access (accent when anything is
-  shared), new session, pin, close.
-- Welcome: a static 66 DIP optical orb within a 210 DIP hero, one 27 DIP italic
-  serif heading and a 12 DIP supporting line. Three 54 DIP suggestion rows fill
-  a draft (and insert the current tab or Deep research as a chip) without sending
-  it or granting browser access.
-- Conversation: separate user and assistant messages; 12 DIP bubble padding,
-  13 DIP body text, 12 DIP role labels. User messages repeat their chips. Browser
-  activity uses quiet status text.
-- Composer: 18 DIP radius, unframed 14 DIP editor, a wrapping row of 24 DIP chips
-  above it, then the tool row with 28 DIP icon actions for `@`, Deep research and
-  Background, the model chip with a chevron and the 36 DIP primary send/stop action.
-  The Background action keeps its width during a run and describes its current
-  action in its accessible name and tooltip.
+- Two presentations. **Ask bar**: up to 640 DIP wide, centred 20 DIP above the
+  page's bottom, 10 DIP padding, the latest answer over a composer without the
+  mode switch, `@` or model chip; an expand action docks it. **Panel**: 420 DIP,
+  20 DIP outer radius, 16 DIP inner padding, 10 DIP stack gap, pinned by default.
+- Header: one 30 DIP row. The conversation title (13 DIP semibold, a chevron, a
+  search glyph for research conversations) opens the history; 28 DIP icon actions
+  follow: access, new conversation, more, close.
+- Empty conversation: one 32 DIP italic display line, then one-line 32 DIP
+  suggestion pills (hairline `line`, glyph in `ink-muted`, accent on hover), then
+  an eyebrow **Recent** with up to three history rows. No orb, no descriptions.
+- Conversation: user messages are right-aligned bubbles (accent tint, 14 DIP
+  radius with a 4 DIP bottom-right corner, at most 84% wide, chips above the
+  text). Answers sit directly on the panel: 13 DIP Markdown, then a copy action
+  and the model in muted text. A finished turn's steps collapse into a disclosure
+  row; the running turn shows each step.
+- Research plan card (`bg-base` well, 14 DIP radius, 14 DIP padding): a title
+  line with the state, numbered angle rows (removable while waiting), outlined
+  22 DIP fact tags (sources, parallel calls, no tabs or history), then **Start**
+  (primary, `⌘↵` key cap) and **Cancel**.
+- Research progress card: the loader dots and phase title with the source count,
+  three 4 DIP phase bars (plan, sources, report) with labels, one status row per
+  angle (hollow dot pending, spinner running, check done, warning failed), a
+  tinted “Now: host/path” note and a danger **Stop** pill.
+- Consent in the conversation: a warn-outlined card with the element preview,
+  the question and **Allow** / **Skip** pills.
+- Composer: 16 DIP radius on `bg-base`, `line` hairline (`line-strong` when
+  focused), unframed 14 DIP editor, a wrapping row of 24 DIP chips above it, then
+  the tool row: a 30 DIP Chat/Research switch, `@`, Background, a gap, the model
+  chip and the 36 DIP send/stop action. Research mode tints the well and draws a
+  1.5 DIP accent ring; its segment fills with the accent.
 - Chips: 6 DIP radius, a 16 DIP letter tile in the page's color (tools: an accent
   glyph), 12 DIP medium text. Pages have an accent tint, tools an outline. An 18 DIP
   × button removes the chip and is named “Remove <title>”.
@@ -36,29 +50,31 @@ focused exception to the browser chrome's generally flat color treatment.
   - Model menu: 300 DIP, right-aligned 8 DIP above the composer; a search field,
     an accent note when the session is fixed to its model, groups per backend, the
     default model's badge and a link to Settings.
-  - Sessions and access menus: 320 DIP, right-aligned 6 DIP below the header. Access
-    rows end in a 32×18 DIP switch (accent when on, outlined when off); a switch that
-    would widen a started session is disabled. A danger-tinted **Revoke all access**
-    pill closes the menu.
+  - History, more and access menus: right-aligned 6 DIP below the header. More
+    holds pinning, scheduled tasks, page actions and the defaults for new
+    conversations. Access rows end in a 32×18 DIP switch (accent when on, outlined
+    when off); a switch that would widen a started session is disabled. A
+    danger-tinted **Revoke all access** pill closes the menu.
   - Every menu closes on a press outside it, except on its own toggle.
 - Background section, between the header and the conversation: a group label with
   the task count, 46 DIP task rows (accent tint, activity dots while running, take
   over and stop/close actions) and consent cards (the element's label on a light
   page strip with an accent ring, then Allow, Skip and Take over the tab pills).
+- Toolbar button: an accent dot while the assistant works, a badge for unseen
+  results or `!` for a waiting consent, the status as its tooltip.
 - Page control overlays (browser chrome over the page): a 40 DIP status capsule
   with activity dots, status text, an Esc key cap and **Finish in the background**;
   a 88 DIP consent bubble beside the clicked element (above it when there is room)
   with Allow (↵), Skip (Esc) and **Until the task ends**.
-- Unpinned panels auto-hide after a 650 ms pointer-exit delay. Open menus,
-  focused drafts, resizing and running tasks keep the panel visible. The left
-  edge has an 8 DIP drag target with a subtle 40 DIP grip; preferred width ranges
-  from 360 to 760 DIP and persists across hiding/pinning for the current window.
+- The left edge has an 8 DIP drag target with a subtle 40 DIP grip; preferred
+  width ranges from 360 to 760 DIP and persists across hiding/pinning for the
+  current window.
 
 ## Color and motion
 
-Dark surfaces use `#111217` and `#1a1c24`; light surfaces use `#faf9f6` and
-`#f0efed`. The accent is `#b4a6ff` in dark mode and `#6d54d8` in light mode.
-Text and icons retain distinct primary, secondary and disabled roles.
+The panel uses the design system's tokens: `bg-raised` for the panel, `bg-base`
+for wells (composer, cards), `ink`, `ink-muted`, `line`, `line-strong`, the
+violet accent (`ket`) and `ok`/`warn`/`danger` for states, in both themes.
 
 Page control uses a rotating violet–ice–mint sweep, with 38/20/8/1.5 DIP nested
 edge strokes at 10/17/35/95 percent opacity. The rotation takes 5.4 seconds at
@@ -66,7 +82,7 @@ edge strokes at 10/17/35/95 percent opacity. The rotation takes 5.4 seconds at
 bottom status capsule carries three activity dots and an Escape key hint.
 Reduced-motion mode uses a static frame and no animation timer.
 
-The welcome orb is static: the assistant does not animate or poll while idle.
+The assistant does not animate or poll while idle.
 The effect lives in browser chrome, accepts no pointer input, and ends when the
 task completes, fails, stops or changes profile.
 

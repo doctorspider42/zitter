@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,6 +80,12 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   void Show(bool from_edge = false);
   // Hides the panel; the conversation and running work stay.
   void Hide();
+  // The Ask bar: a compact composer over the bottom of the page, with the
+  // latest answer above it. Opening it again, or Expand, docks the panel.
+  void ShowAsk();
+  bool compact() const { return compact_; }
+  // Height of the Ask bar at `width`.
+  int CompactHeight(int width) const;
   void StartNewConversation();
   bool SwitchProfile();
   // Stops the selected conversation; background tasks keep running.
@@ -138,6 +145,10 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   // For the toolbar button: any conversation or task working, results not seen yet.
   bool working() const;
   int unread() const { return unread_; }
+  // A background task or the visible tab waits for the user's consent.
+  bool needs_attention() const;
+  // One line for the toolbar: what the assistant is doing now.
+  std::u16string status_text() const;
   const std::vector<AssistantTask>& tasks() const { return tasks_; }
   void AddTaskForTesting(AssistantTask task);
   void RunTaskForTesting(const std::string& id) { RunTask(id); }
@@ -155,7 +166,9 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
  private:
   // kind: 0 answer, 1 the user's message, 2 a step (state 1) or an issue (state 2),
   // 3 a note, 4 a hidden trace of a tool call (saved, for inspection),
-  // 5 a question to the user with one-click options (state 1: several may be picked).
+  // 5 a question to the user with one-click options (state 1: several may be picked),
+  // 6 a research plan: `text` is the prompt, `options` the search angles;
+  //   state 0 waits for the user, 1 started, 2 replaced or cancelled.
   struct Message {
     Message();
     Message(const Message&);
@@ -205,10 +218,17 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
     bool asking = false;
     std::vector<bool> picks;
     std::string partial;
+    // The composer's mode: Research plans first, then runs on approval.
+    bool research_mode = false;
+    // A research run: its latest progress from the runtime.
+    bool researching = false;
+    std::optional<base::DictValue> research_progress;
   };
   // Has the user written anything here yet?
   static bool Started(const Session& session);
   void Layout(PassKey) override;
+  // Drops the optional tool icons a narrow composer has no room for.
+  void FitTools();
   Session& selected() { return *sessions_[selected_]; }
   const Session& selected() const { return *sessions_[selected_]; }
   Session* Find(const std::string& key, uint64_t epoch);
@@ -265,6 +285,19 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   Message* PendingQuestion(Session& session);
   void ShowPartial();
   void Send(bool background);
+  // Research: asks for a plan, then runs the approved one.
+  void SetResearchMode(bool on);
+  void RequestPlan(Session& session, std::string prompt);
+  void StartResearch(Session& session);
+  Message* PendingPlan(Session& session);
+  void CancelPlan(Session& session);
+  // The request every turn sends: prompt, model, access, context, history up to `history_end`.
+  base::DictValue TurnRequest(Session& session, const std::string& prompt, bool research, bool background, size_t history_end);
+  void RenderWelcome();
+  void RenderResearch(views::View* card, const Session& session);
+  void ShowResearchProgress();
+  void Expand();
+  void ApplyCompact();
   void StartTurn(Session& session);
   void StartRuntime(std::string key, uint64_t epoch, std::string api_key);
   void PollRuntime(std::string key, uint64_t epoch, int attempts);
@@ -285,10 +318,13 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   AssistantPermissions observed_default_permissions_;
   std::unique_ptr<PanelScene> scene_;
   raw_ptr<PanelViewport> viewport_ = nullptr;
+  raw_ptr<views::View> viewport_host_ = nullptr;
   raw_ptr<views::View> header_ = nullptr, conversation_ = nullptr, background_ = nullptr;
-  raw_ptr<views::View> sessions_action_ = nullptr, tasks_action_ = nullptr, access_action_ = nullptr;
+  raw_ptr<views::View> sessions_action_ = nullptr, access_action_ = nullptr, mode_ = nullptr;
   raw_ptr<views::View> composer_ = nullptr, chips_view_ = nullptr, tools_ = nullptr;
-  raw_ptr<views::View> research_chip_ = nullptr, background_chip_ = nullptr, model_chip_ = nullptr, send_ = nullptr, stop_ = nullptr;
+  raw_ptr<views::View> mention_action_ = nullptr, background_chip_ = nullptr, model_chip_ = nullptr, send_ = nullptr, stop_ = nullptr;
+  bool mention_wanted_ = false, background_wanted_ = false;
+  raw_ptr<views::View> expand_action_ = nullptr;
   raw_ptr<views::Textarea> prompt_ = nullptr;
   raw_ptr<EditorControl> model_search_ = nullptr;
   raw_ptr<views::View> menu_view_ = nullptr, menu_footer_ = nullptr;
@@ -331,8 +367,12 @@ class AssistantPanel final : public views::View, public views::ResizeAreaDelegat
   const base::Time scheduler_started_ = base::Time::Now();
   int unread_ = 0;
   std::unique_ptr<network::SimpleURLLoader> progress_loader_;
-  raw_ptr<views::View> live_answer_ = nullptr;
-  bool pinned_ = false;
+  raw_ptr<views::View> live_answer_ = nullptr, live_research_ = nullptr;
+  // Finished turns whose steps are shown, by the index of their first step.
+  std::set<size_t> expanded_steps_;
+  bool compact_ = false;
+  // Docked: the panel reserves page space and stays until closed.
+  bool pinned_ = true;
   int port_ = 0;
   std::string token_;
   base::Process process_;

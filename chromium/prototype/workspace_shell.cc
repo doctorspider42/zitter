@@ -5103,7 +5103,12 @@ class ShellRoot final : public views::View {
     // is taken before the page is sized, so the page never resizes twice.
     gfx::Rect page(g.content.x,g.content.y,g.content.width,g.content.height);
     if (assistant && !assistant_allowed) assistant->SetVisible(false);
-    if (assistant && assistant->GetVisible()) {
+    if (assistant && assistant->GetVisible() && assistant_compact) {
+      // The Ask bar: centred over the bottom of the page, as tall as its content.
+      const int w = std::min(640, std::max(0, page.width() - 48));
+      const int h = std::min(assistant->GetHeightForWidth(w), std::max(0, page.height() - 48));
+      assistant->SetBounds(page.x() + (page.width() - w) / 2, page.bottom() - 20 - h, w, h);
+    } else if (assistant && assistant->GetVisible()) {
       const int extent = std::min(assistant->GetPreferredSize().width(), std::max(300, assistant_pinned ? page.width() - 168 : width() - 80));
       assistant->SetBounds(width() - extent - kGap, top, extent, std::max(0, height() - top - kGap));
       // A pinned assistant always reserves page space, including narrow windows.
@@ -5179,6 +5184,7 @@ class ShellRoot final : public views::View {
   raw_ptr<views::View> assistant_capsule = nullptr, assistant_consent = nullptr;
   std::optional<gfx::Rect> consent_anchor;
   bool assistant_pinned = false;
+  bool assistant_compact = false;
   bool assistant_allowed = true;
   raw_ptr<views::View> edge = nullptr;
   bool pinned = true;
@@ -5507,9 +5513,10 @@ bool WorkspaceShell::assistant_edge_visible_for_testing() const {
   auto* edge = static_cast<ShellRoot*>(root_.get())->assistant_edge.get();
   return edge && edge->GetVisible();
 }
-void WorkspaceShell::LayoutAssistant(bool pinned) {
+void WorkspaceShell::LayoutAssistant(bool pinned, bool compact) {
   auto* root = static_cast<ShellRoot*>(root_.get());
-  root->assistant_pinned = pinned;
+  root->assistant_pinned = pinned && !compact;
+  root->assistant_compact = compact;
   root->InvalidateLayout();
   if (widget_) widget_->LayoutRootViewIfNecessary();
   PositionPreferencesTab();
@@ -6272,6 +6279,7 @@ void WorkspaceShell::Detach() {
   rust_folder_dialog_.reset();rust_folder_dialog_delegate_.reset();
 
   developer_menu_runner_.reset(); developer_menu_.reset(); inspect_element_.Reset();
+
   link_menu_runner_.reset(); link_menu_.reset(); route_menu_.reset(); add_menu_runner_.reset(); add_menu_.reset();
   workspace_menu_runner_.reset();
   workspace_menu_.reset();
@@ -11668,7 +11676,8 @@ void WorkspaceShell::RefreshGeneralControls() {
       unavailable->second->SetVisible(it == values.end());
     if (unavailable_preferences_.contains(key)) {
       control->SetVisible(it != values.end());
-      if (it != values.end()) {
+      // Site defaults list the policies a site may get; other pickers keep their choices.
+      if (it != values.end() && key.starts_with(kSiteDefaultPrefix)) {
         const auto& policies = it->second.text;
         std::vector<std::pair<std::string, std::u16string>> options = {{"block", T(u"Blokuj")}};
         if (policies.find('p') != std::string::npos)
@@ -17330,8 +17339,9 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         break;
       }
       case 2: {
+        // Layers: on macOS trackpad scrolling goes through the compositor, which needs them.
         auto* scroll = page_->AddChildView(std::make_unique<views::ScrollView>(
-            views::ScrollView::ScrollWithLayers::kDisabled));
+            views::ScrollView::ScrollWithLayers::kEnabled));
         scroll->ClipHeightTo(0, std::numeric_limits<int>::max());
         scroll->SetBackgroundColor(std::nullopt);
         scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);

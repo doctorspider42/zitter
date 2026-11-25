@@ -74,8 +74,10 @@ Colors Theme(const views::View* view) {
   const auto* provider = view->GetColorProvider();
   const auto bg = provider ? provider->GetColor(ui::kColorDialogBackground) : SK_ColorBLACK;
   const bool dark = SkColorGetR(bg) + SkColorGetG(bg) + SkColorGetB(bg) < 384;
-  return dark ? Colors{0xff111217,0xff1a1c24,0xfff3f3f7,0xff979ba9,0xff30323e,0xffb4a6ff,0xff20222b,0xff6f7283,0xffffbe55,0xff6fd6cb,0xfff29bab,0xff171322,true}
-              : Colors{0xfffaf9f6,0xfff0efed,0xff22232b,0xff6b6d7a,0xffdedde3,0xff6d54d8,0xffffffff,0xff8c8a96,0xffa15c00,0xff0f766e,0xffb63c58,0xffffffff,false};
+  // Design system tokens: bg-raised panel, bg-base wells, ink, ink-muted,
+  // line, the violet accent (ket), line-strong and the status colors.
+  return dark ? Colors{0xff1e1b28,0xff14121b,0xfff3f1f8,0xffaaa5bb,0xff2c2839,0xff9a92ff,0xff262231,0xff736d89,0xffffbe55,0xff6fd6cb,0xffff7a55,0xff0c0b11,true}
+              : Colors{0xffffffff,0xfff5f3ef,0xff16141c,0xff5a5566,0xffdcd7cd,0xff4b40d9,0xffffffff,0xff8c8678,0xffa15c00,0xff0f766e,0xffc2410c,0xffffffff,false};
 }
 gfx::FontList Type(int size, int weight = 400, bool display = false) {
   return gfx::FontList({std::string(sidebar::design_font_family(display ? 1 : 2))}, display ? gfx::Font::ITALIC : gfx::Font::NORMAL,
@@ -99,7 +101,11 @@ void Glyph(gfx::Canvas* canvas, AssistantGlyph glyph, float x, float y, SkColor 
     case AssistantGlyph::kArrow: line(8,13,8,3);line(3.5,7.5,8,3);line(8,3,12.5,7.5);break;
     case AssistantGlyph::kStop: Round(canvas,gfx::RectF(4,4,8,8),2,color);break;
     case AssistantGlyph::kRevoke: canvas->DrawCircle(gfx::PointF(8,8),5.5f,f);line(4,4,12,12);break;
-    case AssistantGlyph::kAt: canvas->DrawStringRectWithFlags(u"@",Type(17,500),color,gfx::Rect(0,-2,17,21),gfx::Canvas::TEXT_ALIGN_CENTER);break;
+    case AssistantGlyph::kAt: {
+      // Drawn like the other glyphs, so it shares their size and centre (a text @ sat low).
+      canvas->DrawCircle(gfx::PointF(8,8),2.6f,f);
+      if(auto path=SkParsePath::FromSVGString("M10.6 5.4V8.7a2 2 0 0 0 4 0V8a6.6 6.6 0 1 0-2.6 5.3"))canvas->DrawPath(*path,f);
+      break; }
     case AssistantGlyph::kHistory: canvas->DrawCircle(gfx::PointF(8,8),5.5f,f);line(8,4.5,8,8);line(8,8,10.5,9.5);break;
     case AssistantGlyph::kSearch: canvas->DrawCircle(gfx::PointF(6,6),4.5f,f);line(9.5,9.5,14,14);break;
     case AssistantGlyph::kChevron: line(5,6,8,9);line(8,9,11,6);break;
@@ -124,6 +130,12 @@ void Glyph(gfx::Canvas* canvas, AssistantGlyph glyph, float x, float y, SkColor 
       SkPathBuilder q; q.moveTo(3.5f,10);q.quadTo(5.5f,13.4f,9.2f,12.9f);q.quadTo(11.4f,12.5f,12.4f,11);canvas->DrawPath(q.detach(),f);
       line(12.5f,13.5f,12.5f,11);line(12.5f,11,10,11);break; }
     case AssistantGlyph::kBack: line(10,3.5f,5.5f,8);line(5.5f,8,10,12.5f);break;
+    case AssistantGlyph::kMore: { cc::PaintFlags dot=f;dot.setStyle(cc::PaintFlags::kFill_Style);
+      for(float cx:{3.5f,8.f,12.5f})canvas->DrawCircle(gfx::PointF(cx,8),1.2f,dot);break; }
+    case AssistantGlyph::kChat: { SkPathBuilder p; p.moveTo(4.5f,2.5f);p.lineTo(11.5f,2.5f);p.quadTo(13.5f,2.5f,13.5f,4.5f);p.lineTo(13.5f,9.5f);
+      p.quadTo(13.5f,11.5f,11.5f,11.5f);p.lineTo(7,11.5f);p.lineTo(4,14);p.lineTo(4,11.5f);p.quadTo(2.5f,11.2f,2.5f,9.5f);p.lineTo(2.5f,4.5f);
+      p.quadTo(2.5f,2.5f,4.5f,2.5f);p.close();canvas->DrawPath(p.detach(),f);break; }
+    case AssistantGlyph::kPanel: Round(canvas,gfx::RectF(2,2.5f,12,11),2,color,1.5f);line(10,2.5f,10,13.5f);break;
     case AssistantGlyph::kGlobe: { canvas->DrawCircle(gfx::PointF(8,8),5.5f,f);line(2.5f,8,13.5f,8);
       SkPathBuilder p; p.addOval(SkRect::MakeXYWH(5.4f,2.5f,5.2f,11));canvas->DrawPath(p.detach(),f);break; }
   }
@@ -169,6 +181,7 @@ class Action final : public views::Button {
   void Update(std::u16string text,bool selected) {text_=std::move(text);selected_=selected;GetViewAccessibility().SetName(text_);SetTooltipText(text_);PreferredSizeChanged();SchedulePaint();}
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
     if(option_)return {148,40};
+    if(chip_&&glyph_==AssistantGlyph::kChevron)return {8+std::min(110,gfx::GetStringWidth(text_,Type(12,500)))+4+16+4,28};
     const bool disclosure=chip_&&(glyph_==AssistantGlyph::kSpark||glyph_==AssistantGlyph::kShield);
     return {chip_?std::min(280,gfx::GetStringWidth(text_,Type(12,500))+(disclosure?58:48)):primary_?36:28,primary_?36:28};
   }
@@ -180,14 +193,23 @@ class Action final : public views::Button {
     const auto selected_fill = monochrome ? c.raised : SkColorSetA(c.accent, c.dark ? 35 : 22);
     const auto selected_ink = monochrome ? c.ink : c.accent;
     auto rect=gfx::RectF(GetLocalBounds());rect.Inset(.5f);
-    const auto fill=primary_?c.accent:selected_?selected_fill:hover?c.card:SK_ColorTRANSPARENT;
+    // Hover is a tint of the ink: it shows on the panel and inside the composer's well alike.
+    const auto hover_fill=SkColorSetA(c.ink,c.dark?24:16);
+    const auto fill=primary_?(hover?SkColorSetA(c.accent,225):c.accent):selected_?selected_fill:hover&&GetEnabled()?hover_fill:SK_ColorTRANSPARENT;
     Round(canvas,rect,chip_?10:primary_?18:9,fill);
     if(chip_&&selected_)Round(canvas,rect,10,SkColorSetA(c.accent,60),1);
-    const auto ink=!GetEnabled()?SkColorSetA(c.muted,100):glyph_==AssistantGlyph::kRevoke?(c.dark?0xfff29bab:0xffb63c58):primary_?(c.dark?0xff171322:SK_ColorWHITE):selected_?selected_ink:c.muted;
+    const auto ink=!GetEnabled()?SkColorSetA(c.muted,100):glyph_==AssistantGlyph::kRevoke?c.danger:primary_?c.on_accent:selected_?selected_ink:hover?c.ink:c.muted;
     if(option_){
       if(!selected_)Round(canvas,rect,10,c.line,1);
       canvas->DrawStringRectWithFlags(text_,Type(12,500),ink,gfx::Rect(12,0,std::max(0,width()-36),height()),gfx::Canvas::TEXT_ALIGN_LEFT);
       if(selected_)Glyph(canvas,AssistantGlyph::kSpark,width()-25,(height()-16)/2,ink);
+      return;
+    }
+    if(chip_&&glyph_==AssistantGlyph::kChevron){
+      // A menu chip: its text (elided past 110 DIP), then a chevron.
+      const int tw=std::min(110,std::min(gfx::GetStringWidth(text_,Type(12,500))+1,std::max(0,width()-32)));
+      canvas->DrawStringRectWithFlags(text_,Type(12,500),ink,gfx::Rect(8,0,tw,height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+      Glyph(canvas,AssistantGlyph::kChevron,8+tw+4,(height()-16)/2,ink);
       return;
     }
     const int gx=chip_?8:(width()-16)/2;Glyph(canvas,glyph_,gx,(height()-16)/2,ink);
@@ -217,6 +239,8 @@ class Surface final : public views::View,public views::FocusChangeListener {
   METADATA_HEADER(Surface,views::View)
  public:
   explicit Surface(int kind):kind_(kind){}
+  void SetAccent(bool accent){if(accent_!=accent){accent_=accent;SchedulePaint();}}
+  void SetBare(bool bare){if(bare_!=bare){bare_=bare;SchedulePaint();}}
   void AddedToWidget() override {views::View::AddedToWidget();if(kind_==1&&GetFocusManager())focus_.Observe(GetFocusManager());}
   void RemovedFromWidget() override {focus_.Reset();views::View::RemovedFromWidget();}
   void OnDidChangeFocus(views::View* before,views::View* now) override {if((before&&Contains(before))||(now&&Contains(now)))SchedulePaint();}
@@ -226,11 +250,19 @@ class Surface final : public views::View,public views::FocusChangeListener {
       // Popover: raised fill, a hairline and a soft drop below.
       Round(canvas,rect,12,c.raised);Round(canvas,rect,12,c.line,1);return;
     }
-    Round(canvas,rect,kind_==1?18:14,kind_==2?SkColorSetA(c.accent,c.dark?20:14):c.card);
+    if(bare_)return;
+    const float radius=kind_==1?16:14;
+    if(kind_==1&&accent_){
+      // Research mode: a tinted well inside a full accent ring.
+      Round(canvas,rect,radius,color_utils::AlphaBlend(c.accent,c.card,c.dark?0.07f:0.05f));
+      auto ring=gfx::RectF(GetLocalBounds());ring.Inset(.75f);Round(canvas,ring,radius,c.accent,1.5f);return;
+    }
+    Round(canvas,rect,radius,kind_==2?SkColorSetA(c.accent,c.dark?44:24):kind_==5?c.card:c.card);
     const bool focused=kind_==1&&GetFocusManager()&&GetFocusManager()->GetFocusedView()&&Contains(GetFocusManager()->GetFocusedView());
-    if(kind_==1||kind_==0)Round(canvas,rect,kind_==1?18:14,focused?SkColorSetA(c.accent,180):c.line,1);
+    if(kind_==1||kind_==0)Round(canvas,rect,radius,focused?c.strong:c.line,1);
+    if(kind_==5)Round(canvas,rect,radius,SkColorSetA(c.warn,110),1);
   }
- private:int kind_;base::ScopedObservation<views::FocusManager,views::FocusChangeListener> focus_{this};
+ private:int kind_;bool accent_=false,bare_=false;base::ScopedObservation<views::FocusManager,views::FocusChangeListener> focus_{this};
 };
 BEGIN_METADATA(Surface)
 END_METADATA
@@ -427,6 +459,9 @@ class Activity final : public views::View {
       cc::PaintFlags dot;dot.setAntiAlias(true);dot.setColor(c.danger);canvas->DrawCircle(center,6.5f,dot);
       canvas->DrawStringRectWithFlags(u"!",Type(10,700),c.on_accent==SK_ColorWHITE?c.bg:SK_ColorWHITE,gfx::Rect(2,2,12,14),gfx::Canvas::TEXT_ALIGN_CENTER);
       ink=c.danger;
+    }else if(state_==4){
+      cc::PaintFlags ring;ring.setAntiAlias(true);ring.setStyle(cc::PaintFlags::kStroke_Style);ring.setStrokeWidth(1.5f);ring.setColor(c.strong);
+      canvas->DrawCircle(center,3.5f,ring);
     }else{
       const float pulse=.5f+.5f*std::sin(t*5);
       cc::PaintFlags halo;halo.setAntiAlias(true);halo.setColor(SkColorSetA(c.warn,static_cast<U8CPU>(60*pulse)));canvas->DrawCircle(center,7,halo);
@@ -540,6 +575,7 @@ class Pill final : public views::Button {
     SetFocusBehavior(FocusBehavior::ALWAYS);SetInstallFocusRingOnFocus(true);GetViewAccessibility().SetName(text_);
   }
   gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    if(kind_==4)return {(glyph_?32:14)+gfx::GetStringWidth(text_,Type(13))+14,32};
     return {(glyph_?28:12)+gfx::GetStringWidth(text_,Type(12,600))+(key_.empty()?12:KeysWidth(key_)+10),28};
   }
   void PaintButtonContents(gfx::Canvas* canvas) override {
@@ -548,6 +584,13 @@ class Pill final : public views::Button {
     if(kind_==0){Round(canvas,rect,14,hover?SkColorSetA(c.accent,225):c.accent);ink=c.on_accent;}
     else if(kind_==1){if(hover)Round(canvas,rect,14,SkColorSetA(c.ink,c.dark?18:12));Round(canvas,rect,14,c.strong,1);}
     else if(kind_==2){Round(canvas,rect,14,hover?SkColorSetA(c.ink,c.dark?30:20):SkColorSetA(c.ink,c.dark?16:10));}
+    else if(kind_==4){
+      // A suggestion: one line in a hairline pill; the glyph takes the accent on hover.
+      Round(canvas,rect,16,hover?SkColorSetA(c.ink,c.dark?18:12):SK_ColorTRANSPARENT);Round(canvas,rect,16,hover?c.strong:c.line,1);
+      if(glyph_){canvas->Save();canvas->Translate(gfx::Vector2d(11,8));Glyph(canvas,*glyph_,0,0,hover?c.accent:c.muted);canvas->Restore();}
+      canvas->DrawStringRectWithFlags(text_,Type(13),c.ink,gfx::Rect(glyph_?33:14,0,gfx::GetStringWidth(text_,Type(13))+2,height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+      return;
+    }
     else{Round(canvas,rect,14,SkColorSetA(c.danger,hover?60:40));ink=c.danger;}
     if(!GetEnabled())ink=SkColorSetA(ink,110);
     int x=12;if(glyph_){canvas->Save();canvas->Translate(gfx::Vector2d(9,6));canvas->Scale(.875f,.875f);Glyph(canvas,*glyph_,0,0,ink);canvas->Restore();x=28;}
@@ -772,6 +815,202 @@ class ConsentBubble final : public views::View {
 BEGIN_METADATA(ConsentBubble)
 END_METADATA
 }
+namespace {
+// The conversation's title in the header: a quiet button that opens the history.
+class SessionTitle final : public views::Button {
+  METADATA_HEADER(SessionTitle,views::Button)
+ public:
+  explicit SessionTitle(base::RepeatingClosure action):Button(base::BindRepeating(std::move(action))){
+    SetFocusBehavior(FocusBehavior::ALWAYS);SetInstallFocusRingOnFocus(true);
+    GetViewAccessibility().SetRole(ax::mojom::Role::kPopUpButton);SetTooltipText(T(u"Historia rozmów"));
+  }
+  void Update(std::u16string text,bool research,bool open){
+    text_=std::move(text);research_=research;open_=open;
+    GetViewAccessibility().SetName(TF(u"Rozmowa: {}. Historia rozmów",{text_}));PreferredSizeChanged();SchedulePaint();
+  }
+  int TextWidth() const {return gfx::GetStringWidth(text_,Type(13,600));}
+  // Long titles end in an ellipsis; the header's actions keep their room.
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {std::min(240,(research_?22:0)+TextWidth()+16+22),30};}
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);const bool hover=open_||GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+    if(hover)Round(canvas,gfx::RectF(GetLocalBounds()),8,SkColorSetA(c.ink,c.dark?18:12));
+    int x=8;
+    if(research_){canvas->Save();canvas->Translate(gfx::Vector2d(x,8));canvas->Scale(.875f,.875f);Glyph(canvas,AssistantGlyph::kSearch,0,0,c.accent);canvas->Restore();x+=22;}
+    const int w=std::min(TextWidth()+2,std::max(0,width()-x-22));
+    canvas->DrawStringRectWithFlags(text_,Type(13,600),c.ink,gfx::Rect(x,0,w,height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+    canvas->Save();canvas->Translate(gfx::Vector2d(x+w+3,8));canvas->Scale(.875f,.875f);Glyph(canvas,AssistantGlyph::kChevron,0,0,c.muted);canvas->Restore();
+  }
+ private:std::u16string text_;bool research_=false,open_=false;
+};
+BEGIN_METADATA(SessionTitle)
+END_METADATA
+// Chat / Research: two segments in a sunken pill.
+class ModeSwitch final : public views::View {
+  METADATA_HEADER(ModeSwitch,views::View)
+ public:
+  class Segment final : public views::Button {
+    METADATA_HEADER(Segment,views::Button)
+   public:
+    Segment(base::RepeatingClosure action,AssistantGlyph glyph,std::u16string text,bool research)
+        :Button(base::BindRepeating(std::move(action))),glyph_(glyph),text_(std::move(text)),research_(research){
+      SetFocusBehavior(FocusBehavior::ALWAYS);SetInstallFocusRingOnFocus(true);
+      GetViewAccessibility().SetRole(ax::mojom::Role::kRadioButton);GetViewAccessibility().SetName(text_);
+    }
+    void SetOn(bool on){on_=on;GetViewAccessibility().SetCheckedState(on?ax::mojom::CheckedState::kTrue:ax::mojom::CheckedState::kFalse);SchedulePaint();}
+    gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {8+14+5+gfx::GetStringWidth(text_,Type(12,600))+10,26};}
+    void PaintButtonContents(gfx::Canvas* canvas) override {
+      const auto c=Theme(this);const bool hover=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+      auto rect=gfx::RectF(GetLocalBounds());
+      SkColor ink=!GetEnabled()?SkColorSetA(c.muted,110):hover?c.ink:c.muted;
+      if(on_&&research_){Round(canvas,rect,13,c.accent);ink=c.on_accent;}
+      else if(on_){Round(canvas,rect,13,c.bg);auto edge=rect;edge.Inset(.5f);Round(canvas,edge,13,c.strong,1);ink=c.ink;}
+      canvas->Save();canvas->Translate(gfx::Vector2d(8,6));canvas->Scale(.875f,.875f);Glyph(canvas,glyph_,0,0,ink);canvas->Restore();
+      canvas->DrawStringRectWithFlags(text_,Type(12,600),ink,gfx::Rect(27,0,std::max(0,width()-31),height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+    }
+   private:AssistantGlyph glyph_;std::u16string text_;bool research_,on_=false;
+  };
+  explicit ModeSwitch(base::RepeatingCallback<void(int)> pick){
+    GetViewAccessibility().SetRole(ax::mojom::Role::kRadioGroup);GetViewAccessibility().SetName(T(u"Tryb"));
+    chat_=AddChildView(std::make_unique<Segment>(base::BindRepeating(pick,0),AssistantGlyph::kChat,T(u"Czat"),false));
+    research_=AddChildView(std::make_unique<Segment>(base::BindRepeating(pick,1),AssistantGlyph::kSearch,T(u"Research"),true));
+  }
+  void Update(int mode,bool research_enabled,std::u16string tooltip){
+    chat_->SetOn(mode==0);research_->SetOn(mode==1);research_->SetEnabled(research_enabled||mode==1);research_->SetTooltipText(tooltip);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    return {4+chat_->GetPreferredSize().width()+research_->GetPreferredSize().width(),30};
+  }
+  void Layout(PassKey) override {
+    int x=2;for(auto* b:{chat_.get(),research_.get()}){const int w=b->GetPreferredSize().width();b->SetBounds(x,2,w,26);x+=w;}
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);auto rect=gfx::RectF(GetLocalBounds());rect.Inset(.5f);
+    Round(canvas,rect,15,c.dark?0x26000000:0x0c000000);Round(canvas,rect,15,c.line,1);
+  }
+ private:raw_ptr<Segment> chat_=nullptr,research_=nullptr;
+};
+BEGIN_METADATA(ModeSwitch,Segment)
+END_METADATA
+BEGIN_METADATA(ModeSwitch)
+END_METADATA
+class Heading final : public views::View {
+  METADATA_HEADER(Heading,views::View)
+ public:
+  explicit Heading(std::u16string text):text_(std::move(text)){GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);GetViewAccessibility().SetName(text_);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {280,44};}
+  void OnPaint(gfx::Canvas* canvas) override {
+    canvas->DrawStringRectWithFlags(text_,Type(32,400,true),Theme(this).ink,gfx::Rect(2,0,std::max(0,width()-2),height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+  }
+ private:std::u16string text_;
+};
+BEGIN_METADATA(Heading)
+END_METADATA
+class CardTitle final : public views::View {
+  METADATA_HEADER(CardTitle,views::View)
+ public:
+  CardTitle(AssistantGlyph glyph,std::u16string title,std::u16string trailing,bool loader)
+      :glyph_(glyph),title_(std::move(title)),trailing_(std::move(trailing)),loader_(loader){
+    GetViewAccessibility().SetRole(loader_?ax::mojom::Role::kStatus:ax::mojom::Role::kHeading);GetViewAccessibility().SetName(title_);
+    if(!trailing_.empty())GetViewAccessibility().SetDescription(trailing_);
+  }
+  void AddedToWidget() override {if(loader_&&!gfx::Animation::PrefersReducedMotion())timer_.Start(FROM_HERE,base::Milliseconds(66),base::BindRepeating(&CardTitle::SchedulePaint,base::Unretained(this)));}
+  void RemovedFromWidget() override {timer_.Stop();}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {280,22};}
+  void OnPaint(gfx::Canvas* canvas) override;
+ private:AssistantGlyph glyph_;std::u16string title_,trailing_;bool loader_;base::RepeatingTimer timer_;
+};
+BEGIN_METADATA(CardTitle)
+END_METADATA
+class Tag final : public views::View {
+  METADATA_HEADER(Tag,views::View)
+ public:
+  Tag(std::u16string text,std::optional<AssistantGlyph> glyph):text_(std::move(text)),glyph_(glyph){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(text_);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {(glyph_?24:10)+gfx::GetStringWidth(text_,Type(11))+10,22};}
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);auto rect=gfx::RectF(GetLocalBounds());rect.Inset(.5f);Round(canvas,rect,11,c.line,1);
+    if(glyph_){canvas->Save();canvas->Translate(gfx::Vector2d(8,5));canvas->Scale(.75f,.75f);Glyph(canvas,*glyph_,0,0,c.muted);canvas->Restore();}
+    canvas->DrawStringRectWithFlags(text_,Type(11),c.muted,gfx::Rect(glyph_?24:10,0,std::max(0,width()-(glyph_?28:14)),height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+  }
+ private:std::u16string text_;std::optional<AssistantGlyph> glyph_;
+};
+BEGIN_METADATA(Tag)
+END_METADATA
+class Phases final : public views::View {
+  METADATA_HEADER(Phases,views::View)
+ public:
+  Phases(int phase,float sources,std::u16string sources_label):phase_(phase),sources_(std::clamp(sources,0.f,1.f)),label_(std::move(sources_label)){
+    GetViewAccessibility().SetRole(ax::mojom::Role::kProgressIndicator);
+    GetViewAccessibility().SetName(phase_==0?T(u"Plan"):phase_==1?label_:T(u"Raport"));
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {280,30};}
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);const int gap=6,w=std::max(0,(width()-2*gap)/3);
+    const std::array<std::u16string,3> labels={T(u"Plan"),label_,T(u"Raport")};
+    for(int i=0;i<3;++i){
+      const int x=i*(w+gap);const float fill=i<phase_?1.f:i>phase_?0.f:i==1?sources_:.5f;
+      Round(canvas,gfx::RectF(x,0,w,4),2,SkColorSetA(c.ink,c.dark?26:18));
+      if(fill>0)Round(canvas,gfx::RectF(x,0,std::max(4.f,w*fill),4),2,c.accent);
+      canvas->DrawStringRectWithFlags(labels[i],Type(11,i==phase_?600:400),i==phase_?c.ink:c.muted,gfx::Rect(x,10,w,16),gfx::Canvas::TEXT_ALIGN_LEFT);
+    }
+  }
+ private:int phase_;float sources_;std::u16string label_;
+};
+BEGIN_METADATA(Phases)
+END_METADATA
+class Disclosure final : public views::Button {
+  METADATA_HEADER(Disclosure,views::Button)
+ public:
+  Disclosure(base::RepeatingClosure action,std::u16string text,bool expanded):Button(base::BindRepeating(std::move(action))),text_(std::move(text)),expanded_(expanded){
+    SetFocusBehavior(FocusBehavior::ALWAYS);SetInstallFocusRingOnFocus(true);GetViewAccessibility().SetName(text_);
+    if(expanded_)GetViewAccessibility().SetIsExpanded();else GetViewAccessibility().SetIsCollapsed();
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {return {26+gfx::GetStringWidth(text_,Type(12))+12,28};}
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);const bool hover=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+    if(hover)Round(canvas,gfx::RectF(GetLocalBounds()),8,SkColorSetA(c.ink,c.dark?18:12));
+    // The chevron points down when open, right when closed.
+    canvas->Save();canvas->Translate(gfx::Vector2d(6,6));
+    if(!expanded_){canvas->Translate(gfx::Vector2d(0,16));canvas->sk_canvas()->rotate(-90);}
+    Glyph(canvas,AssistantGlyph::kChevron,0,0,c.muted);canvas->Restore();
+    canvas->DrawStringRectWithFlags(text_,Type(12),hover?c.ink:c.muted,gfx::Rect(26,0,std::max(0,width()-30),height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+  }
+ private:std::u16string text_;bool expanded_;
+};
+BEGIN_METADATA(Disclosure)
+END_METADATA
+// The user's words in a right-aligned bubble, as wide as they need.
+class UserBubble final : public views::View {
+  METADATA_HEADER(UserBubble,views::View)
+ public:
+  UserBubble(std::u16string text,std::vector<std::pair<AssistantMark,std::u16string>> chips):text_(std::move(text)){
+    if(!chips.empty()){flow_=AddChildView(CreateAssistantFlow(4));for(auto& [mark,title]:chips)flow_->AddChildView(CreateAssistantToken(mark,title,!mark.letter.size(),{}));}
+    if(!text_.empty())body_=AddChildView(CreateAssistantPlainText(text_));
+  }
+  // Wide enough for the longest line (and the chips), at most 84% of the column.
+  int BubbleWidth(int width) const {
+    int longest=0;for(const auto& line:base::SplitString(text_,u"\n",base::KEEP_WHITESPACE,base::SPLIT_WANT_ALL))longest=std::max(longest,gfx::GetStringWidth(line,Type(13)));
+    if(flow_)longest=std::max(longest,std::min(width,flow_->GetPreferredSize().width()));
+    return std::clamp(longest+24+8,48,std::max(48,width*84/100));
+  }
+  int Inner(int width,bool apply){
+    const int bw=BubbleWidth(width),x=width-bw+12,iw=std::max(1,bw-24);int y=9;
+    if(flow_){const int h=flow_->GetHeightForWidth(iw);if(apply)flow_->SetBounds(x,y,iw,h);y+=h+(body_?6:0);}
+    if(body_){const int h=body_->GetHeightForWidth(iw);if(apply)body_->SetBounds(x-2,y,iw+4,h);y+=h;}
+    return y+9;
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& b) const override {const int w=b.width().is_bounded()?b.width().value():320;return {w,const_cast<UserBubble*>(this)->Inner(w,false)};}
+  void Layout(PassKey) override {Inner(width(),true);}
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto c=Theme(this);const int bw=BubbleWidth(width());
+    SkPathBuilder p;const float x=width()-bw,r=14,h=height(),w=width();
+    p.moveTo(x+r,0);p.lineTo(w-r,0);p.quadTo(w,0,w,r);p.lineTo(w,h-4);p.quadTo(w,h,w-4,h);p.lineTo(x+r,h);p.quadTo(x,h,x,h-r);p.lineTo(x,r);p.quadTo(x,0,x+r,0);p.close();
+    cc::PaintFlags f;f.setAntiAlias(true);f.setColor(SkColorSetA(c.accent,c.dark?46:26));canvas->DrawPath(p.detach(),f);
+  }
+ private:std::u16string text_;raw_ptr<views::View> flow_=nullptr,body_=nullptr;
+};
+BEGIN_METADATA(UserBubble)
+END_METADATA
+}
 class PromptArea final : public views::Textarea {
   METADATA_HEADER(PromptArea,views::Textarea)
  public:
@@ -988,6 +1227,14 @@ class Markdown final : public views::View {
 BEGIN_METADATA(Markdown)
 END_METADATA
 }
+void CardTitle::OnPaint(gfx::Canvas* canvas) {
+  const auto c=Theme(this);int x=0;
+  if(loader_){PaintDots(canvas,c,3,height()/2,timer_.IsRunning()?std::fmod(base::TimeTicks::Now().since_origin().InSecondsF(),2.0)/2.0:-1.f);x=24;}
+  else{Glyph(canvas,glyph_,0,(height()-16)/2,c.accent);x=24;}
+  const int tw=trailing_.empty()?0:gfx::GetStringWidth(trailing_,Type(11))+4;
+  canvas->DrawStringRectWithFlags(title_,Type(13,600),c.ink,gfx::Rect(x,0,std::max(0,width()-x-tw-8),height()),gfx::Canvas::TEXT_ALIGN_LEFT);
+  if(tw)canvas->DrawStringRectWithFlags(trailing_,Type(11),c.muted,gfx::Rect(width()-tw,0,tw,height()),gfx::Canvas::TEXT_ALIGN_RIGHT);
+}
 std::unique_ptr<views::View> CreateAssistantMarkdown(std::u16string text,base::RepeatingCallback<void(const GURL&)> open){return std::make_unique<Markdown>(std::move(text),std::move(open));}
 std::unique_ptr<views::View> CreateAssistantPlainText(std::u16string text){
   // Plain, selectable copy (the user's own messages): Markdown off.
@@ -1034,6 +1281,18 @@ std::unique_ptr<views::View> CreateAssistantOption(base::RepeatingClosure cb,std
 std::unique_ptr<views::View> CreateAssistantResizeGrip(views::ResizeAreaDelegate* delegate){return std::make_unique<Grip>(delegate);}
 void UpdateAssistantButton(views::View* view,std::u16string text,bool selected){static_cast<Action*>(view)->Update(std::move(text),selected);}
 std::unique_ptr<views::View> CreateAssistantSurface(int kind){return std::make_unique<Surface>(kind);}
+void SetAssistantSurfaceAccent(views::View* surface,bool accent){if(auto* s=views::AsViewClass<Surface>(surface))s->SetAccent(accent);}
+void SetAssistantSurfaceBare(views::View* surface,bool bare){if(auto* s=views::AsViewClass<Surface>(surface))s->SetBare(bare);}
+std::unique_ptr<views::View> CreateAssistantSessionTitle(base::RepeatingClosure action){return std::make_unique<SessionTitle>(std::move(action));}
+void UpdateAssistantSessionTitle(views::View* title,std::u16string text,bool research,bool open){if(auto* t=views::AsViewClass<SessionTitle>(title))t->Update(std::move(text),research,open);}
+std::unique_ptr<views::View> CreateAssistantModeSwitch(base::RepeatingCallback<void(int)> pick){return std::make_unique<ModeSwitch>(std::move(pick));}
+void UpdateAssistantModeSwitch(views::View* view,int mode,bool research_enabled,std::u16string tooltip){if(auto* m=views::AsViewClass<ModeSwitch>(view))m->Update(mode,research_enabled,std::move(tooltip));}
+std::unique_ptr<views::View> CreateAssistantHeading(std::u16string text){return std::make_unique<Heading>(std::move(text));}
+std::unique_ptr<views::View> CreateAssistantUserBubble(std::u16string text,std::vector<std::pair<AssistantMark,std::u16string>> chips){return std::make_unique<UserBubble>(std::move(text),std::move(chips));}
+std::unique_ptr<views::View> CreateAssistantCardTitle(AssistantGlyph glyph,std::u16string title,std::u16string trailing,bool loader){return std::make_unique<CardTitle>(glyph,std::move(title),std::move(trailing),loader);}
+std::unique_ptr<views::View> CreateAssistantTag(std::u16string text,std::optional<AssistantGlyph> glyph){return std::make_unique<Tag>(std::move(text),glyph);}
+std::unique_ptr<views::View> CreateAssistantPhases(int phase,float sources,std::u16string sources_label){return std::make_unique<Phases>(phase,sources,std::move(sources_label));}
+std::unique_ptr<views::View> CreateAssistantDisclosure(base::RepeatingClosure action,std::u16string text,bool expanded){return std::make_unique<Disclosure>(std::move(action),std::move(text),expanded);}
 std::unique_ptr<views::View> CreateAssistantWelcome(){return std::make_unique<Welcome>();}
 std::unique_ptr<views::View> CreateAssistantSuggestion(base::RepeatingClosure cb,AssistantGlyph glyph,std::u16string title,std::u16string detail){return std::make_unique<Suggestion>(std::move(cb),glyph,std::move(title),std::move(detail));}
 }

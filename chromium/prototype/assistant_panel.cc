@@ -275,32 +275,28 @@ AssistantPanel::AssistantPanel(AssistantHost* host)
   scene_ = CreatePanelScene(this,true);
   auto weak=weak_factory_.GetWeakPtr();
 
+  // One header row: the conversation's title opens the history; access, a new
+  // conversation, more (pin, scheduled tasks, settings) and close.
   header_=AddChildView(std::make_unique<views::View>());
-  auto* title_row=header_->AddChildView(std::make_unique<views::View>());
-  auto* identity=title_row->AddChildView(CreateAssistantIdentity());
-  title_row->AddChildView(CreateAssistantIcon(
-      Later(base::BindRepeating(&AssistantPanel::NewSession, weak)),
-      AssistantGlyph::kPlus, T(u"Nowa sesja")));
-  access_action_ = title_row->AddChildView(CreateAssistantIcon(
+  sessions_action_ = header_->AddChildView(CreateAssistantSessionTitle(
+      Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kSessions))));
+  auto* header_gap = header_->AddChildView(std::make_unique<views::View>());
+  access_action_ = header_->AddChildView(CreateAssistantIcon(
       Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kAccess)),
-      AssistantGlyph::kShield, T(u"Dostęp tej sesji")));
-  title_row->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSettings)),AssistantGlyph::kGear,T(u"Ustawienia asystenta")));
-  title_row->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::Hide,weak)),AssistantGlyph::kClose,T(u"Zamknij")));
-  SetSidebarPanelLayout(title_row,false,gfx::Insets(),4,identity,true);
-  auto* navigation=header_->AddChildView(std::make_unique<views::View>());
-  sessions_action_ = navigation->AddChildView(CreateAssistantIcon(
-      Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kSessions)),
-      AssistantGlyph::kHistory, T(u"Historia")));
-  tasks_action_=navigation->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kTasks)),AssistantGlyph::kCalendar,T(u"Zadania zaplanowane")));
-  SetSidebarPanelLayout(navigation,false,gfx::Insets(),4);
-  SetSidebarPanelLayout(header_,true,gfx::Insets(),6);
+      AssistantGlyph::kShield, T(u"Dostęp tej rozmowy")));
+  header_->AddChildView(CreateAssistantIcon(
+      Later(base::BindRepeating(&AssistantPanel::NewSession, weak)),
+      AssistantGlyph::kPlus, T(u"Nowa rozmowa")));
+  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kSettings)),AssistantGlyph::kMore,T(u"Więcej: przypięcie, zadania, ustawienia")));
+  header_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::Hide,weak)),AssistantGlyph::kClose,T(u"Zamknij")));
+  SetSidebarPanelLayout(header_,false,gfx::Insets(),2,header_gap,true);
 
   background_=AddChildView(std::make_unique<views::View>());
   SetSidebarPanelLayout(background_,true,gfx::Insets(),6);
   background_->SetVisible(false);
 
   PanelViewport* transcript_viewport=nullptr;
-  auto* viewport=AddChildView(CreatePanelViewport(&transcript_viewport,scene_->ViewportChangedCallback()));viewport_=transcript_viewport;
+  auto* viewport=AddChildView(CreatePanelViewport(&transcript_viewport,scene_->ViewportChangedCallback()));viewport_=transcript_viewport;viewport_host_=viewport;
   auto content=std::make_unique<views::View>();conversation_=content.get();
   content->SetLayoutManager(CreateSidebarColumnLayout(8));viewport_->SetPanelContents(std::move(content));
 
@@ -311,19 +307,26 @@ AssistantPanel::AssistantPanel(AssistantHost* host)
   prompt_->GetViewAccessibility().SetName(T(u"Wiadomość do asystenta"));
   prompt_->set_controller(this);
   tools_=composer_->AddChildView(std::make_unique<views::View>());
-  tools_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){
+  // Chat or Research: an explicit mode, so research never starts by surprise.
+  mode_=tools_->AddChildView(CreateAssistantModeSwitch(base::BindRepeating([](base::WeakPtr<AssistantPanel> self,int mode){
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<AssistantPanel> self,int mode){
+      if(self){self->SetResearchMode(mode==1);self->prompt_->RequestFocus();}},self,mode));},weak)));
+  mention_action_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){
     auto text=std::u16string(self->prompt_->GetText());
     if(!text.empty()&&!base::IsUnicodeWhitespace(text.back()))text+=u" ";
     self->mention_dismissed_.reset();self->prompt_->SetText(text+u"@");self->prompt_->SetSelectedRange(gfx::Range(text.size()+1));
     self->prompt_->RequestFocus();self->PromptChanged();
   },base::Unretained(this)),AssistantGlyph::kAt,T(u"Wstaw kartę lub narzędzie")));
-  // The tools are toggles: they insert or remove the same chips as @.
-  research_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("research")),AssistantGlyph::kSpark,T(u"Deep research")));
+  // Background inserts or removes the same chip as @.
   background_chip_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::ToggleTool,base::Unretained(this),std::string("background")),AssistantGlyph::kLayers,T(u"W tle")));
-  model_chip_=tools_->AddChildView(CreateAssistantChip(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kModel)),AssistantGlyph::kSpark,u""));
+  auto* tools_gap=tools_->AddChildView(std::make_unique<views::View>());
+  model_chip_=tools_->AddChildView(CreateAssistantChip(Later(base::BindRepeating(&AssistantPanel::ToggleMenu,weak,Menu::kModel)),AssistantGlyph::kChevron,u""));
+  // The Ask bar docks into the full panel.
+  expand_action_=tools_->AddChildView(CreateAssistantIcon(Later(base::BindRepeating(&AssistantPanel::Expand,weak)),AssistantGlyph::kPanel,T(u"Rozwiń w panel")));
+  expand_action_->SetVisible(false);
   send_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating([](AssistantPanel* self){self->Send(false);},base::Unretained(this)),AssistantGlyph::kArrow,T(u"Wyślij"),true));
   stop_=tools_->AddChildView(CreateAssistantIcon(base::BindRepeating(&AssistantPanel::Stop,base::Unretained(this)),AssistantGlyph::kStop,T(u"Stop"),true));
-  SetSidebarPanelLayout(tools_,false,gfx::Insets(),4,model_chip_,true);
+  SetSidebarPanelLayout(tools_,false,gfx::Insets(),4,tools_gap,true);
   SetSidebarPanelLayout(this,true,gfx::Insets(16),10,viewport);
   resize_handle_=AddChildView(CreateAssistantResizeGrip(this));
   resize_handle_->SetProperty(views::kViewIgnoredByLayoutKey,true);
@@ -340,11 +343,12 @@ AssistantPanel::~AssistantPanel() {
   if (process_.IsValid()) process_.Terminate(0, false);
   // Drop view references before deleting the children. Their scene nodes
   // must still be released before the scene registry.
-  viewport_ = nullptr;
+  viewport_ = nullptr; viewport_host_ = nullptr;
   header_ = conversation_ = background_ = nullptr;
-  sessions_action_ = tasks_action_ = access_action_ = nullptr;
+  sessions_action_ = access_action_ = mode_ = nullptr;
   composer_ = chips_view_ = tools_ = nullptr;
-  research_chip_ = background_chip_ = model_chip_ = send_ = stop_ = nullptr;
+  mention_action_ = background_chip_ = model_chip_ = send_ = stop_ = expand_action_ = nullptr;
+  live_research_ = nullptr;
   prompt_ = nullptr;
   model_search_ = nullptr;
   menu_view_ = menu_footer_ = nullptr;
@@ -358,6 +362,7 @@ AssistantPanel::~AssistantPanel() {
 }
 void AssistantPanel::Show(bool from_edge) {
   if (!host_->assistant_settings().enabled) return;
+  if (compact_) { compact_ = false; ApplyCompact(); }
   hide_timer_.Stop();SetVisible(true); host_->shell()->LayoutAssistant(pinned_); prompt_->RequestFocus();
   unread_ = 0; NotifyBar();
   // Opened from its button or a shortcut, the pointer is still elsewhere: an
@@ -367,10 +372,57 @@ void AssistantPanel::Show(bool from_edge) {
   pointer_exit_armed_ = HoverBounds().Contains(last_pointer_position_);
   WatchPointer();
 }
+void AssistantPanel::ShowAsk() {
+  if (!host_->assistant_settings().enabled) return;
+  // ⌘E again docks the Ask bar; an open panel only takes the keyboard.
+  if (GetVisible() && compact_) { Expand(); return; }
+  if (GetVisible()) { prompt_->RequestFocus(); return; }
+  // A new question: a finished conversation stays in the history.
+  auto& session = selected();
+  if (Started(session) && !session.busy && !session.asking && !PendingPlan(session)) StartNewConversation();
+  compact_ = true;
+  // The bar asks; research is planned in the panel.
+  if (!PendingPlan(selected())) selected().research_mode = false;
+  // The current page goes along when tabs may be listed.
+  if (selected().permissions.tabs && std::ranges::none_of(chips_, [](const auto& c) { return c.ref == "@current"; })) {
+    AssistantPermissions list; list.tabs = true;
+    const auto context = host_->AssistantContext(list);
+    if (const auto* tabs = context.FindList("tabs")) for (const auto& entry : *tabs) if (entry.GetDict().FindBool("current").value_or(false)) {
+      const auto title = base::UTF8ToUTF16(*entry.GetDict().FindString("title"));
+      const GURL url(*entry.GetDict().FindString("url"));
+      chips_.push_back({"tab", "@current", title.empty() ? base::UTF8ToUTF16(url.host()) : title, kPageColors[base::PersistentHash(url.host()) % kPageColors.size()]});
+    }
+  }
+  RenderChips();
+  ApplyCompact();
+  hide_timer_.Stop(); hover_check_.Stop();
+  SetVisible(true); host_->shell()->LayoutAssistant(false, true);
+  prompt_->RequestFocus();
+  unread_ = 0; NotifyBar();
+}
+void AssistantPanel::Expand() {
+  if (!compact_) return;
+  Show();
+  if (GetWidget()) GetWidget()->LayoutRootViewIfNecessary();
+  viewport_->ScrollTo(viewport_->maximum());
+}
+void AssistantPanel::ApplyCompact() {
+  header_->SetVisible(!compact_);
+  resize_handle_->SetVisible(!compact_);
+  if (compact_) { CloseMenu(); background_->SetVisible(false); } else RenderBackground();
+  SetSidebarPanelLayout(this, true, compact_ ? gfx::Insets::TLBR(12, 6, 4, 6) : gfx::Insets(16), compact_ ? 4 : 10, viewport_host_);
+  UpdateControls(); RenderConversation();
+}
+int AssistantPanel::CompactHeight(int width) const {
+  const int inner = std::max(0, width - 12);
+  int height = 16 + composer_->GetHeightForWidth(inner);
+  if (!conversation_->children().empty()) height += 4 + std::min(320, conversation_->GetHeightForWidth(std::max(0, inner - 12)));
+  return height;
+}
 void AssistantPanel::WatchPointer() {
   // Keep watching while visible: child views, popovers and native capture can
   // swallow exit events. A blocked collapse must be retried after capture ends.
-  if (pinned_ || !GetVisible() || hover_check_.IsRunning()) return;
+  if (pinned_ || compact_ || !GetVisible() || hover_check_.IsRunning()) return;
   hover_check_.Start(FROM_HERE, base::Milliseconds(100), base::BindRepeating([](AssistantPanel* self) {
     if (!self->GetVisible() || self->pinned_) {
       self->hide_timer_.Stop(); self->hover_check_.Stop(); return;
@@ -405,10 +457,16 @@ void AssistantPanel::Hide() {
   hide_timer_.Stop(); hover_check_.Stop();
   if (!GetVisible()) return;
   CloseMenu();
-  SetVisible(false); host_->shell()->LayoutAssistant(false); NotifyBar();
+  SetVisible(false);
+  if (compact_) { compact_ = false; ApplyCompact(); }
+  host_->shell()->LayoutAssistant(false); NotifyBar();
 }
 bool AssistantPanel::busy() const { return selected().busy && !selected().background; }
-gfx::Size AssistantPanel::CalculatePreferredSize(const views::SizeBounds&) const {return {preferred_width_,560};}
+gfx::Size AssistantPanel::CalculatePreferredSize(const views::SizeBounds& bounds) const {
+  if (!compact_) return {preferred_width_, 560};
+  const int width = bounds.width().is_bounded() ? bounds.width().value() : 600;
+  return {width, CompactHeight(width)};
+}
 void AssistantPanel::OnMouseEntered(const ui::MouseEvent&) {
   pointer_exit_armed_ = true; hide_timer_.Stop(); WatchPointer();
 }
@@ -626,11 +684,13 @@ void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
     if (const auto* messages = entry->FindList("messages")) for (const auto& value : *messages) {
       const auto* m = value.GetIfDict();
       if (!m || !m->FindString("text")) continue;
-      Message message; message.kind = std::clamp(m->FindInt("kind").value_or(3), 0, 5); message.text = *m->FindString("text");
+      Message message; message.kind = std::clamp(m->FindInt("kind").value_or(3), 0, 6); message.text = *m->FindString("text");
       if (const auto* options = m->FindList("options")) for (const auto& option : *options) if (option.is_string()) message.options.push_back(option.GetString());
       if (const auto* answer = m->FindString("answer")) message.answer = *answer;
       // A question left open when Zitter closed can no longer be answered.
       if (message.kind == 5 && message.answer.empty()) message.answer = "—";
+      // A plan still being written when Zitter closed has no angles to run.
+      if (message.kind == 6 && message.answer == "planning") { message.answer.clear(); message.state = 2; }
       message.state = m->FindInt("state").value_or(message.kind == 2 ? 1 : 0);
       if (const auto* chips = m->FindList("chips")) for (const auto& c : *chips) {
         const auto* chip = c.GetIfDict();
@@ -668,6 +728,8 @@ void AssistantPanel::SessionsLoaded(std::optional<base::DictValue> saved) {
   base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(FROM_HERE, base::BindOnce([](base::WeakPtr<AssistantPanel> self) {
     if (self) self->CheckTasks(base::Time::Now()); }, weak_factory_.GetWeakPtr()), base::Seconds(5));
   if (menu_ == Menu::kSessions || menu_ == Menu::kTasks) BuildMenu();
+  // The empty conversation lists the recent ones, which arrive only now.
+  if (!sessions_.empty() && selected().messages.empty()) RenderConversation();
   NotifyBar();
 }
 void AssistantPanel::PickModel(std::string provider, std::string model) {
@@ -696,6 +758,9 @@ void AssistantPanel::StopSession(Session& session) {
   session.request.reset(); session.page_control = false;
   session.thinking = false; session.tool_running = false; session.partial.clear();
   session.asking = false; session.picks.clear();
+  session.researching = false; session.research_progress.reset();
+  // A plan that was still being written is dropped with its turn.
+  for (auto& m : session.messages) if (m.kind == 6 && m.answer == "planning") { m.answer.clear(); m.state = 2; }
   if (was_busy) session.status = T(u"Zatrzymane");
   if (!send_) return;
   UpdateControls(); UpdatePageControl(); RenderBackground();
@@ -791,8 +856,6 @@ void AssistantPanel::CloseMenu() {
     auto old_menu = RemoveChildViewT(menu_view_.get());
     menu_view_ = nullptr;
   }
-  UpdateAssistantButton(sessions_action_, T(u"Sesje"), false);
-  UpdateAssistantButton(tasks_action_, T(u"Zadania zaplanowane"), false);
   UpdateControls();
   InvalidateLayout(); scene_->Schedule();
 }
@@ -811,7 +874,7 @@ void AssistantPanel::BuildMenu() {
     case Menu::kSessions: surface->GetViewAccessibility().SetName(T(u"Historia")); BuildSessionsMenu(surface.get()); break;
     case Menu::kTasks: surface->GetViewAccessibility().SetName(T(u"Zadania zaplanowane")); BuildTasksMenu(surface.get()); break;
     case Menu::kTaskEditor: surface->GetViewAccessibility().SetName(T(u"Zadanie zaplanowane")); BuildTaskEditor(surface.get()); break;
-    case Menu::kAccess: surface->GetViewAccessibility().SetName(T(u"Dostęp tej sesji")); BuildAccessMenu(surface.get()); break;
+    case Menu::kAccess: surface->GetViewAccessibility().SetName(T(u"Dostęp tej rozmowy")); BuildAccessMenu(surface.get()); break;
     case Menu::kSettings: surface->GetViewAccessibility().SetName(T(u"Ustawienia asystenta")); BuildSettingsMenu(surface.get()); break;
     case Menu::kModel: surface->GetViewAccessibility().SetName(T(u"Wybierz model")); BuildModelMenu(surface.get()); break;
     case Menu::kMention: surface->GetViewAccessibility().SetName(T(u"Wstaw kartę lub narzędzie")); BuildMentionMenu(surface.get()); break;
@@ -827,13 +890,12 @@ void AssistantPanel::BuildMenu() {
     menu_monitor_ = views::EventMonitor::CreateWindowMonitor(menu_observer_.get(), GetWidget()->GetNativeWindow(), {ui::EventType::kMousePressed});
   }
   ReorderChildView(resize_handle_, children().size() - 1);
-  UpdateAssistantButton(sessions_action_, T(u"Historia"), menu_ == Menu::kSessions);
-  UpdateAssistantButton(tasks_action_, T(u"Zadania zaplanowane"), menu_ == Menu::kTasks || menu_ == Menu::kTaskEditor);
   UpdateControls();
   InvalidateLayout(); scene_->Schedule();
 }
 views::View* AssistantPanel::ScrollList(views::View* body, int max_height) {
-  auto scroll = std::make_unique<views::ScrollView>(views::ScrollView::ScrollWithLayers::kDisabled);
+  // Layers: on macOS trackpad scrolling goes through the compositor, which needs them.
+  auto scroll = std::make_unique<views::ScrollView>(views::ScrollView::ScrollWithLayers::kEnabled);
   scroll->SetBackgroundColor(std::nullopt);
   scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
   scroll->SetDrawOverflowIndicator(false);
@@ -956,7 +1018,7 @@ void AssistantPanel::BuildAccessMenu(views::View* body) {
       {p.history, T(u"Historia przeglądania")}, {p.web, T(u"Publiczne strony i wyszukiwanie")}}};
   const int granted = static_cast<int>(std::ranges::count_if(grants, [](const auto& g) { return g.first; }));
   const bool started = !selected().messages.empty() || selected().busy;
-  body->AddChildView(CreateAssistantEyebrow(T(u"Dostęp tej sesji"), TF(u"{} z 5", {base::NumberToString16(granted)})));
+  body->AddChildView(CreateAssistantEyebrow(T(u"Dostęp tej rozmowy"), TF(u"{} z 5", {base::NumberToString16(granted)})));
   if (started && !granted) {
     AssistantRow fresh;
     fresh.title = T(u"Nowa sesja");
@@ -1000,7 +1062,8 @@ void AssistantPanel::BuildSettingsMenu(views::View* body) {
   auto* title = head->AddChildView(CreateAssistantEyebrow(T(u"Ustawienia asystenta"), {}));
   SetSidebarPanelLayout(head, false, gfx::Insets(), 4, title, true);
   AssistantRow pin;
-  pin.title = T(u"Przypnij panel asystenta");
+  pin.title = T(u"Przypnij panel");
+  pin.detail = pinned_ ? T(u"Zostaje obok strony, dopóki go nie zamkniesz") : T(u"Pływa nad stroną i chowa się po wyjściu kursora");
   pin.toggle = pinned_;
   pin.mark = {AssistantGlyph::kPin, {}, SK_ColorTRANSPARENT};
   body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
@@ -1008,6 +1071,23 @@ void AssistantPanel::BuildSettingsMenu(views::View* body) {
     self->SetPinned(!self->pinned());
     self->BuildMenu();
   }, weak)), std::move(pin)));
+  AssistantRow tasks; tasks.title = T(u"Zadania zaplanowane");
+  tasks.mark = {AssistantGlyph::kCalendar, {}, SK_ColorTRANSPARENT};
+  const auto profile = host_->AssistantProfileId();
+  const auto active_tasks = std::ranges::count_if(tasks_, [&](const auto& t) { return t.profile == profile && t.active; });
+  if (active_tasks) tasks.badge = base::NumberToString16(active_tasks);
+  body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kTasks)), std::move(tasks)));
+  if (host_->AssistantPageActionsAvailable()) {
+    // Page actions that change the browser, not the conversation.
+    auto page = [&](AssistantGlyph glyph, std::u16string title, int command) {
+      AssistantRow row; row.title = std::move(title); row.mark = {glyph, {}, SK_ColorTRANSPARENT};
+      body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self, int command) {
+        if (!self) return; self->CloseMenu(); self->host_->RunAssistantPageAction(command); }, weak, command)), std::move(row)));
+    };
+    page(AssistantGlyph::kShield, T(u"Zablokuj reklamy na tej stronie"), 2);
+    page(AssistantGlyph::kSearch, T(u"Dodaj wyszukiwarkę tej strony"), 1);
+  }
+  body->AddChildView(CreateAssistantEyebrow(T(u"Nowe rozmowy")))->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(6, 0, 0, 0));
   // The default model of every new conversation.
   AssistantRow model; model.title = T(u"Model");
   model.detail = settings.default_model.empty() ? T(u"Nie wybrano") : base::UTF8ToUTF16(settings.default_model);
@@ -1253,6 +1333,7 @@ bool AssistantPanel::PromptKey(const ui::KeyEvent& key) {
   if (code == ui::VKEY_ESCAPE) {
     if (menu_ != Menu::kNone) { CloseMenu(); return true; }
     if (busy()) { Stop(); return true; }
+    if (compact_) { Hide(); return true; }
     return false;
   }
   if (!sessions_.empty() && selected().asking && prompt_->GetText().empty() && code >= ui::VKEY_1 && code <= ui::VKEY_8 && !key.IsControlDown() && !key.IsAltDown()) {
@@ -1265,6 +1346,9 @@ bool AssistantPanel::PromptKey(const ui::KeyEvent& key) {
       return true;
     }
   }
+  // ⌘↵ (Ctrl+↵) starts the research plan waiting for approval.
+  if (code == ui::VKEY_RETURN && (key.IsCommandDown() || key.IsControlDown()) && !sessions_.empty() &&
+      PendingPlan(selected()) && prompt_->GetText().empty()) { StartResearch(selected()); return true; }
   if (code == ui::VKEY_RETURN && !key.IsShiftDown()) { Send(key.IsAltDown()); return true; }
   if (code == ui::VKEY_BACK && prompt_->GetText().empty() && !chips_.empty()) { RemoveChip(chips_.size() - 1); return true; }
   return false;
@@ -1278,6 +1362,11 @@ void AssistantPanel::InsertChip(AssistantChip chip, bool from_mention) {
     const size_t at = *mention_at_;
     mention_at_.reset(); mention_dismissed_.reset();
     prompt_->SetText(text); prompt_->SetSelectedRange(gfx::Range(at));
+  }
+  if (chip.kind == "research") {
+    // Research is the composer's mode, not a chip.
+    if (menu_ == Menu::kMention) { menu_ = Menu::kNone; BuildMenu(); }
+    SetResearchMode(true); prompt_->RequestFocus(); return;
   }
   if (chip.kind == "background" && !(host_->assistant_settings().background && selected().permissions.actions)) return;
   if (std::ranges::none_of(chips_, [&](const auto& c) { return c.kind == chip.kind && c.ref == chip.ref; })) chips_.push_back(std::move(chip));
@@ -1310,8 +1399,9 @@ void AssistantPanel::ToggleTool(const std::string& kind) {
   // During a task the background button moves that task out of view.
   if (kind == "background" && busy()) { MoveToBackground(); return; }
   const auto found = std::ranges::find_if(chips_, [&](const auto& chip) { return chip.kind == kind; });
+  if (kind == "research") { SetResearchMode(!selected().research_mode); return; }
   if (found != chips_.end()) { RemoveChip(found - chips_.begin()); return; }
-  InsertChip({kind, "", kind == "research" ? T(u"Deep research") : T(u"W tle"), 0}, false);
+  InsertChip({kind, "", T(u"W tle"), 0}, false);
 }
 
 // Turns -------------------------------------------------------------------
@@ -1528,8 +1618,8 @@ void AssistantPanel::Send(bool background) {
     Append(session, "This Assistant provider is disabled.");
     return;
   }
-  const bool research = !session.night_shift && std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });
-  bool in_background = background || std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; });
+  const bool research = !session.night_shift && session.research_mode && session.permissions.web;
+  bool in_background = !research && (background || std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; }));
   if (in_background && (session.night_shift || !(settings.background && session.permissions.actions))) {
     Append(session, base::UTF16ToUTF8(T(u"Praca w tle wymaga klikania i włączonej pracy w tle w Ustawieniach.")));
     return;
@@ -1549,12 +1639,30 @@ void AssistantPanel::Send(bool background) {
   session.composer_draft.clear(); session.composer_chips.clear();
   prompt_->SetText(u""); RenderChips();
   if (session.title.empty()) session.title = text.empty() ? chips.front().title : text.substr(0, 48);
+  if (research) {
+    // A plan waiting for approval takes the message as a correction.
+    if (auto* plan = PendingPlan(session)) {
+      const std::string original = plan->text;
+      plan->state = 2;
+      Append(session, "You: " + base::UTF16ToUTF8(text), chips);
+      RequestPlan(session, original + "\n\nAdjust the research plan: " + prompt);
+      return;
+    }
+    Append(session, "You: " + base::UTF16ToUTF8(text), chips);
+    RequestPlan(session, prompt);
+    return;
+  }
   Append(session, "You: " + base::UTF16ToUTF8(text), chips);
   session.background = in_background;
+  session.request = TurnRequest(session, prompt, false, in_background, session.messages.size() - 1);
+  StartTurn(session);
+}
+base::DictValue AssistantPanel::TurnRequest(Session& session, const std::string& prompt, bool research, bool background, size_t history_end) {
+  const auto& settings = host_->assistant_settings();
   const auto permissions = session.night_shift
       ? AssistantPermissions{.pages = session.permissions.pages, .web = false}
       : session.permissions;
-  session.request = base::DictValue().Set("id", session.id).Set("prompt", prompt).Set("research", research).Set("background", in_background)
+  auto request = base::DictValue().Set("id", session.id).Set("prompt", prompt).Set("research", research).Set("background", background)
       .Set("concurrency", settings.concurrency)
       .Set("date", base::DictValue().Set("unix_ms", static_cast<double>(base::Time::Now().InMillisecondsSinceUnixEpoch()))
            .Set("utc_offset_minutes", TimelineUtcOffsetMinutes(base::Time::Now())))
@@ -1562,12 +1670,65 @@ void AssistantPanel::Send(bool background) {
       .Set("permissions", permissions.ToValue())
       .Set("context", session.night_shift ? base::DictValue() : host_->AssistantContext(permissions));
   base::ListValue history;
-  for (size_t i = 0; i + 1 < session.messages.size(); ++i) {
+  for (size_t i = 0; i < history_end && i < session.messages.size(); ++i) {
     const auto& m = session.messages[i];
     if (m.kind == 0 || m.kind == 1) history.Append(base::DictValue().Set("role", m.kind == 1 ? "user" : "assistant").Set("text", m.text.substr(0, 8000)));
   }
   while (history.size() > 30) history.erase(history.begin());
-  session.request->Set("history", std::move(history));
+  request.Set("history", std::move(history));
+  return request;
+}
+// Research --------------------------------------------------------------
+void AssistantPanel::SetResearchMode(bool on) {
+  auto& session = selected();
+  if (on && (!session.permissions.web || session.night_shift || session.busy)) {
+    if (!session.permissions.web) ToggleMenu(Menu::kAccess);
+    return;
+  }
+  if (!on && PendingPlan(session)) CancelPlan(session);
+  session.research_mode = on;
+  if (on) std::erase_if(chips_, [](const auto& chip) { return chip.kind == "background"; });
+  RenderChips(); UpdateControls(); RenderConversation();
+}
+AssistantPanel::Message* AssistantPanel::PendingPlan(Session& session) {
+  if (session.busy) return nullptr;
+  for (auto it = session.messages.rbegin(); it != session.messages.rend(); ++it) {
+    if (it->kind == 6) return it->state == 0 ? &*it : nullptr;
+    if (it->kind == 0) return nullptr;
+  }
+  return nullptr;
+}
+void AssistantPanel::CancelPlan(Session& session) {
+  if (auto* plan = PendingPlan(session)) plan->state = 2;
+  ScheduleSave();
+  if (&session == &selected()) { UpdateControls(); RenderConversation(); }
+}
+void AssistantPanel::RequestPlan(Session& session, std::string prompt) {
+  // Only the plan: nothing is searched before the user approves it.
+  session.background = false;
+  session.request = TurnRequest(session, prompt, true, false, session.messages.size() - 1);
+  session.request->Set("research_plan", true);
+  // Kept so the approved run sends the same prompt.
+  Message plan; plan.kind = 6; plan.state = 0; plan.text = prompt; plan.answer = "planning";
+  session.messages.push_back(std::move(plan));
+  StartTurn(session);
+}
+void AssistantPanel::StartResearch(Session& session) {
+  auto* plan = PendingPlan(session);
+  if (!plan || plan->options.empty() || session.busy) return;
+  plan->state = 1;
+  // The history ends before the request this plan answers.
+  size_t end = session.messages.size();
+  for (size_t i = session.messages.size(); i-- > 0;) if (&session.messages[i] == plan) { end = i; break; }
+  while (end > 0 && session.messages[end - 1].kind != 1) --end;
+  if (end > 0) --end;
+  base::ListValue queries;
+  for (const auto& query : plan->options) queries.Append(query);
+  const std::string prompt = plan->text;
+  session.background = false;
+  session.researching = true; session.research_progress.reset();
+  session.request = TurnRequest(session, prompt, true, false, end);
+  session.request->Set("research_queries", std::move(queries));
   StartTurn(session);
 }
 void AssistantPanel::StartTurn(Session& session) {
@@ -1666,6 +1827,16 @@ void AssistantPanel::PollProgress() {
     const auto value = response ? base::JSONReader::ReadDict(*response, base::JSON_PARSE_RFC) : std::nullopt;
     const auto* partial = value ? value->FindString("partial") : nullptr;
     if (!session || !session->thinking || !partial || *partial == session->partial) return;
+    // Research progress starts with a record separator; the rest is answer text.
+    if (partial->starts_with("\x1e")) {
+      auto progress = base::JSONReader::ReadDict(std::string_view(*partial).substr(1), base::JSON_PARSE_RFC);
+      if (!progress) return;
+      session->partial = *partial;
+      session->research_progress = std::move(*progress);
+      if (session == &self->selected()) self->ShowResearchProgress();
+      self->NotifyBar();
+      return;
+    }
     session->partial = *partial;
     if (session == &self->selected()) self->ShowPartial();
   }, weak_factory_.GetWeakPtr(), session.key, session.epoch), 1024 * 1024);
@@ -1679,6 +1850,7 @@ void AssistantPanel::ShowPartial() {
     live_answer_->RemoveAllChildViews();
     live_answer_->AddChildView(CreateAssistantMarkdown(base::UTF8ToUTF16(session.partial), base::BindRepeating([](const GURL&) {})));
     live_answer_->InvalidateLayout(); conversation_->InvalidateLayout(); InvalidateLayout(); scene_->Schedule();
+    if (compact_) host_->shell()->LayoutAssistant(false, true);
   }
   if (GetWidget()) GetWidget()->LayoutRootViewIfNecessary();
   if (at_end) viewport_->ScrollTo(viewport_->maximum());
@@ -1721,6 +1893,7 @@ void AssistantPanel::OnTurn(std::string key, uint64_t epoch, base::DictValue rep
   auto* session = Find(key, epoch);
   if (!session) return;
   session->thinking = false; session->partial.clear();
+  session->researching = false; session->research_progress.reset();
   auto finish = [&](std::u16string status) {
     session->busy = false; session->finished = true; session->page_control = false;
     if (!session->task_id.empty()) TaskFinished(*session, status == T(u"Gotowe"));
@@ -1732,7 +1905,18 @@ void AssistantPanel::OnTurn(std::string key, uint64_t epoch, base::DictValue rep
       if (auto* focus = GetFocusManager(); focus && (!focus->GetFocusedView() || Contains(focus->GetFocusedView()))) prompt_->RequestFocus();
     }
   };
+  // A research plan waiting for the user: the angles fill the plan card.
+  Message* planning = nullptr;
+  for (auto& m : session->messages) if (m.kind == 6 && m.answer == "planning") planning = &m;
+  if (planning) {
+    planning->answer.clear();
+    if (const auto* plan = reply.FindList("plan")) {
+      for (const auto& query : *plan) if (query.is_string() && planning->options.size() < 8) planning->options.push_back(query.GetString());
+    }
+    if (planning->options.empty()) planning->state = 2;
+  }
   if (const auto* error = reply.FindString("error")) { Append(*session, *error); finish(T(u"Błąd")); return; }
+  if (planning) { finish(T(u"Plan gotowy")); ScheduleSave(); return; }
   if (const auto* answer = reply.FindString("answer"); answer && !answer->empty()) Append(*session, "Assistant: " + *answer);
   auto* actions = reply.FindList("actions");
   if (!actions || actions->empty()) { finish(T(u"Gotowe")); return; }
@@ -2074,6 +2258,23 @@ bool AssistantPanel::working() const {
   return std::ranges::any_of(sessions_, [](const auto& s) { return s->busy; });
 }
 void AssistantPanel::NotifyBar() { host_->AssistantStateChanged(); }
+bool AssistantPanel::needs_attention() const {
+  return std::ranges::any_of(sessions_, [](const auto& s) { return s->busy && (s->confirmation.has_value() || s->asking); });
+}
+std::u16string AssistantPanel::status_text() const {
+  if (needs_attention()) return T(u"Asystent czeka na Twoją odpowiedź");
+  for (const auto& s : sessions_) {
+    if (!s->busy || !s->researching) continue;
+    const auto* angles = s->research_progress ? s->research_progress->FindList("angles") : nullptr;
+    if (!angles || angles->empty()) return T(u"Research: planuję");
+    size_t done = 0;
+    for (const auto& a : *angles) if (a.is_dict() && a.GetDict().FindInt("state").value_or(0) >= 2) ++done;
+    return TF(u"Research: {}/{}", {base::NumberToString16(done), base::NumberToString16(angles->size())});
+  }
+  if (std::ranges::any_of(sessions_, [](const auto& s) { return s->busy; })) return T(u"Asystent pracuje");
+  if (unread_) return TF(u"Asystent · nowe wyniki: {}", {base::NumberToString16(unread_)});
+  return T(u"Asystent");
+}
 AssistantTask* AssistantPanel::FindTask(const std::string& id) {
   for (auto& task : tasks_) if (task.id == id) return &task;
   return nullptr;
@@ -2421,7 +2622,7 @@ void AssistantPanel::RenderBackground() {
     background_->AddChildView(CreateAssistantTaskRow(mark, title, status, state,
         page ? later(weak, s->key, 3) : base::RepeatingClosure(), s->busy ? later(weak, s->key, 5) : later(weak, s->key, 4)));
   }
-  background_->SetVisible(shown > 0);
+  background_->SetVisible(shown > 0 && !compact_);
   host_->shell()->SetAssistantAttention(std::ranges::any_of(sessions_, [](const auto& s) { return s->background && s->confirmation.has_value(); }));
   InvalidateLayout(); scene_->Schedule();
 }
@@ -2443,46 +2644,128 @@ void AssistantPanel::UpdatePageControl() {
 }
 
 // Rendering ---------------------------------------------------------------
-void AssistantPanel::RenderConversation() {
-  live_answer_ = nullptr;
-  conversation_->RemoveAllChildViews();
-  const auto& session=selected();
-  const auto& messages=session.messages;
-  if(messages.empty()) {
-    conversation_->AddChildView(CreateAssistantWelcome());
-    auto suggestion=[&](AssistantGlyph glyph,std::u16string title,std::u16string detail,std::u16string prompt,std::string tool){
-      conversation_->AddChildView(CreateAssistantSuggestion(base::BindRepeating([](AssistantPanel* self,std::u16string prompt,std::string tool){
-        self->prompt_->SetText(prompt);
-        if(tool=="current"){
-          // The page itself goes in as a chip when tabs may be listed.
-          if(self->selected().permissions.tabs){
-            AssistantPermissions list;list.tabs=true;
-            const auto context=self->host_->AssistantContext(list);
-            if(const auto* tabs=context.FindList("tabs"))for(const auto& entry:*tabs)if(entry.GetDict().FindBool("current").value_or(false)){
-              const auto title=base::UTF8ToUTF16(*entry.GetDict().FindString("title"));const GURL url(*entry.GetDict().FindString("url"));
-              self->InsertChip({"tab","@current",title.empty()?base::UTF8ToUTF16(url.host()):title,kPageColors[base::PersistentHash(url.host())%kPageColors.size()]},false);
-            }
-          } else self->prompt_->SetText(prompt+u" @current");
-        } else if(!tool.empty())self->InsertChip({tool,"",T(u"Deep research"),0},false);
-        self->UpdateControls();self->prompt_->RequestFocus();
-      },base::Unretained(this),std::move(prompt),std::move(tool)),glyph,std::move(title),std::move(detail)));
+namespace {
+// Polish counts pick one of three forms: 1 krok, 2–4 kroki, 5 kroków (12–14 kroków).
+std::u16string Count(size_t n, std::u16string one, std::u16string few, std::u16string many) {
+  const size_t tens = n % 100, units = n % 10;
+  return n == 1 ? one : (units >= 2 && units <= 4 && (tens < 12 || tens > 14)) ? few : many;
+}
+std::u16string ShortAddress(const std::string& spec) {
+  const GURL url(spec);
+  if (!url.is_valid()) return base::UTF8ToUTF16(spec);
+  auto host = base::UTF8ToUTF16(url.host());
+  if (host.starts_with(u"www.")) host = host.substr(4);
+  return host + (url.path() == "/" ? u"" : base::UTF8ToUTF16(url.path()));
+}
+}
+void AssistantPanel::RenderWelcome() {
+  auto weak = weak_factory_.GetWeakPtr();
+  const auto& session = selected();
+  auto* heading = conversation_->AddChildView(CreateAssistantHeading(session.research_mode ? T(u"Co zbadamy?") : T(u"Od czego zaczynamy?")));
+  heading->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(8, 0, 4, 0));
+  // One line each: what the click does is in its words, nothing runs by itself.
+  auto* flow = conversation_->AddChildView(CreateAssistantFlow(8));
+  if (host_->AssistantPageActionsAvailable()) {
+    auto action = [&](AssistantGlyph glyph, std::u16string title, int command) {
+      flow->AddChildView(CreateAssistantPill(Later(base::BindRepeating(
+          [](base::WeakPtr<AssistantPanel> self, int command) { if (self) self->host_->RunAssistantPageAction(command); }, weak, command)),
+          std::move(title), 4, glyph));
     };
-    // The page quick actions live here, where the conversation starts.
-    if(host_->AssistantPageActionsAvailable()){
-      auto action=[&](AssistantGlyph glyph,std::u16string title,std::u16string detail,int command){
-        conversation_->AddChildView(CreateAssistantSuggestion(Later(base::BindRepeating(
-            [](base::WeakPtr<AssistantPanel> self,int command){if(self)self->host_->RunAssistantPageAction(command);},
-            weak_factory_.GetWeakPtr(),command)),glyph,std::move(title),std::move(detail)));
-      };
-      action(AssistantGlyph::kPage,T(u"Podsumuj stronę"),T(u"Najważniejsze informacje"),0);
-      action(AssistantGlyph::kCheck,T(u"Sprawdź fakty"),T(u"Z odnośnikami do źródeł"),3);
-      action(AssistantGlyph::kLayers,T(u"Wyciągnij dane"),T(u"Tabela i porównanie"),4);
-      action(AssistantGlyph::kSearch,T(u"Dodaj wyszukiwarkę"),T(u"Szukaj na tej stronie z paska"),1);
-      action(AssistantGlyph::kShield,T(u"Zablokuj reklamy"),T(u"Reguła dla tej witryny"),2);
+    action(AssistantGlyph::kPage, T(u"Streść tę kartę"), 0);
+    action(AssistantGlyph::kCheck, T(u"Sprawdź fakty"), 3);
+    action(AssistantGlyph::kLayers, T(u"Wyciągnij dane"), 4);
+  }
+  if (!session.research_mode && session.permissions.web)
+    flow->AddChildView(CreateAssistantPill(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
+      if (self) { self->SetResearchMode(true); self->prompt_->RequestFocus(); } }, weak)), T(u"Zbadaj temat"), 4, AssistantGlyph::kSearch));
+  flow->AddChildView(CreateAssistantPill(Later(base::BindRepeating(&AssistantPanel::OpenTaskEditor, weak, std::string())),
+                                         T(u"Zaplanuj zadanie"), 4, AssistantGlyph::kCalendar));
+  // The latest conversations of this profile: the history without opening it.
+  const auto profile = host_->AssistantProfileId();
+  std::vector<size_t> recent;
+  for (size_t i = 0; i < sessions_.size(); ++i)
+    if (i != selected_ && sessions_[i]->profile == profile && Started(*sessions_[i])) recent.push_back(i);
+  std::ranges::sort(recent, [&](size_t a, size_t b) { return sessions_[a]->updated > sessions_[b]->updated; });
+  if (recent.empty()) return;
+  conversation_->AddChildView(CreateAssistantEyebrow(T(u"Ostatnie")))->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(18, 0, 0, 0));
+  const auto today = base::Time::Now().LocalMidnight();
+  for (size_t n = 0; n < recent.size() && n < 3; ++n) {
+    const auto& s = *sessions_[recent[n]];
+    AssistantRow row;
+    row.title = s.title.empty() ? T(u"Rozmowa") : s.title;
+    const bool research = std::ranges::any_of(s.messages, [](const Message& m) { return m.kind == 6; });
+    row.mark = {research ? AssistantGlyph::kSearch : AssistantGlyph::kChat, {}, SK_ColorTRANSPARENT};
+    row.muted_mark = !research;
+    base::Time::Exploded day; s.updated.LocalExplode(&day);
+    row.badge = s.updated >= today ? base::TimeFormatTimeOfDay(s.updated)
+              : s.updated >= today - base::Days(1) ? T(u"wczoraj")
+              : base::UTF8ToUTF16(base::StringPrintf("%d.%02d", day.day_of_month, day.month));
+    conversation_->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::SelectSession, weak, recent[n])), std::move(row)));
+  }
+}
+void AssistantPanel::RenderResearch(views::View* card, const Session& session) {
+  const auto* p = session.research_progress ? &*session.research_progress : nullptr;
+  const std::string phase_name = p && p->FindString("phase") ? *p->FindString("phase") : "plan";
+  const int phase = phase_name == "report" ? 2 : phase_name == "sources" ? 1 : 0;
+  const auto* angles = p ? p->FindList("angles") : nullptr;
+  const size_t total = angles ? angles->size() : 0;
+  size_t done = 0;
+  if (angles) for (const auto& a : *angles) if (a.is_dict() && a.GetDict().FindInt("state").value_or(0) >= 2) ++done;
+  const int sources = p ? p->FindInt("sources").value_or(0) : 0;
+  card->AddChildView(CreateAssistantCardTitle(AssistantGlyph::kSearch,
+      phase == 0 ? T(u"Planuję") : phase == 1 ? T(u"Szukam źródeł") : T(u"Piszę raport"),
+      sources ? Count(sources,TF(u"{} źródło",{base::NumberToString16(sources)}),TF(u"{} źródła",{base::NumberToString16(sources)}),TF(u"{} źródeł",{base::NumberToString16(sources)})) : std::u16string(), true));
+  card->AddChildView(CreateAssistantPhases(phase, total ? static_cast<float>(done) / total : 0.f,
+      total ? TF(u"Źródła {}/{}", {base::NumberToString16(done), base::NumberToString16(total)}) : T(u"Źródła")));
+  if (angles) {
+    auto* list = card->AddChildView(std::make_unique<views::View>());
+    SetSidebarPanelLayout(list, true, gfx::Insets(), 6);
+    for (const auto& a : *angles) {
+      if (!a.is_dict()) continue;
+      const auto& angle = a.GetDict();
+      const int state = angle.FindInt("state").value_or(0);
+      const int read = angle.FindInt("sources").value_or(0);
+      auto text = base::UTF8ToUTF16(angle.FindString("query") ? *angle.FindString("query") : std::string());
+      if (read) text += u" · " + Count(read,TF(u"{} źródło",{base::NumberToString16(read)}),TF(u"{} źródła",{base::NumberToString16(read)}),TF(u"{} źródeł",{base::NumberToString16(read)}));
+      list->AddChildView(CreateAssistantActivity(std::move(text), state == 0 ? 4 : state == 1 ? 0 : state == 2 ? 1 : 2));
     }
-    suggestion(AssistantGlyph::kGlobe,T(u"Znajdź coś w internecie"),T(u"Odpowiedzi z konkretnych źródeł"),T(u"Pomóż mi znaleźć informacje o "),"");
-    suggestion(AssistantGlyph::kSpark,T(u"Zbadaj temat głębiej"),T(u"Wstawia narzędzie Deep research"),T(u"Zbadaj dokładnie i porównaj "),"research");
-  } else for(size_t i=0;i<messages.size();++i) {
+  }
+  if (const auto* current = p ? p->FindString("current") : nullptr; current && !current->empty())
+    card->AddChildView(CreateAssistantNote(TF(u"Teraz: {}", {ShortAddress(*current)}), AssistantGlyph::kGlobe, true));
+  auto* actions = card->AddChildView(std::make_unique<views::View>());
+  auto* gap = actions->AddChildView(std::make_unique<views::View>());
+  actions->AddChildView(CreateAssistantPill(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) { if (self) self->Stop(); }, weak_factory_.GetWeakPtr())),
+                                            T(u"Zatrzymaj"), 3, AssistantGlyph::kStop));
+  SetSidebarPanelLayout(actions, false, gfx::Insets(), 6, gap, true);
+}
+void AssistantPanel::ShowResearchProgress() {
+  if (!live_research_) { RenderConversation(); return; }
+  const bool at_end = viewport_->offset() >= viewport_->maximum() - 24;
+  live_research_->RemoveAllChildViews();
+  RenderResearch(live_research_, selected());
+  live_research_->InvalidateLayout(); conversation_->InvalidateLayout(); InvalidateLayout(); scene_->Schedule();
+  if (compact_) host_->shell()->LayoutAssistant(false, true);
+  if (GetWidget()) GetWidget()->LayoutRootViewIfNecessary();
+  if (at_end) viewport_->ScrollTo(viewport_->maximum());
+}
+void AssistantPanel::RenderConversation() {
+  live_answer_ = nullptr; live_research_ = nullptr;
+  conversation_->RemoveAllChildViews();
+  auto& session=selected();
+  const auto& messages=session.messages;
+  const auto weak=weak_factory_.GetWeakPtr();
+  if(messages.empty()) {
+    if(!compact_)RenderWelcome();
+    InvalidateLayout();scene_->Schedule();
+    if(compact_)host_->shell()->LayoutAssistant(false,true);
+    return;
+  }
+  // The Ask bar shows only the latest answer; the panel shows everything.
+  size_t first=0;
+  if(compact_)for(size_t i=messages.size();i-->0;)if(messages[i].kind==1){first=i+1;break;}
+  size_t last=messages.size();
+  while(last>0&&messages[last-1].kind==4)--last;
+  for(size_t i=first;i<messages.size();++i) {
     const auto& message=messages[i];
     if(message.kind==4)continue;
     if(message.kind==3&&message.state==7){
@@ -2493,18 +2776,65 @@ void AssistantPanel::RenderConversation() {
       card->AddChildView(CreateAssistantActivity(task?TF(u"Uruchomione automatycznie · {}",{base::UTF8ToUTF16(task->name)}):T(u"Uruchomione automatycznie"),1));
       if(task){
         card->AddChildView(CreateAssistantNote(AssistantTaskSchedule(*task)+u" · "+base::UTF8ToUTF16(task->model)));
-        card->AddChildView(CreateAssistantLink(Later(base::BindRepeating(&AssistantPanel::OpenTaskEditor,weak_factory_.GetWeakPtr(),task->id)),T(u"Edytuj zadanie"),AssistantGlyph::kCalendar));
+        card->AddChildView(CreateAssistantLink(Later(base::BindRepeating(&AssistantPanel::OpenTaskEditor,weak,task->id)),T(u"Edytuj zadanie"),AssistantGlyph::kCalendar));
       }
+      continue;
+    }
+    if(message.kind==6) {
+      // The research plan: angles to search, nothing runs before Start.
+      const bool planning=message.answer=="planning";
+      const bool waiting=!planning&&message.state==0&&!session.busy;
+      if(message.state==2&&!planning)continue;
+      auto* card=conversation_->AddChildView(CreateAssistantSurface(0));
+      SetSidebarPanelLayout(card,true,gfx::Insets(14),10);
+      card->AddChildView(CreateAssistantCardTitle(AssistantGlyph::kSearch,T(u"Plan badania"),
+          planning?T(u"Układam pytania…"):waiting?T(u"Czeka na start"):T(u"Uruchomiony"),planning));
+      if(planning){card->AddChildView(CreateAssistantNote(T(u"Nic jeszcze nie szukam. Zobaczysz plan przed startem.")));continue;}
+      auto* list=card->AddChildView(std::make_unique<views::View>());
+      SetSidebarPanelLayout(list,true,gfx::Insets(),0);
+      for(size_t o=0;o<message.options.size();++o){
+        AssistantRow row;row.title=base::UTF8ToUTF16(message.options[o]);
+        row.mark={std::nullopt,base::NumberToString16(o+1),SK_ColorTRANSPARENT};
+        row.disabled=!waiting;
+        if(waiting&&message.options.size()>1){
+          row.remove=Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self,size_t o){
+            if(!self)return;
+            auto* plan=self->PendingPlan(self->selected());
+            if(!plan||o>=plan->options.size()||plan->options.size()<2)return;
+            plan->options.erase(plan->options.begin()+o);
+            self->ScheduleSave();self->RenderConversation();
+          },weak,o));
+          row.remove_name=T(u"Usuń z planu");
+        }
+        list->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self){if(self)self->prompt_->RequestFocus();},weak)),std::move(row)));
+      }
+      if(!waiting)continue;
+      const int angles=static_cast<int>(message.options.size());
+      auto* tags=card->AddChildView(CreateAssistantFlow(6));
+      tags->AddChildView(CreateAssistantTag(TF(u"ok. {} źródeł",{base::NumberToString16(angles*4)}),AssistantGlyph::kGlobe));
+      tags->AddChildView(CreateAssistantTag(TF(u"{} naraz",{base::NumberToString16(std::min(angles,host_->assistant_settings().concurrency))})));
+      tags->AddChildView(CreateAssistantTag(T(u"bez Twoich kart i historii"),AssistantGlyph::kLock));
+      auto* actions=card->AddChildView(std::make_unique<views::View>());
+#if BUILDFLAG(IS_MAC)
+      const std::u16string start_key=u"⌘↵";
+#else
+      const std::u16string start_key=u"Ctrl+↵";
+#endif
+      actions->AddChildView(CreateAssistantPill(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self){if(self)self->StartResearch(self->selected());},weak)),
+                                                T(u"Rozpocznij"),0,std::nullopt,start_key));
+      actions->AddChildView(CreateAssistantPill(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self){if(self){self->CancelPlan(self->selected());}},weak)),
+                                                T(u"Anuluj"),2));
+      auto* gap=actions->AddChildView(std::make_unique<views::View>());
+      SetSidebarPanelLayout(actions,false,gfx::Insets(),6,gap,false);
       continue;
     }
     if(message.kind==5) {
       // The model's question: one click answers; several may be picked when allowed.
-      auto* card=conversation_->AddChildView(CreateAssistantSurface(3));
+      auto* card=conversation_->AddChildView(CreateAssistantSurface(0));
       SetSidebarPanelLayout(card,true,gfx::Insets(12),6);
       const bool open=message.answer.empty()&&session.asking;
       card->AddChildView(CreateAssistantActivity(open?T(u"Asystent pyta"):T(u"Asystent zapytał"),open?3:1));
       card->AddChildView(CreateAssistantMarkdown(base::UTF8ToUTF16(message.text),base::BindRepeating([](const GURL&){})));
-      const auto weak=weak_factory_.GetWeakPtr();
       if(message.state==2){
         // A proposal: its answers are buttons, the first one primary.
         if(open){
@@ -2551,43 +2881,83 @@ void AssistantPanel::RenderConversation() {
       continue;
     }
     if(message.kind==2) {
-      // The step in progress turns; finished steps get a check, failures a warning.
-      size_t last=messages.size();
-      while(last>0&&messages[last-1].kind==4)--last;
-      const bool running=session.busy&&session.tool_running&&i+1==last&&message.state!=2;
-      conversation_->AddChildView(CreateAssistantActivity(base::UTF8ToUTF16(message.text),running?0:message.state==2?2:1));
+      // A turn's steps: one line once it is done, every step while it runs.
+      size_t end=i;
+      size_t steps=0,failed=0;
+      for(;end<messages.size()&&(messages[end].kind==2||messages[end].kind==4);++end)
+        if(messages[end].kind==2){++steps;failed+=messages[end].state==2;}
+      const bool live=session.busy&&end>=last;
+      const bool expanded=live||expanded_steps_.contains(i);
+      if(!live){
+        auto summary=Count(steps,TF(u"{} krok",{base::NumberToString16(steps)}),TF(u"{} kroki",{base::NumberToString16(steps)}),TF(u"{} kroków",{base::NumberToString16(steps)}));
+        if(failed)summary+=u" · "+Count(failed,TF(u"{} nieudany",{base::NumberToString16(failed)}),TF(u"{} nieudane",{base::NumberToString16(failed)}),TF(u"{} nieudanych",{base::NumberToString16(failed)}));
+        conversation_->AddChildView(CreateAssistantDisclosure(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self,size_t at){
+          if(!self)return;
+          if(!self->expanded_steps_.erase(at))self->expanded_steps_.insert(at);
+          self->RenderConversation();},weak,i)),std::move(summary),expanded));
+      }
+      if(expanded){
+        auto* group=conversation_->AddChildView(std::make_unique<views::View>());
+        SetSidebarPanelLayout(group,true,gfx::Insets::TLBR(0,live?0:10,live?0:4,0),6);
+        for(size_t j=i;j<end;++j){
+          if(messages[j].kind!=2)continue;
+          const bool running=session.busy&&session.tool_running&&j+1==last&&messages[j].state!=2;
+          group->AddChildView(CreateAssistantActivity(base::UTF8ToUTF16(messages[j].text),running?0:messages[j].state==2?2:1));
+        }
+      }
+      i=end-1;
       continue;
     }
-    auto* card=conversation_->AddChildView(CreateAssistantSurface(message.kind==1?2:3));
-    SetSidebarPanelLayout(card,true,gfx::Insets(12),6);
-    auto* head=card->AddChildView(std::make_unique<views::View>());
-    auto* role=head->AddChildView(scene_->MakeText(message.kind==1?T(u"Ty"):message.kind==0?TF(u"Asystent · {}",{base::UTF8ToUTF16(session.model)}):T(u"Asystent"),false,false,0));
-    scene_->SetTextStyle(role,6,PanelScene::Tone::kMuted);
-    // Copies the message as written (Markdown for replies).
-    if(!message.text.empty())head->AddChildView(CreateAssistantIcon(base::BindRepeating([](std::u16string text){
-      ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(text);},base::UTF8ToUTF16(message.text)),AssistantGlyph::kCopy,T(u"Kopiuj wiadomość")));
-    SetSidebarPanelLayout(head,false,gfx::Insets(),4,role,true);
-    if(!message.chips.empty()){
-      auto* flow=card->AddChildView(CreateAssistantFlow(4));
-      for(const auto& chip:message.chips)flow->AddChildView(CreateAssistantToken(MarkFor(chip),chip.title,!IsPage(chip),{}));
+    if(message.kind==1){
+      std::vector<std::pair<AssistantMark,std::u16string>> chips;
+      for(const auto& chip:message.chips)chips.emplace_back(MarkFor(chip),chip.title);
+      conversation_->AddChildView(CreateAssistantUserBubble(base::UTF8ToUTF16(message.text),std::move(chips)))
+          ->SetProperty(views::kMarginsKey,gfx::Insets::TLBR(i?8:0,0,2,0));
+      continue;
     }
-    if(message.kind==0&&!message.text.empty()){
-      card->AddChildView(CreateAssistantMarkdown(base::UTF8ToUTF16(message.text),base::BindRepeating([](base::WeakPtr<AssistantPanel> self,const GURL& url){
-        if(self&&url.SchemeIsHTTPOrHTTPS())self->host_->NavigateFromBar(url,true);},weak_factory_.GetWeakPtr())));
-    } else if(!message.text.empty()){card->AddChildView(CreateAssistantPlainText(base::UTF8ToUTF16(message.text)));}
+    if(message.kind==3){
+      conversation_->AddChildView(CreateAssistantNote(base::UTF8ToUTF16(message.text),std::nullopt,true));
+      continue;
+    }
+    if(message.text.empty())continue;
+    // An answer is the conversation itself: no card, a copy action beneath.
+    conversation_->AddChildView(CreateAssistantMarkdown(base::UTF8ToUTF16(message.text),base::BindRepeating([](base::WeakPtr<AssistantPanel> self,const GURL& url){
+      if(self&&url.SchemeIsHTTPOrHTTPS())self->host_->NavigateFromBar(url,true);},weak)));
+    auto* actions=conversation_->AddChildView(std::make_unique<views::View>());
+    actions->AddChildView(CreateAssistantIcon(base::BindRepeating([](std::u16string text){
+      ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(text);},base::UTF8ToUTF16(message.text)),AssistantGlyph::kCopy,T(u"Kopiuj odpowiedź")));
+    auto* model=actions->AddChildView(scene_->MakeText(base::UTF8ToUTF16(session.model),false,false,0));
+    scene_->SetTextStyle(model,6,PanelScene::Tone::kMuted);
+    SetSidebarPanelLayout(actions,false,gfx::Insets(),4,model,true);
   }
-  if(session.busy&&!messages.empty()) {
+  if(session.busy) {
     if(session.background){
       conversation_->AddChildView(CreateAssistantActivity(T(u"Pracuję w tle. Postęp i prośby o zgodę są wyżej, w sekcji W tle."),0));
+    }else if(session.researching){
+      auto* card=conversation_->AddChildView(CreateAssistantSurface(0));
+      SetSidebarPanelLayout(card,true,gfx::Insets(14),12);
+      live_research_=card;
+      RenderResearch(card,session);
+    }else if(std::ranges::any_of(messages,[](const Message& m){return m.kind==6&&m.answer=="planning";})){
+      // The plan card says what happens.
     }else if(session.asking){
     }else if(session.confirmation){
-      conversation_->AddChildView(CreateAssistantActivity(T(u"Czeka na Twoją zgodę"),3));
-    }else if(session.thinking&&!session.partial.empty()){
+      // The same consent as the bubble on the page, answerable here.
+      auto* card=conversation_->AddChildView(CreateAssistantSurface(5));
+      SetSidebarPanelLayout(card,true,gfx::Insets(12),8);
+      card->AddChildView(CreateAssistantActivity(T(u"Czeka na Twoją zgodę"),3));
+      if(session.confirm_prompt.empty())card->AddChildView(CreateAssistantElementPreview(session.confirm_label));
+      card->AddChildView(CreateAssistantNote(!session.confirm_prompt.empty()?session.confirm_prompt:session.confirm_key?TF(u"Nacisnąć {}?",{session.confirm_label}):TF(u"Kliknąć „{}”?",{session.confirm_label})));
+      auto* actions=card->AddChildView(std::make_unique<views::View>());
+      auto consent=[&](bool allow){return Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self,std::string key,bool allow){
+        if(!self)return;for(auto& s:self->sessions_)if(s->key==key&&s->confirmation)self->Consent(*s,allow);},weak,session.key,allow));};
+      actions->AddChildView(CreateAssistantPill(consent(true),T(u"Zezwól"),0));
+      actions->AddChildView(CreateAssistantPill(consent(false),T(u"Pomiń"),1));
+      auto* gap=actions->AddChildView(std::make_unique<views::View>());
+      SetSidebarPanelLayout(actions,false,gfx::Insets(),6,gap,false);
+    }else if(session.thinking&&!session.partial.empty()&&!session.partial.starts_with("\x1e")){
       // The answer as the model writes it.
-      auto* card=conversation_->AddChildView(CreateAssistantSurface(3));
-      SetSidebarPanelLayout(card,true,gfx::Insets(12),6);
-      card->AddChildView(CreateAssistantActivity(TF(u"Asystent · {} pisze…",{base::UTF8ToUTF16(session.model)}),0));
-      live_answer_=card->AddChildView(std::make_unique<views::View>());
+      live_answer_=conversation_->AddChildView(std::make_unique<views::View>());
       live_answer_->SetLayoutManager(std::make_unique<views::FillLayout>());
       live_answer_->AddChildView(CreateAssistantMarkdown(base::UTF8ToUTF16(session.partial),base::BindRepeating([](const GURL&){})));
     }else if(session.thinking){
@@ -2597,11 +2967,12 @@ void AssistantPanel::RenderConversation() {
     }
   }
   InvalidateLayout();scene_->Schedule();
+  if(compact_)host_->shell()->LayoutAssistant(false,true);
 }
 void AssistantPanel::UpdateControls() {
   NotifyBar();
   if (sessions_.empty() || !send_) return;
-  const auto& session = selected();
+  auto& session = selected();
   const auto& settings = host_->assistant_settings();
   const bool idle = !session.busy;
   send_->SetVisible(idle); stop_->SetVisible(!idle); send_->SetEnabled(idle && !session.provider.empty());
@@ -2610,18 +2981,33 @@ void AssistantPanel::UpdateControls() {
   // A disabled text field can retain its caret timer until focus changes.
   prompt_->SetCursorEnabled(idle || session.asking);
   if (session.asking) { send_->SetVisible(true); send_->SetEnabled(true); stop_->SetVisible(false); }
-  prompt_->SetPlaceholderText(session.asking ? T(u"Wybierz odpowiedź albo napisz własną…") : T(u"Zapytaj Zittera… @ wstawia kartę albo narzędzie"));
-  const bool research = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "research"; });
+  // Research needs public web access; a session without it falls back to chat.
+  if (session.research_mode && !session.permissions.web && !PendingPlan(session)) session.research_mode = false;
+  const bool research = session.research_mode;
+  const bool planned = PendingPlan(session) != nullptr;
+  prompt_->SetPlaceholderText(session.asking ? T(u"Wybierz odpowiedź albo napisz własną…")
+      : session.researching ? T(u"Research trwa. Możesz zamknąć panel.")
+      : planned ? T(u"Popraw plan, np. „tylko źródła z ostatniego roku”")
+      : research ? T(u"Jaki temat zbadać?")
+      : compact_ ? T(u"Zapytaj o tę stronę albo napisz, co zrobić")
+      : T(u"Zapytaj albo zleć zadanie · @ wstawia kartę"));
+  SetAssistantSurfaceAccent(composer_, research);
+  SetAssistantSurfaceBare(composer_, compact_);
+  UpdateAssistantModeSwitch(mode_, research ? 1 : 0, idle && session.permissions.web,
+      session.permissions.web ? T(u"Research: plan do akceptacji, potem raport ze źródłami")
+                              : T(u"Research wymaga dostępu do publicznych stron"));
+  mode_->SetVisible(!compact_);
+  mention_wanted_ = !compact_;
   const bool background = std::ranges::any_of(chips_, [](const auto& c) { return c.kind == "background"; });
-  UpdateAssistantButton(research_chip_, T(u"Deep research"), research);
-  const bool movable = session.busy && !session.background;
+  const bool movable = session.busy && !session.background && !session.researching;
   UpdateAssistantButton(background_chip_, movable ? T(u"Dokończ w tle") : T(u"W tle"), background || session.background);
-  research_chip_->SetEnabled(idle && session.permissions.web);
-  background_chip_->SetVisible(true);
+  background_wanted_ = !compact_ && !research && settings.background;
+  FitTools();
   background_chip_->SetEnabled(settings.background && (idle || movable));
-  background_chip_->SetTooltipText(!settings.background ? T(u"Włącz pracę w tle w Ustawieniach → Asystent AI") :
-      !session.permissions.actions ? T(u"Nadaj tej sesji dostęp do działań, aby uruchomić zadanie w tle") :
+  background_chip_->SetTooltipText(!session.permissions.actions ? T(u"Nadaj tej rozmowie dostęp do działań, aby uruchomić zadanie w tle") :
       movable ? T(u"Dokończ w tle") : T(u"W tle · Alt+Enter"));
+  model_chip_->SetVisible(!compact_);
+  expand_action_->SetVisible(compact_);
   UpdateAssistantButton(model_chip_, session.model.empty() ? T(u"Wybierz model") : base::UTF8ToUTF16(session.model), menu_ == Menu::kModel);
   if (!session.model.empty()) {
     const auto label = TF(u"Model: {}. Zmień model", {base::UTF8ToUTF16(session.model)});
@@ -2631,12 +3017,40 @@ void AssistantPanel::UpdateControls() {
   const int shared = static_cast<int>(session.permissions.tabs) + session.permissions.pages + session.permissions.actions + session.permissions.history + session.permissions.web;
   UpdateAssistantButton(access_action_, TF(u"Dostęp · {}", {base::NumberToString16(shared)}),
                         menu_ == Menu::kAccess);
-  access_action_->GetViewAccessibility().SetName(T(u"Dostęp tej sesji"));
+  access_action_->GetViewAccessibility().SetName(T(u"Dostęp tej rozmowy"));
+  const bool researched = session.research_mode || std::ranges::any_of(session.messages, [](const Message& m) { return m.kind == 6; });
+  UpdateAssistantSessionTitle(sessions_action_, session.title.empty() ? T(u"Nowa rozmowa") : session.title, researched, menu_ == Menu::kSessions);
+  header_->InvalidateLayout();
   InvalidateLayout();
+}
+
+void AssistantPanel::FitTools() {
+  // Send must always fit. Without room, "W tle" goes first, then @ (typing @
+  // in the prompt does the same).
+  const int room = tools_->width();
+  bool mention = mention_wanted_, background = background_wanted_;
+  if (room > 0) {
+    constexpr int kGap = 4;
+    int base = tools_->GetPreferredSize().width();
+    for (views::View* optional : {mention_action_.get(), background_chip_.get()}) {
+      if (optional->GetVisible())
+        base -= optional->GetPreferredSize().width() + kGap;
+    }
+    const int mention_width = mention_action_->GetPreferredSize().width() + kGap;
+    mention = mention && base + mention_width <= room;
+    if (mention)
+      base += mention_width;
+    background = background && base + background_chip_->GetPreferredSize().width() + kGap <= room;
+  }
+  if (mention_action_->GetVisible() != mention)
+    mention_action_->SetVisible(mention);
+  if (background_chip_->GetVisible() != background)
+    background_chip_->SetVisible(background);
 }
 
 void AssistantPanel::Layout(PassKey) {
   LayoutSuperclass<views::View>(this);
+  FitTools();
   resize_handle_->SetBounds(0,16,8,std::max(0,height()-32));
   if (!menu_view_) return;
   const int inner = std::max(0, width() - 32);

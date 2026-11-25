@@ -189,14 +189,38 @@ def launch(root: Path) -> int:
         return 0
     import secrets
     import tempfile
-    workspace = Path(tempfile.mkdtemp(prefix="zitter-content-dev-")).resolve()
+    # The app opens a workspace root only as a private zitter-content-probe-* directory
+    # right in $TMPDIR (IsProbeRoot in embedder_mac.mm). One stable root keeps spaces,
+    # tabs and settings from one relaunch to the next.
+    workspace = Path(tempfile.gettempdir()).resolve() / "zitter-content-probe-dev"
+    workspace.mkdir(mode=0o700, exist_ok=True)
+    workspace.chmod(0o700)
     key = workspace / "probe-cookie-key"
-    key.write_bytes(secrets.token_bytes(32))
+    if not key.exists():
+        key.write_bytes(secrets.token_bytes(32))
     key.chmod(0o600)
+    # With its output discarded the app writes a run log to ~/Library/Logs/Zitter
+    # and files crashed runs under Crashes/ there (docs/logs-and-crashes.md).
+    logs = Path.home() / "Library/Logs/Zitter"
     proc = subprocess.Popen([str(binary), "--zitter-content-workspace", f"--zitter-content-workspace-root={workspace}"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                             start_new_session=True)
-    print(f"Started the Content browser (pid {proc.pid}) with a fresh workspace in {workspace}")
+    log = logs / f"zitter-unknown-{proc.pid}.log"
+    # A rejected root or a crash ends the app within moments: report it, not a start.
+    for _ in range(25):
+        if proc.poll() is not None:
+            found = sorted(logs.glob(f"zitter-*-{proc.pid}.log")) + sorted((logs / "Crashes").glob(f"zitter-*-{proc.pid}.log"))
+            log = found[-1] if found else log
+            text = log.read_text(errors="replace") if log.exists() else ""
+            errors = [line for line in text.splitlines() if ":ERROR:" in line or ":FATAL:" in line]
+            print(f"The Content browser quit at start (exit {proc.returncode}).")
+            print("\n".join(errors[-5:]) or f"See {log}")
+            return 1
+        time.sleep(0.2)
+    found = sorted(logs.glob(f"zitter-*-{proc.pid}.log"))
+    if found:
+        log = found[-1]
+    print(f"Started the Content browser (pid {proc.pid}) with the workspace in {workspace}; log: {log}")
     return 0
 
 
