@@ -1,7 +1,7 @@
 {
   "repository": "https://chromium.googlesource.com/chromium/src.git",
-  "revision": "9a31f0acec1854d44e49a73fbf8017598151a583",
+  "revision": "4deb883708d3d25100c5aac2148aafc95dae95ac",
   "integration": "chrome/test:browser_tests",
-  "status": "Chrome 157.0.8103.39 desktop Stable source tag",
-  "verified_on": "2026-11-08"
+  "status": "Chrome 159.0.8154.34 desktop Stable source tag",
+  "verified_on": "2026-11-25"
 }
