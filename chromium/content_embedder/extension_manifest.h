@@ -22,6 +22,9 @@ namespace base {
 class FilePath;
 }
 
+namespace os_crypt_async {
+class Encryptor;
+}
 namespace extensions {
 class Extension;
 namespace declarative_net_request {
@@ -127,6 +130,12 @@ void InitializeLabExtensionsClient();
 
 // Runs before browser startup, after Content has registered URL schemes.
 std::optional<int> ConfigureExtensionProbes();
+
+// The Workspace key that authenticates the digests of verified extension
+// installations, so a start can skip re-extracting unchanged signed archives.
+// Without one, every start runs the full archive check.
+void SetExtensionAttestationEncryptor(
+    scoped_refptr<os_crypt_async::Encryptor> encryptor);
 
 // Called while the validated temporary Workspace root is locked.
 bool ConfigureWorkspaceExtensionProbe(base::span<const base::FilePath> profiles);

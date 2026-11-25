@@ -4489,8 +4489,13 @@ void WorkspaceLab::StartWorkspace() {
         if (!lab || !lab->done_)
           return;
         auto reveal = base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
-          if (lab && lab->done_)
-            prototype::SetWorkspaceStartupCloaked(lab->widget_.get(), false);
+          if (!lab || !lab->done_)
+            return;
+          prototype::SetWorkspaceStartupCloaked(lab->widget_.get(), false);
+          if (auto after = std::move(lab->after_startup_reveal_)) {
+            base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+                FROM_HERE, std::move(after));
+          }
         }, lab);
         auto* compositor = lab->widget_->GetCompositor();
         compositor->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
@@ -4706,14 +4711,14 @@ void WorkspaceLab::StartWorkspace() {
     session_probe_advancing_ = true;
   SelectWorkspace(model_.workspaces()[restored_workspace_].id);
 #if BUILDFLAG(IS_WIN)
-  // Start already-pinned pages after the main window can process input.
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-      FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
+  // Start already-pinned pages once the restored window is on screen; their
+  // renderers no longer hold back the first frame.
+  after_startup_reveal_ = base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
         if (!lab || !lab->done_ || !lab->CanEditWorkspace())
           return;
         for (size_t workspace = 0; workspace < lab->tabs_.size(); ++workspace)
           lab->LoadBackgroundProfileFavorites(workspace);
-      }, weak_factory_.GetWeakPtr()));
+      }, weak_factory_.GetWeakPtr());
 #endif
   if (std::exchange(restore_window_fullscreen_, false)) {
     // AppKit needs the main window and its content to be ready before

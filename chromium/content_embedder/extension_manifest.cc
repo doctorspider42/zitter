@@ -5,6 +5,7 @@
 #include "extensions_manager.h"
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <cstdio>
 #include <map>
@@ -14,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/barrier_callback.h"
 #include "base/base64.h"
 #include "base/command_line.h"
 #include "base/containers/fixed_flat_set.h"
@@ -31,15 +33,18 @@
 #include "base/memory/weak_ptr.h"
 #include "base/task/thread_pool.h"
 #include "base/notreached.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "components/crx_file/crx_verifier.h"
 #include "components/crx_file/id_util.h"
+#include "components/os_crypt/async/common/encryptor.h"
 #include "components/policy/core/common/schema.h"
 #include "components/version_info/version_info.h"
 #include "crypto/hash.h"
@@ -1221,6 +1226,10 @@ constexpr char kActiveFixtureVersion[] = "active-version";
 constexpr char kFixtureTrustRecord[] = "trusted-key-sha256";
 constexpr char kUninstallUrlRecord[] = "uninstall-url";
 constexpr char kDnrRecoveryMarker[] = "dnr-recovery";
+// The Workspace-encrypted digests of a fully verified installation. A later
+// start compares the tree with them instead of extracting the signed archive.
+constexpr char kFixtureAttestation[] = "verified-tree";
+constexpr size_t kMaxFixtureAttestationBytes = 16 * 1024 * 1024;
 constexpr std::string_view kDnrRecoveryMarkerValue = "1";
 constexpr size_t kMaxUninstallUrlBytes = 1023;
 constexpr char kUserEnabledState[] = "user-enabled";
@@ -1381,6 +1390,7 @@ bool MatchesSignedIdentity(const extensions::Extension& extension,
 scoped_refptr<extensions::Extension> LoadFixture(const base::FilePath& path,
                                                 int flags,
                                                 const SignedFixture* fixture = nullptr) {
+  TRACE_EVENT0("startup", "LoadFixture");
   std::string manifest_error;
   auto manifest = extensions::file_util::LoadManifest(path, &manifest_error);
   constexpr auto location = extensions::mojom::ManifestLocation::kUnpacked;
@@ -1486,7 +1496,8 @@ base::FilePath ReadSingleFixtureDirectory(const base::FilePath& parent) {
         child.BaseName() == base::FilePath::FromASCII(kFixtureTrustRecord) ||
         child.BaseName() == base::FilePath::FromASCII(kExtensionOptionalGrants) ||
         child.BaseName() == base::FilePath::FromASCII(kUninstallUrlRecord) ||
-        child.BaseName() == base::FilePath::FromASCII(kDnrRecoveryMarker))
+        child.BaseName() == base::FilePath::FromASCII(kDnrRecoveryMarker) ||
+        child.BaseName() == base::FilePath::FromASCII(kFixtureAttestation))
       continue;
     if (!directory.empty() || !IsCanonicalDirectory(child))
       return {};
@@ -1509,8 +1520,57 @@ std::optional<base::FilePath> ExtensionTreeKey(const base::FilePath& path) {
 #endif
 }
 
+// Checks installed files against their attested SHA-256 on the thread pool.
+// One by one, a large extension (LastPass: 500 files, 72 MB) held the start
+// for about 0.3 s. The caller waits in a nested loop, as the full check waits
+// for its extraction utility.
+bool MatchFixtureDigests(
+    std::vector<std::pair<base::FilePath, std::string>> files) {
+  if (files.empty())
+    return true;
+  constexpr size_t kChunks = 8;
+  std::vector<std::vector<std::pair<base::FilePath, std::string>>> chunks(
+      std::min(kChunks, files.size()));
+  for (size_t index = 0; index < files.size(); ++index)
+    chunks[index % chunks.size()].push_back(std::move(files[index]));
+  bool matched = false;
+  base::RunLoop loop(base::RunLoop::Type::kNestableTasksAllowed);
+  const auto done = base::BarrierCallback<bool>(
+      chunks.size(),
+      base::BindOnce(
+          [](bool* matched, base::OnceClosure quit, std::vector<bool> results) {
+            *matched = std::ranges::all_of(results, std::identity());
+            std::move(quit).Run();
+          },
+          &matched, loop.QuitClosure()));
+  for (auto& chunk : chunks) {
+    base::ThreadPool::PostTaskAndReplyWithResult(
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
+        base::BindOnce(
+            [](std::vector<std::pair<base::FilePath, std::string>> chunk) {
+              for (const auto& [path, digest] : chunk) {
+                std::string bytes;
+                if (!IsFixtureFile(path, kMaxFixtureFileSize, /*allow_empty=*/true) ||
+                    !base::ReadFileToStringWithMaxSize(path, &bytes,
+                                                       kMaxFixtureFileSize) ||
+                    base::HexEncode(crypto::hash::Sha256(bytes)) != digest) {
+                  return false;
+                }
+              }
+              return true;
+            },
+            std::move(chunk)),
+        base::OnceCallback<void(bool)>(done));
+  }
+  loop.Run();
+  return matched;
+}
+
+// `fixture.files` holds each file's contents, or with `digests` its
+// uppercase hexadecimal SHA-256 from an attestation.
 scoped_refptr<extensions::Extension> ReadExtractedFixtureVersion(
-    const base::FilePath& version_dir, const SignedFixture& fixture) {
+    const base::FilePath& version_dir, const SignedFixture& fixture,
+    bool digests = false) {
   if (!IsCanonicalDirectory(version_dir))
     return nullptr;
   std::map<base::FilePath, std::string_view> expected_files;
@@ -1544,6 +1604,7 @@ scoped_refptr<extensions::Extension> ReadExtractedFixtureVersion(
   }
 
   bool has_generated_index = false;
+  std::vector<std::pair<base::FilePath, std::string>> digest_checks;
   base::FileEnumerator installed(version_dir, /*recursive=*/true,
                                  kFixtureTreeEntries);
   for (auto path = installed.Next(); !path.empty(); path = installed.Next()) {
@@ -1575,9 +1636,15 @@ scoped_refptr<extensions::Extension> ReadExtractedFixtureVersion(
       return nullptr;
 #endif
     const auto expected = expected_files.find(*key);
+    if (expected == expected_files.end())
+      return nullptr;
+    if (digests) {
+      digest_checks.emplace_back(path, std::string(expected->second));
+      expected_files.erase(expected);
+      continue;
+    }
     std::string bytes;
-    if (expected == expected_files.end() ||
-        !IsFixtureFile(path, kMaxFixtureFileSize, /*allow_empty=*/true) ||
+    if (!IsFixtureFile(path, kMaxFixtureFileSize, /*allow_empty=*/true) ||
         !base::ReadFileToStringWithMaxSize(path, &bytes, kMaxFixtureFileSize) ||
         bytes != expected->second) {
       return nullptr;
@@ -1585,6 +1652,8 @@ scoped_refptr<extensions::Extension> ReadExtractedFixtureVersion(
     expected_files.erase(expected);
   }
   if (!expected_files.empty() || !expected_dirs.empty())
+    return nullptr;
+  if (digests && !MatchFixtureDigests(std::move(digest_checks)))
     return nullptr;
   // The unpacked manifest validator warns about any generated metadata
   // directory. Discard the verified cache structure before loading the signed
@@ -1606,14 +1675,122 @@ scoped_refptr<extensions::Extension> ReadExtractedFixtureVersion(
   return extension;
 }
 
-scoped_refptr<extensions::Extension> ReadFixtureVersion(
+scoped_refptr<os_crypt_async::Encryptor>& FixtureAttestationEncryptor() {
+  static base::NoDestructor<scoped_refptr<os_crypt_async::Encryptor>> encryptor;
+  return *encryptor;
+}
+
+base::FilePath FixtureAttestationPath(const base::FilePath& version_dir) {
+  return version_dir.DirName().AppendASCII(kFixtureAttestation);
+}
+
+// Records what the full check accepted: the archive's and every extracted
+// file's SHA-256, encrypted (and so authenticated) with the Workspace key.
+void WriteFixtureAttestation(const base::FilePath& version_dir,
+                             const SignedFixture& fixture,
+                             const std::vector<uint8_t>& trusted_key_hash) {
+  const auto& encryptor = FixtureAttestationEncryptor();
+  if (!encryptor || !encryptor->IsEncryptionAvailable())
+    return;
+  base::DictValue files;
+  for (const auto& [name, contents] : fixture.files)
+    files.Set(name, base::HexEncode(crypto::hash::Sha256(contents)));
+  base::DictValue record;
+  record.Set("version", 1);
+  record.Set("directory", version_dir.BaseName().AsUTF8Unsafe());
+  record.Set("key_hash", base::HexEncode(trusted_key_hash));
+  record.Set("id", fixture.id);
+  record.Set("public_key", fixture.public_key);
+  record.Set("web_store", fixture.web_store);
+  record.Set("archive", base::HexEncode(crypto::hash::Sha256(fixture.archive)));
+  record.Set("files", std::move(files));
+  std::string json;
+  std::string ciphertext;
+  if (!base::JSONWriter::Write(record, &json) ||
+      !encryptor->EncryptString(json, &ciphertext) ||
+      ciphertext.size() > kMaxFixtureAttestationBytes ||
+      !base::ImportantFileWriter::WriteFileAtomically(
+          FixtureAttestationPath(version_dir), ciphertext)) {
+    LOG(WARNING) << "Could not record a verified extension installation";
+  }
+}
+
+// The fast start path: the tree must match an attestation for this version
+// and trusted key exactly. Anything else falls back to the full check.
+scoped_refptr<extensions::Extension> ReadAttestedFixtureVersion(
     const base::FilePath& version_dir,
     const std::vector<uint8_t>& trusted_key_hash) {
+  TRACE_EVENT0("startup", "ReadAttestedFixtureVersion");
+  const auto& encryptor = FixtureAttestationEncryptor();
+  const auto path = FixtureAttestationPath(version_dir);
+  if (!encryptor || !encryptor->IsDecryptionAvailable() ||
+      !IsFixtureFile(path, kMaxFixtureAttestationBytes)) {
+    return nullptr;
+  }
+  std::string ciphertext;
+  std::string json;
+  if (!base::ReadFileToStringWithMaxSize(path, &ciphertext,
+                                         kMaxFixtureAttestationBytes) ||
+      !encryptor->DecryptString(ciphertext, &json)) {
+    return nullptr;
+  }
+  const auto record = base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
+  if (!record || record->FindInt("version") != 1)
+    return nullptr;
+  const auto* directory = record->FindString("directory");
+  const auto* key_hash = record->FindString("key_hash");
+  const auto* id = record->FindString("id");
+  const auto* public_key = record->FindString("public_key");
+  const auto web_store = record->FindBool("web_store");
+  const auto* archive_digest = record->FindString("archive");
+  const auto* files = record->FindDict("files");
+  if (!directory || !key_hash || !id || !public_key || !web_store ||
+      !archive_digest || !files || files->empty() ||
+      *directory != version_dir.BaseName().AsUTF8Unsafe() ||
+      *key_hash != base::HexEncode(trusted_key_hash) ||
+      *id != crx_file::id_util::GenerateIdFromHash(trusted_key_hash)) {
+    return nullptr;
+  }
+  const auto archive_path = version_dir.AppendASCII(kExtensionArchiveFileName);
+  std::string archive;
+  if (!IsFixtureFile(archive_path, kMaxFixtureArchiveSize) ||
+      !base::ReadFileToStringWithMaxSize(archive_path, &archive,
+                                         kMaxFixtureArchiveSize) ||
+      base::HexEncode(crypto::hash::Sha256(archive)) != *archive_digest) {
+    return nullptr;
+  }
+  SignedFixture fixture;
+  fixture.id = *id;
+  fixture.public_key = *public_key;
+  fixture.web_store = *web_store;
+  fixture.key_hash = trusted_key_hash;
+  for (const auto [name, digest] : *files) {
+    if (!digest.is_string() || digest.GetString().size() != 64)
+      return nullptr;
+    fixture.files.emplace(name, digest.GetString());
+  }
+  TRACE_EVENT0("startup", "CompareAttestedFixtureTree");
+  return ReadExtractedFixtureVersion(version_dir, fixture, /*digests=*/true);
+}
+
+// `attest` lets an installed version start from its attestation and records
+// one after a successful full check.
+scoped_refptr<extensions::Extension> ReadFixtureVersion(
+    const base::FilePath& version_dir,
+    const std::vector<uint8_t>& trusted_key_hash,
+    bool attest = false) {
   if (!IsCanonicalDirectory(version_dir))
     return nullptr;
+  if (attest) {
+    if (auto extension = ReadAttestedFixtureVersion(version_dir, trusted_key_hash))
+      return extension;
+  }
   auto fixture = VerifyFixtureArchive(
       version_dir.AppendASCII(kExtensionArchiveFileName), trusted_key_hash);
-  return fixture ? ReadExtractedFixtureVersion(version_dir, *fixture) : nullptr;
+  auto extension = fixture ? ReadExtractedFixtureVersion(version_dir, *fixture) : nullptr;
+  if (extension && attest)
+    WriteFixtureAttestation(version_dir, *fixture, trusted_key_hash);
+  return extension;
 }
 
 scoped_refptr<extensions::Extension> ReadInstalledFixture(
@@ -1628,7 +1805,7 @@ scoped_refptr<extensions::Extension> ReadInstalledFixture(
   const auto active_path = id_dir.AppendASCII(kActiveFixtureVersion);
   if (!base::PathExists(active_path) && !base::IsLink(active_path)) {
     return ReadFixtureVersion(ReadSingleFixtureDirectory(id_dir),
-                              trusted_key_hash);
+                              trusted_key_hash, /*attest=*/true);
   }
 
   std::string version;
@@ -1640,7 +1817,8 @@ scoped_refptr<extensions::Extension> ReadInstalledFixture(
   const base::Version parsed(version);
   if (!parsed.IsValid() || parsed.GetString() != version)
     return nullptr;
-  return ReadFixtureVersion(id_dir.AppendASCII(version + "_0"), trusted_key_hash);
+  return ReadFixtureVersion(id_dir.AppendASCII(version + "_0"), trusted_key_hash,
+                            /*attest=*/true);
 }
 
 bool AllowsFixtureUpdate(const extensions::Extension& current,
@@ -2780,6 +2958,8 @@ bool ReadTrustedProfileExtensions(
     const base::FilePath& profile,
     std::multimap<base::FilePath, ExtensionProbeFixture>& fixtures,
     bool skip_invalid) {
+  TRACE_EVENT1("startup", "ReadTrustedProfileExtensions", "profile",
+               profile.BaseName().AsUTF8Unsafe());
   const auto install_root = profile.AppendASCII(extensions::kInstallDirectoryName);
   if (!base::PathExists(install_root) && !IsFixtureLink(install_root))
     return true;
@@ -2837,6 +3017,11 @@ bool IsWorkspaceExtensionReviewOnly() {
              kExtensionInstallReview) == "preview";
 }
 
+void SetExtensionAttestationEncryptor(
+    scoped_refptr<os_crypt_async::Encryptor> encryptor) {
+  FixtureAttestationEncryptor() = std::move(encryptor);
+}
+
 bool ConfigureWorkspaceExtensionProbe(base::span<const base::FilePath> profiles) {
   const auto& command_line = *base::CommandLine::ForCurrentProcess();
   if (!IsWorkspaceExtensionRuntime())
@@ -2852,6 +3037,7 @@ bool ConfigureWorkspaceExtensionProbe(base::span<const base::FilePath> profiles)
         return false;
       }
     }
+    TRACE_EVENT0("startup", "PrepareExtensionRegistryProbe");
     PrepareExtensionRegistryProbe(std::move(fixtures));
     return true;
   }

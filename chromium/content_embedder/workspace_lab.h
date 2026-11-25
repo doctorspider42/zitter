@@ -1177,6 +1177,10 @@ class WorkspaceLab final : private WorkspaceRuntime,
   bool window_was_fullscreen_ = false;
   bool restore_window_fullscreen_ = false;
   bool restore_window_maximized_ = false;
+#if BUILDFLAG(IS_WIN)
+  // Startup work that waits until the restored window is on screen.
+  base::OnceClosure after_startup_reveal_;
+#endif
   std::optional<base::DictValue> window_placement_at_close_;
   base::ScopedObservation<views::Widget, views::WidgetObserver>
       fullscreen_observation_{this};

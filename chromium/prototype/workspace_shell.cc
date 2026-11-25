@@ -14086,7 +14086,22 @@ void WorkspaceShell::PositionWebNotifications() {
                             width, height));
 }
 
+void WorkspaceShell::MovePanelsBy(const gfx::Vector2d& delta) {
+  if (delta.IsZero()) return;
+  for (auto* panel : {tools_widget_.get(), sidebar_widget_.get(), scrim_widget_.get(),
+                      time_machine_widget_.get(), tab_switcher_widget_.get(), toast_widget_.get(),
+                      web_notification_widget_.get(), download_cue_widget_.get(), find_widget_.get(),
+                      print_widget_.get(), general_widget_.get(), settings_widget_.get(),
+                      profiles_widget_.get(), import_widget_.get(), peek_widget_.get(),
+                      address_widget_.get()}) {
+    // Hidden panels wait for PositionPanels: each SetWindowPos costs about
+    // a millisecond of the drag even for an invisible window.
+    if (panel && panel->IsVisible())
+      panel->SetBounds(panel->GetWindowBoundsInScreen() + delta);
+  }
+}
 void WorkspaceShell::PositionPanels() {
+  panel_position_timer_.Stop();
   if (!sidebar_widget_ || !address_widget_ || !settings_widget_) return;
   const auto bounds = widget_->GetClientAreaBoundsInScreen();
   if (tools_widget_) {
@@ -19523,12 +19538,32 @@ bool WorkspaceShell::HandleAddressKey(const ui::KeyEvent& event) {
   RunSuggestion(static_cast<PaletteView*>(palette_root_.get())->selected());
   return true;
 }
-void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rect&) {
+void WorkspaceShell::OnWidgetBoundsChanged(views::Widget* widget, const gfx::Rect& new_bounds) {
   // Screen-space GPU clipping belongs to the captured viewport. Reflow restores
   // live content instead of leaving an overlay at old window/sidebar bounds.
   if(workspace_switch_overlay_&&(widget==widget_||widget==sidebar_widget_.get()))StopWorkspaceAnimation();
   if(widget==address_widget_.get())ScheduleMetalPalette();
-  if (widget == widget_) {widget_->LayoutRootViewIfNecessary();PositionPanels();ScheduleMetalHeader();ScheduleMetalSplit();}
+  if (widget == widget_) {
+    [[maybe_unused]] const auto previous = std::exchange(shell_bounds_, new_bounds);
+    widget_->LayoutRootViewIfNecessary();
+#if BUILDFLAG(IS_WIN)
+    const bool moved = !previous.IsEmpty() && previous.size() == new_bounds.size();
+#else
+    // AppKit moves child windows with their parent.
+    const bool moved = false;
+#endif
+    if (moved) {
+      // Dragging: each move only translates the panel windows. Measuring the
+      // panels' contents on every step stalled the drag loop (~13 ms a move).
+      MovePanelsBy(new_bounds.origin() - previous.origin());
+      panel_position_timer_.Start(FROM_HERE, base::Milliseconds(200),
+          base::BindOnce(&WorkspaceShell::PositionPanels, weak_factory_.GetWeakPtr()));
+    } else {
+      panel_position_timer_.Stop();
+      PositionPanels();
+    }
+    ScheduleMetalHeader();ScheduleMetalSplit();
+  }
   if (widget == sidebar_widget_.get() && !sidebar_rename_workspace_.empty())
     ScheduleMetalSidebar();
 }
@@ -19568,6 +19603,9 @@ void WorkspaceShell::OnWidgetActivationChanged(views::Widget* widget, bool activ
   }
 }
 void WorkspaceShell::OnWidgetVisibilityChanged(views::Widget* widget, bool visible) {
+  // A panel shown right after a window move: place it before it is drawn.
+  if (visible && widget != widget_ && panel_position_timer_.IsRunning())
+    PositionPanels();
   if (widget == address_widget_.get()) VLOG(1) << "Palette visibility=" << visible;
 #if BUILDFLAG(IS_MAC)
   if (widget == sidebar_widget_.get()) {

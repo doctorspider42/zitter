@@ -81,6 +81,10 @@
 #include "download_probe.h"
 #include "extension_archive_service.h"
 #include "extension_manifest.h"
+#include "base/memory/ref_counted.h"
+#include "base/trace_event/trace_event.h"
+#include "components/os_crypt/async/browser/os_crypt_async.h"
+#include "components/os_crypt/async/common/encryptor.h"
 #include "extensions/browser/extension_file_task_runner.h"
 #include "lab_clients.h"
 #include "lab_web_view.h"
@@ -232,6 +236,19 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         if (!ui_automation_)
           return 1;
       }
+      if (os_crypt_) {
+        // The pinned DPAPI provider answers synchronously.
+        using Holder = base::RefCountedData<scoped_refptr<os_crypt_async::Encryptor>>;
+        auto holder = base::MakeRefCounted<Holder>();
+        os_crypt_->GetInstance(base::BindOnce(
+            [](scoped_refptr<Holder> holder,
+               scoped_refptr<os_crypt_async::Encryptor> encryptor) {
+              holder->data = std::move(encryptor);
+            },
+            holder));
+        SetExtensionAttestationEncryptor(std::move(holder->data));
+      }
+      TRACE_EVENT0("startup", "ConfigureWorkspaceExtensionProbe");
       if (!ConfigureWorkspaceExtensionProbe(workspace_extension_profiles_)) {
         return 1;
       }
@@ -250,8 +267,10 @@ class WindowsLabMainParts final : public content::BrowserMainParts,
         if (!safe_browsing_key_.empty())
           browser_->StartNavigationReputation(workspace_root_, safe_browsing_key_);
       }
-      if (!IsWorkspaceExtensionReviewOnly())
+      if (!IsWorkspaceExtensionReviewOnly()) {
+        TRACE_EVENT0("startup", "CreateWorkspace");
         CreateWorkspace();
+      }
       return 0;
     }
     context_ = std::make_unique<ProfileContext>(

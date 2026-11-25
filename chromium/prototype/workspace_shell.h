@@ -1038,6 +1038,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void FinishTabSwitcher(std::optional<uint64_t> id);
   void CreateToolsPanel();
   void PositionPanels();
+  // A window move keeps every panel's offset from the shell, so dragging only
+  // translates the panel windows; the full layout runs once the move settles.
+  void MovePanelsBy(const gfx::Vector2d& delta);
   void PositionPreferencesTab();
   void SyncPreferencesTab();
   void EnsurePreferencesTab();
@@ -1893,6 +1896,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void FinishSidebarSlide(size_t generation);
   base::RepeatingTimer sidebar_hover_timer_;
   base::RepeatingTimer sidebar_slide_timer_;
+  gfx::Rect shell_bounds_;
+  base::OneShotTimer panel_position_timer_;
   base::TimeTicks sidebar_left_at_;
   base::TimeTicks sidebar_slide_started_;
   double sidebar_slide_from_ = 0;

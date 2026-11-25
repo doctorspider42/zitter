@@ -532,6 +532,20 @@ by name in the same directory: `sidebar_scene_unittests`,
   window forward. Processes launched from an MSIX-packaged parent (such as the
   Claude desktop app) see a virtualized `AppData\Local`, which the layout check
   rejects; start test copies through `explorer.exe`.
+- **Startup time.** After a full check of an installed extension (signed
+  archive, sandboxed extraction, byte comparison of the tree), Zitter writes
+  `verified-tree` beside the version directory: the SHA-256 of the archive and
+  of every extracted file, encrypted with the Workspace's DPAPI key. Later
+  starts hash the tree on the thread pool against it and fall back to the full
+  check on any difference. With LastPass (500 files, 72 MB) this cut the
+  extension restore from about 1.1 s to 0.2 s. Pinned pages of other spaces
+  start loading after the first frame reveals the window. Measure with
+  `--trace-startup=toplevel,startup --trace-startup-format=json`; the
+  `startup` category names the extension and Workspace steps.
+- **Window moves.** A move that keeps the window size only translates the
+  visible panel windows; the full `PositionPanels()` layout runs 200 ms after
+  the last move or when a panel is shown. Measuring every panel on each move
+  held the drag loop for about 13 ms a step.
 - **Migration from the Chrome-based build.** When `Zitter Content` is still
   empty, the first plain launch imports the Chrome-based profile
   (`legacy_import_win.cc`, the C++ port of `tools/profile_migration_trial.py`):
