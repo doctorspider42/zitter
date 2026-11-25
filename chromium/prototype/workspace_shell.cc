@@ -5,6 +5,8 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/style/platform_style.h"
 #include "ui/views/vector_icons.h"
+#include "ui/views/event_monitor.h"
+#include "ui/events/event_observer.h"
 #include "ui/views/mouse_constants.h"
 #include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/view_tracker.h"
@@ -3426,10 +3428,11 @@ class SceneModalDialog final : public views::BubbleDialogDelegate {
   }
 #if !BUILDFLAG(IS_MAC)
   // Without an anchor, a bubble sits at the screen's origin; macOS shows these
-  // as sheets. Centered over the parent window instead.
+  // as sheets. Centered over the parent window instead, unless it was given
+  // an anchor point (the site panel hangs under the address pill).
   gfx::Rect GetBubbleBounds() override{
     gfx::Rect bounds=views::BubbleDialogDelegate::GetBubbleBounds();
-    if(GetAnchorView()||!GetWidget()||!GetWidget()->parent())return bounds;
+    if(GetAnchorView()||anchor_rect()||!GetWidget()||!GetWidget()->parent())return bounds;
     bounds.set_origin(GetWidget()->parent()->GetWindowBoundsInScreen().CenterPoint()-gfx::Vector2d(bounds.width()/2,bounds.height()/2));
     return bounds;
   }
@@ -5305,6 +5308,14 @@ WorkspaceShell::Callbacks::Callbacks(Callbacks&&) = default;
 WorkspaceShell::Callbacks& WorkspaceShell::Callbacks::operator=(Callbacks&&) = default;
 WorkspaceShell::Callbacks::~Callbacks() = default;
 
+// Presses anywhere in the app, while the site panel is open.
+class SitePanelPresses final : public ui::EventObserver {
+ public:
+  explicit SitePanelPresses(base::RepeatingClosure pressed) : pressed_(std::move(pressed)) {}
+  void OnEvent(const ui::Event& event) override { pressed_.Run(); }
+ private:
+  base::RepeatingClosure pressed_;
+};
 WorkspaceShell::WorkspaceShell(base::FilePath path, Callbacks callbacks)
     : settings_path_(std::move(path)), callbacks_(std::move(callbacks)),
       io_runner_(base::ThreadPool::CreateSequencedTaskRunner(
@@ -13535,6 +13546,7 @@ void WorkspaceShell::ToggleSitePanel(){
 }
 void WorkspaceShell::CloseSitePanel(){
   if (!site_panel_ && !site_settings_page_) return;
+  site_press_monitor_.reset();site_press_observer_.reset();
   site_menu_runner_.reset();site_menu_.reset();site_rows_.clear();site_data_row_=nullptr;site_header_=nullptr;site_body_=nullptr;
   if (site_settings_page_) {
     auto* root = static_cast<ShellRoot*>(root_.get());
@@ -13589,9 +13601,25 @@ void WorkspaceShell::ShowSitePanel(SiteSummary summary, SiteHandlers handlers, b
   widget->SetColorModeOverride(widget_->color_mode_override());
   PreparePanelText(widget->GetRootView());
   widget->Show();PlaceSitePanel();
+  // The sidebar is its own window and never takes activation, so a press
+  // there would leave the panel open: watch presses across the app instead.
+  site_press_observer_=std::make_unique<SitePanelPresses>(base::BindRepeating(&WorkspaceShell::OnSitePanelPress,weak));
+  site_press_monitor_=views::EventMonitor::CreateApplicationMonitor(site_press_observer_.get(),widget_->GetNativeWindow(),
+      {ui::EventType::kMousePressed,ui::EventType::kTouchPressed});
   SetRowSiteControls(url_pill_,true,true);ScheduleMetalSidebar();
   if (!site_handlers_.clear_storage && site_handlers_.measure) site_handlers_.measure.Run(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,uint64_t generation,const SiteDataFacts& facts){
     if(shell&&shell->site_generation_==generation)shell->ApplySiteFacts(facts);},weak,site_generation_));
+}
+// A press anywhere outside the panel closes it. The address pill is left to
+// its own toggle, and the permission menu to its runner.
+void WorkspaceShell::OnSitePanelPress(){
+  if(!site_panel_||!site_panel_->IsVisible())return;
+  if(site_menu_runner_&&site_menu_runner_->IsRunning())return;
+  const auto point=display::Screen::Get()->GetCursorScreenPoint();
+  if(site_panel_->GetWindowBoundsInScreen().Contains(point))return;
+  if(url_pill_&&url_pill_->GetBoundsInScreen().Contains(point))return;
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,uint64_t generation){
+    if(shell&&shell->site_generation_==generation)shell->CloseSitePanel();},weak_factory_.GetWeakPtr(),site_generation_));
 }
 // An anchorless bubble hangs centred below its anchor point: put that point
 // under the pill, half the panel in from its left edge.

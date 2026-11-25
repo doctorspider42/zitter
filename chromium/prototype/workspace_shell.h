@@ -58,6 +58,7 @@ namespace gfx { class Canvas; }
 namespace views {
 class ImageView;
 class DialogDelegate;
+class EventMonitor;
 class Button;
 class Combobox;
 class Checkbox;
@@ -84,6 +85,7 @@ class PreferenceChromeState;
 class ImportFormState;
 class SidebarNodeGraphState;
 class TimeMachineView;
+class SitePanelPresses;
 
 // Top band above the sidebar; the native traffic lights and the page commands
 // are centered on its middle line.
@@ -1665,6 +1667,11 @@ class WorkspaceShell final : public ui::EventHandler,
   std::vector<raw_ptr<views::View>> site_rows_;
   std::unique_ptr<ui::SimpleMenuModel> site_menu_;
   std::unique_ptr<views::MenuRunner> site_menu_runner_;
+  // A press outside the panel closes it (the sidebar never takes activation
+  // from it). Declared so the monitor goes before its observer.
+  std::unique_ptr<SitePanelPresses> site_press_observer_;
+  std::unique_ptr<views::EventMonitor> site_press_monitor_;
+  void OnSitePanelPress();
   SiteHandlers site_handlers_;
   SiteSummary site_summary_;
   SiteDataFacts site_facts_;
