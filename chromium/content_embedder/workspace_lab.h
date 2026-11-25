@@ -244,7 +244,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
                                gfx::NativeWindow main,
                                std::string command,
                                bool validate);
-  void SetNativeMenuProbe(base::RepeatingCallback<bool(std::string)> activate);
+  // `target` names the window menu commands go to while macOS keeps the app
+  // inactive behind another app; it returns whether the app is in front.
+  void SetNativeMenuProbe(
+      base::RepeatingCallback<bool(std::string)> activate,
+      base::RepeatingCallback<bool(gfx::NativeWindow)> target = {});
   WorkspaceExtensionTab* CreateExtensionTab(content::BrowserContext& profile,
                                             const GURL& url, bool active);
   bool UpdateExtensionTab(WorkspaceExtensionTab& target, const GURL& url,
@@ -1122,6 +1126,7 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::map<size_t, size_t> pending_private_windows_;
   size_t private_source_index_ = 0;
   base::RepeatingCallback<bool(std::string)> native_menu_probe_;
+  base::RepeatingCallback<bool(gfx::NativeWindow)> native_menu_target_;
   WorkspaceModel model_;
   WorkspaceController controller_{model_, *this};
   std::unique_ptr<views::LayoutProvider> layout_provider_;

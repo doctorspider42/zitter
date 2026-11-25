@@ -5556,8 +5556,10 @@ void WorkspaceLab::SetApplicationVersion(std::string version) {
 }
 
 void WorkspaceLab::SetNativeMenuProbe(
-    base::RepeatingCallback<bool(std::string)> activate) {
+    base::RepeatingCallback<bool(std::string)> activate,
+    base::RepeatingCallback<bool(gfx::NativeWindow)> target) {
   native_menu_probe_ = std::move(activate);
+  native_menu_target_ = std::move(target);
 }
 
 bool WorkspaceLab::OpenPrivateWindow() {
@@ -15496,9 +15498,16 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
       if ((ready = loaded(first, kPaths[2]))) {
         if (native_menu_probe_ && !zoom_probe) {
           first->widget_->Activate();
+          // macOS keeps an app started in the background inactive while
+          // another app is in front, and an inactive app has no key window.
+          // Then the menu commands go to the private window named here.
+          const bool foreground =
+              !native_menu_target_ ||
+              native_menu_target_.Run(first->widget_->GetNativeWindow());
           // AppKit switches the key window asynchronously after a private
           // window closes. Dispatch the menu action after its target is ready.
-          if (!first->widget_->IsActive() || !first->CanEditWorkspace()) {
+          if ((foreground && !first->widget_->IsActive()) ||
+              !first->CanEditWorkspace()) {
             ready = false;
             break;
           }
@@ -15535,6 +15544,8 @@ void WorkspaceLab::CheckPrivateWindowProbe(int phase,
             fail();
             return;
           }
+          if (native_menu_target_)
+            native_menu_target_.Run(gfx::NativeWindow());
         } else {
           first->CloseTab(0);
         }

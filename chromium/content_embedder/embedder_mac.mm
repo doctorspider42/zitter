@@ -139,6 +139,7 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 - (void)setExternalUrlHandler:(base::RepeatingCallback<void(GURL)>)handler;
 - (void)setWorkspaceMenuAction:(WorkspaceMenuAction)action;
 - (bool)activateWorkspaceMenuForTesting:(const std::string&)command;
+- (bool)setWorkspaceMenuTargetForTesting:(NSWindow*)target;
 @end
 
 @implementation ZitterContentApplication {
@@ -152,6 +153,8 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
   NSMenu* _previousMainMenu;
   NSMenu* _previousWindowsMenu;
   NSMenu* _workspaceDockMenu;
+  // The window menu commands go to in tests while the app stays inactive.
+  NSWindow* __weak _testingMenuTarget;
 }
 - (void)setWorkspaceQuitClosure:(base::RepeatingClosure)quit {
   _workspaceQuit = std::move(quit);
@@ -343,9 +346,15 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
   return NO;
 }
 - (bool)dispatchWorkspaceMenuItem:(NSMenuItem*)item validate:(bool)validate {
+  NSWindow* key = self.keyWindow;
+  NSWindow* main = self.mainWindow;
+  // An inactive app has no key or main window. Tests that cannot bring the
+  // app forward name the window a person would have focused.
+  if (!self.isActive && _testingMenuTarget)
+    key = main = _testingMenuTarget;
   return _workspaceMenuAction &&
          _workspaceMenuAction.Run(
-             gfx::NativeWindow(self.keyWindow), gfx::NativeWindow(self.mainWindow),
+             gfx::NativeWindow(key), gfx::NativeWindow(main),
              base::SysNSStringToUTF8(item.representedObject), validate);
 }
 - (void)runWorkspaceMenuItem:(NSMenuItem*)item {
@@ -354,6 +363,12 @@ using WorkspaceMenuAction = base::RepeatingCallback<bool(
 - (BOOL)validateMenuItem:(NSMenuItem*)item {
   return item.action != @selector(runWorkspaceMenuItem:) ||
          [self dispatchWorkspaceMenuItem:item validate:true];
+}
+- (bool)setWorkspaceMenuTargetForTesting:(NSWindow*)target {
+  _testingMenuTarget = target;
+  if (target && !self.isActive)
+    [NSRunningApplication.currentApplication activateWithOptions:0];
+  return self.isActive;
 }
 - (bool)activateWorkspaceMenuForTesting:(const std::string&)command {
   if (command == "dock_reopen") {
@@ -1167,10 +1182,15 @@ class LabMainParts final : public content::BrowserMainParts,
           &WorkspaceLab::HandleNativeMenuCommand,
           base::Unretained(workspace_.get()))];
       if (workspace_probe_url_.is_valid()) {
-        workspace_->SetNativeMenuProbe(base::BindRepeating([](std::string command) {
-          return [static_cast<ZitterContentApplication*>(NSApp)
-              activateWorkspaceMenuForTesting:command];
-        }));
+        workspace_->SetNativeMenuProbe(
+            base::BindRepeating([](std::string command) {
+              return [static_cast<ZitterContentApplication*>(NSApp)
+                  activateWorkspaceMenuForTesting:command];
+            }),
+            base::BindRepeating([](gfx::NativeWindow target) {
+              return [static_cast<ZitterContentApplication*>(NSApp)
+                  setWorkspaceMenuTargetForTesting:target.GetNativeNSWindow()];
+            }));
       }
     }
     if (ordinary_prepared_startup_) {
