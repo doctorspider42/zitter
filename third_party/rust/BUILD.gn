@@ -62,7 +62,7 @@ cargo_crate("adblock") {
   allow_unsafe = true
   deps = [
     "//third_party/rust/zitter_vendor:arrayvec",
-    "//third_party/rust/base64/v0_22:lib",
+    "//third_party/rust/zitter_vendor:base64",
     "//third_party/rust/zitter_vendor:bitflags",
     "//third_party/rust/zitter_vendor:flatbuffers",
     "//third_party/rust/zitter_vendor:idna",
@@ -110,6 +110,54 @@ cargo_crate("arrayvec") {
   cargo_pkg_version = "0.7.8"
   allow_unsafe = true
   features = [
+    "default",
+    "std",
+  ]
+  visibility = [ "//third_party/rust/*", "//zitter:*" ]
+  _configs_to_remove = [
+    "//build/config/coverage:default_coverage",
+    "//build/config/compiler:chromium_code",
+  ]
+  library_configs -= _configs_to_remove
+  executable_configs -= _configs_to_remove
+  proc_macro_configs -= _configs_to_remove
+}
+
+cargo_crate("base64") {
+  crate_name = "base64"
+  epoch = "0.22"
+  crate_type = "rlib"
+  crate_root = "//third_party/rust/zitter_vendor/base64/src/lib.rs"
+  sources = [
+    "//third_party/rust/zitter_vendor/base64/src/alphabet.rs",
+    "//third_party/rust/zitter_vendor/base64/src/chunked_encoder.rs",
+    "//third_party/rust/zitter_vendor/base64/src/decode.rs",
+    "//third_party/rust/zitter_vendor/base64/src/display.rs",
+    "//third_party/rust/zitter_vendor/base64/src/encode.rs",
+    "//third_party/rust/zitter_vendor/base64/src/engine/general_purpose/decode.rs",
+    "//third_party/rust/zitter_vendor/base64/src/engine/general_purpose/decode_suffix.rs",
+    "//third_party/rust/zitter_vendor/base64/src/engine/general_purpose/mod.rs",
+    "//third_party/rust/zitter_vendor/base64/src/engine/mod.rs",
+    "//third_party/rust/zitter_vendor/base64/src/engine/naive.rs",
+    "//third_party/rust/zitter_vendor/base64/src/engine/tests.rs",
+    "//third_party/rust/zitter_vendor/base64/src/lib.rs",
+    "//third_party/rust/zitter_vendor/base64/src/prelude.rs",
+    "//third_party/rust/zitter_vendor/base64/src/read/decoder.rs",
+    "//third_party/rust/zitter_vendor/base64/src/read/decoder_tests.rs",
+    "//third_party/rust/zitter_vendor/base64/src/read/mod.rs",
+    "//third_party/rust/zitter_vendor/base64/src/tests.rs",
+    "//third_party/rust/zitter_vendor/base64/src/write/encoder.rs",
+    "//third_party/rust/zitter_vendor/base64/src/write/encoder_string_writer.rs",
+    "//third_party/rust/zitter_vendor/base64/src/write/encoder_tests.rs",
+    "//third_party/rust/zitter_vendor/base64/src/write/mod.rs",
+  ]
+  inputs = []
+  build_native_rust_unit_tests = false
+  edition = "2018"
+  cargo_pkg_name = "base64"
+  cargo_pkg_version = "0.22.1"
+  features = [
+    "alloc",
     "default",
     "std",
   ]

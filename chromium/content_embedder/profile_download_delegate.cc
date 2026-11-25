@@ -30,7 +30,7 @@
 #include "components/download/public/common/resume_mode.h"
 #include "components/history/content/browser/download_conversions.h"
 #include "components/history/core/browser/history_service.h"
-#include "components/safe_browsing/content/common/file_type_policies.h"
+#include "components/safe_browsing/content/common/file_type_policies/file_type_policies.h"
 #include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/browser_context.h"

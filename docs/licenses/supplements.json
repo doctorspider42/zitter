@@ -130,6 +130,15 @@
       "rationale": "adblock-rust dependency."
     },
     {
+      "Name": "base64 0.22",
+      "dir": "third_party/rust/zitter_vendor/base64",
+      "License": "MIT OR Apache-2.0",
+      "License File": [
+        "third_party/rust/zitter_vendor/base64/LICENSE-MIT"
+      ],
+      "rationale": "adblock-rust dependency; Chromium 159 vendors only base64 0.23."
+    },
+    {
       "Name": "bitflags (with serde)",
       "dir": "third_party/rust/zitter_vendor/bitflags",
       "License": "MIT OR Apache-2.0",

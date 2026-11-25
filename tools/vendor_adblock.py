@@ -34,11 +34,14 @@ KEEP = ('src/', 'Cargo.toml', 'LICENSE', 'LICENSE-APACHE', 'LICENSE-MIT', 'COPYR
 CRATES = [
     ('adblock', '0.13.5', '7a4c8558f27608dec74695c866f9a8ef897ec7a77cb826f8a5baf0b8ba461d2a', '2024', '0.13',
      ['full-regex-handling'],
-     ['arrayvec', f'{CHROMIUM}/base64/v0_22:lib', 'bitflags', 'flatbuffers', 'idna', f'{CHROMIUM}/itertools/v0_14:lib',
+     ['arrayvec', 'base64', 'bitflags', 'flatbuffers', 'idna', f'{CHROMIUM}/itertools/v0_14:lib',
       f'{CHROMIUM}/memchr/v2:lib', 'percent-encoding', 'regex', 'rustc-hash', 'seahash', f'{CHROMIUM}/serde/v1:lib',
       f'{CHROMIUM}/serde_json/v1:lib', 'thiserror'], 'rlib', True),
     ('arrayvec', '0.7.8', 'd3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56', '2018', '0.7',
      ['default', 'std'], [], 'rlib', True),
+    # Chromium 159 moved its base64 to 0.23; adblock requires 0.22.
+    ('base64', '0.22.1', '72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6', '2018', '0.22',
+     ['alloc', 'default', 'std'], [], 'rlib', False),
     # Chromium's bitflags has no `serde` feature, which adblock needs.
     ('bitflags', '2.13.2', '3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06', '2021', '2',
      ['serde', 'serde_core'], [f'{CHROMIUM}/serde_core/v1:lib'], 'rlib', False),

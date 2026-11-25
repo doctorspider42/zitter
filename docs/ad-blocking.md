@@ -33,11 +33,12 @@ build cost is one-off.
 How it is embedded:
 
 - `third_party/rust/` holds the sources of `adblock` 0.13.5 and the crates
-  Chromium does not vendor at a compatible version: `arrayvec`, `bitflags` (with
+  Chromium does not vendor at a compatible version: `arrayvec`, `base64` 0.22
+  (Chromium 159 ships 0.23), `bitflags` (with
   the `serde` feature, which Chromium's copy lacks), `flatbuffers`, `idna`,
   `idna_adapter`, `percent-encoding`, `rustc-hash`, `seahash`, `thiserror` 1 and
   `thiserror-impl` 1. The rest (`regex`, `serde`, `serde_json`, `memchr`,
-  `base64`, `itertools`, `smallvec`, `utf8_iter`, ICU) comes from Chromium's
+  `itertools`, `smallvec`, `utf8_iter`, ICU) comes from Chromium's
   `//third_party/rust`. `tools/vendor_adblock.py` downloads the exact versions
   with Chromium's own cargo, checks their checksums against `Cargo.lock`, and
   writes `third_party/rust/BUILD.gn` with `cargo_crate` targets. No build

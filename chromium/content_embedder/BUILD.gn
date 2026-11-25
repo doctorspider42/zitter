@@ -252,7 +252,7 @@ lab_deps = [
   "//components/pref_registry",
   "//components/prefs",
   "//components/safe_browsing:buildflags",
-  "//components/safe_browsing/content/common:file_type_policies",
+  "//components/safe_browsing/content/common/file_type_policies",
   "//components/safe_browsing/core/browser",
   "//components/safe_browsing/core/browser/db:database_manager",
   "//components/safe_browsing/core/browser/db:sb_local_database_manager",
