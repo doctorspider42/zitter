@@ -91,7 +91,9 @@
 #include "extension_registry_probe.h"
 #include "legacy_import_win.h"
 #include "ui_automation.h"
+#include "crash_logs.h"
 #include "updates_win.h"
+#include "chromium/prototype/workspace_frame_win.h"
 #include "web_apps.h"
 #include "workspace_session_store.h"
 #include "workspace_timeline.h"
@@ -973,8 +975,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
     return *update;
   // The taskbar groups Zitter's windows, pins and jump list under this ID;
   // the installer's shortcuts carry the same one.
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kProcessType))
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kProcessType)) {
     ::SetCurrentProcessExplicitAppUserModelID(zitter::windows::kAppId);
+    zitter::content_embedder::StartRunLog();
+  }
 
   sandbox::SandboxInterfaceInfo sandbox_info = {};
   content::InitializeSandboxInfo(&sandbox_info);
@@ -983,6 +987,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, wchar_t*, int) {
   params.instance = instance;
   params.sandbox_info = &sandbox_info;
   const int exit_code = content::ContentMain(std::move(params));
+  zitter::content_embedder::EndRunLog(exit_code);
   // An early startup failure returns while pool threads still run; CRT
   // teardown then races them (a DNS hosts read crashed in fopen). End the
   // process now, as Chrome does for utility processes, after flushing output.

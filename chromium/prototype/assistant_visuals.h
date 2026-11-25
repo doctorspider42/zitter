@@ -4,6 +4,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 #include "base/functional/callback.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/range/range.h"
@@ -17,7 +19,8 @@ namespace zitter::prototype {
 inline constexpr char kAssistantSparkIcon[] = "M8 1Q9 7 15 8Q9 9 8 15Q7 9 1 8Q7 7 8 1Z";
 void PaintAssistantSpark(gfx::Canvas* canvas, const gfx::RectF& box, SkColor color);
 enum class AssistantGlyph { kSpark, kPlus, kHistory, kPin, kClose, kArrow, kStop, kAt, kSearch, kShield, kPage, kChevron, kRevoke,
-                            kLayers, kCheck, kGear, kCopy, kTrash, kLock, kEye, kExpand, kGlobe, kCalendar, kRepeat, kBack };
+                            kLayers, kCheck, kGear, kCopy, kTrash, kLock, kEye, kExpand, kGlobe, kCalendar, kRepeat, kBack,
+                            kMore, kChat, kPanel };
 inline constexpr int kAssistantPanelRadius = 20;
 std::unique_ptr<views::Background> CreateAssistantBackground(
     std::optional<SkColor> workspace_accent = std::nullopt);
@@ -27,15 +30,38 @@ std::unique_ptr<views::View> CreateAssistantChip(base::RepeatingClosure action, 
 std::unique_ptr<views::View> CreateAssistantOption(base::RepeatingClosure action, std::u16string text);
 std::unique_ptr<views::View> CreateAssistantResizeGrip(views::ResizeAreaDelegate* delegate);
 void UpdateAssistantButton(views::View* button, std::u16string text, bool selected = false);
-// kind 0 card, 1 composer, 2 accent tint, 3 message, 4 popover (raised, with shadow).
+// kind 0 card, 1 composer, 2 accent tint, 3 message, 4 popover (raised, with shadow),
+// 5 attention card (warn outline).
 std::unique_ptr<views::View> CreateAssistantSurface(int kind = 0);
+// The composer's ring in accent: Research mode is on.
+void SetAssistantSurfaceAccent(views::View* surface, bool accent);
+// No fill or hairline: the surface sits inside something already framed (the Ask bar).
+void SetAssistantSurfaceBare(views::View* surface, bool bare);
+// The header's conversation title: opens the conversation history.
+std::unique_ptr<views::View> CreateAssistantSessionTitle(base::RepeatingClosure action);
+void UpdateAssistantSessionTitle(views::View* title, std::u16string text, bool research, bool open);
+// Composer mode: 0 chat, 1 research. `pick` gets the chosen mode.
+std::unique_ptr<views::View> CreateAssistantModeSwitch(base::RepeatingCallback<void(int)> pick);
+void UpdateAssistantModeSwitch(views::View* view, int mode, bool research_enabled, std::u16string research_tooltip);
+// One italic display line (the empty conversation's greeting).
+std::unique_ptr<views::View> CreateAssistantHeading(std::u16string text);
+// A card's title line: glyph, title, muted trailing text.
+std::unique_ptr<views::View> CreateAssistantCardTitle(AssistantGlyph glyph, std::u16string title, std::u16string trailing,
+                                                      bool loader = false);
+// Small outlined facts ("8 kierunków", "ok. 3 min").
+std::unique_ptr<views::View> CreateAssistantTag(std::u16string text, std::optional<AssistantGlyph> glyph = std::nullopt);
+// Research phases: plan, sources, report. `phase` 0–2; `sources` 0–1 of phase 1.
+std::unique_ptr<views::View> CreateAssistantPhases(int phase, float sources, std::u16string sources_label);
+// "▸ 4 kroki": shows or hides the steps of a finished turn.
+std::unique_ptr<views::View> CreateAssistantDisclosure(base::RepeatingClosure action, std::u16string text, bool expanded);
 std::unique_ptr<views::View> CreateAssistantWelcome();
 // An assistant reply as Markdown: headings, paragraphs with **bold**, *italic*,
 // `code` and links, bullet and numbered lists, quotes, code blocks, tables and
 // rules. Links call `open`; nothing else in the text can act.
 std::unique_ptr<views::View> CreateAssistantMarkdown(std::u16string text, base::RepeatingCallback<void(const GURL&)> open);
 // A step of the conversation: 0 running (a spinner, the text breathing),
-// 1 done (a check), 2 failed (a warning), 3 waiting for the user (a pulsing dot).
+// 1 done (a check), 2 failed (a warning), 3 waiting for the user (a pulsing dot),
+// 4 not started (a hollow dot, muted).
 std::unique_ptr<views::View> CreateAssistantActivity(std::u16string text, int state);
 // A scheduled task in the tasks view: what it does, when, with which model and
 // access, how its last run went; a switch pauses it, Run starts it now.
@@ -59,6 +85,9 @@ struct AssistantMark {
   std::u16string letter;
   SkColor color = SK_ColorTRANSPARENT;
 };
+// The user's message: a right-aligned tinted bubble that fits its text, with
+// the pages and tools it referenced above the text.
+std::unique_ptr<views::View> CreateAssistantUserBubble(std::u16string text, std::vector<std::pair<AssistantMark, std::u16string>> chips);
 // Uppercase group label with optional trailing text ("OTWARTE KARTY", "3 wyniki").
 std::unique_ptr<views::View> CreateAssistantEyebrow(std::u16string text, std::u16string trailing = {});
 struct AssistantRow {
@@ -88,7 +117,7 @@ void SetAssistantFooterText(views::View* footer, std::u16string text);
 std::unique_ptr<views::View> CreateAssistantToken(AssistantMark mark, std::u16string text, bool tool, base::RepeatingClosure remove);
 // Children wrap onto new lines (chips above the composer field).
 std::unique_ptr<views::View> CreateAssistantFlow(int spacing);
-// Small pill buttons: 0 primary, 1 outline, 2 quiet, 3 danger tint.
+// Small pill buttons: 0 primary, 1 outline, 2 quiet, 3 danger tint, 4 suggestion (32 DIP, hairline).
 std::unique_ptr<views::View> CreateAssistantPill(base::RepeatingClosure action, std::u16string text, int kind,
                                                  std::optional<AssistantGlyph> glyph = std::nullopt, std::u16string key = {});
 // A muted text button, used as a link to Settings.

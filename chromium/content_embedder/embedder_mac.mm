@@ -121,6 +121,7 @@
 #include "profile_context.h"
 #include "profile_permission_controller.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
+#include "crash_logs.h"
 #include "workspace_lab.h"
 #include "ui_automation.h"
 #include "workspace_media_access.h"
@@ -2539,6 +2540,7 @@ class LabMainDelegate final : public content::ContentMainDelegate {
       }
       command->AppendSwitch(switches::kHeadless);
     }
+    WatchRunTermination();
     [ZitterContentApplication sharedApplication];
     CHECK([NSApp isKindOfClass:[ZitterContentApplication class]]);
     if (ordinary_prepared_startup_) {
@@ -2584,9 +2586,18 @@ extern "C" __attribute__((visibility("default"))) int ContentMain(
     int argc,
     const char** argv) {
   zitter::content_embedder::SetBundlePaths();
+  // Child processes inherit the browser's output; only the browser opens a run log.
+  bool child = false;
+  for (int i = 1; i < argc; ++i)
+    child = child || std::string_view(UNSAFE_BUFFERS(argv[i])).starts_with("--type=");
+  if (!child)
+    zitter::content_embedder::StartRunLog();
   zitter::content_embedder::LabMainDelegate delegate;
   content::ContentMainParams params(&delegate);
   params.argc = argc;
   params.argv = argv;
-  return delegate.WorkspaceExitCode(content::ContentMain(std::move(params)));
+  const int exit_code =
+      delegate.WorkspaceExitCode(content::ContentMain(std::move(params)));
+  zitter::content_embedder::EndRunLog(exit_code);
+  return exit_code;
 }

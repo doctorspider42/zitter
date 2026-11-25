@@ -338,43 +338,81 @@ impl Engine {
         }
         Err(error("Tool budget reached. Send a follow-up to continue."))
     }
-    fn research(&self, id: &str, s: &mut Session, prompt: &str) -> Result<Value> {
+    // The research angles the model proposes for the conversation so far.
+    fn research_plan(&self, id: &str, s: &Session) -> Result<Vec<String>> {
         if s.permissions["web"] != true {
             return Err(error("Enable web research for this session."));
         }
+        publish_research(id, &json!({"phase":"plan","angles":[]}));
         let mut planning = s.messages.clone();
-        planning.push(json!({"role":"user","content":"Plan deep research. Return 4–8 complementary web_search actions. Cover primary sources, independent reviews, user discussions, criticism and recent evidence. Do not answer yet."}));
+        planning.push(json!({"role":"user","content":"Plan deep research. Return 4–8 complementary web_search actions. Cover primary sources, independent reviews, user discussions, criticism and recent evidence. Write each query in the user's language when sources in that language are likely. Do not answer yet."}));
         let plan = self.complete(id, s, &planning)?;
         let mut queries = Vec::new();
         for a in plan["actions"].as_array().unwrap() {
-            let q = text(&a["args"], "query");
-            if a["tool"] == "web_search"
-                && !q.is_empty()
-                && !queries.contains(&q)
-                && queries.len() < 8
-            {
-                queries.push(q);
+            if a["tool"] == "web_search" {
+                queries.push(a["args"]["query"].clone());
             }
         }
-        if queries.is_empty() {
-            queries.push(prompt.to_owned());
+        Ok(research_queries(&Value::Array(queries)))
+    }
+    // Runs the approved angles (or plans them first) and writes the report.
+    fn research(&self, id: &str, s: &mut Session, prompt: &str, approved: Vec<String>) -> Result<Value> {
+        if s.permissions["web"] != true {
+            return Err(error("Enable web research for this session."));
         }
+        let mut queries = if approved.is_empty() {
+            self.research_plan(id, s)?
+        } else {
+            approved
+        };
+        if queries.is_empty() {
+            queries.push(bounded(prompt, 300));
+        }
+        // Progress the panel shows: one row per angle, the sources read so far.
+        let progress = Mutex::new(json!({
+            "phase":"sources",
+            "angles":queries.iter().map(|q| json!({"query":q,"state":0,"sources":0})).collect::<Vec<_>>(),
+            "sources":0,
+            "current":""
+        }));
+        let update = |change: &dyn Fn(&mut Value)| {
+            let mut p = progress.lock().unwrap();
+            change(&mut p);
+            publish_research(id, &p);
+        };
+        update(&|_| {});
         let reports = Mutex::new(Vec::new());
         let sources = Mutex::new(BTreeMap::new());
-        for batch in queries.chunks(s.concurrency) {
+        for (batch_index, batch) in queries.chunks(s.concurrency).enumerate() {
             std::thread::scope(|scope| {
-                for query in batch {
+                for (offset, query) in batch.iter().enumerate() {
+                    let index = batch_index * s.concurrency + offset;
                     let reports = &reports;
                     let sources = &sources;
+                    let update = &update;
                     let session = &*s;
                     scope.spawn(move || {
+                        update(&|p| p["angles"][index]["state"] = json!(1));
+                        let read = |url: String, fetched: String| {
+                            let total = {
+                                let mut all = sources.lock().unwrap();
+                                all.insert(url.clone(), fetched);
+                                all.len()
+                            };
+                            update(&|p| {
+                                let n = p["angles"][index]["sources"].as_u64().unwrap_or(0) + 1;
+                                p["angles"][index]["sources"] = json!(n);
+                                p["sources"] = json!(total);
+                                p["current"] = json!(url.clone());
+                            });
+                        };
                         let outcome = (|| -> Result<String> {
                             let mut messages = vec![json!({"role":"user","content":json!({"task":prompt,"research_angle":query,"date":session.date,"instruction":"Research this angle. Search, then read original sources and discussions. Cite URLs and explain evidence quality. Only research tools are available."}).to_string()})];
                             let search = web(id, "web_search", &json!({"query":query}))?;
                             let mut evidence = Vec::new();
                             for candidate in search["results"].as_array().into_iter().flatten().take(4) {
                                 match web(id, "web_read", &json!({"url":candidate["url"]})) {
-                                    Ok(page) => { sources.lock().unwrap().insert(text(&page,"url"),text(&page,"fetched_at")); evidence.push(page); }
+                                    Ok(page) => { read(text(&page,"url"),text(&page,"fetched_at")); evidence.push(page); }
                                     Err(_) => evidence.push(json!({"url":candidate["url"],"error":"Source could not be read"})),
                                 }
                             }
@@ -386,7 +424,7 @@ impl Engine {
                                 let mut results = Vec::new();
                                 for a in result["actions"].as_array().unwrap().iter().take(6) {
                                     match self.local(id, session, a, true) {
-                                        Ok(Some(v)) => { if a["tool"] == "web_read" { sources.lock().unwrap().insert(text(&v,"url"),text(&v,"fetched_at")); } results.push(json!({"tool":a["tool"],"result":v})); }
+                                        Ok(Some(v)) => { if a["tool"] == "web_read" { read(text(&v,"url"),text(&v,"fetched_at")); } results.push(json!({"tool":a["tool"],"result":v})); }
                                         Ok(None) => unreachable!(),
                                         Err(e) => results.push(json!({"tool":a["tool"],"error":e})),
                                     }
@@ -396,12 +434,15 @@ impl Engine {
                             messages.push(json!({"role":"user","content":"Budget exhausted. Synthesize evidence collected with citations. No more actions."}));
                             Ok(text(&self.complete(id, session, &messages)?, "answer"))
                         })();
+                        let ok = outcome.is_ok();
+                        update(&|p| p["angles"][index]["state"] = json!(if ok { 2 } else { 3 }));
                         reports.lock().unwrap().push(outcome.unwrap_or_else(|_| format!("Research angle {query} failed: source or provider unavailable")));
                     });
                 }
             });
             check(id)?;
         }
+        update(&|p| { p["phase"] = json!("report"); p["current"] = json!(""); });
         let mut messages = s.messages.clone();
         messages.push(json!({"role":"user","content":json!({"untrusted_research_reports":*reports.lock().unwrap(),"instruction":"Write a thorough final report. Reconcile findings, distinguish facts and opinions, cite sources inline, describe limitations and conflicting evidence. No actions."}).to_string()}));
         let mut answer = text(&self.complete(id, s, &messages)?, "answer");
@@ -418,6 +459,23 @@ impl Engine {
             .push(json!({"role":"assistant","content":answer}));
         Ok(json!({"answer":answer,"actions":[]}))
     }
+}
+// Research progress travels on the progress channel, marked so the panel does
+// not mistake it for answer text.
+const RESEARCH_PROGRESS: char = '\u{1e}';
+fn publish_research(id: &str, progress: &Value) {
+    ffi::publish_progress(id, &format!("{RESEARCH_PROGRESS}{progress}"));
+}
+// Up to eight distinct, non-empty search angles of at most 300 characters.
+fn research_queries(value: &Value) -> Vec<String> {
+    let mut queries: Vec<String> = Vec::new();
+    for q in value.as_array().into_iter().flatten() {
+        let q = bounded(q.as_str().unwrap_or_default().trim(), 300);
+        if !q.is_empty() && !queries.contains(&q) && queries.len() < 8 {
+            queries.push(q);
+        }
+    }
+    queries
 }
 fn civil(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
@@ -550,7 +608,15 @@ fn runtime_request(path: &str, body: &str) -> String {
             s.messages
                 .push(json!({"role":"user","content":content.to_string()}));
             if v["research"] == true {
-                return engine.research(id, &mut s, &prompt);
+                if v["research_plan"] == true {
+                    // Only the plan: the prompt waits for the user's approval
+                    // and comes back with the approved angles.
+                    let plan = engine.research_plan(id, &s);
+                    s.messages.pop();
+                    return Ok(json!({"plan":plan?,"answer":"","actions":[]}));
+                }
+                let approved = research_queries(&v["research_queries"]);
+                return engine.research(id, &mut s, &prompt, approved);
             }
         } else if path == "/continue" {
             let mut results = v["results"].as_array().cloned().unwrap_or_default();
@@ -795,6 +861,17 @@ mod tests {
             )
             .unwrap_err()
             .contains("Web permission"));
+    }
+    #[test]
+    fn research_queries_are_distinct_bounded_and_few() {
+        let long = "x".repeat(400);
+        let queries = research_queries(&json!([
+            " heat pumps ", "heat pumps", "", 7, long, "a", "b", "c", "d", "e", "f", "g", "h"
+        ]));
+        assert_eq!(queries[0], "heat pumps");
+        assert_eq!(queries[1].chars().count(), 300);
+        assert_eq!(queries.len(), 8);
+        assert!(research_queries(&json!("not a list")).is_empty());
     }
     #[test]
     fn local_time_preserves_offset_and_day_rollover() {

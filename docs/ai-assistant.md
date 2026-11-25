@@ -1,22 +1,30 @@
 # Optional AI assistant
 
-Open **Command Center → AI Assistant** (`Ctrl+K`, then type `>assistant`).
-The assistant opens on the right with a quiet welcome screen, draft suggestions
-and a composer anchored at the bottom. The pin icon reserves page space or uses
-an overlay. An unpinned panel hides after the pointer remains outside for about
-650–750 ms; pinned panels stay visible. Drafts, open menus and pending questions
-survive hiding, and a running task keeps working. Pointer monitoring continues
-across child views and resumes after resizing. A panel opened with the keyboard
-stays visible while the mouse is stationary. The adjacent click-consent bubble
-also counts as inside while the pointer is over it. Drag the grip on its left edge to resize it
-between 360 and 760 DIP; narrow windows constrain the effective width. The chosen
-width survives hiding and pin changes within the window.
-The header has no close button: unpin the panel to let it hide automatically.
-Use **Stop** to stop the current task. The right edge opens the panel whenever
-the assistant is enabled, including before the first conversation. Hovering never
-starts a provider request: requests follow **Send**, an explicit connection test,
-or a configured scheduled task. Suggestions only fill a draft; they do not send
-it or grant browser access.
+The assistant has two presentations that share one conversation model:
+
+- **Ask bar** (`⌘E`, `Ctrl+E` on Windows): a compact composer centred over the
+  bottom of the page, with the latest answer above it. It opens without
+  moving the page, attaches the current tab as a chip when tabs may be listed,
+  and closes with Escape. Pressing `⌘E` again, or **Expand to panel**, docks the
+  conversation into the panel. A finished conversation stays in the history and
+  the bar starts a new one.
+- **Panel**: opened from the toolbar's spark button or Command Center
+  (`>assistant`). It is pinned by default: it reserves page space and stays
+  until it is closed with its close button or the toolbar button. **More →
+  Pin panel** switches to the floating panel, which hides after the pointer
+  remains outside it for about 450 ms.
+
+The toolbar button shows the assistant's state without opening it: an accent
+dot while it works, a badge for unseen results or `!` when a task waits for
+consent or an answer, and the current status (for example “Research: 3/8”) as
+its tooltip.
+
+Drag the grip on the panel's left edge to resize it between 360 and 760 DIP;
+narrow windows constrain the effective width. The chosen width survives hiding
+and pin changes within the window. Hovering never starts a provider request:
+requests follow **Send**, **Start** on a research plan, an explicit connection
+test, or a configured scheduled task. Suggestions fill a draft or switch the
+mode; they never send it or grant browser access.
 
 ## Settings
 
@@ -50,55 +58,82 @@ recalled.
 
 ## The panel
 
-The only choice in the panel is the model: the chip next to **Send** opens a
-searchable menu grouped by backend. The model stays fixed within a session; picking
-another one after the first message starts a new session and keeps the current one
-in the session list.
+The header is one row: the conversation's title (it opens **Conversation
+history**), **This conversation's access** (shield), **New conversation** (+),
+**More** (pin, scheduled tasks, page actions that change the browser, defaults
+for new conversations) and close. The access menu has switches for this
+conversation's permissions and click confirmation, **Revoke all access** and a
+link to Settings; before the first message any switch can change, afterwards
+only narrowing works and it stops the task. A click outside an open menu closes
+it. Revoking stops every task and terminates the assistant runtime.
+Conversations belong to the profile in which they were created; changing
+profiles stops their tasks.
 
-The header holds **Conversation history** (history icon), **This session's access**
-(shield: switches for this session's permissions and click confirmation, **Revoke
-all access** and a link to Settings; before the first message any switch can
-change, afterwards only narrowing works and it stops the task), **New session**,
-pin and close. A click outside an open menu closes it. Revoking stops every task and terminates the
-assistant runtime. Sessions belong to the profile in which they were created;
-changing profiles stops their tasks.
+An empty conversation shows one italic line, one-line suggestions (summarize
+this tab, check facts, extract data when the page allows it, research a topic,
+schedule a task) and the three most recent conversations.
 
-**New session** reuses an untouched conversation (nothing sent yet) instead of
-adding another one, and leaving an untouched conversation drops it.
+**New conversation** reuses an untouched conversation (nothing sent yet) instead
+of adding another one, and leaving an untouched conversation drops it.
+
+The model chip next to **Send** opens a searchable menu grouped by backend. The
+model stays fixed within a conversation; picking another one after the first
+message starts a new conversation and keeps the current one in the list.
+
+### Chat and Research
+
+The composer has an explicit mode switch: **Chat** or **Research**. Research
+needs public web access and puts an accent ring around the composer. Sending in
+Research mode never starts a search: the model writes a **research plan** of up
+to eight search angles. The plan card lists them; each can be removed, and a
+message sent while the plan waits corrects it (the model rewrites the plan).
+Nothing is searched until **Start** (`⌘↵` / `Ctrl+↵`); **Cancel** discards the
+plan. While research runs, a progress card shows the phase (plan, sources,
+report), each angle's state and sources read, the page being read and **Stop**.
+The progress arrives on the runtime's progress channel as a record-separator
+prefixed JSON object, so it never shows as answer text.
+
+### Messages
+
+Your messages are right-aligned bubbles with the pages and tools they
+referenced. Answers are plain Markdown on the panel, with a copy button and the
+model below. A finished turn's browser steps collapse into one line (“4 steps
+· 1 failed”) that expands on click; the steps of the running turn stay visible.
+A click waiting for consent on the visible tab shows the same Allow and Skip
+actions in the conversation as in the bubble beside the element.
 
 Conversations are saved: a second after each change they are written to
 `ZitterAssistantSessions.json` in Zitter's data directory, beside
 `ZitterWorkspaces.json`, and they come back after a restart. Only conversations
 with a sent message are saved, up to 200; past that, the least recently used idle
 one is forgotten. A restored conversation keeps its model; its access never exceeds
-the current defaults in Settings. The runtime does not keep tool results across a
-restart: the next turn passes the last 30 prompts and answers to the model as
-earlier context.
+the current defaults in Settings. A research plan that was still being written
+when Zitter closed comes back cancelled. The runtime does not keep tool results
+across a restart: the next turn passes the last 30 prompts and answers to the
+model as earlier context.
 
 The history view covers the panel below the header. It lists the current
 profile's conversations, newest first, grouped into Today, Yesterday, Last 7 days
 and Earlier. Each row shows the title, a line of the last answer (or, while
 searching, the text around the match), and the time or date. Search covers titles
 and messages. Hovering a row shows a trash to delete that conversation (Delete
-does the same on a focused row). **New session** sits above the list; the foot has
-**Delete all conversations**, which needs a second click and removes only the
-current profile's conversations. Messages are copied with the copy icon on each
-message.
+does the same on a focused row). **New conversation** sits above the list; the
+foot has **Delete all conversations**, which needs a second click and removes
+only the current profile's conversations.
 
 The message field is multiline: Enter sends, Shift+Enter starts a new line, and the
 field grows to six lines before it scrolls. Replies render Markdown (headings,
 bold, italics, inline code, links, lists, quotes, code blocks, tables and rules);
-links open in a new tab. Every message has a copy button that copies its text as
-written, Markdown included.
+links open in a new tab.
 
 Type `@` to insert a page or a tool. Suggestions list open tabs (the current one
-first), pinned pages and the tools **Deep research** and **Background**, filtered
-by what follows the `@`. Arrow keys move, Enter or Tab inserts, Escape closes. The
-footer says what inserting the highlighted item shares. An inserted item becomes a
-chip above the field; its × removes it, and Backspace in an empty field removes the
-last one. The **Deep research** and **Background** buttons under the field insert
-and remove the same chips. Pages reach the model as `@current`, `@tab:<id>` and
-`@pin:<id>` references.
+first), pinned pages and the tools **Deep research** (it switches the composer to
+Research) and **Background**, filtered by what follows the `@`. Arrow keys move,
+Enter or Tab inserts, Escape closes. The footer says what inserting the
+highlighted item shares. An inserted item becomes a chip above the field; its ×
+removes it, and Backspace in an empty field removes the last one. The
+**Background** button beside `@` inserts and removes the same chip. Pages reach
+the model as `@current`, `@tab:<id>` and `@pin:<id>` references.
 
 ## Runtime setup
 
@@ -111,7 +146,7 @@ browser actions and permission checks remain in the browser process.
 | Backend | Setup | Model field |
 | --- | --- | --- |
 | OpenAI API | Add your key in **Settings → AI Assistant → AI connections**. `OPENAI_API_KEY` remains an optional fallback. Requests use the Responses API with `store: false`. | Defaults include `gpt-6.1-sol`, `gpt-6.1-terra`, and `gpt-6-astra`. |
-| Codex CLI | Authenticate with `codex login`. Choose **Help and setup** to set a native executable path. Zitter also checks PATH, supported Windows desktop and npm installations, and `ZITTER_CODEX_PATH`. | Current defaults include `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`, and `gpt-6-luna`. Custom IDs remain supported. |
+| Codex CLI | Authenticate with `codex login`. Choose **Help and setup** to set a native executable path. Zitter also checks PATH, supported Windows desktop and npm installations, and `ZITTER_CODEX_PATH`. | Current defaults include `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-terra`, and `gpt-6-luna`. Saved settings move `gpt-6.1-sol` and `gpt-6-astra` to their 6.2 successors. Custom IDs remain supported. |
 | Claude CLI | Install native Claude Code and sign in with `/login`. Choose **Help and setup** to set the path, or use PATH or `ZITTER_CLAUDE_PATH`. | A Claude CLI alias or exact model ID. |
 | Ollama | Start local Ollama and choose **Detect models** or **Add model**. Optional `ZITTER_OLLAMA_URL` changes the loopback HTTP endpoint. The default is `http://127.0.0.1:11434`. | A downloaded model with reliable structured output. |
 

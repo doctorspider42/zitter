@@ -664,6 +664,8 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void AssistantProviderChecked(size_t index, bool discover,
                                 uint64_t generation, base::DictValue result);
   bool ShowAssistant(bool hover);
+  // The Ask bar over the page (⌘E).
+  bool ShowAssistantAsk();
   const prototype::AssistantSettings& assistant_settings() const override;
   void SetAssistantSettings(prototype::AssistantSettings settings) override;
   content::WebContents* AssistantCurrentPage() override;

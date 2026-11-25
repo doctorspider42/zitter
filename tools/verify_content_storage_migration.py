@@ -117,7 +117,7 @@ ASSISTANT_SETTINGS_FIXTURE = {
 }
 ASSISTANT_SETTINGS_REOPENED = {
     **ASSISTANT_SETTINGS_FIXTURE,
-    "catalog_version": 3, "default_model": "openai/gpt-6.1-sol",
+    "catalog_version": 4, "default_model": "openai/gpt-6.1-sol",
     "models": [{"provider": "openai", "id": "gpt-6.1-sol", "visible": False},
                *ASSISTANT_SETTINGS_FIXTURE["models"][1:],
                {"provider": "openai", "id": "gpt-6.1-terra", "visible": True},

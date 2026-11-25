@@ -95,6 +95,8 @@ lab_includes = [ "$root_gen_dir/zitter" ]
 
 lab_sources = [
   "browsing_preferences.cc",
+  "crash_logs.cc",
+  "crash_logs.h",
   "browsing_preferences.h",
   "bluetooth_access.cc",
   "bluetooth_access.h",

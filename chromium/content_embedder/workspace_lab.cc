@@ -544,6 +544,17 @@ class ContentToolbarButton final : public views::Button,
     toggled_ = toggled;
     SchedulePaint();
   }
+  // The assistant's status without opening it: a dot while it works, a badge
+  // for results or a consent waiting, and the status as the tooltip.
+  void SetStatus(bool working, std::u16string badge, std::u16string status) {
+    if (working_ == working && badge_ == badge && GetTooltipText() == status)
+      return;
+    working_ = working;
+    badge_ = std::move(badge);
+    SetTooltipText(status);
+    GetViewAccessibility().SetDescription(status);
+    SchedulePaint();
+  }
   void PaintButtonContents(gfx::Canvas* canvas) override {
     const auto palette = palette_.Run();
     const bool hover = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED || HasFocus();
@@ -564,6 +575,8 @@ class ContentToolbarButton final : public views::Button,
       const auto& image = icon_.AsImageSkia();
       canvas->DrawImageInt(image, 0, 0, image.width(), image.height(), x, y, 16, 16, true);
     }
+    if (working_ && badge_.empty())
+      prototype::FillRound(canvas, gfx::RectF(width() - 9, 3, 6, 6), 3, palette.accent_ink);
     if (!badge_.empty()) {
       const gfx::Rect bounds(width() - 15, height() - 15, 14, 14);
       prototype::FillRound(canvas, gfx::RectF(bounds), 7, palette.ink);
@@ -578,11 +591,28 @@ class ContentToolbarButton final : public views::Button,
   gfx::Image icon_;
   std::u16string badge_;
   bool toggled_ = false;
+  bool working_ = false;
   int tab_id_ = 0;
   std::unique_ptr<extensions::ExtensionActionIconFactory> icon_factory_;
 };
 BEGIN_METADATA(ContentToolbarButton)
 END_METADATA
+
+void UpdateAssistantToolbar(views::View* button, const prototype::AssistantPanel* panel) {
+  auto* toolbar = views::AsViewClass<ContentToolbarButton>(button);
+  if (!toolbar)
+    return;
+  if (!panel) {
+    toolbar->SetStatus(false, {}, prototype::T(u"Asystent"));
+    toolbar->SetToggledAppearance(false);
+    return;
+  }
+  const int unread = panel->unread();
+  toolbar->SetToggledAppearance(panel->GetVisible() && !panel->compact());
+  toolbar->SetStatus(panel->working(),
+                     panel->needs_attention() ? u"!" : unread ? base::NumberToString16(std::min(unread, 9)) : u"",
+                     panel->status_text());
+}
 
 class ContentToolbarDivider final : public views::View {
   METADATA_HEADER(ContentToolbarDivider, views::View)
@@ -2603,7 +2633,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
   assistant_toolbar_button_ = trailing->AddChildView(std::make_unique<ContentToolbarButton>(
       prototype::kAssistantSparkIcon, prototype::T(u"Asystent"),
       base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
-        if (lab && !lab->ShowAssistant(false))
+        if (!lab)
+          return;
+        // The button opens and closes the docked panel.
+        if (lab->assistant_ && lab->assistant_->GetVisible() && !lab->assistant_->compact()) {
+          lab->assistant_->Hide();
+          return;
+        }
+        if (!lab->ShowAssistant(false))
           lab->shell_->OpenAssistantSettings();
       }, weak), fingerprint.palette));
   assistant_toolbar_button_->SetVisible(false);
@@ -4862,6 +4899,10 @@ bool WorkspaceLab::AcceleratorPressed(const ui::Accelerator& accelerator) {
                      accelerator.modifiers() & ui::EF_CONTROL_DOWN);
 }
 
+void WorkspaceLab::AssistantStateChanged() {
+  UpdateAssistantToolbar(assistant_toolbar_button_, assistant_);
+}
+
 bool WorkspaceLab::CanHandleAccelerators() const {
   return !smoke_ && !session_probe_url_.is_valid();
 }
@@ -5008,6 +5049,8 @@ bool WorkspaceLab::RunShortcut(std::string id, bool show_tab_switcher) {
   }
   if (id == "assistant" || id == "assistant_hover")
     return ShowAssistant(id == "assistant_hover");
+  if (id == "assistant_ask")
+    return ShowAssistantAsk();
   if (id == "private_window") {
     return OpenPrivateWindow();
   }

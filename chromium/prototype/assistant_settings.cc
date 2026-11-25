@@ -2,6 +2,7 @@
 #include "chromium/prototype/assistant_settings.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/base64.h"
 #include "base/files/file_path.h"
@@ -24,7 +25,7 @@ base::DictValue AssistantPermissions::ToValue() const {
   return base::DictValue().Set("tabs", tabs).Set("pages", pages).Set("actions", actions).Set("history", history).Set("web", web).Set("confirm_clicks", confirm_clicks);
 }
 AssistantSettings::AssistantSettings()
-    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"openai", "gpt-6.1-sol"}, {"openai", "gpt-6.1-terra"}, {"openai", "gpt-6-astra"}, {"codex", "gpt-6.1-sol"}, {"codex", "gpt-6.1-terra"}, {"codex", "gpt-6-astra"}, {"codex", "gpt-6-luna"}}),
+    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"openai", "gpt-6.1-sol"}, {"openai", "gpt-6.1-terra"}, {"openai", "gpt-6-astra"}, {"codex", "gpt-6.2-sol"}, {"codex", "gpt-6.2-astra"}, {"codex", "gpt-6.1-terra"}, {"codex", "gpt-6-luna"}}),
       default_model("claude/sonnet") {}
 AssistantSettings::AssistantSettings(const AssistantSettings&) = default;
 AssistantSettings& AssistantSettings::operator=(const AssistantSettings&) = default;
@@ -59,7 +60,7 @@ base::DictValue AssistantSettings::ToValue() const {
     remembered.Set(key, permissions);
   return base::DictValue().Set("shortcut_access", std::move(remembered))
       .Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
-      .Set("catalog_version", 3).Set("codex_path", codex_path).Set("claude_path", claude_path)
+      .Set("catalog_version", 4).Set("codex_path", codex_path).Set("claude_path", claude_path)
       .Set("ollama_configured", ollama_configured)
       .Set("encrypted_api_key", encrypted_api_key).Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
       .Set("confirm_background", confirm_background).Set("concurrency", concurrency);
@@ -114,6 +115,16 @@ AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
       if (result.models.size() < 32 && std::ranges::none_of(result.models, [&](const auto& model) {
             return model.provider == "openai" && model.id == id;
           })) result.models.push_back({"openai", id});
+  }
+  if (value->FindInt("catalog_version").value_or(0) < 4) {
+    // Codex moved its flagship and its balanced model to 6.2: the old defaults
+    // become the new ones in place, keeping their visibility and the default.
+    for (const auto& [old_id, new_id] : {std::pair{"gpt-6.1-sol", "gpt-6.2-sol"}, std::pair{"gpt-6-astra", "gpt-6.2-astra"}}) {
+      if (std::ranges::any_of(result.models, [&](const auto& m) { return m.provider == "codex" && m.id == new_id; })) continue;
+      for (auto& model : result.models)
+        if (model.provider == "codex" && model.id == old_id) model.id = new_id;
+      if (result.default_model == std::string("codex/") + old_id) result.default_model = std::string("codex/") + new_id;
+    }
   }
   if (const auto* permissions = value->FindDict("permissions")) {
     auto flag = [&](const char* key, bool fallback) { return permissions->FindBool(key).value_or(fallback); };

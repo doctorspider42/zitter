@@ -68,6 +68,8 @@ std::vector<Shortcut> ArcShortcuts() {
   add("new_tab", T(u"Nowa karta"), ui::VKEY_T, p);
   add("private_window", T(u"Nowe okno prywatne"), ui::VKEY_N, p | ui::EF_SHIFT_DOWN);
   add("palette", T(u"Command Center"), ui::VKEY_K, p);
+  // The Ask bar; pressed again it docks into the assistant panel.
+  add("assistant_ask", T(u"Zapytaj asystenta"), ui::VKEY_E, p);
   add("close_tab", T(u"Zamknij kartę / Peek"), ui::VKEY_W, p);
   add("close_other_tabs", T(u"Zamknij pozostałe karty"), ui::VKEY_K, p | ui::EF_SHIFT_DOWN);
   add("reopen", T(u"Przywróć zamkniętą kartę"), ui::VKEY_T, p | ui::EF_SHIFT_DOWN);

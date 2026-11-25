@@ -703,6 +703,19 @@ bool WorkspaceLab::ShowAssistant(bool hover) {
   return true;
 }
 
+bool WorkspaceLab::ShowAssistantAsk() {
+  if (!assistant_host_settings_.enabled || AssistantProfileId().empty())
+    return false;
+  if (!assistant_ || !assistant_->GetVisible()) {
+    // Creates the panel and switches its profile, then turns it into the bar.
+    if (!ShowAssistant(false))
+      return false;
+    assistant_->Hide();
+  }
+  assistant_->ShowAsk();
+  return true;
+}
+
 content::BrowserContext* WorkspaceLab::AssistantBrowserContext() const {
   return AssistantProfileId().empty() ? nullptr : WorkspaceProfile(active_index_);
 }
@@ -2513,8 +2526,6 @@ void WorkspaceLab::SaveAssistantSessions(base::DictValue sessions) {
           base::ImportantFileWriter::WriteFileAtomically(path, *json);
       }, session_path_.DirName().AppendASCII(kSessionsFile), std::move(sessions)));
 }
-
-void WorkspaceLab::AssistantStateChanged() {}
 
 bool WorkspaceLab::NavigateFromBar(const GURL& url, bool new_tab) {
   return Navigate(url, new_tab);

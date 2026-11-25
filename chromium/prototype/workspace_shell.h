@@ -337,7 +337,8 @@ class WorkspaceShell final : public ui::EventHandler,
   std::unique_ptr<views::View> Build();
   views::View* content_host() const { return content_host_; }
   void SetAssistantView(views::View* view);
-  void LayoutAssistant(bool pinned);
+  // Docked (pinned) or floating; `compact` is the Ask bar over the page's bottom.
+  void LayoutAssistant(bool pinned, bool compact = false);
   void SetAssistantActivity(bool active);
   views::View* assistant_activity_for_testing() const;
   // Settings → Asystent AI: off hides the panel and the right-edge opener.
