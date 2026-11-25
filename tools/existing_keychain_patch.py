@@ -7,13 +7,11 @@ def prepare(checkout: Path):
     directory = checkout / "components/os_crypt/async/browser"
     edits = {
         "keychain_key_provider.h": (
-            ('#include "base/gtest_prod_util.h"',
-             '#include <string>\n\n#include "base/gtest_prod_util.h"'),
             ("  KeychainKeyProvider();",
              "  KeychainKeyProvider();\n"
              "  KeychainKeyProvider(std::string existing_service, std::string existing_account);"),
-            ("  raw_ptr<crypto::apple::KeychainV2> keychain_for_testing_ = nullptr;",
-             "  raw_ptr<crypto::apple::KeychainV2> keychain_for_testing_ = nullptr;\n"
+            ("  const std::vector<uint8_t> pbkdf2_salt_;",
+             "  const std::vector<uint8_t> pbkdf2_salt_;\n"
              "  std::string existing_service_;\n"
              "  std::string existing_account_;"),
         ),
@@ -38,11 +36,15 @@ def prepare(checkout: Path):
              "    if (existing.has_value())\n"
              "      password.assign(existing->begin(), existing->end());\n"
              "  }"),
-            ("KeychainKeyProvider::KeychainKeyProvider() = default;",
-             "KeychainKeyProvider::KeychainKeyProvider() = default;\n\n"
+            ("KeychainKeyProvider::KeychainKeyProvider()\n"
+             "    : KeychainKeyProvider(kDefaultKeyTag, kDefaultSalt) {}",
+             "KeychainKeyProvider::KeychainKeyProvider()\n"
+             "    : KeychainKeyProvider(kDefaultKeyTag, kDefaultSalt) {}\n\n"
              "KeychainKeyProvider::KeychainKeyProvider(std::string existing_service,\n"
              "                                         std::string existing_account)\n"
-             "    : existing_service_(std::move(existing_service)),\n"
+             "    : key_tag_(kDefaultKeyTag),\n"
+             "      pbkdf2_salt_(base::ToVector(kDefaultSalt)),\n"
+             "      existing_service_(std::move(existing_service)),\n"
              "      existing_account_(std::move(existing_account)) {}"),
             ("                     keychain_for_testing_),",
              "                     keychain_for_testing_, existing_service_, existing_account_),"),
