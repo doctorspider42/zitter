@@ -414,6 +414,8 @@ DEFINE_UI_CLASS_PROPERTY_KEY(int, kReloadAngle, 0)
 DEFINE_UI_CLASS_PROPERTY_KEY(int, kDownloadProgress, -1)
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kDownloadDone, false)
 DEFINE_UI_CLASS_PROPERTY_KEY(int, kDownloadTremor, 0)
+// Unread notifications on the footer's bell (0: no badge).
+DEFINE_UI_CLASS_PROPERTY_KEY(int, kNotificationBadge, 0)
 SkColor HoverWash(const views::View* view) { return Palette(view).bg_hover; }
 SkColor Mix(SkColor a, SkColor b, int percent_a) {
   auto channel = [&](U8CPU x, U8CPU y) { return (x * percent_a + y * (100 - percent_a)) / 100; };
@@ -565,6 +567,19 @@ void StrokeRound(gfx::Canvas* canvas, const gfx::Rect& rect, int radius, SkColor
   gfx::RectF bounds(rect);
   bounds.Inset(0.5f);
   canvas->DrawRoundRect(bounds, radius, flags);
+}
+// A count on an icon button (the bell's unread notifications): a 14 px
+// `accent` pill at the top-right corner, cut out of the surface by a 2 px ring
+// in `bg-base`, the number in `on-accent`.
+void PaintCountBadge(const views::View* view, gfx::Canvas* canvas, int count) {
+  const auto p = Palette(view);
+  const std::u16string text = count > 9 ? u"9+" : base::NumberToString16(count);
+  const auto font = DesignFont(2, 9.5f, 700, false);
+  const int w = std::max(14, gfx::GetStringWidth(text, font) + 6);
+  const gfx::Rect pill(view->width() - w, 1, w, 14);
+  FillRound(canvas, gfx::Rect(pill.x() - 2, pill.y() - 2, pill.width() + 4, 18), 9, p.bg_base);
+  FillRound(canvas, pill, 7, p.accent);
+  canvas->DrawStringRectWithFlags(text, font, p.on_accent, pill, gfx::Canvas::TEXT_ALIGN_CENTER);
 }
 void PaintIcon(gfx::Canvas* canvas, const gfx::VectorIcon& icon, const gfx::Rect& box,
                int size, SkColor color) {
@@ -1402,6 +1417,10 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
     const auto name=label.empty()?view->GetTooltipText():label;
     if(rect.width()>rect.height()*1.6f&&!name.empty()){const auto p=Palette(view);item.title=base::UTF16ToUTF8(name);item.font_size=Font(-1).GetFontSize();item.text_style=6;
       item.fill=on?p.accent_soft:item.hovered?p.bg_hover:SK_ColorTRANSPARENT;item.edge=on?p.accent:p.line;}}
+  if(const int count=view->GetProperty(kNotificationBadge);count>0&&glyph!=GlyphButton::Glyph::kSwatch){
+    // The bell's unread count: `accent` pill, `on-accent` digits, ringed in `bg-base`.
+    const auto p=Palette(view);item.badge=p.accent;item.detail_ink=p.on_accent;item.edge=p.bg_base;
+    item.detail=count>9?std::string("9+"):base::NumberToString(count);}
   return item;
 }
 sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip){return GlyphSceneData(button,button->glyph(),button->icon(),button->on(),button->label(),button->color(),button->GetEnabledInViewsSubtree()&&(button->GetState()==views::Button::STATE_HOVERED||button->GetState()==views::Button::STATE_PRESSED),button->HasFocus(),rect,clip);}
@@ -1543,7 +1562,8 @@ class RustActionView : public views::View {
   void OnPaint(gfx::Canvas* canvas) override{if(visible_&&visible_.Run())return;SyncEnabled();const auto v=state_->action_snapshot();const auto paint=v.visual==sidebar::RowVisual::Disabled?views::Button::STATE_DISABLED:v.visual==sidebar::RowVisual::Pressed?views::Button::STATE_PRESSED:v.visual==sidebar::RowVisual::Hovered?views::Button::STATE_HOVERED:views::Button::STATE_NORMAL;
     // Workspace dots paint the Rust recipe (own accent, active pill); vector icons stay native.
     if(glyph_==ControlGlyph::kDot||glyph_==ControlGlyph::kDownloads||glyph_==ControlGlyph::kReturnToPin||glyph_==ControlGlyph::kConfirmTabName||glyph_==ControlGlyph::kTabAudio){const auto bounds=gfx::RectF(GetLocalBounds());PaintSceneRecipe(canvas,SceneItem(bounds,bounds),Font(3),true);return;}
-    PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);}
+    PaintGlyphControl(this,glyph_,icon_,color_,v.on,label_,paint,canvas);
+    if(const int count=GetProperty(kNotificationBadge);count>0)PaintCountBadge(this,canvas,count);}
  protected:
   sidebar::ActionControl& NodeControl(){return *state_;}
   const sidebar::ActionControl& NodeControl() const{return *state_;}
@@ -6462,10 +6482,13 @@ void WorkspaceShell::Update(ShellState state) {
   const bool selected = state.workspace_id != previous_workspace;
   if (selected || !state.configuration_ready || state.profiles_busy)
     FinishSidebarRename(false);
-  if (state.profile_id != state_.profile_id)
+  const bool profile_switched = state.profile_id != state_.profile_id;
+  if (profile_switched)
     HideWebNotifications();
   state_ = std::move(state);
   if (!widget_) return;
+  if (profile_switched)
+    UpdateNotificationBadge();
   // A removal that first asked a page (beforeunload) gets its toast once done.
   if (pending_removal_ && std::ranges::none_of(state_.workspaces, [&](const auto& w) { return w.id == pending_removal_->first; })) {
     auto [id, name] = std::move(*pending_removal_); pending_removal_.reset();
@@ -12662,7 +12685,7 @@ void WorkspaceShell::WritePreference(std::string key, int value) {
   }
   const bool ok = callbacks_.write_preference && callbacks_.write_preference.Run(key, value);
   RefreshGeneralControls();
-  ReportPreferenceOutcome(3, key, ok, ok ? (key == "hardware_acceleration" ? T(u"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową.") : T(u"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.")) :
+  ReportPreferenceOutcome(3, key, ok, ok ? (key == "hardware_acceleration" ? T(u"Zapisano. Uruchom ponownie Zitter, aby zmienić akcelerację sprzętową.") : key == "system_notifications" ? T(u"Zapisano. Dotyczy kolejnych powiadomień.") : T(u"Zapisano. Jeśli strona nie zastosowała zmiany, odśwież ją.")) :
       key == "dns_mode" ? T(u"Nie zapisano trybu DNS. Tryb ścisły wymaga poprawnego adresu DNS-over-HTTPS; ustawienie może też być zarządzane.") :
       T(u"Nie udało się zmienić ustawienia. Profil może być zarządzany lub niedostępny."));
 }
@@ -13902,6 +13925,261 @@ void WorkspaceShell::PositionToast(){
   const auto size=toast_->GetPreferredSize();const int width=std::min(size.width(),std::max(200,bounds.right()-left-24));
   SetWidgetBounds(toast_widget_.get(),gfx::Rect((left+bounds.right()-width)/2,bounds.bottom()-20-size.height(),width,size.height()));
 }
+// Site and extension notifications (design: the "Zitter — Notifications"
+// canvas): a floating card above the footer with rows grouped by time, and a
+// banner at the top right of the page with a countdown.
+enum class NoticeGlyph { kCheck, kCheckAll, kTrash, kClose };
+void DrawNoticeGlyph(gfx::Canvas* canvas,NoticeGlyph glyph,gfx::PointF center,int size,SkColor color){
+  const float s=size/16.f;const float ox=center.x()-8*s,oy=center.y()-8*s;
+  auto at=[&](float x,float y){return SkPoint::Make(ox+x*s,oy+y*s);};
+  SkPathBuilder path;
+  auto line=[&](std::initializer_list<std::pair<float,float>> points){bool first=true;for(const auto& [x,y]:points){if(first)path.moveTo(at(x,y));else path.lineTo(at(x,y));first=false;}};
+  switch(glyph){
+    case NoticeGlyph::kCheck:line({{3,8.5f},{6.5f,12},{13,4.5f}});break;
+    case NoticeGlyph::kCheckAll:line({{1.5f,8.5f},{4.5f,11.5f},{10.5f,4.5f}});line({{8,11.5f},{14,4.5f}});break;
+    case NoticeGlyph::kTrash:line({{2.5f,4.5f},{13.5f,4.5f}});line({{6,4.5f},{6,3},{10,3},{10,4.5f}});line({{4,4.5f},{4.7f,13},{11.3f,13},{12,4.5f}});break;
+    case NoticeGlyph::kClose:line({{4,4},{12,12}});line({{12,4},{4,12}});break;
+  }
+  cc::PaintFlags flags;flags.setAntiAlias(true);flags.setStyle(cc::PaintFlags::kStroke_Style);flags.setStrokeWidth(1.6f);
+  flags.setStrokeCap(cc::PaintFlags::kRound_Cap);flags.setStrokeJoin(cc::PaintFlags::kRound_Join);flags.setColor(color);
+  canvas->DrawPath(path.detach(),flags);
+}
+// An icon-only button: `ink-muted` at rest, `ink` on a `bg-hover` fill.
+class NoticeIconButton final : public views::Button {
+  METADATA_HEADER(NoticeIconButton,views::Button)
+ public:
+  NoticeIconButton(PressedCallback callback,NoticeGlyph glyph,std::u16string name,int box)
+      :views::Button(std::move(callback)),glyph_(glyph),box_(box){
+    SetInstallFocusRingOnFocus(true);GetViewAccessibility().SetName(name);SetTooltipText(name);SetAnimateOnStateChange(false);
+    views::InstallRoundRectHighlightPathGenerator(this,gfx::Insets(),box>=28?8:6);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(box_,box_);}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const bool hot=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+    if(hot)FillRound(canvas,GetLocalBounds(),box_>=28?8:6,p.bg_hover);
+    DrawNoticeGlyph(canvas,glyph_,gfx::PointF(width()/2.f,height()/2.f),box_>=28?16:14,hot?p.ink:p.ink_muted);
+  }
+ private:
+  NoticeGlyph glyph_;int box_;
+};
+BEGIN_METADATA(NoticeIconButton)
+END_METADATA
+// A quiet text action. `soft`: the banner's main action on `accent-soft`.
+class NoticeTextButton final : public views::Button {
+  METADATA_HEADER(NoticeTextButton,views::Button)
+ public:
+  enum class Tone { kAccent, kSoft, kMuted };
+  NoticeTextButton(PressedCallback callback,std::u16string text,Tone tone,int height)
+      :views::Button(std::move(callback)),text_(std::move(text)),tone_(tone),height_(height){
+    SetInstallFocusRingOnFocus(true);GetViewAccessibility().SetName(text_);SetAnimateOnStateChange(false);
+    views::InstallRoundRectHighlightPathGenerator(this,gfx::Insets(),8);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{
+    return gfx::Size(gfx::GetStringWidth(text_,Font())+2*Padding(),height_);}
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const bool hot=GetState()==STATE_HOVERED||GetState()==STATE_PRESSED;
+    if(tone_==Tone::kSoft)FillRound(canvas,GetLocalBounds(),8,hot?Mix(p.accent_soft,p.accent,85):p.accent_soft);
+    else if(hot)FillRound(canvas,GetLocalBounds(),8,p.bg_hover);
+    const SkColor ink=tone_==Tone::kMuted?(hot?p.ink:p.ink_muted):p.accent_ink;
+    DrawSiteText(canvas,text_,Font(),ink,gfx::Rect(Padding(),0,width()-2*Padding(),height()),gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+ private:
+  gfx::FontList Font() const{return SiteFont(12,tone_==Tone::kSoft?600:500);}
+  int Padding() const{return height_>=28?10:8;}
+  std::u16string text_;Tone tone_;int height_;
+};
+BEGIN_METADATA(NoticeTextButton)
+END_METADATA
+// The site's tile: its initial on its own soft accent, picked from the host.
+std::pair<SkColor,SkColor> NoticeTileColors(const views::View* view,const std::u16string& host){
+  const auto presets=sidebar::appearance_presets(false);
+  if(presets.empty()){const auto p=Palette(view);return {p.bg_hover,p.ink};}
+  const size_t index=std::hash<std::u16string>()(host)%presets.size();
+  const auto own=sidebar::design_palette(IsDark(view),presets[index].color);
+  return {own.accent_soft,own.accent_ink};
+}
+std::u16string NoticeHost(const std::u16string& origin){
+  const GURL url(origin);
+  if(url.is_valid()&&!url.host().empty()){
+    std::string host(url.host());if(host.starts_with("www."))host=host.substr(4);
+    if(url.has_port())host+=":"+std::string(url.port());
+    return base::UTF8ToUTF16(host);}
+  return origin;
+}
+std::u16string NoticeTime(base::Time received){
+  const auto age=base::Time::Now()-received;
+  if(age<base::Minutes(1))return T(u"teraz");
+  if(age<base::Hours(1))return TF(u"{} min",{base::NumberToString16(age.InMinutes())});
+  return base::TimeFormatTimeOfDay(received);
+}
+std::u16string NoticeInitial(const std::u16string& host){
+  for(const char16_t c:host)if(base::IsAsciiAlpha(c)||base::IsAsciiDigit(c))return std::u16string(1,base::ToUpperASCII(c));
+  return u"•";
+}
+// One notification. In the panel: hover fill, unread dot, ✓ and × on hover.
+// As the banner: a bigger tile, ✓ and × always there, the main action soft and
+// a 2 px countdown at the bottom that hover pauses.
+class NoticeRow final : public views::Button {
+  METADATA_HEADER(NoticeRow,views::Button)
+ public:
+  struct Spec {
+    std::u16string origin,title,body,more;
+    base::Time received;
+    bool unread=false,banner=false;
+    std::vector<std::pair<std::u16string,base::RepeatingClosure>> actions;
+    base::RepeatingClosure read,remove,expire;
+  };
+  NoticeRow(PressedCallback open,Spec spec):views::Button(std::move(open)),spec_(std::move(spec)),host_(NoticeHost(spec_.origin)){
+    SetInstallFocusRingOnFocus(true);SetAnimateOnStateChange(false);SetNotifyEnterExitOnChild(true);
+    views::InstallRoundRectHighlightPathGenerator(this,gfx::Insets(),spec_.banner?12:8);
+    GetViewAccessibility().SetName(host_+u", "+spec_.title+(spec_.body.empty()?u"":u". "+spec_.body));
+    body_=Label(this,spec_.body,kMuted,SiteFont(12,400));body_->SetMultiLine(true);body_->SetMaxLines(2);
+    body_->SetCanProcessEventsWithinSubtree(false);body_->SetVisible(!spec_.body.empty());
+    const int action_height=spec_.banner?28:26;bool first=true;
+    for(const auto& [label,action]:spec_.actions){
+      const auto tone=spec_.banner?(first?NoticeTextButton::Tone::kSoft:NoticeTextButton::Tone::kMuted):NoticeTextButton::Tone::kAccent;
+      actions_.push_back(AddChildView(std::make_unique<NoticeTextButton>(base::BindRepeating([](base::RepeatingClosure run){
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,run);},action),label,tone,action_height)));
+      first=false;}
+    const int box=24;
+    if(spec_.read)read_=AddChildView(std::make_unique<NoticeIconButton>(base::BindRepeating(&NoticeRow::Post,spec_.read),NoticeGlyph::kCheck,T(u"Oznacz powiadomienie jako przeczytane"),box));
+    if(spec_.remove)remove_=AddChildView(std::make_unique<NoticeIconButton>(base::BindRepeating(&NoticeRow::Post,spec_.remove),NoticeGlyph::kClose,spec_.banner?T(u"Zamknij powiadomienie"):T(u"Usuń powiadomienie"),box));
+    UpdateTools();
+    if(spec_.banner&&spec_.expire){deadline_=base::TimeTicks::Now()+kLife;countdown_.Start(FROM_HERE,base::Milliseconds(50),this,&NoticeRow::Tick);}
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds& available) const override{
+    // A fixed width the panel's viewport can take as its minimum; the height
+    // follows the width the row gets.
+    const int natural=spec_.banner?372:200;
+    const int width=available.width().is_bounded()?available.width().value():natural;
+    return gfx::Size(std::min(width,natural),HeightForWidth(width));}
+  gfx::Size GetMinimumSize() const override{return gfx::Size(0,HeightForWidth(spec_.banner?372:232));}
+  void Layout(PassKey) override{
+    const int x=TextX(),right=width()-Pad().right();int y=Pad().top()+16+2+18+2;
+    if(body_->GetVisible()){const int h=std::min(32,body_->GetHeightForWidth(std::max(1,right-x)));body_->SetBounds(x,y,std::max(1,right-x),h);y+=h;}
+    int ax=x-8;y+=spec_.banner?8:4;
+    for(views::View* action:actions_){const auto size=action->GetPreferredSize();action->SetBounds(ax,y,std::min(size.width(),std::max(0,right-ax)),size.height());ax+=size.width()+2;}
+    const int top=spec_.banner?Pad().top()-4:6;int tx=width()-(spec_.banner?Pad().right()-4:6);
+    for(auto* tool:{remove_.get(),read_.get()})if(tool){tx-=24;tool->SetBounds(tx,top,24,24);tx-=2;}
+  }
+  void PaintButtonContents(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);
+    if(!spec_.banner&&Hot())FillRound(canvas,GetLocalBounds(),8,p.bg_hover);
+    const int tile=spec_.banner?32:28;const auto [fill,ink]=NoticeTileColors(this,host_);
+    const gfx::Rect tile_rect(Pad().left(),Pad().top(),tile,tile);FillRound(canvas,tile_rect,spec_.banner?8:6,fill);
+    DrawSiteText(canvas,NoticeInitial(host_),SiteFont(spec_.banner?14:13,700),ink,tile_rect,gfx::Canvas::TEXT_ALIGN_CENTER);
+    const int x=TextX();const int reserve=spec_.banner?56:22;const int text_right=width()-Pad().right()-reserve;
+    int y=Pad().top();
+    std::u16string meta=host_+u" · "+NoticeTime(spec_.received);
+    int more_width=0;
+    if(!spec_.more.empty()){const auto font=SiteFont(11,500);more_width=gfx::GetStringWidth(spec_.more,font)+8;
+      DrawSiteText(canvas,spec_.more,font,p.ink_muted,gfx::Rect(text_right-more_width+8,y,more_width,16),gfx::Canvas::TEXT_ALIGN_RIGHT);}
+    DrawSiteText(canvas,meta,SiteFont(11,400,true),p.ink_muted,gfx::Rect(x,y,std::max(0,text_right-x-more_width),16));
+    y+=18;DrawSiteText(canvas,spec_.title.empty()?host_:spec_.title,SiteFont(13,600),p.ink,gfx::Rect(x,y,std::max(0,(spec_.banner?text_right:width()-Pad().right()-22)-x),18));
+    if(!spec_.banner&&spec_.unread&&!Hot())FillRound(canvas,gfx::Rect(width()-12-7,16,7,7),4,p.accent);
+    if(spec_.banner&&spec_.expire){
+      // Clipped to the card's 12 px corners, as the design's overflow is.
+      gfx::ScopedCanvas scoped(canvas);
+      canvas->ClipPath(SkPath::RRect(SkRRect::MakeRectXY(gfx::RectToSkRect(GetLocalBounds()),12,12)),true);
+      const int bar=height()-2;canvas->FillRect(gfx::Rect(0,bar,width(),2),p.line);
+      canvas->FillRect(gfx::Rect(0,bar,static_cast<int>(width()*Remaining()),2),p.accent);}
+  }
+  void StateChanged(ButtonState old_state) override{views::Button::StateChanged(old_state);UpdateTools();SchedulePaint();}
+  void OnMouseEntered(const ui::MouseEvent& event) override{views::Button::OnMouseEntered(event);if(countdown_.IsRunning()){paused_=deadline_-base::TimeTicks::Now();}UpdateTools();}
+  void OnMouseExited(const ui::MouseEvent& event) override{views::Button::OnMouseExited(event);if(paused_){deadline_=base::TimeTicks::Now()+*paused_;paused_.reset();}UpdateTools();}
+  void OnFocus() override{views::Button::OnFocus();UpdateTools();}
+  void OnBlur() override{views::Button::OnBlur();UpdateTools();}
+ private:
+  static constexpr base::TimeDelta kLife=base::Seconds(8);
+  static void Post(base::RepeatingClosure run){base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,run);}
+  gfx::Insets Pad() const{return spec_.banner?gfx::Insets::TLBR(14,16,14,14):gfx::Insets(10);}
+  int TextX() const{return Pad().left()+(spec_.banner?32+12:28+10);}
+  bool Hot() const{return GetState()==STATE_HOVERED||GetState()==STATE_PRESSED||IsMouseHovered();}
+  int HeightForWidth(int width) const{
+    int h=Pad().top()+16+2+18+2;
+    if(!spec_.body.empty())h+=std::min(32,body_->GetHeightForWidth(std::max(1,width-Pad().right()-TextX())));
+    if(!actions_.empty())h+=(spec_.banner?8:4)+(spec_.banner?28:26);
+    return h+Pad().bottom()+(spec_.banner&&spec_.expire?2:0);
+  }
+  float Remaining() const{const auto left=paused_?*paused_:deadline_-base::TimeTicks::Now();return std::clamp(static_cast<float>(left/kLife),0.f,1.f);}
+  void Tick(){if(paused_)return;SchedulePaint();if(Remaining()<=0.f){countdown_.Stop();Post(spec_.expire);}}
+  void UpdateTools(){
+    const bool shown=spec_.banner||Hot()||HasFocus()||(read_&&read_->HasFocus())||(remove_&&remove_->HasFocus());
+    if(read_)read_->SetVisible(shown&&(spec_.banner||spec_.unread));
+    if(remove_)remove_->SetVisible(shown);
+  }
+  Spec spec_;std::u16string host_;raw_ptr<views::Label> body_=nullptr;std::vector<raw_ptr<views::View>> actions_;
+  raw_ptr<views::View> read_=nullptr,remove_=nullptr;base::TimeTicks deadline_;std::optional<base::TimeDelta> paused_;base::RepeatingTimer countdown_;
+};
+BEGIN_METADATA(NoticeRow)
+END_METADATA
+// The panel's head: „Powiadomienia”, the count, then mark-all-read, clear all
+// and close.
+class NoticeHeader final : public views::View {
+  METADATA_HEADER(NoticeHeader,views::View)
+ public:
+  NoticeHeader(size_t count,base::RepeatingClosure read_all,base::RepeatingClosure clear,base::RepeatingClosure close):count_(count){
+    GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);GetViewAccessibility().SetName(T(u"Powiadomienia"));
+    if(read_all)tools_.push_back(AddChildView(std::make_unique<NoticeIconButton>(base::BindRepeating(read_all),NoticeGlyph::kCheckAll,T(u"Oznacz wszystkie jako przeczytane"),28)));
+    if(clear)tools_.push_back(AddChildView(std::make_unique<NoticeIconButton>(base::BindRepeating(clear),NoticeGlyph::kTrash,T(u"Wyczyść wszystkie"),28)));
+    tools_.push_back(AddChildView(std::make_unique<NoticeIconButton>(base::BindRepeating(close),NoticeGlyph::kClose,T(u"Zamknij panel"),28)));
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(200,44);}
+  gfx::Size GetMinimumSize() const override{return gfx::Size(0,44);}
+  void Layout(PassKey) override{int x=width()-8;for(auto it=tools_.rbegin();it!=tools_.rend();++it){x-=28;(*it)->SetBounds(x,8,28,28);x-=2;}}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const auto title=T(u"Powiadomienia");const auto font=SiteFont(13,600);
+    const int tw=gfx::GetStringWidth(title,font);DrawSiteText(canvas,title,font,p.ink,gfx::Rect(16,13,tw+2,18));
+    if(count_)DrawSiteText(canvas,base::NumberToString16(count_),SiteFont(12,400,true),p.ink_muted,gfx::Rect(16+tw+6,13,40,18));
+  }
+ private:
+  size_t count_;std::vector<raw_ptr<views::View>> tools_;
+};
+BEGIN_METADATA(NoticeHeader)
+END_METADATA
+// A time group's label: `eyebrow`.
+class NoticeEyebrow final : public views::View {
+  METADATA_HEADER(NoticeEyebrow,views::View)
+ public:
+  explicit NoticeEyebrow(std::u16string text):text_(std::move(text)){GetViewAccessibility().SetRole(ax::mojom::Role::kHeading);GetViewAccessibility().SetName(text_);}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(1,28);}
+  void OnPaint(gfx::Canvas* canvas) override{DrawSiteText(canvas,text_,SiteFont(11,600),Palette(this).ink_muted,gfx::Rect(10,10,width()-20,14));}
+ private:
+  std::u16string text_;
+};
+BEGIN_METADATA(NoticeEyebrow)
+END_METADATA
+// Nothing yet: the bell on `accent-soft` and an italic „Cisza.”.
+class NoticeEmpty final : public views::View {
+  METADATA_HEADER(NoticeEmpty,views::View)
+ public:
+  NoticeEmpty(){GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);GetViewAccessibility().SetName(T(u"Brak powiadomień"));}
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override{return gfx::Size(200,112);}
+  gfx::Size GetMinimumSize() const override{return gfx::Size(0,112);}
+  void OnPaint(gfx::Canvas* canvas) override{
+    const auto p=Palette(this);const int cx=width()/2;
+    FillRound(canvas,gfx::Rect(cx-22,16,44,44),22,p.accent_soft);
+    // The vector icon carries its own margin: 24 px draws an 18 px bell.
+    DrawSiteIcon(canvas,vector_icons::kNotificationsIcon,cx-12,26,24,p.accent_ink);
+    DrawSiteText(canvas,T(u"Cisza."),DesignFont(1,34,400,true),p.ink,gfx::Rect(0,68,width(),40),gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+};
+BEGIN_METADATA(NoticeEmpty)
+END_METADATA
+// The card: `bg-raised` with the `line` edge every floating surface starts with.
+class NoticeEdge final : public views::Border {
+ public:
+  void Paint(const views::View& view,gfx::Canvas* canvas) override{StrokeRound(canvas,view.GetLocalBounds(),12,Palette(&view).line);}
+  gfx::Insets GetInsets() const override{return gfx::Insets(1);}
+  gfx::Size GetMinimumSize() const override{return gfx::Size(2,2);}
+};
+class NoticeSurface final : public views::View {
+  METADATA_HEADER(NoticeSurface,views::View)
+ public:
+  NoticeSurface(){SetBorder(std::make_unique<NoticeEdge>());SetUseDefaultFillLayout(true);}
+  void OnPaint(gfx::Canvas* canvas) override{FillRound(canvas,GetLocalBounds(),12,Palette(this).bg_raised);}
+};
+BEGIN_METADATA(NoticeSurface)
+END_METADATA
+
 void WorkspaceShell::ShowWebNotification(
     std::string profile, std::string id, std::u16string origin, std::u16string title,
     std::u16string body, base::RepeatingClosure click,
@@ -13910,19 +14188,24 @@ void WorkspaceShell::ShowWebNotification(
   std::erase_if(web_notifications_, [&](const auto& item) {
     return item.profile == profile && item.id == id;
   });
-  if (web_notifications_.size() >= 20)
+  if (web_notifications_.size() >= 50)
     web_notifications_.pop_back();
   web_notifications_.insert(web_notifications_.begin(),
       {profile, id, std::move(origin), std::move(title), std::move(body),
-       std::move(click), std::move(actions), std::move(dismiss)});
+       std::move(click), std::move(actions), std::move(dismiss), base::Time::Now(), true});
+  UpdateNotificationBadge();
   if (profile != state_.profile_id || !widget_ || !widget_->IsVisible())
     return;
   if (!web_drawer_) {
+    web_notification_timer_.Stop();
     web_banner_ = std::move(id);
-    web_notification_timer_.Start(FROM_HERE, base::Seconds(8), this,
-                                  &WorkspaceShell::HideWebNotifications);
   }
   RenderWebNotifications();
+}
+
+bool WorkspaceShell::ShowsWebNotificationBanner(const std::string& profile) const {
+  return profile == state_.profile_id && widget_ && widget_->IsVisible() &&
+         !widget_->IsMinimized();
 }
 
 void WorkspaceShell::RemoveWebNotification(const std::string& profile,
@@ -13930,12 +14213,73 @@ void WorkspaceShell::RemoveWebNotification(const std::string& profile,
   std::erase_if(web_notifications_, [&](const auto& item) {
     return item.profile == profile && item.id == id;
   });
+  UpdateNotificationBadge();
   if (profile != state_.profile_id)
     return;
   if (web_drawer_)
     RenderWebNotifications();
   else if (web_banner_ == id)
     HideWebNotifications();
+}
+
+void WorkspaceShell::UpdateNotificationBadge() {
+  if (!notifications_button_)
+    return;
+  const int unread = static_cast<int>(std::ranges::count_if(web_notifications_, [&](const auto& item) {
+    return item.profile == state_.profile_id && item.unread;
+  }));
+  if (notifications_button_->GetProperty(kNotificationBadge) == unread)
+    return;
+  notifications_button_->SetProperty(kNotificationBadge, unread);
+  notifications_button_->SchedulePaint();
+  notifications_button_->GetViewAccessibility().SetName(
+      unread ? TF(u"Powiadomienia, nieprzeczytane: {}", {base::NumberToString16(unread)})
+             : T(u"Powiadomienia"));
+  ScheduleMetalSidebar();
+}
+
+void WorkspaceShell::OpenWebNotification(const std::string& id) {
+  const auto item = std::ranges::find_if(web_notifications_, [&](const auto& item) {
+    return item.profile == state_.profile_id && item.id == id;
+  });
+  if (item == web_notifications_.end())
+    return;
+  item->unread = false;
+  const auto click = item->click;
+  UpdateNotificationBadge();
+  HideWebNotifications();
+  if (click)
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, click);
+}
+
+void WorkspaceShell::MarkWebNotificationsRead(std::optional<std::string> id) {
+  for (auto& item : web_notifications_) {
+    if (item.profile == state_.profile_id && (!id || item.id == *id))
+      item.unread = false;
+  }
+  UpdateNotificationBadge();
+  if (web_drawer_)
+    RenderWebNotifications();
+  else if (id && web_banner_ == *id)
+    HideWebNotifications();
+}
+
+void WorkspaceShell::DismissWebNotifications(std::optional<std::string> id) {
+  std::vector<base::RepeatingClosure> dismissals;
+  std::erase_if(web_notifications_, [&](auto& item) {
+    if (item.profile != state_.profile_id || (id && item.id != *id))
+      return false;
+    if (item.dismiss)
+      dismissals.push_back(std::move(item.dismiss));
+    return true;
+  });
+  UpdateNotificationBadge();
+  if (web_drawer_)
+    RenderWebNotifications();
+  else if (id && web_banner_ == *id)
+    HideWebNotifications();
+  for (const auto& dismiss : dismissals)
+    dismiss.Run();
 }
 
 void WorkspaceShell::CloseSidebarTabByMiddleClick(
@@ -13999,90 +14343,115 @@ void WorkspaceShell::RenderWebNotifications() {
     PanelViewport* viewport = nullptr;
     auto scroll = CreatePanelViewport(&viewport, {}, {0, 10000, false});
     viewport->SetPanelContents(std::move(body));
-    CreatePanelWidget(std::move(scroll), web_notification_delegate_,
+    auto surface = std::make_unique<NoticeSurface>();
+    surface->AddChildView(std::move(scroll));
+    CreatePanelWidget(std::move(surface), web_notification_delegate_,
                       web_notification_widget_, T(u"Powiadomienia"));
   }
   auto* body = web_notification_contents_.get();
   body->RemoveAllChildViews();
-  body->SetBackground(views::CreateSolidBackground(Tone(root_, kCard)));
-  SetSidebarPanelLayout(body, true, gfx::Insets(14), 8);
   const auto weak = weak_factory_.GetWeakPtr();
-  auto* header = body->AddChildView(std::make_unique<views::View>());
-  auto* title = PanelText(header, web_drawer_ ? T(u"Powiadomienia") : std::u16string(),
-                          kLabelText, kInk);
-  auto* close = header->AddChildView(CreateSceneAction(
-      base::BindRepeating(&WorkspaceShell::HideWebNotifications, weak), T(u"Zamknij"),
-      GlyphButton::Glyph::kVector, &vector_icons::kCloseIcon, {}, {}));
-  close->SetPreferredSize(gfx::Size(28, 28));
-  SetSidebarPanelLayout(header, false, gfx::Insets(), 4, title, true);
-  if (web_drawer_)
-    body->AddChildView(std::make_unique<SceneHairline>());
-  const bool has_items = std::ranges::any_of(web_notifications_, [&](const auto& item) {
-    return item.profile == state_.profile_id;
-  });
-  if (web_drawer_ && has_items) {
-    auto* controls = ActionGroup(body, false, 6);
-    AddAction(controls, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
-      if (!shell)
-        return;
+  // Every handler waits a task: it rebuilds this very panel.
+  auto later = [weak](void (WorkspaceShell::*method)(std::optional<std::string>),
+                      std::optional<std::string> id) {
+    return base::BindRepeating(
+        [](base::WeakPtr<WorkspaceShell> shell,
+           void (WorkspaceShell::*method)(std::optional<std::string>),
+           std::optional<std::string> id) {
+          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+              FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> shell,
+                                           void (WorkspaceShell::*method)(std::optional<std::string>),
+                                           std::optional<std::string> id) {
+                if (shell) (shell.get()->*method)(std::move(id));
+              }, shell, method, std::move(id)));
+        }, weak, method, std::move(id));
+  };
+  auto open = [weak](std::string id) {
+    return base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, std::string id) {
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce([](base::WeakPtr<WorkspaceShell> current) {
-            if (!current || !current->web_drawer_)
-              return;
-            std::vector<base::RepeatingClosure> dismissals;
-            std::erase_if(current->web_notifications_, [&](auto& item) {
-              if (item.profile != current->state_.profile_id)
-                return false;
-              if (item.dismiss)
-                dismissals.push_back(std::move(item.dismiss));
-              return true;
-            });
-            for (const auto& dismiss : dismissals)
-              dismiss.Run();
-            current->RenderWebNotifications();
-          }, shell));
-    }, weak), T(u"Wyczyść"));
-  }
-
-  bool shown = false;
+          FROM_HERE, base::BindOnce(&WorkspaceShell::OpenWebNotification, shell, id));
+    }, weak, std::move(id));
+  };
+  auto spec = [&](const WebNotification& item, bool banner) {
+    NoticeRow::Spec spec;
+    spec.origin = item.origin; spec.title = item.title; spec.body = item.body;
+    spec.received = item.received; spec.unread = item.unread; spec.banner = banner;
+    spec.actions = item.actions;
+    spec.read = later(&WorkspaceShell::MarkWebNotificationsRead, item.id);
+    spec.remove = later(&WorkspaceShell::DismissWebNotifications, item.id);
+    return spec;
+  };
+  std::vector<const WebNotification*> mine;
   for (const auto& item : web_notifications_) {
-    if (item.profile != state_.profile_id || (!web_drawer_ && web_banner_ != item.id))
-      continue;
-    if (shown)
-      body->AddChildView(std::make_unique<SceneHairline>());
-    shown = true;
-    Label(body, item.origin, kMuted, SiteFont(11, 500, true))->SetMaximumWidthSingleLine(290);
-    Label(body, item.title, kInk, SiteFont(15, 700))->SetMaximumWidthSingleLine(290);
-    auto* message = Label(body, item.body, kMuted, SiteFont(13, 400));
-    message->SetMultiLine(true);
-    message->SetMaximumWidth(290);
-    message->SetMaxLines(3);
-    auto* actions = ActionGroup(body, false, 6);
-    AddAction(actions, base::BindRepeating(
-        [](base::WeakPtr<WorkspaceShell> shell, base::RepeatingClosure click) {
-          if (shell)
-            shell->HideWebNotifications();
-          base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, click);
-        }, weak, item.click), T(u"Otwórz"));
-    for (const auto& [action_title, action] : item.actions) {
-      AddAction(actions, base::BindRepeating([](base::RepeatingClosure callback) {
-        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE, callback);
-      }, action), action_title);
-    }
+    if (item.profile == state_.profile_id)
+      mine.push_back(&item);
   }
-  if (!shown) {
-    auto badge = std::make_unique<views::ImageView>(
-        ui::ImageModel::FromVectorIcon(vector_icons::kNotificationsIcon,
-                                       ui::kColorLabelForeground, 18));
-    badge->SetHorizontalAlignment(views::ImageView::Alignment::kCenter);
-    body->AddChildView(std::move(badge));
-    auto* empty = Label(body, T(u"Brak powiadomień"), kInk);
-    empty->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-    auto* detail = Label(body, T(u"Nowe powiadomienia pojawią się tutaj."), kMuted);
-    detail->SetMultiLine(true);
-    detail->SetHorizontalAlignment(gfx::ALIGN_CENTER);
+  auto settings_link = [&](views::View* parent, bool center) {
+    auto* holder = parent->AddChildView(std::make_unique<views::View>());
+    auto* layout = holder->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal,
+        center ? gfx::Insets::TLBR(0, 0, 20, 0) : gfx::Insets::TLBR(2, 8, 4, 8)));
+    layout->set_main_axis_alignment(center ? views::BoxLayout::MainAxisAlignment::kCenter
+                                           : views::BoxLayout::MainAxisAlignment::kStart);
+    holder->AddChildView(std::make_unique<NoticeTextButton>(
+        base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+          if (!shell) return;
+          shell->HideWebNotifications();
+          shell->OpenGeneralSettings(T(u"Powiadomienia Windows"));
+        }, weak),
+        T(u"Ustawienia powiadomień"),
+        center ? NoticeTextButton::Tone::kAccent : NoticeTextButton::Tone::kMuted, 28));
+  };
+
+  if (web_drawer_) {
+    body->SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(0, 0, 4, 0)));
+    const bool unread = std::ranges::any_of(mine, [](const auto* item) { return item->unread; });
+    body->AddChildView(std::make_unique<NoticeHeader>(
+        mine.size(),
+        unread ? later(&WorkspaceShell::MarkWebNotificationsRead, std::nullopt) : base::RepeatingClosure(),
+        mine.empty() ? base::RepeatingClosure() : later(&WorkspaceShell::DismissWebNotifications, std::nullopt),
+        base::BindRepeating(&WorkspaceShell::HideWebNotifications, weak)));
+    if (mine.empty()) {
+      body->AddChildView(std::make_unique<NoticeEmpty>());
+      settings_link(body, true);
+    } else {
+      auto* list = body->AddChildView(std::make_unique<views::View>());
+      list->SetLayoutManager(std::make_unique<views::BoxLayout>(
+          views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(0, 6), 0));
+      const auto now = base::Time::Now();
+      std::optional<bool> group;
+      for (const auto* item : mine) {
+        const bool recent = now - item->received < base::Minutes(15);
+        if (group != recent) {
+          list->AddChildView(std::make_unique<NoticeEyebrow>(
+              recent ? T(u"TERAZ") : T(u"WCZEŚNIEJ")));
+          group = recent;
+        }
+        list->AddChildView(std::make_unique<NoticeRow>(open(item->id), spec(*item, false)));
+      }
+      settings_link(body, false);
+    }
+  } else {
+    const auto banner = std::ranges::find_if(mine, [&](const auto* item) {
+      return web_banner_ == item->id;
+    });
+    if (banner == mine.end()) {
+      HideWebNotifications();
+      return;
+    }
+    body->SetLayoutManager(std::make_unique<views::FillLayout>());
+    auto row = spec(**banner, true);
+    const auto others = std::ranges::count_if(mine, [&](const auto* item) {
+      return item != *banner && item->unread;
+    });
+    if (others)
+      row.more = u"+" + base::NumberToString16(others);
+    row.expire = base::BindRepeating(&WorkspaceShell::HideWebNotifications, weak);
+    body->AddChildView(std::make_unique<NoticeRow>(open((*banner)->id), std::move(row)));
   }
   web_notification_widget_->SetColorModeOverride(widget_->color_mode_override());
+  PreparePanelText(body);
   body->InvalidateLayout();
   PositionWebNotifications();
   web_notification_widget_->LayoutRootViewIfNecessary();
@@ -14095,23 +14464,28 @@ void WorkspaceShell::RenderWebNotifications() {
 
 void WorkspaceShell::PositionWebNotifications() {
   const auto area = widget_->GetClientAreaBoundsInScreen();
+  // The card's 1 px edge on both sides.
+  auto height_for = [&](int width) {
+    return web_notification_contents_->GetHeightForWidth(std::max(1, width - 2)) + 2;
+  };
   if (web_drawer_ && notification_slot_ && sidebar_widget_) {
     const auto sidebar = sidebar_widget_->GetClientAreaBoundsInScreen();
     const int width = std::max(1, sidebar.width() - kSidebarInsets.width());
-    const int height = std::clamp(web_notification_contents_->GetHeightForWidth(width),
-                                  128, std::max(128, sidebar.height() / 2));
+    const int height = std::clamp(height_for(width), 128,
+                                  std::max(128, sidebar.height() * 2 / 3));
     notification_slot_->SetPreferredSize(gfx::Size(width, height));
     notification_slot_->SetVisible(true);
     sidebar_widget_->LayoutRootViewIfNecessary();
     SetWidgetBounds(web_notification_widget_.get(), notification_slot_->GetBoundsInScreen());
     return;
   }
-  const int width = std::clamp(area.width() - 32, 1, 352);
-  const int height = std::clamp(web_notification_contents_->GetHeightForWidth(width),
-                                1, std::max(1, area.height() - 64));
+  // The banner hangs at the top right of the page.
+  const auto page = content_host_ && content_host_->GetWidget()
+                        ? content_host_->GetBoundsInScreen() : area;
+  const int width = std::clamp(page.width() - 32, 1, 372);
+  const int height = std::clamp(height_for(width), 1, std::max(1, page.height() - 32));
   SetWidgetBounds(web_notification_widget_.get(),
-                  gfx::Rect(area.right() - width - 16, area.bottom() - height - 16,
-                            width, height));
+                  gfx::Rect(page.right() - width - 16, page.y() + 16, width, height));
 }
 
 void WorkspaceShell::MovePanelsBy(const gfx::Vector2d& delta) {

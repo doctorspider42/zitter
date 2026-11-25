@@ -863,6 +863,9 @@ class WorkspaceShell final : public ui::EventHandler,
   void SetNotificationsMenuVisible(bool visible);
   void SetMiddleClickClosesTabs(bool enabled) { middle_click_closes_tabs_ = enabled; }
   void RemoveWebNotification(const std::string& profile, const std::string& id);
+  // Whether a new notification of `profile` opens a banner in a visible,
+  // restored window (the window may still sit behind other apps).
+  bool ShowsWebNotificationBanner(const std::string& profile) const;
   // The address pill trembles once (a copied address).
   void TremorAddress();
   // Downloads (design: Downloads). The footer's Downloads icon turns into a ring
@@ -1242,7 +1245,14 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingClosure click;
     std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions;
     base::RepeatingClosure dismiss;
+    base::Time received;
+    bool unread = true;
   };
+  void UpdateNotificationBadge();
+  void OpenWebNotification(const std::string& id);
+  // One notification (`id`) or all of the profile's.
+  void MarkWebNotificationsRead(std::optional<std::string> id);
+  void DismissWebNotifications(std::optional<std::string> id);
   bool notifications_menu_visible_ = true;
   bool middle_click_closes_tabs_ = true;
   raw_ptr<views::View> notifications_button_ = nullptr;

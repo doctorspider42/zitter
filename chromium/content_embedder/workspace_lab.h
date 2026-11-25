@@ -20,6 +20,7 @@
 #include "build/build_config.h"
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_types.h"
+#include "system_toasts_win.h"
 #endif
 #include "base/callback_list.h"
 #include "base/containers/span.h"
@@ -470,6 +471,16 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ClosePopup(content::WebContents* page);
   // Brings the window, workspace and tab that show `page` to the front.
   void ActivatePage(content::WebContents* page);
+#if BUILDFLAG(IS_WIN)
+  // Adds a site or extension notification to the in-app center and, as
+  // `system_notifications_` says, mirrors it as a Windows toast.
+  void PresentWebNotification(
+      std::string profile, const std::string& id, std::u16string sender,
+      std::u16string title, std::u16string body, base::RepeatingClosure click,
+      std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions,
+      base::RepeatingClosure dismiss);
+  void OnSystemToastShown(bool shown, SystemToastState state);
+#endif
   std::optional<std::pair<size_t, size_t>> TabForPage(
       content::WebContents* page) const;
   void AttachPageServices(content::WebContents& page, size_t workspace);
@@ -1322,6 +1333,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
   // App-wide: GPU use (applied at the next start) and secure DNS.
   bool hardware_acceleration_ = true;
   bool notifications_menu_visible_ = true;
+#if BUILDFLAG(IS_WIN)
+  // SystemNotificationMode: when a notification also becomes a Windows toast.
+  int system_notifications_ = kDefaultSystemNotificationMode;
+  bool system_toast_warning_shown_ = false;
+#endif
   bool middle_click_closes_tabs_ = true;
   bool image_link_previews_ = false;
   base::OneShotTimer preconnect_timer_;

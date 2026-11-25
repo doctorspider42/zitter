@@ -1127,6 +1127,7 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     rows.push(preference_spec(0,K::WorkspaceNames,"",t("Nazwa aktywnej przestrzeni"),t("Pokazuj nazwę obok kropki aktywnej przestrzeni na dole panelu kart."),vec![],"",A::None));
     if cfg!(target_os = "windows") {
         rows.push(preference_spec(0,K::Toggle,"notifications_menu_visible",t("Powiadomienia w panelu kart"),t("Pokazuj dzwonek obok pobranych plików."),vec![],"",A::None));
+        rows.push(preference_spec(0,K::Picker,"system_notifications",t("Powiadomienia Windows"),t("Wybierz, kiedy powiadomienia stron i rozszerzeń trafiają też do centrum powiadomień Windows. Zitter i tak trzyma je pod dzwonkiem w panelu kart."),vec![t("Tylko w Zitterze").into(),t("Gdy Zitter jest w tle").into(),t("Zawsze").into()],"",A::None));
     }
     rows.push(preference_spec(0,K::Toggle,"middle_click_closes_tabs",t("Zamykanie kart środkowym przyciskiem"),t("Środkowy przycisk zamyka otwartą kartę i zachowuje przypięcie."),vec![],"",A::None));
     rows.push(preference_spec(0,K::Language,"",t("Język interfejsu"),t("Zmiana zadziała po ponownym uruchomieniu Zitter."),vec![t("Systemowy").into(),"Polski".into(),"English".into()],"",A::None));
@@ -3542,6 +3543,16 @@ fn layout_item(i: &ffi::Item, out: &mut Vec<ffi::Primitive>) {
             } else {
                 emit(cx-8.0,cy-8.0,16.0,16.0,0.0,i.ink,"",0.0,false);
             }
+            if i.glyph!=11 && !i.detail.is_empty() && i.badge>>24!=0 {
+                // A count badge (the bell's unread notifications): a 14 px `accent`
+                // pill at the top-right corner, cut out of the surface by a 2 px
+                // ring in `edge`, the number in `detail_ink`.
+                let w=(6.0+5.5*i.detail.chars().count() as f32).max(14.0);
+                let (bx,by)=(i.x+i.width-w,i.y+1.0);
+                if i.edge>>24!=0 {emit(bx-2.0,by-2.0,w+4.0,18.0,9.0,i.edge,"",0.0,false);}
+                emit(bx,by,w,14.0,7.0,i.badge,"",0.0,false);
+                emit(bx,by,w,14.0,0.0,i.detail_ink,&i.detail,9.5,true);
+            }
         }
         if i.focused {emit(i.x+2.0,i.y+i.height-3.0,(i.width-4.0).max(0.0),2.0,1.0,i.ink,"",0.0,false);}
         for p in out[first_primitive..].iter_mut() {
@@ -4357,17 +4368,19 @@ mod tests {
     #[test] fn preference_catalogue_preserves_categories_counts_and_platform_gate() {
         use ffi::PreferenceRowKind as K;use ffi::PreferenceActionKind as A;
         let windows_options = usize::from(cfg!(target_os = "windows"));
-        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam","User-Agent"]);assert_eq!(c.descriptions.len(),13);assert_eq!(c.rows.len(),90 + windows_options);
-        let mut counts=[0;13];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[14 + windows_options,5,9,7,12,5,5,3,1,7,12,5,5]);
+        let windows_pickers = usize::from(cfg!(target_os = "windows"));
+        let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam","User-Agent"]);assert_eq!(c.descriptions.len(),13);assert_eq!(c.rows.len(),90 + windows_options + windows_pickers);
+        let mut counts=[0;13];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[14 + windows_options + windows_pickers,5,9,7,12,5,5,3,1,7,12,5,5]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),45 + windows_options);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
-        let no=preference_catalogue(false);assert_eq!(no.rows.len(),89 + windows_options);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
+        let no=preference_catalogue(false);assert_eq!(no.rows.len(),89 + windows_options + windows_pickers);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }
     #[test] fn preference_catalogue_registered_store_keys_keep_their_control_kinds() {
         use ffi::PreferenceRowKind as K;let c=preference_catalogue(true);let mut keys=std::collections::BTreeSet::new();
         for row in &c.rows{if row.kind==K::Text||row.kind==K::Toggle||row.kind==K::Picker{assert!(!row.key.is_empty());assert!(keys.insert(row.key.clone()));}else{assert!(row.key.is_empty());}}
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle && r.key!="notifications_menu_visible" && r.key!="middle_click_closes_tabs").map(|r|r.key.as_str()).collect::<Vec<_>>(),["image_link_previews","shift_click_peek","online_search_suggestions","clean_address_copies","referrers","https_only","third_party_cookies","do_not_track","fingerprint_protection","preconnect","link_auditing","camera","microphone","location","notifications","clipboard","javascript","images","popups","sound","save_passwords","auto_signin","download_prompt","spellcheck","online_spellcheck","caret_browsing","hardware_acceleration","assistant_enabled","assistant_tabs","assistant_pages","assistant_actions","assistant_history","assistant_web","assistant_confirm_clicks","assistant_background","assistant_confirm_background","ad_blocking","ad_blocking_stealth","user_agent_client_hints"]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).map(|r|r.key.as_str()).collect::<Vec<_>>(),["font_standard","font_serif","font_sans","font_fixed","accept_languages","dns_templates"]);
-        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","assistant_concurrency"]);
+        let pickers:&[&str]=if cfg!(target_os = "windows"){&["system_notifications","zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","assistant_concurrency"]}else{&["zoom","font_size","minimum_font_size","fixed_font_size","dns_mode","assistant_concurrency"]};
+        assert_eq!(c.rows.iter().filter(|r|r.kind==K::Picker).map(|r|r.key.as_str()).collect::<Vec<_>>(),pickers);
         for key in ["hardware_acceleration","dns_mode","dns_templates"]{let row=c.rows.iter().find(|r|r.key==key).unwrap();assert!(row.detail.contains("całej aplikacji"));}
     }
     #[test] fn preference_catalogue_editor_and_action_accessibility_retains_native_copy() {

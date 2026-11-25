@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -75,6 +76,7 @@
 #include "content/public/browser/notification_event_dispatcher.h"
 #include "content/public/browser/platform_notification_context.h"
 #include "third_party/blink/public/common/notifications/platform_notification_data.h"
+#include "third_party/blink/public/mojom/notifications/notification.mojom.h"
 #include "base/timer/timer.h"
 #endif
 #include "content/public/browser/back_forward_cache.h"
@@ -2204,15 +2206,26 @@ class WindowsWebNotifications final : public content::PlatformNotificationServic
     if (profile_->site_permissions().NotificationSetting(url::Origin::Create(origin)) != 1)
       return;
     entries_.insert_or_assign(id, origin);
+    // Action buttons reach only a service worker's notificationclick event.
+    std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions;
+    for (size_t index = 0; persistent && index < data.actions.size() && index < 2; ++index) {
+      if (data.actions[index]->type == blink::mojom::NotificationActionType::TEXT)
+        continue;
+      actions.emplace_back(data.actions[index]->title,
+                           base::BindRepeating(&WindowsWebNotifications::Click,
+                                               weak_factory_.GetWeakPtr(), id, persistent,
+                                               std::optional<int>(static_cast<int>(index))));
+    }
     show_.Run(id, base::UTF8ToUTF16(url::Origin::Create(origin).Serialize()),
               data.title, data.body, base::BindRepeating(
-                  &WindowsWebNotifications::Click, weak_factory_.GetWeakPtr(), id, persistent),
-              {}, base::BindRepeating(&WindowsWebNotifications::CloseNotification,
+                  &WindowsWebNotifications::Click, weak_factory_.GetWeakPtr(), id, persistent,
+                  std::nullopt),
+              std::move(actions), base::BindRepeating(&WindowsWebNotifications::CloseNotification,
                                       weak_factory_.GetWeakPtr(), id));
     if (!persistent)
       content::NotificationEventDispatcher::GetInstance()->DispatchNonPersistentShowEvent(id);
   }
-  void Click(const std::string& id, bool persistent) {
+  void Click(const std::string& id, bool persistent, std::optional<int> action) {
     const auto entry = entries_.find(id);
     if (entry == entries_.end() || profile_->ShutdownStarted())
       return;
@@ -2223,7 +2236,7 @@ class WindowsWebNotifications final : public content::PlatformNotificationServic
     auto* dispatcher = content::NotificationEventDispatcher::GetInstance();
     if (persistent) {
       dispatcher->DispatchNotificationClickEvent(
-          &*profile_, id, origin, std::nullopt, std::nullopt, base::DoNothing());
+          &*profile_, id, origin, action, std::nullopt, base::DoNothing());
     } else {
       dispatcher->DispatchNonPersistentClickEvent(id, base::DoNothing());
     }

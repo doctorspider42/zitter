@@ -406,10 +406,42 @@ copy, run `out/ZitterWinContent/zitter.exe` with a disposable
   update, the original user session waits for elevated setup to finish, then
   starts the browser.
 - Website notifications use Zitter's site permission prompt. Once allowed,
-  `new Notification(…)` shows an in-app banner and adds an entry for the
-  current profile in the tab sidebar's Notifications panel. To try the flow,
-  run `python -m http.server --bind 127.0.0.1 --directory testdata 8765`
-  and open `http://127.0.0.1:8765/notification_probe.html` in Zitter.
+  `new Notification(…)` and `registration.showNotification(…)` show an in-app
+  banner and add an entry for the profile in the tab sidebar's Notifications
+  panel. As **Settings → Appearance → Windows notifications** says, Zitter
+  also mirrors each one as a Windows toast (`system_toasts_win.cc`):
+  - **Only in Zitter**: no toasts.
+  - **When Zitter is in the background** (the default): a toast when the
+    in-app banner could go unseen, that is when another app has the focus,
+    the window is minimized or hidden, or the window shows another profile.
+  - **Always**: a toast for every notification.
+
+  The in-app center stays the source of truth: a click, an action button or
+  a dismissal on either side closes both. Toasts reach the running process
+  through their Activated event (no COM activator), so Zitter removes its
+  toasts when it quits. Windows shows toasts from an unpackaged app only
+  when its AppUserModelID has a Start menu shortcut or an
+  `HKCU\Software\Classes\AppUserModelId` entry; without the installer's
+  shortcut Zitter writes that entry itself. When Windows turns Zitter's
+  toasts off, Zitter says so once per session with a button to the Windows
+  settings. Sites have no push service yet (`GetPushMessagingService` returns
+  null), so a site notifies only while one of its pages is open.
+- The in-app notifications follow the "Zitter — Notifications" design canvas
+  (https://claude.ai/artifact/PHBkkWqLLkWfhA2v1Soyqw): the bell shows the
+  unread count; the panel is a card above the footer with rows grouped into
+  "Now" and "Earlier" (a site tile, host and time, title, two lines of text,
+  the site's actions, ✓ and × on hover); a new notification shows as a banner
+  at the top right of the page with ✓, × and an 8-second countdown that hover
+  pauses. Opening a notification or ✓ marks it read; × removes it.
+- The notification test bench is `tools/notification_lab.py`:
+  - `serve` hosts `testdata/notification_probe.html` on
+    `http://127.0.0.1:8765/`: page and service worker notifications, delayed
+    sends (to switch away first), bursts, tags, action buttons, a push check
+    and an event log;
+  - `doctor` reads what Windows does with Zitter's toasts (the account switch,
+    the AppUserModelID registration, Zitter's switch in Windows settings);
+  - `toast` shows a toast under Zitter's AppUserModelID without Zitter, to
+    tell a Zitter bug from a Windows setting. `--dev` picks the Dev build's ID.
 - Passwords open Chrome's password manager (`chrome://password-manager`) as a
   tab of the active space, as History opens `chrome://history`. The |z⟩ menu
   has „Importuj z przeglądarki…” instead of the passwords entry.
@@ -625,8 +657,9 @@ by name in the same directory: `sidebar_scene_unittests`,
 - **Notifications.** Sites and extensions share the profile's in-app
   notification center. Open **Notifications** beside **Downloads** in the tab
   panel. **Settings → Appearance → Notifications in the tab panel** controls
-  whether the bell appears. Extensions can create, update, query and clear basic
-  notifications and receive close, click and button events.
+  whether the bell appears, and **Windows notifications** whether they also
+  go to the Windows notification center. Extensions can create, update, query
+  and clear basic notifications and receive close, click and button events.
 - **Native messaging.** Extensions with `nativeMessaging` can connect to
   registered Windows executable hosts. Zitter also discovers Chromium and Chrome
   registrations in the 32-bit and 64-bit registry views. The manifest must

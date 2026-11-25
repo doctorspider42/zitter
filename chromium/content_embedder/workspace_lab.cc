@@ -292,6 +292,7 @@
 #elif BUILDFLAG(IS_WIN)
 #include "chromium/prototype/workspace_frame_win.h"
 #include "password_authenticator_win.h"
+#include "system_toasts_win.h"
 #endif
 #include "url/url_constants.h"
 
@@ -2938,6 +2939,13 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
     hardware_acceleration_ = session.FindBool("hardware_acceleration").value_or(true);
     notifications_menu_visible_ = session.FindBool("notifications_menu_visible").value_or(true);
     shell_->SetNotificationsMenuVisible(notifications_menu_visible_);
+#if BUILDFLAG(IS_WIN)
+    system_notifications_ =
+        session.FindInt("system_notifications").value_or(kDefaultSystemNotificationMode);
+    ClearPreviousSystemToasts();
+    if (system_notifications_ != static_cast<int>(SystemNotificationMode::kNever))
+      EnsureSystemToastRegistration();
+#endif
     dns_mode_ = session.FindInt("dns_mode").value_or(0);
     if (const auto* templates = session.FindString("dns_templates"))
       dns_templates_ = *templates;
@@ -3786,13 +3794,14 @@ void WorkspaceLab::ConfigureProfileForWorkspace(ProfileContext& profile) {
               auto owner = profile_id.Run();
               if (owner.empty())
                 return;
-              lab->shell_->ShowWebNotification(
+              lab->PresentWebNotification(
                   std::move(owner), id, std::move(sender), std::move(title),
                   std::move(body), std::move(click), std::move(actions), std::move(dismiss));
             }, weak_factory_.GetWeakPtr(), profile_id),
         base::BindRepeating(
             [](base::WeakPtr<WorkspaceLab> lab, base::RepeatingCallback<std::string()> profile_id,
                const std::string& id) {
+              CloseSystemToast(id);
               if (lab && lab->shell_)
                 lab->shell_->RemoveWebNotification(profile_id.Run(), id);
             }, weak_factory_.GetWeakPtr(), profile_id));
@@ -4304,6 +4313,10 @@ void WorkspaceLab::FinishBrowserImport(bool ok, std::string error) {
 }
 
 WorkspaceLab::~WorkspaceLab() {
+#if BUILDFLAG(IS_WIN)
+  if (!private_owner_)
+    CloseAllSystemToasts();
+#endif
   password_csv_import_.reset();
   if (extension_shortcut_target_ && widget_ && widget_->GetFocusManager())
     widget_->GetFocusManager()->UnregisterAccelerators(extension_shortcut_target_.get());
@@ -6232,6 +6245,15 @@ void WorkspaceLab::ShowPermissionPrompt(std::u16string title,
       },
       weak_factory_.GetWeakPtr()));
   permission_prompt_widget_->SetColorModeOverride(widget_->color_mode_override());
+#if BUILDFLAG(IS_WIN)
+  // Without an anchor the prompt can land around the screen origin, half off
+  // screen, and a site's request then goes unanswered. Hang it under the
+  // toolbar, centered over the window it asks for.
+  if (auto* bubble = permission_prompt_delegate_->AsBubbleDialogDelegate()) {
+    const gfx::Rect window = widget_->GetWindowBoundsInScreen();
+    bubble->SetAnchorRect(gfx::Rect(window.x(), window.y() + 40, window.width(), 0));
+  }
+#endif
   permission_prompt_widget_->Show();
   const bool tab_probe = site_permission_probe_phase_.starts_with("media-tab-");
 #if BUILDFLAG(IS_WIN)
@@ -7929,6 +7951,73 @@ std::optional<std::pair<size_t, size_t>> WorkspaceLab::TabForPage(
   return std::nullopt;
 }
 
+#if BUILDFLAG(IS_WIN)
+void WorkspaceLab::PresentWebNotification(
+    std::string profile, const std::string& id, std::u16string sender, std::u16string title,
+    std::u16string body, base::RepeatingClosure click,
+    std::vector<std::pair<std::u16string, base::RepeatingClosure>> actions,
+    base::RepeatingClosure dismiss) {
+  // The in-app center keeps every notification; a Windows toast mirrors it
+  // when the in-app banner could go unseen.
+  const auto mode = static_cast<SystemNotificationMode>(system_notifications_);
+  const bool banner_seen =
+      ZitterIsForeground() && shell_->ShowsWebNotificationBanner(profile);
+  const bool toast = mode == SystemNotificationMode::kAlways ||
+                     (mode == SystemNotificationMode::kInBackground && !banner_seen);
+  if (toast) {
+    SystemToast system;
+    system.id = id;
+    system.title = title;
+    system.body = body;
+    system.attribution = sender;
+    std::vector<base::RepeatingClosure> handlers;
+    for (const auto& [label, handler] : actions) {
+      system.actions.push_back(label);
+      handlers.push_back(handler);
+    }
+    system.click = base::BindRepeating(
+        [](base::WeakPtr<WorkspaceLab> lab, base::RepeatingClosure click) {
+          if (lab && lab->widget_) {
+            if (lab->widget_->IsMinimized())
+              lab->widget_->Restore();
+            lab->widget_->Show();
+            lab->widget_->Activate();
+          }
+          click.Run();
+        }, weak_factory_.GetWeakPtr(), click);
+    system.action = base::BindRepeating(
+        [](std::vector<base::RepeatingClosure> handlers, size_t index) {
+          if (index < handlers.size())
+            handlers[index].Run();
+        }, std::move(handlers));
+    system.dismissed = dismiss;
+    ShowSystemToast(std::move(system),
+                    base::BindOnce(&WorkspaceLab::OnSystemToastShown,
+                                   weak_factory_.GetWeakPtr()));
+  }
+  shell_->ShowWebNotification(std::move(profile), id, std::move(sender), std::move(title),
+                              std::move(body), std::move(click), std::move(actions),
+                              std::move(dismiss));
+}
+
+void WorkspaceLab::OnSystemToastShown(bool shown, SystemToastState state) {
+  if (shown || system_toast_warning_shown_ || !shell_)
+    return;
+  LOG(WARNING) << "Windows did not show a Zitter notification: "
+               << SystemToastStateName(state);
+  if (state != SystemToastState::kDisabledForApplication &&
+      state != SystemToastState::kDisabledForUser) {
+    return;
+  }
+  // Once per session: the person chose Windows notifications, but Windows
+  // turned them off for Zitter or for the whole account.
+  system_toast_warning_shown_ = true;
+  shell_->ShowToast(prototype::T(u"Windows blokuje powiadomienia "), prototype::T(u"Zittera"),
+                    base::BindOnce(&OpenWindowsNotificationSettings),
+                    prototype::T(u"Ustawienia"));
+}
+#endif
+
 void WorkspaceLab::ActivatePage(content::WebContents* page) {
   const auto location = TabForPage(page);
   if (!location || saving_session_ || before_unload_batch_.pending())
@@ -9487,6 +9576,8 @@ BrowserPreferences WorkspaceLab::ReadPreferences() const {
 #if BUILDFLAG(IS_WIN)
     settings["notifications_menu_visible"] = {.value = notifications_menu_visible_,
                                               .editable = CanEditWorkspace()};
+    settings["system_notifications"] = {.value = system_notifications_,
+                                        .editable = CanEditWorkspace()};
     settings["hardware_acceleration"] = {.value = hardware_acceleration_,
                                          .editable = CanEditWorkspace()};
 #endif
@@ -9622,6 +9713,20 @@ bool WorkspaceLab::WritePreference(std::string key, int value) {
     return CanEditWorkspace() && value >= 0 && static_cast<size_t>(value) < sizes.size() &&
            profile.site_permissions().SetBrowsingNumber(key, sizes[value]);
   }
+#if BUILDFLAG(IS_WIN)
+  if (key == "system_notifications") {
+    if (private_owner_ || !CanEditWorkspace() || value < 0 || value > 2)
+      return false;
+    system_notifications_ = value;
+    system_toast_warning_shown_ = false;
+    if (value == static_cast<int>(SystemNotificationMode::kNever))
+      CloseAllSystemToasts();
+    else
+      EnsureSystemToastRegistration();
+    PersistWorkspaceChanges();
+    return true;
+  }
+#endif
   if (value != 0 && value != 1)
     return false;
   if (ProfilePermissionController::IsBrowsingFlag(key))
@@ -13963,6 +14068,10 @@ base::DictValue WorkspaceLab::CaptureSession() const {
     session.Set("hardware_acceleration", false);
   if (!notifications_menu_visible_)
     session.Set("notifications_menu_visible", false);
+#if BUILDFLAG(IS_WIN)
+  if (system_notifications_ != kDefaultSystemNotificationMode)
+    session.Set("system_notifications", system_notifications_);
+#endif
   if (!middle_click_closes_tabs_)
     session.Set("middle_click_closes_tabs", false);
   if (image_link_previews_)

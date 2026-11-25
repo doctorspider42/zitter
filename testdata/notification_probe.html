@@ -2,60 +2,313 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Zitter notification test</title>
+<title>Zitter notification lab</title>
 <style>
-  :root { color-scheme: light dark; font: 1rem system-ui; }
-  body { max-width: 34rem; margin: 4rem auto; padding: 0 1.25rem; }
-  button { font: inherit; padding: .6rem 1rem; }
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f5f8; --card: #fff; --text: #1d1b22; --muted: #6b6775; --line: #e2dfe8;
+    --accent: #6c4cf0; --ok: #1f8a4c; --warn: #b26a00; --bad: #c4372d;
+    font: 15px/1.45 system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17151c; --card: #211f28; --text: #ece9f2; --muted: #9a95a6; --line: #34313d;
+            --accent: #9b85ff; --ok: #4cc485; --warn: #f0a640; --bad: #ff6b5e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); }
+  main { max-width: 60rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1rem; margin: 0 0 .75rem; }
+  p.lead { color: var(--muted); margin: 0 0 1.5rem; }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: .35rem .75rem; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+  .buttons { display: flex; flex-direction: column; gap: .5rem; }
+  button { font: inherit; padding: .55rem .8rem; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--bg); color: var(--text); text-align: left; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button small { display: block; color: var(--muted); font-size: .8rem; }
+  button.primary small { color: #ffffffcc; }
+  label { display: flex; gap: .5rem; align-items: center; color: var(--muted); margin-top: .5rem; }
+  input[type=number] { width: 4rem; font: inherit; }
+  #log { font: 12.5px/1.5 ui-monospace, Consolas, monospace; max-height: 22rem; overflow: auto;
+         margin: 0; white-space: pre-wrap; }
+  #log .t { color: var(--muted); }
+  .log-head { display: flex; justify-content: space-between; align-items: center; }
+  .log-head button { padding: .25rem .6rem; }
 </style>
-<h1>Notification test</h1>
-<p>Send a web notification from this site to the current Zitter profile.</p>
-<button type="button">Send test notification</button>
-<p role="status"></p>
-<script>
-  const button = document.querySelector('button');
-  const status = document.querySelector('[role="status"]');
-  let count = 0;
+<main>
+  <h1>Notification lab</h1>
+  <p class="lead">Sends every kind of web notification Zitter supports and logs what comes
+    back. Use the delayed buttons, then switch to another app or minimize Zitter to check
+    the Windows notification center.</p>
 
-  button.addEventListener('click', async () => {
+  <div class="grid">
+    <section>
+      <h2>Environment</h2>
+      <dl>
+        <dt>Permission</dt><dd id="permission">…</dd>
+        <dt>Secure context</dt><dd id="secure">…</dd>
+        <dt>Service worker</dt><dd id="sw">…</dd>
+        <dt>Push</dt><dd id="push">…</dd>
+        <dt>Page</dt><dd id="visibility">…</dd>
+      </dl>
+      <div class="buttons" style="margin-top: 1rem">
+        <button type="button" id="request">Ask for permission</button>
+        <button type="button" id="check-push">Try a push subscription
+          <small>Sites like Gmail or Slack need it to notify with their tab closed</small></button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Page notifications</h2>
+      <div class="buttons">
+        <button type="button" class="primary" data-send="page">Send now</button>
+        <button type="button" data-send="page" data-delay="1">Send after a delay
+          <small>Switch away from Zitter while it counts down</small></button>
+        <button type="button" data-send="burst">Send a burst</button>
+        <button type="button" data-send="tag">Replace by tag
+          <small>Two notifications with one tag: only the second should stay</small></button>
+        <button type="button" data-send="long">Long title and body</button>
+        <button type="button" id="close-last">Close the last one from the page</button>
+      </div>
+      <label>Delay <input type="number" id="delay" value="5" min="1" max="120"> s</label>
+      <label>Burst <input type="number" id="burst" value="5" min="2" max="30"> notifications</label>
+    </section>
+
+    <section>
+      <h2>Service worker notifications</h2>
+      <div class="buttons">
+        <button type="button" class="primary" data-send="sw">Send now</button>
+        <button type="button" data-send="sw" data-delay="1">Send after a delay</button>
+        <button type="button" data-send="sw-actions">With two action buttons</button>
+        <button type="button" data-send="sw-sticky">Require interaction</button>
+        <button type="button" data-send="sw-silent">Silent</button>
+        <button type="button" id="sw-list">List shown notifications</button>
+      </div>
+    </section>
+  </div>
+
+  <section style="margin-top: 1rem">
+    <div class="log-head"><h2>Event log</h2><button type="button" id="clear">Clear</button></div>
+    <pre id="log" aria-live="polite"></pre>
+  </section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const logBox = $('log');
+  let count = 0;
+  let last = null;
+  let registration = null;
+
+  function log(text, kind = '') {
+    const line = document.createElement('div');
+    const time = new Date().toLocaleTimeString([], { hour12: false });
+    line.innerHTML = `<span class="t">${time}</span> `;
+    const body = document.createElement('span');
+    body.textContent = text;
+    if (kind) body.className = kind;
+    line.append(body);
+    logBox.prepend(line);
+  }
+
+  function setState(id, text, kind) {
+    $(id).textContent = text;
+    $(id).className = kind;
+  }
+
+  function refreshPermission() {
     if (!('Notification' in window)) {
-      status.textContent = 'Open this page on localhost or over HTTPS.';
+      setState('permission', 'unsupported', 'bad');
       return;
     }
+    const value = Notification.permission;
+    setState('permission', value, value === 'granted' ? 'ok' : value === 'denied' ? 'bad' : 'warn');
+  }
 
-    button.disabled = true;
+  function refreshVisibility() {
+    setState('visibility', `${document.visibilityState}${document.hasFocus() ? ', focused' : ''}`, '');
+  }
+
+  async function ensurePermission() {
+    if (!('Notification' in window)) {
+      log('Notification API is missing. Open this page on localhost or over HTTPS.', 'bad');
+      return false;
+    }
+    if (Notification.permission === 'default') {
+      log('Asking for permission…');
+      await Notification.requestPermission();
+      refreshPermission();
+    }
+    if (Notification.permission !== 'granted') {
+      log(`Permission is "${Notification.permission}". Allow notifications in the site permissions.`, 'bad');
+      return false;
+    }
+    return true;
+  }
+
+  function watch(notification, label) {
+    notification.addEventListener('show', () => log(`${label}: show`, 'ok'));
+    notification.addEventListener('click', () => { log(`${label}: click`, 'ok'); window.focus(); });
+    notification.addEventListener('close', () => log(`${label}: close`));
+    notification.addEventListener('error', () => log(`${label}: error`, 'bad'));
+    last = notification;
+  }
+
+  function pageNotification(title, options) {
+    const label = `#${++count}`;
+    watch(new Notification(`${title} ${label}`, options), label);
+    log(`${label}: requested (page)`);
+  }
+
+  async function swNotification(title, options) {
+    if (!registration) {
+      log('No service worker registration.', 'bad');
+      return;
+    }
+    const label = `#${++count}`;
+    await registration.showNotification(`${title} ${label}`, { ...options, data: { label } });
+    log(`${label}: requested (service worker)`);
+  }
+
+  const senders = {
+    page: () => pageNotification('Page notification', { body: 'Sent with new Notification().' }),
+    burst: () => {
+      const total = Math.min(30, Math.max(2, Number($('burst').value) || 5));
+      for (let i = 0; i < total; i++)
+        pageNotification('Burst', { body: `Notification ${i + 1} of ${total}.` });
+    },
+    tag: () => {
+      pageNotification('Tagged (first, should vanish)', { body: 'Tag: zitter-lab.', tag: 'zitter-lab' });
+      setTimeout(() => pageNotification('Tagged (second, should stay)',
+                                        { body: 'Tag: zitter-lab.', tag: 'zitter-lab' }), 600);
+    },
+    long: () => pageNotification(
+        'A very long notification title that keeps going to check how Windows and Zitter wrap it',
+        { body: 'Body with Polish characters: zażółć gęślą jaźń. ' + 'And a lot more text. '.repeat(12) +
+                'Markup must stay literal: <b>not bold</b> & "quotes".' }),
+    sw: () => swNotification('Service worker notification', { body: 'Sent with registration.showNotification().' }),
+    'sw-actions': () => swNotification('Two actions', {
+      body: 'Pick one of the buttons.',
+      actions: [{ action: 'yes', title: 'Yes' }, { action: 'no', title: 'No' }],
+    }),
+    'sw-sticky': () => swNotification('Require interaction', { body: 'Stays until you act.', requireInteraction: true }),
+    'sw-silent': () => swNotification('Silent', { body: 'Should not play a sound.', silent: true }),
+  };
+
+  document.querySelectorAll('[data-send]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!(await ensurePermission()))
+        return;
+      const send = senders[button.dataset.send];
+      if (!button.dataset.delay) {
+        await send();
+        return;
+      }
+      let left = Math.min(120, Math.max(1, Number($('delay').value) || 5));
+      log(`Sending in ${left} s. Switch away from Zitter now.`, 'warn');
+      const timer = setInterval(async () => {
+        if (--left > 0)
+          return;
+        clearInterval(timer);
+        await send();
+      }, 1000);
+    });
+  });
+
+  $('request').addEventListener('click', async () => {
+    await ensurePermission();
+    refreshPermission();
+  });
+
+  $('close-last').addEventListener('click', () => {
+    if (!last) {
+      log('Nothing to close yet.', 'warn');
+      return;
+    }
+    last.close();
+    log('Asked the page notification to close.');
+  });
+
+  $('sw-list').addEventListener('click', async () => {
+    if (!registration)
+      return;
+    const shown = await registration.getNotifications();
+    log(`Service worker sees ${shown.length} notification(s)` +
+        (shown.length ? ': ' + shown.map((n) => n.title).join(' | ') : '.'));
+  });
+
+  $('check-push').addEventListener('click', async () => {
+    if (!registration || !('pushManager' in registration)) {
+      setState('push', 'unsupported', 'bad');
+      log('PushManager is missing.', 'bad');
+      return;
+    }
     try {
-      let permission = Notification.permission;
-      if (permission === 'default') {
-        permission = await Notification.requestPermission();
-      }
-      if (permission === 'denied') {
-        status.textContent = 'Allow notifications in the site permissions, then try again.';
-        return;
-      }
-      if (permission !== 'granted') {
-        status.textContent = 'Notification permission is required. Click to try again.';
-        return;
-      }
-
-      const notification = new Notification('Zitter test ' + (++count), {
-        body: 'This notification was sent by the test page.',
-      });
-      notification.addEventListener('show', () => {
-        status.textContent = 'Notification shown. Open Notifications in the tab sidebar.';
-      });
-      notification.addEventListener('click', () => {
-        status.textContent = 'Notification clicked.';
-      });
-      notification.addEventListener('error', () => {
-        status.textContent = 'The browser could not show the notification.';
-      });
-      status.textContent = 'Notification requested.';
+      // A throwaway P-256 key: only the browser's answer matters here.
+      const key = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U';
+      const padded = key.replace(/-/g, '+').replace(/_/g, '/');
+      const bytes = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+      const subscription = await registration.pushManager.subscribe(
+          { userVisibleOnly: true, applicationServerKey: bytes });
+      setState('push', 'supported', 'ok');
+      log(`Push subscription created: ${subscription.endpoint.slice(0, 60)}…`, 'ok');
+      await subscription.unsubscribe();
     } catch (error) {
-      status.textContent = error.message;
-    } finally {
-      button.disabled = false;
+      setState('push', 'unavailable', 'warn');
+      log(`Push subscription failed: ${error.name}: ${error.message}. ` +
+          'Notifications then arrive only while the site is open in a tab.', 'warn');
     }
   });
+
+  $('clear').addEventListener('click', () => { logBox.textContent = ''; });
+
+  document.addEventListener('visibilitychange', () => {
+    refreshVisibility();
+    log(`Page is now ${document.visibilityState}.`);
+  });
+  window.addEventListener('focus', refreshVisibility);
+  window.addEventListener('blur', refreshVisibility);
+
+  async function start() {
+    refreshPermission();
+    refreshVisibility();
+    setState('secure', String(window.isSecureContext), window.isSecureContext ? 'ok' : 'bad');
+    if (navigator.permissions) {
+      try {
+        const status = await navigator.permissions.query({ name: 'notifications' });
+        status.addEventListener('change', () => {
+          refreshPermission();
+          log(`Permission changed to "${Notification.permission}".`);
+        });
+      } catch (_) {}
+    }
+    if (!('serviceWorker' in navigator)) {
+      setState('sw', 'unsupported', 'bad');
+      return;
+    }
+    try {
+      registration = await navigator.serviceWorker.register('notification_sw.js');
+      await navigator.serviceWorker.ready;
+      setState('sw', 'ready', 'ok');
+      setState('push', 'pushManager' in registration ? 'not checked' : 'unsupported',
+               'pushManager' in registration ? '' : 'bad');
+    } catch (error) {
+      setState('sw', 'failed', 'bad');
+      log(`Service worker registration failed: ${error.message}`, 'bad');
+    }
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      const { type, label, action } = event.data || {};
+      if (type === 'click')
+        log(`${label}: click${action ? ` on action "${action}"` : ''} (service worker)`, 'ok');
+      else if (type === 'close')
+        log(`${label}: close (service worker)`);
+    });
+  }
+  start();
 </script>
 </html>

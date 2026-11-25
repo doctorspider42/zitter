@@ -72,6 +72,7 @@ bool IsValidSession(const base::DictValue& session) {
                                          session.contains("shift_click_peek") +
                                          session.contains("hardware_acceleration") +
                                          session.contains("notifications_menu_visible") +
+                                         session.contains("system_notifications") +
                                          session.contains("middle_click_closes_tabs") +
                                          session.contains("image_link_previews") +
                                          session.contains("dns_mode") +
@@ -129,6 +130,10 @@ bool IsValidSession(const base::DictValue& session) {
     return false;
   if (session.contains("hardware_acceleration") &&
       !session.FindBool("hardware_acceleration")) {
+    return false;
+  }
+  if (const auto* mode = session.Find("system_notifications");
+      mode && (!mode->is_int() || mode->GetInt() < 0 || mode->GetInt() > 2)) {
     return false;
   }
   if (const auto* mode = session.Find("dns_mode");

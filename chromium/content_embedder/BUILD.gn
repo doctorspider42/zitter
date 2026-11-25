@@ -745,6 +745,8 @@ if (is_mac) {
                 "password_authenticator_win.cc",
                 "password_authenticator_win.h",
                 "spelling_win.cc",
+                "system_toasts_win.cc",
+                "system_toasts_win.h",
                 "ui_automation_win.cc",
                 "updates_win.cc",
                 "updates_win.h",
