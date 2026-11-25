@@ -16,6 +16,7 @@
 
 #include "base/base_paths.h"
 #include "base/barrier_closure.h"
+#include "base/i18n/language_tag.h"
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/command_line.h"
@@ -643,7 +644,9 @@ class WindowsLabBrowserClient final : public LabBrowserClientBase {
         *this);
   }
 
-  std::string GetApplicationLocale() override { return "en-US"; }
+  base::i18n::LanguageTag GetApplicationLocale() override {
+    return base::i18n::GetKnownLanguageTag("en-US");
+  }
   bool ShouldEnableStrictSiteIsolation() override { return true; }
 
   void ConfigureNetworkContextParams(

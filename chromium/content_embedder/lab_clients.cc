@@ -1220,7 +1220,7 @@ bool LabBrowserClientBase::CanCreateWindow(
     return true;
   // Automatic document picture-in-picture is authorised by the browser
   // rather than a user gesture, like Chrome.
-  if (disposition == WindowOpenDisposition::NEW_PICTURE_IN_PICTURE && opener &&
+  if (disposition == WindowOpenDisposition::kNewPictureInPicture && opener &&
       PictureInPicture::Get().AllowsAutomaticWindow(
           content::WebContents::FromRenderFrameHost(opener))) {
     return true;

@@ -235,7 +235,7 @@ class Notifications {
       return;
     }
     extensions::EventRouter::Get(context)->DispatchEventToExtension(
-        entry.extension, std::make_unique<extensions::Event>(value, std::move(name), std::move(args), context));
+        entry.extension, std::make_unique<extensions::Event>(value, std::move(name), base::MakeRefCounted<extensions::EventArgs>(std::move(args)), context));
   }
 
   Entries entries_;

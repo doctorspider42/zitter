@@ -1195,7 +1195,7 @@ class WorkspaceWebView final : public LabWebView {
     if (contents && !devtools_) {
       // This view hosts a borrowed frontend and never creates WebContents.
       devtools_ = AddChildViewAt(std::make_unique<views::WebView>(), 0);
-      devtools_->set_allow_accelerators(true);
+      devtools_->set_allow_accelerators_deprecated(true);
     }
     if (!devtools_)
       return;
@@ -1519,12 +1519,12 @@ class WorkspaceWebView final : public LabWebView {
       const GURL& target_url, WindowOpenDisposition disposition,
       const blink::mojom::WindowFeatures& features, bool user_gesture,
       bool* was_blocked) override {
-    if (disposition == WindowOpenDisposition::NEW_PICTURE_IN_PICTURE) {
+    if (disposition == WindowOpenDisposition::kNewPictureInPicture) {
       return LabWebView::AddNewContents(source, std::move(page), target_url, disposition,
                                         features, user_gesture, was_blocked);
     }
     const bool shift_link = user_gesture &&
-        disposition == WindowOpenDisposition::NEW_WINDOW && ConsumeShiftLink(target_url);
+        disposition == WindowOpenDisposition::kNewWindow && ConsumeShiftLink(target_url);
     auto* adopted = adopt_page_.Run(source, std::move(page), target_url,
                                     disposition, user_gesture, shift_link);
     if (!adopted && was_blocked)
@@ -1637,10 +1637,10 @@ void SetInitialPageBackground(content::WebContents& page, views::Widget& widget)
 }
 
 bool IsNewPageDisposition(WindowOpenDisposition disposition) {
-  return disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB ||
-         disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB ||
-         disposition == WindowOpenDisposition::NEW_WINDOW ||
-         disposition == WindowOpenDisposition::NEW_POPUP;
+  return disposition == WindowOpenDisposition::kNewForegroundTab ||
+         disposition == WindowOpenDisposition::kNewBackgroundTab ||
+         disposition == WindowOpenDisposition::kNewWindow ||
+         disposition == WindowOpenDisposition::kNewPopup;
 }
 
 bool CanOpenPageSource(content::WebContents* page) {
@@ -1701,7 +1701,6 @@ void LabViewsDelegate::OnBeforeWidgetInit(
     return;
   // Mirrors ChromeViewsDelegate::CreateNativeWidget on Windows.
   bool desktop = !(params->parent && params->child &&
-                   !params->force_software_compositing &&
                    params->type != views::Widget::InitParams::TYPE_TOOLTIP);
   if (params->parent && params->type != views::Widget::InitParams::TYPE_CONTROL &&
       params->type != views::Widget::InitParams::TYPE_WINDOW) {
@@ -6336,8 +6335,7 @@ void WorkspaceLab::RequestClipboardPromptProbe(base::TimeTicks deadline,
   auto descriptor = blink::mojom::PermissionDescriptor::New();
   descriptor->name = blink::mojom::PermissionName::CLIPBOARD_READ;
   content::PermissionRequestDescription request(
-      std::move(descriptor), /*user_gesture=*/true,
-      frame->GetLastCommittedOrigin().GetURL());
+      std::move(descriptor), /*user_gesture=*/true);
   WorkspaceProfile(active_index_)->site_permissions().RequestPermissionsFromCurrentDocument(
       frame, request, base::BindOnce(
           [](base::WeakPtr<WorkspaceLab> lab,
@@ -7858,7 +7856,7 @@ content::WebContents* WorkspaceLab::AdoptPage(
       FROM_HERE, base::BindOnce(
           &WorkspaceLab::FinishOpeningPage, weak_factory_.GetWeakPtr(),
           model_.workspaces()[*workspace].id, tab.id,
-          disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB,
+          disposition == WindowOpenDisposition::kNewBackgroundTab,
           /*resume_requests=*/true, from_peek));
   return adopted;
 }
@@ -7877,7 +7875,7 @@ content::WebContents* WorkspaceLab::OpenPageURL(
   }
   content::NavigationController::LoadURLParams load(params);
   auto* page = source;
-  if (params.disposition != WindowOpenDisposition::CURRENT_TAB) {
+  if (params.disposition != WindowOpenDisposition::kCurrentTab) {
     auto& tabs = tabs_[*workspace];
     if ((!from_peek && *workspace != active_index_) || !params.user_gesture ||
         !IsNewPageDisposition(params.disposition)) {
@@ -7885,7 +7883,7 @@ content::WebContents* WorkspaceLab::OpenPageURL(
     }
     auto* source_view = static_cast<WorkspaceWebView*>(
         from_peek ? peek_tab_->view.get() : tabs[opener->second].view.get());
-    if (shift_click_peek_ && params.disposition == WindowOpenDisposition::NEW_WINDOW &&
+    if (shift_click_peek_ && params.disposition == WindowOpenDisposition::kNewWindow &&
         params.is_renderer_initiated && !params.post_data &&
         ui::PageTransitionCoreTypeIs(params.transition, ui::PAGE_TRANSITION_LINK) &&
         source_view->ConsumeShiftLink(params.url)) {
@@ -7914,7 +7912,7 @@ content::WebContents* WorkspaceLab::OpenPageURL(
         FROM_HERE, base::BindOnce(
             &WorkspaceLab::FinishOpeningPage, weak_factory_.GetWeakPtr(),
             model_.workspaces()[*workspace].id, tab.id,
-            params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB,
+            params.disposition == WindowOpenDisposition::kNewBackgroundTab,
             /*resume_requests=*/false, from_peek));
   }
   auto navigation = page->GetController().LoadURLWithParams(load);
@@ -16123,7 +16121,7 @@ void WorkspaceLab::CheckPeekProbe(
       return;
     }
     auto params = content::OpenURLParams::CreateBrowserInitiated(
-        session_probe_url_.Resolve("/peek/next"), WindowOpenDisposition::CURRENT_TAB,
+        session_probe_url_.Resolve("/peek/next"), WindowOpenDisposition::kCurrentTab,
         ui::PAGE_TRANSITION_LINK);
     if (PeekPage()->OpenURL(params, {}) != PeekPage()) {
       fail();
@@ -16386,7 +16384,7 @@ void WorkspaceLab::CheckPopupProbe(
         content::ISOLATED_WORLD_ID_GLOBAL);
     content::OpenURLParams params = content::OpenURLParams::CreateBrowserInitiated(
         session_probe_url_.Resolve("/popup-background"),
-        WindowOpenDisposition::NEW_BACKGROUND_TAB, ui::PAGE_TRANSITION_LINK);
+        WindowOpenDisposition::kNewBackgroundTab, ui::PAGE_TRANSITION_LINK);
     params.user_gesture = true;
     if (tabs_[0].size() != 2 || !opener->OpenURL(params, {})) {
       fail();

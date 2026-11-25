@@ -209,7 +209,7 @@ class AppWebView final : public LabWebView {
       content::WebContents* source,
       const content::OpenURLParams& params,
       base::OnceCallback<void(content::NavigationHandle&)> callback) override {
-    if (params.disposition == WindowOpenDisposition::CURRENT_TAB &&
+    if (params.disposition == WindowOpenDisposition::kCurrentTab &&
         (window_->popup() || window_->app().InScope(params.url))) {
       content::NavigationController::LoadURLParams load(params);
       auto navigation = source->GetController().LoadURLWithParams(load);
@@ -229,7 +229,7 @@ class AppWebView final : public LabWebView {
       const blink::mojom::WindowFeatures&,
       bool user_gesture,
       bool* was_blocked) override {
-    if (disposition == WindowOpenDisposition::NEW_POPUP) {
+    if (disposition == WindowOpenDisposition::kNewPopup) {
       auto* popup = page.get();
       window_->AdoptPopup(std::move(page));
       return popup;

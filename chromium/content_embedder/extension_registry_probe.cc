@@ -6,6 +6,7 @@
 #include "extensions_manager.h"
 
 #include "base/base64.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/strings/string_util.h"
 #include "base/supports_user_data.h"
 #include "chromium/prototype/night_shift_config.h"
@@ -891,7 +892,7 @@ class WorkspaceExtensionTab final : public content::WebContentsObserver {
     if (!router || !router->HasEventListener(std::string(name)))
       return;
     auto event = std::make_unique<extensions::Event>(
-        type, name, std::move(args), context_,
+        type, name, base::MakeRefCounted<extensions::EventArgs>(std::move(args)), context_,
         extensions::mojom::ContextType::kPrivilegedExtension);
     event->will_dispatch_callback = std::move(scrub);
     if (filter_url.is_valid()) {
@@ -4062,7 +4063,7 @@ class LabExtensionsBrowserClient final
     return nullptr;
   }
   void BroadcastEventToRenderers(extensions::events::HistogramValue,
-                                 const std::string&, base::ListValue,
+                                 const std::string&, scoped_refptr<const extensions::EventArgs>,
                                  bool) override {}
   extensions::ExtensionCache* GetExtensionCache() override { return nullptr; }
   bool IsBackgroundUpdateAllowed() override { return false; }
@@ -4104,7 +4105,7 @@ class LabExtensionsBrowserClient final
   base::FilePath night_shift_directory_;
   std::optional<base::DictValue> night_shift_manifest_;
   std::map<BrowserContext*, ExtensionProbeFixture> night_shift_;
-  std::set<void*> contexts_;
+  RAW_PTR_EXCLUSION std::set<void*> contexts_;
   std::map<BrowserContext*, BrowserContext*> private_contexts_;
   struct FixturePreferences {
     std::unique_ptr<PrefService> service;
@@ -4206,7 +4207,7 @@ void LabExtensionsBrowserClient::Register(BrowserContext& context,
               ->DispatchEventToExtension(
                   kNightShiftId, std::make_unique<extensions::Event>(
                                      extensions::events::RUNTIME_ON_STARTUP,
-                                     "runtime.onStartup", base::ListValue()));
+                                     "runtime.onStartup", base::MakeRefCounted<extensions::EventArgs>(base::ListValue())));
         }));
   }
 }
@@ -4777,7 +4778,7 @@ void GrantWorkspaceExtensionActiveTab(content::WebContents& page,
   extensions::ActiveTabPermissionGranter::CreateForWebContents(
       &page, tab->id(), profile);
   extensions::ActiveTabPermissionGranter::FromWebContents(&page)
-      ->GrantIfRequested(extension);
+      ->GrantIfRequested(extension, base::DoNothing());
 }
 
 void DispatchWorkspaceExtensionWindowEvent(BrowserContext& context,
@@ -4793,8 +4794,8 @@ void DispatchWorkspaceExtensionWindowEvent(BrowserContext& context,
     router->BroadcastEvent(std::make_unique<extensions::Event>(
         removed ? extensions::events::WINDOWS_ON_REMOVED
                 : extensions::events::WINDOWS_ON_FOCUS_CHANGED,
-        event, base::ListValue().Append(removed || focused ? kWorkspaceExtensionWindowId
-                                                          : extension_misc::kUnknownWindowId),
+        event, base::MakeRefCounted<extensions::EventArgs>(base::ListValue().Append(removed || focused ? kWorkspaceExtensionWindowId
+                                                          : extension_misc::kUnknownWindowId)),
         &context, extensions::mojom::ContextType::kPrivilegedExtension));
   }
 }
@@ -4845,7 +4846,7 @@ void DispatchWorkspaceExtensionActionClicked(BrowserContext& context, const std:
     return;
   auto event = std::make_unique<extensions::Event>(
       extensions::events::ACTION_ON_CLICKED, "action.onClicked",
-      base::ListValue().Append(tab->MetadataFor(*extension)), &context);
+      base::MakeRefCounted<extensions::EventArgs>(base::ListValue().Append(tab->MetadataFor(*extension))), &context);
   event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
   extensions::EventRouter::Get(&context)->DispatchEventToExtension(id, std::move(event));
 }
@@ -4870,7 +4871,7 @@ void DispatchWorkspaceExtensionCommand(BrowserContext& profile,
     args.Append(tab->MetadataFor(extension));
   auto event = std::make_unique<extensions::Event>(
       extensions::events::COMMANDS_ON_COMMAND, "commands.onCommand",
-      std::move(args), &profile);
+      base::MakeRefCounted<extensions::EventArgs>(std::move(args)), &profile);
   event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
   extensions::EventRouter::Get(&profile)->DispatchEventToExtension(
       extension.id(), std::move(event));
@@ -4937,7 +4938,7 @@ std::vector<prototype::PageMenuItem> WorkspaceExtensionPageMenu(
                 }
                 auto event = std::make_unique<extensions::Event>(
                     extensions::events::CONTEXT_MENUS_ON_CLICKED, "contextMenus.onClicked",
-                    base::ListValue().Append(std::move(info)).Append(tab->MetadataFor(*extension)),
+                    base::MakeRefCounted<extensions::EventArgs>(base::ListValue().Append(std::move(info)).Append(tab->MetadataFor(*extension))),
                     &profile);
                 event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
                 extensions::EventRouter::Get(&profile)->DispatchEventToExtension(
@@ -5127,7 +5128,7 @@ void DispatchExtensionPasswordSavingChange(BrowserContext& context) {
     router->DispatchEventToExtension(extension->id(), std::make_unique<extensions::Event>(
         extensions::events::TYPES_CHROME_SETTING_ON_CHANGE,
         "types.ChromeSetting.passwordSavingEnabled.onChange",
-        base::ListValue().Append(ReadExtensionPasswordSaving(profile, extension->id(), *value)),
+        base::MakeRefCounted<extensions::EventArgs>(base::ListValue().Append(ReadExtensionPasswordSaving(profile, extension->id(), *value))),
         &context));
   }
 }
@@ -5336,7 +5337,7 @@ void DispatchWorkspaceSidePanelEvent(content::BrowserContext& profile,
   router->DispatchEventToExtension(id, std::make_unique<extensions::Event>(
       opened ? extensions::events::SIDE_PANEL_ON_OPENED : extensions::events::SIDE_PANEL_ON_CLOSED,
       opened ? "sidePanel.onOpened" : "sidePanel.onClosed",
-      base::ListValue().Append(std::move(details)), &profile));
+      base::MakeRefCounted<extensions::EventArgs>(base::ListValue().Append(std::move(details))), &profile));
 }
 
 bool ToggleWorkspaceSidePanelOnAction(content::WebContents& contents, const std::string& id) {
@@ -6074,7 +6075,7 @@ void ManagedExtension::OnWorkerPrepared(Activation activation, bool success) {
                 router->DispatchEventToExtension(
                     self->extension_->id(), std::make_unique<extensions::Event>(
                         extensions::events::RUNTIME_ON_INSTALLED,
-                        "runtime.onInstalled", std::move(args)));
+                        "runtime.onInstalled", base::MakeRefCounted<extensions::EventArgs>(std::move(args))));
                 if (previous)
                   ClearPendingExtensionUpdate(*self->extension_);
               }
@@ -6082,7 +6083,7 @@ void ManagedExtension::OnWorkerPrepared(Activation activation, bool success) {
                 router->DispatchEventToExtension(
                     self->extension_->id(), std::make_unique<extensions::Event>(
                         extensions::events::RUNTIME_ON_STARTUP,
-                        "runtime.onStartup", base::ListValue()));
+                        "runtime.onStartup", base::MakeRefCounted<extensions::EventArgs>(base::ListValue())));
               }
             }
             self->CompleteTransition(ready);
@@ -6544,7 +6545,7 @@ void ExtensionNavigationProbe::QueueWorkerWakeUp(base::TimeTicks deadline) {
   router->DispatchEventToExtension(
       fixture.id(), std::make_unique<extensions::Event>(
                         extensions::events::RUNTIME_ON_STARTUP, kStartupEvent,
-                        base::ListValue()));
+                        base::MakeRefCounted<extensions::EventArgs>(base::ListValue())));
   CheckWorkerWakeUp(base::TimeTicks::Now() + base::Seconds(10));
 }
 

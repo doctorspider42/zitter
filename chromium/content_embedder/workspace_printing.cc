@@ -90,9 +90,9 @@ WEB_CONTENTS_USER_DATA_KEY_IMPL(ScriptedPrintTarget);
 class ScriptedPrintService : public content::DocumentService<mojom::ScriptedPrint> {
  public:
   ScriptedPrintService(content::RenderFrameHost& frame,
-                       mojo::PendingReceiver<mojom::ScriptedPrint> receiver)
-      : DocumentService(frame, std::move(receiver)) {}
-  ~ScriptedPrintService() override = default;
+                       mojo::PendingReceiver<mojom::ScriptedPrint> receiver,
+                       base::SelfDeletingPassKey key)
+      : DocumentService(frame, std::move(receiver), key) {}
 
   void OpenPrintSheet() override {
     auto& frame = render_frame_host();
@@ -113,6 +113,9 @@ class ScriptedPrintService : public content::DocumentService<mojom::ScriptedPrin
             target->Request(*frame);
         }, frame.GetWeakDocumentPtr()));
   }
+
+ private:
+  ~ScriptedPrintService() override = default;
 };
 #endif
 
@@ -133,7 +136,7 @@ void AttachScriptedPrint(
 void BindScriptedPrint(content::RenderFrameHost* frame,
                        mojo::PendingReceiver<mojom::ScriptedPrint> receiver) {
   if (frame && frame->IsInPrimaryMainFrame())
-    new ScriptedPrintService(*frame, std::move(receiver));
+    base::MakeSelfDeleting<ScriptedPrintService>(*frame, std::move(receiver));
 }
 #endif
 

@@ -83,7 +83,6 @@ inline constexpr SiteCategory kSiteOtherCategories[] = {
     {"window-placement", u"Zarządzanie oknami"},
     {"keyboard-lock", u"Przejmowanie klawiatury"},
     {"storage-access", u"Dostęp do danych w ramkach"},
-    {"top-level-storage-access", u"Dostęp do danych innych witryn"},
     {"payment-handler", u"Obsługa płatności"},
     {"webid-api", u"Logowanie przez zewnętrzne usługi"},
     {"web-app-installation", u"Instalowanie aplikacji internetowych"},

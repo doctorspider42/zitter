@@ -218,10 +218,6 @@ class ProfilePermissionController final
       const blink::mojom::PermissionDescriptorPtr& descriptor,
       content::RenderProcessHost* process,
       const GURL& worker_origin) override;
-  content::PermissionResult GetPermissionResultForEmbeddedRequester(
-      const blink::mojom::PermissionDescriptorPtr& descriptor,
-      content::RenderFrameHost* frame,
-      const url::Origin& requesting_origin) override;
   void ResetPermission(blink::PermissionType type,
                        const GURL& requesting_origin,
                        const GURL& embedding_origin) override;

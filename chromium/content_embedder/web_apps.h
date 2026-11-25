@@ -31,6 +31,7 @@
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -204,7 +205,8 @@ class WorkspaceWebApps final : public content::WebContentsObserver {
   void CheckTrackedPage();
   void OnManifest(uint64_t generation, GURL page_url,
                   blink::mojom::ManifestRequestResult result,
-                  const GURL& manifest_url, blink::mojom::ManifestPtr manifest);
+                  const GURL& manifest_url,
+                  std::optional<blink::Manifest> manifest);
   std::optional<WebApp> ShortcutFor(content::WebContents& page) const;
   bool SiteAllowsOffer(content::WebContents& page) const;
   bool CandidateMatches(content::WebContents& page) const;

@@ -54,7 +54,7 @@ content::WebContents* LabWebView::AddNewContents(
     const GURL& target_url, WindowOpenDisposition disposition,
     const blink::mojom::WindowFeatures& window_features, bool user_gesture,
     bool* was_blocked) {
-  if (disposition != WindowOpenDisposition::NEW_PICTURE_IN_PICTURE) {
+  if (disposition != WindowOpenDisposition::kNewPictureInPicture) {
     return views::WebView::AddNewContents(source, std::move(new_contents), target_url,
                                           disposition, window_features, user_gesture,
                                           was_blocked);

@@ -417,7 +417,7 @@ void WorkspaceWebApps::CheckTrackedPage() {
 void WorkspaceWebApps::OnManifest(uint64_t generation, GURL page_url,
                                   blink::mojom::ManifestRequestResult result,
                                   const GURL& manifest_url,
-                                  blink::mojom::ManifestPtr manifest) {
+                                  std::optional<blink::Manifest> manifest) {
   auto* page = web_contents();
   if (generation != generation_ || !candidate_ || !page ||
       page->GetLastCommittedURL() != page_url) {
@@ -427,22 +427,22 @@ void WorkspaceWebApps::OnManifest(uint64_t generation, GURL page_url,
   if (result == blink::mojom::ManifestRequestResult::kSuccess && manifest &&
       !manifest_url.is_empty()) {
     WebApp app;
-    app.name = CleanName(manifest->name ? *manifest->name
-                         : manifest->short_name ? *manifest->short_name
-                                                : std::u16string());
-    app.start_url = manifest->start_url;
-    app.scope = manifest->scope;
-    app.manifest_id = manifest->id.is_valid() ? manifest->id : manifest->start_url;
-    app.display = manifest->display == blink::mojom::DisplayMode::kUndefined
+    app.name = CleanName(manifest->name() ? *manifest->name()
+                         : manifest->short_name() ? *manifest->short_name()
+                                                  : std::u16string());
+    app.start_url = manifest->start_url();
+    app.scope = manifest->scope();
+    app.manifest_id = manifest->id().is_valid() ? manifest->id() : manifest->start_url();
+    app.display = manifest->display() == blink::mojom::DisplayMode::kUndefined
                       ? blink::mojom::DisplayMode::kStandalone
-                      : manifest->display;
-    if (manifest->theme_color)
-      app.theme_color = static_cast<SkColor>(*manifest->theme_color);
+                      : manifest->display();
+    if (manifest->theme_color())
+      app.theme_color = static_cast<SkColor>(*manifest->theme_color());
     // The largest icon for any purpose, preferring sizes from 144 px and
     // "any" (SVG) icons, which the download rasterizes.
     const blink::Manifest::ImageResource* best = nullptr;
     int best_score = -1;
-    for (const auto& icon : manifest->icons) {
+    for (const auto& icon : manifest->icons()) {
       if (!icon.src.is_valid() || !icon.src.SchemeIsHTTPOrHTTPS() ||
           (!icon.purpose.empty() &&
            !std::ranges::contains(icon.purpose,

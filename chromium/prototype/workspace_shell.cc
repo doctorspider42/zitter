@@ -36,6 +36,7 @@
 #include "base/command_line.h"
 #include "chromium/prototype/sidebar_metal.h"
 #include "chromium/prototype/sidebar_layout.h"
+#include "chromium/prototype/reload_icon.h"
 #include "chromium/prototype/settings_icon.h"
 #include "base/files/file_util.h"
 #include "base/files/important_file_writer.h"
@@ -164,6 +165,7 @@
 #include "third_party/skia/include/core/SkPath.h"
 #include "third_party/skia/include/core/SkPathBuilder.h"
 #include "third_party/skia/include/core/SkRRect.h"
+#include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "chromium/prototype/arc_importer.h"
 #include "ui/views/border.h"
@@ -913,7 +915,7 @@ void PaintGlyphControl(views::View* view,ControlGlyph glyph,const gfx::VectorIco
     switch (glyph) {
       case ControlGlyph::kVector: {
         gfx::ScopedCanvas saved(canvas);
-        if (icon == &vector_icons::kReloadCustomIcon && view->GetProperty(kReloadAngle)) {
+        if (icon == &kReloadIcon && view->GetProperty(kReloadAngle)) {
           canvas->Translate(gfx::Vector2d(center.x(), center.y()));
           canvas->sk_canvas()->rotate(view->GetProperty(kReloadAngle));
           canvas->Translate(gfx::Vector2d(-center.x(), -center.y()));
@@ -1359,7 +1361,7 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   item.clip={clip.x(),clip.y(),clip.width(),clip.height()};
   item.glyph=glyph==ControlGlyph::kTabAudio ? 14 : glyph==ControlGlyph::kReturnToPin ? 12 : glyph==ControlGlyph::kConfirmTabName ? 13 : glyph==GlyphButton::Glyph::kDownloads ? 11 : glyph==GlyphButton::Glyph::kSidebar ? 0 : glyph==GlyphButton::Glyph::kDot ? 1 : glyph==GlyphButton::Glyph::kMore ? 6
       : icon==&vector_icons::kArrowBackIcon ? 3 : icon==&vector_icons::kArrowForwardIcon ? 4
-      : icon==&vector_icons::kReloadCustomIcon ? 5 : (icon==&vector_icons::kCloseSmallIcon || icon==&vector_icons::kCloseIcon) ? 7 : icon==&vector_icons::kSearchIcon ? 8
+      : icon==&kReloadIcon ? 5 : (icon==&vector_icons::kCloseSmallIcon || icon==&vector_icons::kCloseIcon) ? 7 : icon==&vector_icons::kSearchIcon ? 8
        : icon==&vector_icons::kAdd2Icon ? 9 : icon==&vector_icons::kLinkIcon ? 10 : 2;
   if (item.glyph == 5) item.detail_font_size = view->GetProperty(kReloadAngle);
   if (item.glyph == 11) {
@@ -1421,7 +1423,7 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
       // Match the icon primitives understood by the Metal shader. Treating
       // them as ordinary rectangles turns arrows and close icons into squares.
       const std::array<const gfx::VectorIcon*,6> icons={&vector_icons::kArrowBackIcon,&vector_icons::kArrowForwardIcon,
-          &vector_icons::kReloadCustomIcon,&vector_icons::kCloseSmallIcon,
+          &kReloadIcon,&vector_icons::kCloseSmallIcon,
           &kSettingsGearIcon,&vector_icons::kSearchIcon};
       PaintIcon(canvas,*icons.at(op.shape-2),gfx::Rect(op.x,op.y,op.width,op.height),std::min(op.width,op.height),op.color);
     }
@@ -5352,7 +5354,7 @@ std::unique_ptr<views::View> WorkspaceShell::Build() {
   const std::array<std::pair<const gfx::VectorIcon*, std::u16string>, 3> commands = {{
       {&vector_icons::kArrowBackIcon, T(u"Wstecz")},
       {&vector_icons::kArrowForwardIcon, T(u"Dalej")},
-      {&vector_icons::kReloadCustomIcon, T(u"Odśwież")}}};
+      {&kReloadIcon, T(u"Odśwież")}}};
   const std::array<const char*,3> command_nodes={"header.back","header.forward","header.reload"};
   for (size_t i = 0; i < commands.size(); ++i) {
     nav_buttons_[i] = header->AddChildView(CreateSceneAction(
@@ -6551,7 +6553,7 @@ struct WorkspaceShell::PinProjection {
   std::map<uint64_t, views::View*> groups;
   std::map<std::string, int> depths;
   std::set<std::string> refresh;
-  std::set<views::View*> obsolete;
+  RAW_PTR_EXCLUSION std::set<views::View*> obsolete;
   std::map<views::View*, std::vector<views::View*>> order;
   views::ViewTracker focus;
   bool moved_focus = false;
@@ -8657,7 +8659,7 @@ void WorkspaceShell::ShowLinkMenu(GURL url, std::string source_workspace,
     };
     add_button(PageCommand::kBack, vector_icons::kArrowBackIcon, T(u"Wstecz"), navigation->can_go_back);
     add_button(PageCommand::kForward, vector_icons::kArrowForwardIcon, T(u"Dalej"), navigation->can_go_forward);
-    add_button(PageCommand::kReload, vector_icons::kReloadCustomIcon, T(u"Odśwież"), navigation->can_reload);
+    add_button(PageCommand::kReload, kReloadIcon, T(u"Odśwież"), navigation->can_reload);
     auto* copy = bar->AddChildView(std::make_unique<PageMenuNavigationButton>(
         base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
           if (!shell) return;

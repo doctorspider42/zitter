@@ -20,6 +20,7 @@
 
 #include "base/apple/bundle_locations.h"
 #include "base/apple/foundation_util.h"
+#include "base/i18n/language_tag.h"
 #include "base/apple/scoped_cftyperef.h"
 #include "base/auto_reset.h"
 #include "base/base_paths.h"
@@ -2336,7 +2337,9 @@ class LabBrowserClient final : public LabBrowserClientBase {
     ordinary_prepared_startup_ = enabled;
   }
 
-  std::string GetApplicationLocale() override { return "en-US"; }
+  base::i18n::LanguageTag GetApplicationLocale() override {
+    return base::i18n::GetKnownLanguageTag("en-US");
+  }
   bool ShouldEnableStrictSiteIsolation() override { return true; }
 
   void ConfigureNetworkContextParams(

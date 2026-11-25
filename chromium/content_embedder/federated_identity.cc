@@ -600,7 +600,7 @@ class LabIdentityDialog final : public IdentityRequestDialogController {
       return nullptr;
     }
     content::OpenURLParams params(url, content::Referrer(),
-                                  WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                                  WindowOpenDisposition::kNewForegroundTab,
                                   ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
                                   /*is_renderer_initiated=*/false);
     // The user asked for the page in the FedCM dialog.

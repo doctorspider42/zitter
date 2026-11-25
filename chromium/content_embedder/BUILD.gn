@@ -203,6 +203,7 @@ lab_sources = [
 
 lab_deps = [
   ":bookmark_sync_buildflags",
+  "//base/i18n:language_tag",
   "//cc",
   "//components/vector_icons",
   "//components/viz/common",

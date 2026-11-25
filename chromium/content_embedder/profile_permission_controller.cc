@@ -673,9 +673,7 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
   std::vector<PermissionResult> results;
   results.reserve(request.permissions.size());
   const bool is_document_request =
-      frame && !request.embedded_permission_request_descriptor &&
-      url::Origin::Create(request.requesting_origin) ==
-          frame->GetLastCommittedOrigin();
+      frame && !request.embedded_permission_request_descriptor;
   if (is_document_request && request.permissions.size() == 1 &&
       IsNotification(request.permissions.front()) && request.user_gesture &&
       notification_prompt_ && IsTrustworthyMainDocument(frame, &*context_) &&
@@ -754,7 +752,7 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
       frame->GetBrowserContext() == &*context_) {
     const auto type = blink::PermissionDescriptorToPermissionType(request.permissions.front());
     const auto* category = FindSiteCategory(type);
-    const auto origin = url::Origin::Create(request.requesting_origin);
+    const auto origin = frame->GetLastCommittedOrigin();
     if (category && network::IsOriginPotentiallyTrustworthy(origin) &&
         SiteSetting(category->key, origin) == 3) {
       const std::string key(category->key);
@@ -787,7 +785,7 @@ void ProfilePermissionController::RequestPermissionsFromCurrentDocument(
       const auto* category = frame
           ? FindSiteCategory(blink::PermissionDescriptorToPermissionType(descriptor))
           : nullptr;
-      const auto requester = url::Origin::Create(request.requesting_origin);
+      const auto requester = frame ? frame->GetLastCommittedOrigin() : url::Origin();
       results.push_back(category && network::IsOriginPotentiallyTrustworthy(requester) &&
                                 SiteSetting(category->key, requester) == 1
                             ? PermissionResult(PermissionStatus::GRANTED)
@@ -908,21 +906,6 @@ PermissionResult ProfilePermissionController::GetPermissionResultForWorker(
     if (const auto* category =
             FindSiteCategory(blink::PermissionDescriptorToPermissionType(descriptor))) {
       return SiteResult(*category, worker_origin);
-    }
-  }
-  return PermissionResult(PermissionStatus::DENIED);
-}
-
-PermissionResult
-ProfilePermissionController::GetPermissionResultForEmbeddedRequester(
-    const blink::mojom::PermissionDescriptorPtr& descriptor,
-    content::RenderFrameHost* frame,
-    const url::Origin& requesting_origin) {
-  if (descriptor && frame && frame->IsActive() &&
-      network::IsOriginPotentiallyTrustworthy(requesting_origin)) {
-    if (const auto* category =
-            FindSiteCategory(blink::PermissionDescriptorToPermissionType(descriptor))) {
-      return SiteResult(*category, requesting_origin);
     }
   }
   return PermissionResult(PermissionStatus::DENIED);
@@ -1104,7 +1087,6 @@ constexpr Category kSiteCategories[] = {
     {"window-placement", PermissionType::WINDOW_MANAGEMENT, 3, true},
     {"keyboard-lock", PermissionType::KEYBOARD_LOCK, 3, true},
     {"storage-access", PermissionType::STORAGE_ACCESS_GRANT, 3, true},
-    {"top-level-storage-access", PermissionType::TOP_LEVEL_STORAGE_ACCESS, 3, true},
     {"captured-surface-control", PermissionType::CAPTURED_SURFACE_CONTROL, 3, true},
     {"automatic-fullscreen", PermissionType::AUTOMATIC_FULLSCREEN, 2, false},
     {"background-sync", PermissionType::BACKGROUND_SYNC, 1, false},

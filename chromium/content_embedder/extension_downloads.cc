@@ -463,7 +463,7 @@ class DownloadEvents final : public ExtensionDownloadEvents,
   void Broadcast(extensions::events::HistogramValue histogram, const char* name,
                  base::ListValue args) {
     extensions::EventRouter::Get(&*context_)->BroadcastEvent(
-        std::make_unique<extensions::Event>(histogram, name, std::move(args), &*context_));
+        std::make_unique<extensions::Event>(histogram, name, base::MakeRefCounted<extensions::EventArgs>(std::move(args)), &*context_));
   }
 
   // content::DownloadManager::Observer:

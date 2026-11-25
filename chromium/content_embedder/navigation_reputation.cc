@@ -12,12 +12,12 @@
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
 #include "base/supports_user_data.h"
-#include "components/safe_browsing/core/browser/database_manager_mechanism.h"
+#include "components/safe_browsing/core/browser/url_checker/database_manager_mechanism.h"
 #include "components/safe_browsing/core/browser/db/sb_local_database_manager.h"
 #include "components/safe_browsing/core/browser/db/sb_protocol_config.h"
 #include "components/safe_browsing/core/browser/db/v5_get_hash_protocol_manager.h"
 #include "components/safe_browsing/core/browser/db/v5_search_hashes_cache.h"
-#include "components/safe_browsing/core/browser/safe_browsing_lookup_mechanism_runner.h"
+#include "components/safe_browsing/core/browser/url_checker/safe_browsing_lookup_mechanism_runner.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_context.h"
@@ -169,10 +169,12 @@ class ReputationThrottle final : public content::NavigationThrottle {
             sb::SBThreatType::SB_THREAT_TYPE_URL_MALWARE,
             sb::SBThreatType::SB_THREAT_TYPE_URL_PHISHING,
             sb::SBThreatType::SB_THREAT_TYPE_URL_UNWANTED},
-        database_, sb::CheckBrowseUrlType::kHashDatabase,
-        /*check_allowlist=*/false, protocol_);
+        database_, sb::CheckBrowseUrlType::kHashDatabase, protocol_,
+        /*custom_callback_task_runner=*/nullptr);
     lookup_ = std::make_unique<LookupRunner>(
         std::move(mechanism), "HashDatabase",
+        navigation_handle()->GetWebContents()->GetBrowserContext()->IsOffTheRecord()
+            ? "Incognito" : "Regular",
         base::BindOnce(&ReputationThrottle::OnVerdict, weak_factory_.GetWeakPtr()));
     if (!lookup_->Run().is_safe_synchronously)
       return DEFER;
