@@ -86,6 +86,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/thread_pool.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
 #include "chromium/prototype/link_navigation.h"
@@ -709,11 +710,11 @@ class NightShiftSettingsObserver final
 WEB_CONTENTS_USER_DATA_KEY_IMPL(NightShiftSettingsObserver);
 
 constexpr char kCommandCenterProbe[] = "zitter-content-command-center-probe";
-constexpr std::array<std::string_view, 18> kWorkspacePaletteShortcuts = {
+constexpr std::array<std::string_view, 19> kWorkspacePaletteShortcuts = {
     "new_tab", "settings", "shortcuts", "engines", "spaces", "profiles",
     "assistant", "assistant_settings", "sidebar", "downloads",
     "timeline", "reopen", "developer", "rss", "import", "history", "passwords",
-    "reload_workspace_icons"};
+    "reload_workspace_icons", "welcome"};
 constexpr std::array<std::string_view, 14> kPagePaletteShortcuts = {
     "back", "forward", "reload", "find", "close_tab", "split", "left_pane",
     "right_pane", "devtools_panel", "devtools_console", "devtools_inspect",
@@ -1718,6 +1719,73 @@ HICON LabViewsDelegate::GetDefaultWindowIcon() const {
 }
 #endif
 
+FactoryResetStartupDialog::FactoryResetStartupDialog(
+    const FactoryResetError& error,
+    bool workspace_locked,
+    const base::FilePath& automation_root,
+    base::RepeatingClosure quit) {
+  if (!views::LayoutProvider::Get())
+    layout_provider_ = std::make_unique<views::LayoutProvider>();
+  if (!views::ViewsDelegate::GetInstance())
+    views_delegate_ = std::make_unique<LabViewsDelegate>();
+#if BUILDFLAG(IS_MAC)
+  prototype::ApplyUiLanguage("en-US");
+#else
+  prototype::ApplyUiLanguage(base::i18n::GetConfiguredLocale());
+#endif
+
+  auto body = std::make_unique<views::View>();
+  body->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
+  auto add_label = [&](std::u16string text) {
+    auto* label = body->AddChildView(std::make_unique<views::Label>(std::move(text)));
+    label->SetMultiLine(true);
+    label->SetMaximumWidth(460);
+    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+    return label;
+  };
+  if (workspace_locked) {
+    add_label(prototype::T(u"Zitter nie mógł uzyskać wyłącznego dostępu do folderu danych."));
+    add_label(prototype::T(u"Zamknij pozostałe okna i procesy Zittera. Jeśli problem się powtarza, sprawdź uprawnienia do folderu danych."));
+  } else {
+    add_label(error.access_denied
+        ? prototype::T(u"System odmówił dostępu podczas czyszczenia danych.")
+        : prototype::T(u"Zitter nie mógł dokończyć czyszczenia danych."));
+    auto* path = add_label(error.path.LossyDisplayName());
+    path->SetAllowCharacterBreak(true);
+    path->SetSelectable(true);
+    add_label(prototype::T(u"Zamknij programy korzystające z tych danych i sprawdź uprawnienia do wskazanego pliku lub folderu."));
+  }
+  add_label(prototype::T(u"Zamknij to okno i uruchom Zitter ponownie. Reset wznowi się automatycznie."));
+
+  delegate_ = std::make_unique<views::DialogDelegate>();
+  delegate_->SetTitle(prototype::T(u"Reset fabryczny nie został dokończony"));
+  delegate_->set_margins(gfx::Insets::TLBR(8, 16, 12, 16));
+  delegate_->SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
+  delegate_->SetButtonLabel(ui::mojom::DialogButton::kOk,
+                            prototype::T(u"Zamknij Zitter"));
+  delegate_->SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
+  delegate_->SetContentsView(std::move(body));
+  widget_.reset(views::DialogDelegate::CreateDialogWidget(
+      delegate_.get(), gfx::NativeWindow(), gfx::NativeView()));
+  widget_->MakeCloseSynchronous(base::BindOnce(
+      [](base::RepeatingClosure quit, views::Widget::ClosedReason) { quit.Run(); },
+      std::move(quit)));
+  const auto& command = *base::CommandLine::ForCurrentProcess();
+  const bool automation = command.HasSwitch(kUiAutomation);
+  const bool front = command.GetSwitchValueASCII(kUiAutomation) == "front";
+  if (automation && !automation_root.empty()) {
+    base::ScopedAllowBlockingForTesting allow_socket_setup;
+    automation_ = UiAutomation::Start(automation_root.AppendASCII("automation.sock"), front);
+  }
+  if (automation && !front)
+    widget_->ShowInactive();
+  else
+    widget_->Show();
+}
+
+FactoryResetStartupDialog::~FactoryResetStartupDialog() = default;
+
 struct WorkspaceLab::PrivateSession {
   explicit PrivateSession(scoped_refptr<base::SequencedTaskRunner> file_runner)
       : directory(new base::ScopedTempDir,
@@ -1957,7 +2025,8 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
                            base::FilePath user_download_directory,
                            std::string download_safe_browsing_key,
                            bool offer_startup_import,
-                           std::string startup_import_probe)
+                           std::string startup_import_probe,
+                           bool allow_factory_reset)
     : devtools_path_(temporary_root.AppendASCII("devtools")),
       session_path_(std::move(session_path)),
       user_download_directory_(std::move(user_download_directory)),
@@ -2094,6 +2163,9 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
 #if BUILDFLAG(IS_WIN)
 #endif
   callbacks.private_mode = private_owner_ != nullptr;
+  if (allow_factory_reset)
+    callbacks.factory_reset = base::BindRepeating(&WorkspaceLab::RequestFactoryReset,
+                                                   weak_factory_.GetWeakPtr());
   // Enhanced spell check needs Google's spelling service; Content has none.
   callbacks.hidden_preferences = {"online_spellcheck"};
   if (!private_owner_ && IsManagedExtensionSession()) {
@@ -3757,8 +3829,7 @@ void WorkspaceLab::ImportPasswordsCsv(
 
 #include "workspace_bookmark_sync.inc"
 
-void WorkspaceLab::ShowWelcome() {
-#if BUILDFLAG(IS_MAC)
+void WorkspaceLab::ShowWelcome(bool first_run) {
   session_writer_->PostTaskAndReplyWithResult(
       FROM_HERE, base::BindOnce([](bool fixture) {
         std::vector<prototype::WorkspaceShell::WelcomeSetup::Source> sources;
@@ -3779,14 +3850,17 @@ void WorkspaceLab::ShowWelcome() {
         }
         return sources;
       }, !startup_import_probe_.empty()),
-      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab,
+      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool first_run,
                         std::vector<prototype::WorkspaceShell::WelcomeSetup::Source> sources) {
-        if (!lab || !lab->startup_import_pending_ || lab->saving_session_ ||
-            !lab->done_)
+        if (!lab || !lab->done_ || lab->saving_session_ ||
+            (first_run ? !lab->startup_import_pending_
+                       : !lab->CanEditWorkspace() || lab->shell_->import_visible()))
           return;
         const auto* active = lab->model_.active();
         const std::string id = active->id;
         prototype::WorkspaceShell::WelcomeSetup setup;
+        setup.first_run = first_run;
+        setup.validate_space_name = base::BindRepeating(&IsContentWorkspaceName);
         setup.sources = std::move(sources);
         setup.space_name = base::UTF8ToUTF16(active->name);
         setup.space_color = lab->shell_->workspace_color(id);
@@ -3803,12 +3877,12 @@ void WorkspaceLab::ShowWelcome() {
                prototype::WorkspaceShell::WelcomeResult result) {
               if (!lab)
                 return;
-              lab->DismissBrowserImport();
+              lab->CompleteStartupImport();
               if (result.space_color)
                 lab->shell_->SetWorkspaceColor(id, *result.space_color);
               const auto index = lab->WorkspaceIndex(id);
-              if (index && !result.space_name.empty())
-                lab->UpdateWorkspace(id, base::UTF16ToUTF8(result.space_name),
+              if (index && result.space_name)
+                lab->UpdateWorkspace(id, base::UTF16ToUTF8(*result.space_name),
                                      lab->model_.workspaces()[*index].profile_id);
             }, lab, id));
         if (lab->startup_import_probe_.empty())
@@ -3853,8 +3927,7 @@ void WorkspaceLab::ShowWelcome() {
           welcome->Close();
         std::puts("Zitter Content startup import probe passed");
         lab->RequestClose();
-      }, weak_factory_.GetWeakPtr()));
-#endif
+      }, weak_factory_.GetWeakPtr(), first_run));
 }
 
 void WorkspaceLab::ImportFromWelcome(
@@ -3875,6 +3948,10 @@ void WorkspaceLab::InvalidateBrowserImport() {
 
 void WorkspaceLab::DismissBrowserImport() {
   InvalidateBrowserImport();
+  CompleteStartupImport();
+}
+
+void WorkspaceLab::CompleteStartupImport() {
   if (std::exchange(startup_import_pending_, false)) {
     RefreshShell();
     PersistWorkspaceChanges();
@@ -4666,13 +4743,16 @@ void WorkspaceLab::StartWorkspace() {
           base::Seconds(30));
     }
   }
+  const auto& launch_options = *base::CommandLine::ForCurrentProcess();
+  const bool open_welcome_for_automation = launch_options.HasSwitch(kUiAutomation) &&
+      launch_options.GetSwitchValueASCII("zitter-open-panel") == "welcome";
   if (startup_import_pending_ && CanImportBrowser()) {
     if (startup_import_probe_ == "reopen") {
       LOG(ERROR) << "The first-run wizard was offered after completion";
       Finish(false);
       return;
     }
-    ShowWelcome();
+    ShowWelcome(/*first_run=*/true);
   } else if (!startup_import_probe_.empty()) {
     if (startup_import_probe_ != "reopen") {
       LOG(ERROR) << "The first-run wizard was not offered";
@@ -4681,6 +4761,8 @@ void WorkspaceLab::StartWorkspace() {
     }
     std::puts("Zitter Content startup import probe passed");
     RequestClose();
+  } else if (open_welcome_for_automation && CanImportBrowser()) {
+    ShowWelcome(/*first_run=*/false);
   }
 }
 
@@ -5090,6 +5172,10 @@ bool WorkspaceLab::RunShortcut(std::string id, bool show_tab_switcher) {
     if (!CanImportBrowser() || !CanEditWorkspace())
       return false;
     shell_->OpenImport();
+  } else if (id == "welcome") {
+    if (!CanImportBrowser() || !CanEditWorkspace() || shell_->import_visible())
+      return false;
+    ShowWelcome(/*first_run=*/false);
   } else if (id == "settings") {
     shell_->OpenGeneralSettings();
   } else if (id == "shortcuts" || id == "engines") {
@@ -7268,6 +7354,40 @@ void WorkspaceLab::SearchAddress(std::u16string query) {
           weak_factory_.GetWeakPtr(), active_index_, query, std::move(seen),
           std::move(results)),
       &address_history_tasks_);
+}
+
+void WorkspaceLab::RequestFactoryReset() {
+  if (!done_ || !CanImportBrowser() || !CanEditWorkspace())
+    return;
+  shell_->ConfirmDanger(
+      shell_->general_widget(), prototype::T(u"Przywrócić ustawienia fabryczne Zittera?"),
+      prototype::T(u"Po ponownym uruchomieniu Zitter skasuje wszystkie lokalne profile. Znikną przestrzenie, karty, zakładki, historia, hasła, cookies, rozszerzenia i ustawienia."),
+      prototype::T(u"Usunięcie danych jest nieodwracalne."),
+      prototype::T(u"Usuń dane i zamknij Zitter"),
+      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool accepted) {
+        if (lab && accepted)
+          lab->ConfirmFactoryReset();
+      }, weak_factory_.GetWeakPtr()));
+}
+
+void WorkspaceLab::ConfirmFactoryReset() {
+  if (!done_ || !CanEditWorkspace())
+    return;
+  saving_session_ = true;
+  session_writer_->PostTaskAndReplyWithResult(
+      FROM_HERE, base::BindOnce(&ScheduleFactoryReset, session_path_.DirName()),
+      base::BindOnce([](base::WeakPtr<WorkspaceLab> lab, bool scheduled) {
+        if (!lab)
+          return;
+        if (scheduled) {
+          lab->Finish(true);
+          return;
+        }
+        lab->saving_session_ = false;
+        lab->shell_->ShowNotice(lab->shell_->general_widget(),
+            prototype::T(u"Nie udało się zaplanować resetu fabrycznego"),
+            prototype::T(u"Spróbuj ponownie."));
+      }, weak_factory_.GetWeakPtr()));
 }
 
 void WorkspaceLab::RequestClearData(BrowsingDataSelection selection) {
@@ -9921,7 +10041,7 @@ std::vector<prototype::PaletteResult> WorkspaceLab::WorkspaceCommandResults(
         (id == "assistant_settings" && !CanConfigureAssistant()) ||
         (id == "timeline" && !timeline_settings_ready_) ||
         (id == "save_snapshot" && !timeline_enabled_) ||
-        (id == "import" && !CanImportBrowser()) ||
+        ((id == "import" || id == "welcome") && !CanImportBrowser()) ||
         (id == "history" && profile.IsOffTheRecord()) ||
         (id == "close_other_tabs" && (PeekPage() || OtherUnpinnedTabs().empty())) ||
         (id == "passwords" && !profile.GetPasswordSavingSetting().has_value())) {

@@ -267,6 +267,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<bool(int64_t, int64_t)> restore_timeline;
     base::RepeatingCallback<void(bool, int)> timeline_settings;
     base::RepeatingCallback<bool()> clear_timeline;
+    base::RepeatingClosure factory_reset;
     base::RepeatingCallback<bool(std::string)> run_shortcut;
     base::RepeatingCallback<void(std::string)> bookmark_sync_action;
     base::RepeatingClosure bookmark_sync_appearance_changed;
@@ -761,8 +762,7 @@ class WorkspaceShell final : public ui::EventHandler,
   void OpenProfiles(std::string profile_id = {}, std::string workspace_id = {});
   void CloseProfiles();
   void OpenImport(std::optional<ImportBrowser> browser = std::nullopt);
-  // The first-run wizard (design: Pierwsze uruchomienie, Windows): welcome,
-  // default browser, import and the first space, in a tool window.
+  // The welcome wizard can also be opened after initial setup.
   struct WelcomeSetup {
     // Browsers found on this computer, in the import step.
     struct Source {
@@ -773,6 +773,8 @@ class WorkspaceShell final : public ui::EventHandler,
     std::vector<Source> sources;
     std::u16string space_name;
     SkColor space_color = 0;
+    bool first_run = true;
+    base::RepeatingCallback<bool(std::string_view)> validate_space_name;
     bool assistant_enabled = false;
     base::RepeatingCallback<void(bool)> set_assistant_enabled;
     base::RepeatingCallback<void(views::View*, std::string)> build_assistant_backends;
@@ -781,7 +783,7 @@ class WorkspaceShell final : public ui::EventHandler,
     base::RepeatingCallback<void(BrowserImportOptions, base::OnceCallback<void(bool, std::u16string)>)> import_browser;
   };
   struct WelcomeResult {
-    std::u16string space_name;
+    std::optional<std::u16string> space_name;
     std::optional<SkColor> space_color;
   };
   void ShowWelcome(WelcomeSetup setup, base::OnceCallback<void(WelcomeResult)> done);

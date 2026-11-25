@@ -1002,6 +1002,8 @@ class LabMainParts final : public content::BrowserMainParts,
 
   int PreMainMessageLoopRun() override {
     screen_.emplace();
+    if (factory_reset_error_)
+      return 0;
     if (workspace_lab_) {
       if (!workspace_keychain_ &&
           !ConfigureWorkspaceExtensionProbe(workspace_extension_profiles_)) {
@@ -1079,6 +1081,12 @@ class LabMainParts final : public content::BrowserMainParts,
 
   void WillRunMainMessageLoop(std::unique_ptr<base::RunLoop>& loop) override {
     quit_ = loop->QuitClosure();
+    if (factory_reset_error_) {
+      factory_reset_dialog_ = std::make_unique<FactoryResetStartupDialog>(
+          *factory_reset_error_, factory_reset_error_locked_,
+          ui_automation_allowed_ ? workspace_root_ : base::FilePath(), quit_);
+      return;
+    }
     if (IsWorkspaceExtensionReviewOnly()) {
       quit_.Run();
       return;
@@ -1232,6 +1240,7 @@ class LabMainParts final : public content::BrowserMainParts,
   }
 
   void PostMainMessageLoopRun() override {
+    factory_reset_dialog_.reset();
     [static_cast<ZitterContentApplication*>(NSApp)
         setExternalUrlHandler:base::RepeatingCallback<void(GURL)>()];
     [static_cast<ZitterContentApplication*>(NSApp)
@@ -1353,15 +1362,10 @@ class LabMainParts final : public content::BrowserMainParts,
       user_download_directory = install_file_keychain_fixture_
           ? root : base::GetHomeDir().AppendASCII("Downloads");
     }
-    const bool preview_welcome = ui_automation_allowed_ &&
-        command_line.HasSwitch(kUiAutomation) &&
-        command_line.GetSwitchValueASCII("zitter-open-panel") == "welcome";
-    const bool offer_startup_import = durable &&
-        (preview_welcome ||
-         (ordinary_prepared_startup_ &&
-          (!install_file_keychain_fixture_ || !startup_import_probe_.empty()) &&
-          (workspace_session_.empty() ||
-           workspace_session_.FindBool("startup_import_pending").value_or(false))));
+    const bool offer_startup_import = factory_reset_applied_ || (ordinary_prepared_startup_ && durable &&
+        (!install_file_keychain_fixture_ || !startup_import_probe_.empty()) &&
+        (workspace_session_.empty() ||
+         workspace_session_.FindBool("startup_import_pending").value_or(false)));
     bool dark = command_line.GetSwitchValueASCII("zitter-content-workspace-theme") == "dark";
     if (!startup_import_probe_.empty()) {
       auto env = base::Environment::Create();
@@ -1376,7 +1380,8 @@ class LabMainParts final : public content::BrowserMainParts,
         dark,
         workspace_smoke_, nullptr, additional_profiles_, os_crypt_,
         std::move(user_download_directory), std::move(download_safe_browsing_key),
-        offer_startup_import, startup_import_probe_);
+        offer_startup_import, startup_import_probe_,
+        durable && (ordinary_prepared_startup_ || !workspace_keychain_));
   }
 
   void StartWorkspaceWithDownloadPolicy(std::string download_safe_browsing_key) {
@@ -1532,11 +1537,9 @@ class LabMainParts final : public content::BrowserMainParts,
       }
     } else if (prepared) {
       int permissions = 0;
-      const auto session = WorkspaceSessionPath(root);
       if (!workspace_keychain_ ||
           !IsPreparedContentWorkspace(root, workspace_mock_keychain_ ? "mock-keychain"
                                                                      : "keychain") ||
-          base::IsLink(session) || !base::PathExists(session) ||
           !base::GetPosixFilePermissions(root, &permissions) ||
           (permissions & 077) != 0) {
         LOG(ERROR) << "Invalid prepared Content workspace";
@@ -1548,8 +1551,28 @@ class LabMainParts final : public content::BrowserMainParts,
     }
     if (!LockRoot(root.AppendASCII("WorkspaceLock"))) {
       LOG(ERROR) << "Could not lock the Content workspace root";
+      if (HasPendingFactoryReset(root)) {
+        factory_reset_error_ = FactoryResetError{root};
+        factory_reset_error_locked_ = true;
+        return true;
+      }
       return false;
     }
+    const bool replace_legacy_layout = ordinary_prepared_startup_ && workspace_legacy_keychain_;
+    const auto reset = ApplyPendingFactoryReset(
+        root, replace_legacy_layout ? "fresh-keychain" : "", !workspace_keychain_);
+    if (!reset.has_value()) {
+      LOG(ERROR) << "Could not complete the pending Zitter factory reset at " << reset.error().path;
+      factory_reset_error_ = reset.error();
+      workspace_root_ = root;
+      ui_automation_allowed_ = IsProbeRoot(root);
+      return true;
+    }
+    factory_reset_applied_ = *reset;
+    if (*reset && replace_legacy_layout)
+      workspace_legacy_keychain_ = false;
+    if (*reset && ordinary_prepared_startup_ && !install_file_keychain_fixture_)
+      prototype::StoreUiLanguage("system", nullptr);
     if (initialize_fresh_layout) {
       base::File marker(root.AppendASCII("ContentWorkspaceLayout"),
                         base::File::FLAG_CREATE | base::File::FLAG_WRITE);
@@ -1569,7 +1592,7 @@ class LabMainParts final : public content::BrowserMainParts,
     }
     auto restored = ReadContentWorkspaceSession(WorkspaceSessionPath(root));
     const auto settings = WorkspaceSettingsPath(root);
-    if (!restored || (prepared && restored->empty()) || base::IsLink(settings)) {
+    if (!restored || (prepared && !*reset && restored->empty()) || base::IsLink(settings)) {
       LOG(ERROR) << "Invalid Content workspace session or settings path";
       return false;
     }
@@ -2268,6 +2291,10 @@ class LabMainParts final : public content::BrowserMainParts,
   bool workspace_encryption_ready_ = false;
   std::optional<std::string> startup_safe_browsing_key_;
   bool fresh_startup_ = false;
+  bool factory_reset_applied_ = false;
+  bool factory_reset_error_locked_ = false;
+  std::optional<FactoryResetError> factory_reset_error_;
+  std::unique_ptr<FactoryResetStartupDialog> factory_reset_dialog_;
   std::string startup_import_probe_;
   GURL workspace_probe_url_;
   GURL probe_url_;

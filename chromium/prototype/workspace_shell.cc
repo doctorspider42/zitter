@@ -11036,6 +11036,8 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     }
   }
   for(const auto& spec:catalogue.rows){
+    if (spec.action == Action::FactoryReset && !callbacks_.factory_reset)
+      continue;
     const std::string key(spec.key);
     if (!key.empty() && std::ranges::contains(callbacks_.hidden_preferences, key))
       continue;
@@ -11158,6 +11160,12 @@ void WorkspaceShell::BuildRustPreferenceRows(const sidebar::PreferenceCatalogue&
     }
     switch(spec.kind){
       case Kind::Action:{
+        if (spec.action == Action::FactoryReset) {
+          auto* button = PreferenceAction(row, {}, text(spec.button));
+          button->GetViewAccessibility().SetName(text(spec.title));
+          SetActionCallback(button, callbacks_.factory_reset);
+          break;
+        }
         if (key == "install_extension") {
           install_extension_button_ = PreferenceAction(row, {}, text(spec.button));
           install_extension_button_->GetViewAccessibility().SetName(title);
@@ -15842,6 +15850,8 @@ void WorkspaceShell::ShowAppMenu(views::View* anchor) {
   if (check_update_) {
     add("check_update", T(u"Sprawdź aktualizacje…"), kMenuDownloadsIcon);
   }
+  if (!callbacks_.private_mode)
+    add("welcome", T(u"Otwórz ekran powitalny…"), kMenuAboutIcon);
   add("about", T(u"O Zitter"), kMenuAboutIcon);
   add("quit", T(u"Zamknij Zitter"), kMenuQuitIcon);
   app_menu_delegate_ = std::move(delegate);
@@ -16740,6 +16750,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   WelcomeView(WorkspaceShell::WelcomeSetup setup, base::OnceCallback<void(WorkspaceShell::WelcomeResult)> done)
       : setup_(std::move(setup)), done_(std::move(done)), color_(setup_.space_color),
         assistant_enabled_(setup_.assistant_enabled), setup_name_(setup_.space_name) {
+    AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
     Build();
   }
   ~WelcomeView() override = default;
@@ -16771,15 +16782,14 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   }
   void Abandon() { done_.Reset(); }
   void ImportForTesting(ImportBrowser browser) { ImportFromRow(browser); }
-  // Closing the window keeps what the steps set so far.
+  bool AcceleratorPressed(const ui::Accelerator& accelerator) override {
+    GetWidget()->CloseWithReason(views::Widget::ClosedReason::kEscKeyPressed);
+    return true;
+  }
+
   void Finish() {
     if (!done_) return;
-    WorkspaceShell::WelcomeResult result;
-    const auto name = name_field_ ? name_field_->GetText() : std::u16string_view(setup_name_);
-    result.space_name = std::u16string(base::TrimWhitespace(name, base::TRIM_ALL));
-    if (result.space_name.empty()) result.space_name = setup_.space_name;
-    if (color_ != setup_.space_color) result.space_color = color_;
-    std::move(done_).Run(std::move(result));
+    std::move(done_).Run(std::move(result_));
   }
 
  private:
@@ -16794,7 +16804,8 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         ->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kEnd);
     ket_ = Text(brand, u"|z⟩", DesignFont(1, 34, 400, true), true);
     eyebrow_ = Text(brand, base::i18n::ToUpper(T(u"Pierwsze kroki")), DesignFont(2, 11, 600, false), false);
-    const std::array<std::u16string, 6> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Asystent AI"), T(u"Import danych"), T(u"Synchronizacja przestrzeni"), T(u"Pierwsza przestrzeń")};
+    const std::array<std::u16string, 6> labels = {T(u"Witaj"), T(u"Domyślna przeglądarka"), T(u"Asystent AI"), T(u"Import danych"), T(u"Synchronizacja przestrzeni"),
+        setup_.first_run ? T(u"Pierwsza przestrzeń") : T(u"Aktywna przestrzeń")};
     for (size_t i = 0; i < labels.size(); ++i) {
       steps_[i] = nav_->AddChildView(std::make_unique<WelcomeStep>(
           base::BindRepeating(&WelcomeView::ShowStep, base::Unretained(this), i), labels[i]));
@@ -16836,11 +16847,17 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     return label;
   }
 
+  bool SkipSpaceStep() const {
+#if BUILDFLAG(IS_WIN)
+    return setup_.first_run && !imported_sources_.empty();
+#else
+    return false;
+#endif
+  }
+
   void ShowStep(size_t step) {
     if (import_busy_) return;
-#if BUILDFLAG(IS_WIN)
-    if (step == 5 && !imported_sources_.empty()) step = 4;
-#endif
+    if (step == 5 && SkipSpaceStep()) step = 4;
     const auto import_scroll_offset = import_scroll_
         ? import_scroll_->GetVisibleRect().origin() : gfx::Point();
     if (step != 3) selected_import_.reset();
@@ -16852,6 +16869,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     // The page's own views go with it; the step list and footer stay.
     if (name_field_) setup_name_ = name_field_->GetText();
     name_field_ = nullptr;
+    name_error_ = nullptr;
     swatches_.clear();
     switches_.clear();
     std::erase_if(ink_labels_, [&](views::Label* l) { return page_->Contains(l) || footer_->Contains(l); });
@@ -16982,7 +17000,8 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         break;
       }
       case 5: {
-        Headline(page_, T(u"Twoja pierwsza przestrzeń"), 48);
+        Headline(page_, setup_.first_run ? T(u"Twoja pierwsza przestrzeń")
+                                         : T(u"Aktywna przestrzeń"), 48);
         Text(page_, T(u"Nazwa"), DesignFont(2, 12, 500, false), false);
         name_field_ = page_->AddChildView(std::make_unique<views::Textfield>());
         name_field_->SetText(setup_name_);
@@ -16990,6 +17009,11 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         name_field_->SetFontList(DesignFont(2, 15, 600, false));
         name_field_->GetViewAccessibility().SetName(T(u"Nazwa"));
         name_field_->SetPreferredSize(gfx::Size(320, 36));
+        name_error_ = page_->AddChildView(std::make_unique<views::Label>());
+        name_error_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+        name_error_->SetMultiLine(true);
+        name_error_->GetViewAccessibility().SetRole(ax::mojom::Role::kAlert);
+        name_error_->SetVisible(false);
         layout->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kStart);
         Text(page_, T(u"Kolor · zabarwi całe okno"), DesignFont(2, 12, 500, false), false);
         auto* row = page_->AddChildView(std::make_unique<views::View>());
@@ -17013,14 +17037,10 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
     auto* row = footer_->SetLayoutManager(std::make_unique<views::BoxLayout>(views::BoxLayout::Orientation::kHorizontal, gfx::Insets::TLBR(16, 0, 0, 0), 8));
     row->set_cross_axis_alignment(views::BoxLayout::CrossAxisAlignment::kCenter);
     footer_->SetBorder(views::CreateSolidSidedBorder(gfx::Insets::TLBR(1, 0, 0, 0), Palette(this, color_).line));
-#if BUILDFLAG(IS_WIN)
-    const bool has_imports = !imported_sources_.empty();
-#else
-    const bool has_imports = false;
-#endif
-    steps_[5]->SetVisible(!has_imports);
+    const bool skip_space = SkipSpaceStep();
+    steps_[5]->SetVisible(!skip_space);
     auto* count = Text(footer_, TF(u"Krok {} z {}", {base::NumberToString16(step + 1),
-        base::NumberToString16(has_imports ? 5 : 6)}), DesignFont(2, 12, 500, false), false);
+        base::NumberToString16(skip_space ? 5 : 6)}), DesignFont(2, 12, 500, false), false);
     row->SetFlexForView(count, 1);
     if (step > 0)
       footer_->AddChildView(std::make_unique<WelcomeButton>(
@@ -17033,7 +17053,8 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         false;
 #endif
     const std::u16string next = step == 0 ? T(u"Zaczynamy")
-        : (step == 5 || (step == 4 && has_imports)) ? T(u"Otwórz Zitter")
+        : (step == 5 || (step == 4 && skip_space))
+            ? (setup_.first_run ? T(u"Otwórz Zitter") : T(u"Gotowe"))
         : defer_default_browser ? T(u"Nie teraz") : T(u"Kontynuuj");
     footer_->AddChildView(std::make_unique<WelcomeButton>(
         base::BindRepeating(&WelcomeView::Next, base::Unretained(this)), next,
@@ -17225,19 +17246,33 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
 
   void Next() {
     if (import_busy_) return;
-    if (step_ == 5
-#if BUILDFLAG(IS_WIN)
-        || (step_ == 4 && !imported_sources_.empty())
-#endif
-    ) {
-      if (GetWidget()) GetWidget()->Close();
-    } else {
+    if (step_ != 5 && (step_ != 4 || !SkipSpaceStep())) {
       ShowStep(step_ + 1);
+      return;
     }
+    if (name_field_) {
+      const auto name = base::TrimWhitespace(name_field_->GetText(), base::TRIM_ALL);
+      if (name.empty() || !setup_.validate_space_name.Run(base::UTF16ToUTF8(name))) {
+        name_error_->SetText(name.empty() ? T(u"Wpisz nazwę przestrzeni.")
+                                         : T(u"Nazwa jest za długa lub zawiera niedozwolone znaki."));
+        name_error_->SetEnabledColor(Palette(this, color_).danger);
+        name_error_->SetVisible(true);
+        name_field_->SetInvalid(true);
+        name_field_->RequestFocus();
+        name_error_->GetViewAccessibility().NotifyEvent(ax::mojom::Event::kAlert, true);
+        return;
+      }
+      if (name != setup_.space_name)
+        result_.space_name = std::u16string(name);
+    }
+    if (color_ != setup_.space_color)
+      result_.space_color = color_;
+    GetWidget()->Close();
   }
 
   WorkspaceShell::WelcomeSetup setup_;
   base::OnceCallback<void(WorkspaceShell::WelcomeResult)> done_;
+  WorkspaceShell::WelcomeResult result_;
   size_t step_ = 0;
   bool import_busy_ = false;
   std::optional<BrowserImportOptions> selected_import_;
@@ -17261,6 +17296,7 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   raw_ptr<views::Label> ket_ = nullptr;
   raw_ptr<views::Label> eyebrow_ = nullptr;
   raw_ptr<views::Textfield> name_field_ = nullptr;
+  raw_ptr<views::Label> name_error_ = nullptr;
   std::array<raw_ptr<WelcomeStep>, 6> steps_ = {};
   bool shown_ = false;
   std::vector<raw_ptr<WelcomeSwatch>> swatches_;
