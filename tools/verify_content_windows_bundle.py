@@ -113,13 +113,14 @@ def find_readobj(explicit, src):
     return None
 
 
-def validate_imports(layout, files, readobj, system32):
+def validate_imports(layout, files, readobj, system32, path_map=str):
+    command = list(readobj) if isinstance(readobj, (list, tuple)) else [readobj]
     executables = {name.casefold(): name for name in files
                    if name.casefold().endswith((".exe", ".dll"))}
     system = {path.name.casefold() for path in system32.iterdir() if path.is_file()}
     for name in sorted(executables.values()):
         result = subprocess.run(
-            [*readobj[0], "--file-headers", "--coff-imports", readobj[1](layout / name)],
+            [*command, "--file-headers", "--coff-imports", path_map(layout / name)],
             capture_output=True, text=True, timeout=30, check=True,
         )
         if ("Machine: IMAGE_FILE_MACHINE_AMD64" not in result.stdout or
@@ -350,7 +351,7 @@ def main():
             extract_bundle(archive, root, files, {*notices, "THIRD_PARTY_LICENSES.txt"})
             layout = root / ARCHIVE_PREFIX
             validate_swiftshader(layout)
-            validate_imports(layout, files, readobj, system32)
+            validate_imports(layout, files, readobj[0], system32, readobj[1])
             if signtool:
                 verify_signatures(layout, files, signtool)
             verify_sandbox_guards(layout / EXECUTABLE, root, env)
