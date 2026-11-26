@@ -96,13 +96,30 @@ def system_directory():
     return Path(buffer.value)
 
 
+def wsl_path(path):
+    path = Path(path).resolve()
+    return "/mnt/" + path.drive[0].lower() + path.as_posix()[len(path.drive):]
+
+
+def find_readobj(explicit, src):
+    """Returns (command prefix, path mapper) for llvm-readobj. A fresh checkout has
+    only the Linux build in Release+Asserts_linux; it reads PE files through WSL."""
+    windows = (explicit or src / "third_party/llvm-build/Release+Asserts/bin/llvm-readobj.exe").resolve()
+    if windows.is_file():
+        return [windows], str
+    linux = src / "third_party/llvm-build/Release+Asserts_linux/bin/llvm-readobj"
+    if explicit is None and linux.is_file() and shutil.which("wsl"):
+        return ["wsl", "--", wsl_path(linux)], wsl_path
+    return None
+
+
 def validate_imports(layout, files, readobj, system32):
     executables = {name.casefold(): name for name in files
                    if name.casefold().endswith((".exe", ".dll"))}
     system = {path.name.casefold() for path in system32.iterdir() if path.is_file()}
     for name in sorted(executables.values()):
         result = subprocess.run(
-            [readobj, "--file-headers", "--coff-imports", layout / name],
+            [*readobj[0], "--file-headers", "--coff-imports", readobj[1](layout / name)],
             capture_output=True, text=True, timeout=30, check=True,
         )
         if ("Machine: IMAGE_FILE_MACHINE_AMD64" not in result.stdout or
@@ -290,10 +307,10 @@ def main():
     manifest = args.runtime_deps or out / RUNTIME_MANIFEST
     if not manifest.is_file():
         parser.error(f"GN runtime manifest not found: {manifest}. Generate the Content output first.")
-    readobj = (args.llvm_readobj or out.parents[1] /
-               "third_party/llvm-build/Release+Asserts/bin/llvm-readobj.exe").resolve()
-    if not readobj.is_file():
-        parser.error(f"LLVM PE inspector not found: {readobj}")
+    readobj = find_readobj(args.llvm_readobj, out.parents[1])
+    if not readobj:
+        parser.error("LLVM PE inspector not found: pass --llvm-readobj, or keep the Linux "
+                     "llvm-readobj in third_party/llvm-build/Release+Asserts_linux with WSL")
     signtool = args.signtool.resolve() if args.signtool else None
     if signtool and not signtool.is_file():
         parser.error(f"Windows SDK SignTool not found: {signtool}")
