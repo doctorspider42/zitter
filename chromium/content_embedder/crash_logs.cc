@@ -378,9 +378,15 @@ void StartRunLog() {
   const base::FilePath path = dir.AppendASCII(name);
 
 #if BUILDFLAG(IS_WIN)
+  // Inheritable: non-official builds pass the browser's stdout and stderr to
+  // every sandboxed child (sandbox_win.cc), and CreateProcess rejects a
+  // PROC_THREAD_ATTRIBUTE_HANDLE_LIST entry that is not inheritable. Without
+  // this, a start from the GUI could not launch the GPU process (0.26.0).
+  // The handle list keeps it out of processes that do not ask for it.
+  SECURITY_ATTRIBUTES inherit = {sizeof(inherit), nullptr, TRUE};
   const HANDLE handle = ::CreateFileW(
       path.value().c_str(), GENERIC_WRITE,
-      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &inherit,
       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
   if (handle == INVALID_HANDLE_VALUE)
     return;

@@ -187,6 +187,37 @@ def smoke(layout, working_directory, env):
         print(", ".join(markers))
 
 
+def gui_start_smoke(layout, working_directory, env):
+    """Runs the workspace smoke with no standard handles, as a start from the
+    Start menu does. Zitter then writes its output to a run log in
+    %LOCALAPPDATA%\\Zitter\\Logs (crash_logs.cc), and every child process
+    inherits that file: 0.26.0 failed exactly here, while the other smokes
+    passed with redirected output."""
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags = subprocess.STARTF_USESTDHANDLES
+    startup.hStdInput = startup.hStdOutput = startup.hStdError = None
+    process = subprocess.Popen(
+        [layout / EXECUTABLE, "--zitter-content-workspace-smoke-test", "--no-proxy-server"],
+        cwd=working_directory, env=env, startupinfo=startup)
+    try:
+        code = process.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        raise ValueError("The workspace smoke without standard handles timed out")
+    logs = Path(os.environ["LOCALAPPDATA"]) / "Zitter" / "Logs"
+    runs = list(logs.glob(f"zitter-*-{process.pid}.log"))
+    text = runs[0].read_text(encoding="utf-8", errors="replace") if runs else ""
+    for run in runs:
+        run.unlink(missing_ok=True)
+    # The smoke's own marker is block-buffered in the file and may not reach
+    # it; the exit code and the log's end line are written unbuffered.
+    lines = text.splitlines()
+    if code or "[zitter] clean exit 0" not in lines or "launch failed" in text:
+        raise ValueError(f"The workspace smoke without standard handles failed ({code}); "
+                         f"its run log:\n{text or '(none)'}")
+    print("Zitter Content workspace smoke passed with its output in a run log")
+
+
 def independent_probes(executable, *, scriptlet_themes=()):
     scriptlet_flags = [("--theme", theme) for theme in scriptlet_themes] or [()]
     return [
@@ -356,6 +387,7 @@ def main():
                 verify_signatures(layout, files, signtool)
             verify_sandbox_guards(layout / EXECUTABLE, root, env)
             smoke(layout, root, env)
+            gui_start_smoke(layout, root, env)
             verify_assistant_helper(layout / ASSISTANT_EXECUTABLE, root, env)
             verify_runtime_probes(layout / EXECUTABLE, root, env, signer=signer, openssl=openssl,
                                   legacy=legacy, node=node, jobs=args.jobs or 2, visible=args.visible)
