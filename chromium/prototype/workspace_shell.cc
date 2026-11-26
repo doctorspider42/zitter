@@ -46,6 +46,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/hash/hash.h"
 #include "base/no_destructor.h"
+#include "base/containers/lru_cache.h"
 #include "base/i18n/break_iterator.h"
 #include <map>
 #include "base/i18n/case_conversion.h"
@@ -1424,6 +1425,44 @@ sidebar::Item GlyphSceneData(views::View* view,ControlGlyph glyph,const gfx::Vec
   return item;
 }
 sidebar::Item GlyphSceneItem(GlyphButton* button,gfx::RectF rect,gfx::RectF clip){return GlyphSceneData(button,button->glyph(),button->icon(),button->on(),button->label(),button->color(),button->GetEnabledInViewsSubtree()&&(button->GetState()==views::Button::STATE_HOVERED||button->GetState()==views::Button::STATE_PRESSED),button->HasFocus(),rect,clip);}
+// One line of text as gfx::Canvas::DrawStringRectWithFlags draws it, keeping
+// the shaped text of recent paints. Sidebar rows repaint the same strings on
+// every space switch and scroll; shaping them again (HarfBuzz runs and, on
+// Windows, font fallback) was most of the cost of a row's paint.
+void DrawSceneText(gfx::Canvas* canvas,const std::u16string& text,const gfx::FontList& font,SkColor color,const gfx::Rect& rect,int flags,std::optional<gfx::ElideBehavior> elide=std::nullopt){
+  if(text.empty()||rect.IsEmpty())return;
+  using Key=std::tuple<std::u16string,std::string,int,int,int,SkColor,int,int,int,int,int,int,float>;
+  static base::NoDestructor<base::LRUCache<Key,std::unique_ptr<gfx::RenderText>>> cache(1024);
+  std::string family;for(const auto& face:font.GetFonts()){family+=face.GetFontName();family+=',';}
+  Key key(text,std::move(family),font.GetFontSize(),font.GetFontStyle(),static_cast<int>(font.GetFontWeight()),color,
+          rect.x(),rect.y(),rect.width(),rect.height(),flags,elide?static_cast<int>(*elide):-1,canvas->image_scale());
+  auto found=cache->Get(key);
+  if(found==cache->end()){
+    std::u16string shown=elide?gfx::ElideText(text,font,rect.width(),*elide):text;
+    // DrawStringRectWithFlags elides at the tail unless NO_ELLIPSIS is given.
+    if(!(flags&gfx::Canvas::NO_ELLIPSIS))shown=gfx::ElideText(shown,font,rect.width(),gfx::ELIDE_TAIL);
+    auto render=gfx::RenderText::CreateRenderText();
+    render->set_clip_to_display_rect(false);
+    render->SetFontList(font);render->SetText(shown);render->SetCursorEnabled(false);render->SetDisplayRect(rect);
+    render->SetHorizontalAlignment((flags&gfx::Canvas::TEXT_ALIGN_RIGHT)?gfx::ALIGN_RIGHT:(flags&gfx::Canvas::TEXT_ALIGN_CENTER)?gfx::ALIGN_CENTER:
+        (flags&gfx::Canvas::TEXT_ALIGN_LEFT)?gfx::ALIGN_LEFT:(flags&gfx::Canvas::TEXT_ALIGN_TO_HEAD)?gfx::ALIGN_TO_HEAD:
+        (gfx::Canvas::DefaultCanvasTextAlignment()&gfx::Canvas::TEXT_ALIGN_RIGHT)?gfx::ALIGN_RIGHT:gfx::ALIGN_LEFT);
+    render->set_subpixel_rendering_suppressed((flags&gfx::Canvas::NO_SUBPIXEL_RENDERING)!=0);
+    render->SetColor(color);
+    const int style=font.GetFontStyle();
+    render->SetStyle(gfx::TEXT_STYLE_ITALIC,(style&gfx::Font::ITALIC)!=0);
+    render->SetStyle(gfx::TEXT_STYLE_UNDERLINE,(style&gfx::Font::UNDERLINE)!=0);
+    render->SetStyle(gfx::TEXT_STYLE_STRIKE,(style&gfx::Font::STRIKE_THROUGH)!=0);
+    render->SetWeight(font.GetFontWeight());
+    found=cache->Put(std::move(key),std::move(render));
+  }
+  gfx::ScopedCanvas scoped(canvas);
+  gfx::RectF clip(rect);
+  // As Canvas::AdjustClipRectForTextBounds: keep edge pixels at fractional scales.
+  if(std::abs(std::trunc(canvas->image_scale())-canvas->image_scale())>1e-5f)clip.Outset(0.5f);
+  canvas->ClipRect(clip);
+  found->second->Draw(canvas);
+}
 // Rasterization behind the native editor and GPU fallback consume the same
 // Rust recipe; no Views background, border or hidden text layout is required.
 void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::FontList& font,bool styled_text=false) {
@@ -1437,8 +1476,8 @@ void PaintSceneRecipe(gfx::Canvas* canvas,const sidebar::Item& item,const gfx::F
     else if(op.text.size()){
       auto text=base::UTF8ToUTF16(std::string(op.text));auto text_font=op.family?DesignFont(op.family,op.font_size,op.font_weight,op.italic):font;
       if(styled_text&&!op.family)text_font=font.DeriveWithSizeDelta(std::max(1,static_cast<int>(op.font_size))-font.GetFontSize());
-      if(styled_text)text=gfx::ElideText(text,text_font,op.width,op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL);
-      canvas->DrawStringRectWithFlags(text,text_font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:op.right_align?gfx::Canvas::TEXT_ALIGN_RIGHT:gfx::Canvas::TEXT_ALIGN_LEFT);
+      DrawSceneText(canvas,text,text_font,op.color,gfx::Rect(op.x,op.y,op.width,op.height),op.center?gfx::Canvas::TEXT_ALIGN_CENTER:op.right_align?gfx::Canvas::TEXT_ALIGN_RIGHT:gfx::Canvas::TEXT_ALIGN_LEFT,
+                    styled_text?std::optional<gfx::ElideBehavior>(op.middle?gfx::ELIDE_MIDDLE:gfx::ELIDE_TAIL):std::nullopt);
     }
     else if(op.shape>=2 && op.shape<=7) {
       // Match the icon primitives understood by the Metal shader. Treating
@@ -2915,6 +2954,10 @@ sidebar::Item PaletteRowItem(views::View* row,const RowRecipe::Spec& spec,gfx::R
   return item;
 }
 rust::Vec<uint16_t> SceneUtf16(std::u16string_view text){rust::Vec<uint16_t> units;units.reserve(text.size());for(auto unit:text)units.push_back(unit);return units;}
+#if !BUILDFLAG(IS_MAC)
+// Whether a sidebar row lies within half a viewport of the visible list.
+bool SidebarRowInPaintWindow(const views::View* row);
+#endif
 class RustRowView final : public views::View {
   METADATA_HEADER(RustRowView,views::View)
  public:
@@ -3142,8 +3185,20 @@ class RustRowView final : public views::View {
     if (audio_) audio_->SyncViewportVisibility();
   }
   void PaintChildren(const views::PaintInfo& info) override{if(!spec_.scene_visible||!spec_.scene_visible.Run())views::View::PaintChildren(info);}
+#if !BUILDFLAG(IS_MAC)
+  // A row skipped while far from the viewport, painted once it scrolls near.
+  void RepaintIfCulled(){if(paint_culled_&&!uncull_pending_&&SidebarRowInPaintWindow(this)){uncull_pending_=true;SchedulePaint();}}
+#endif
   void OnPaint(gfx::Canvas* canvas) override{
     if(spec_.scene_visible&&spec_.scene_visible.Run())return;SyncEnabled();if(state_->sidebar_visual().valid){
+#if !BUILDFLAG(IS_MAC)
+      // Views records the whole list when it is invalidated, such as on a
+      // space switch: with hundreds of pins that took most of a frame. Rows
+      // far outside the viewport skip their recipe until they scroll near.
+      uncull_pending_=false;
+      paint_culled_=!SidebarRowInPaintWindow(this);
+      if(paint_culled_)return;
+#endif
       // The compositor raster paints the same Rust recipe as the Metal surface;
       // the close child paints itself.
       const auto bounds=gfx::RectF(GetLocalBounds());auto scene=SidebarScene(bounds,bounds);
@@ -3158,7 +3213,7 @@ class RustRowView final : public views::View {
                       gfx::Rect(12, (height() - 16) / 2, 16, 16), 16, scene.item.ink);
         } else if (!renaming_) {
           const auto title = Geometry().title;
-          canvas->DrawStringRectWithFlags(
+          DrawSceneText(canvas,
               SidebarSnapshot().title, DesignFont(2, 13, scene.item.active ? 600 : 400, false),
               scene.item.ink, gfx::Rect(title.x, title.y, title.width, title.height),
               gfx::Canvas::TEXT_ALIGN_LEFT);
@@ -3186,6 +3241,9 @@ class RustRowView final : public views::View {
   void TremorStep(){static constexpr std::array<int,4> kOffsets={-1,1,-1,0};if(tremor_step_>=static_cast<int>(kOffsets.size())){tremor_timer_.Stop();return;}tremor_dx_=kOffsets[tremor_step_++];SchedulePaint();if(changed_)changed_.Run();}
  private:
   int tremor_dx_=0,tremor_step_=0;base::RepeatingTimer tremor_timer_;
+#if !BUILDFLAG(IS_MAC)
+  bool paint_culled_=false,uncull_pending_=false;
+#endif
   static void ClearSidebarVisuals(Spec& spec){std::u16string{}.swap(spec.title);std::u16string{}.swap(spec.monogram);spec.monogram_color=SK_ColorTRANSPARENT;spec.icon=nullptr;spec.active=false;spec.tile=false;spec.height=0;}
   void SyncSidebarAX(){const auto title=state_->sidebar_title();const std::u16string text(title.begin(),title.end());SetTooltipText(text);GetViewAccessibility().SetName(text);}
   int SidebarActionInset() const {
@@ -3294,8 +3352,10 @@ template<typename Callback> decltype(auto) WithRowSnapshot(views::View* view,Cal
 }
 bool RowHovered(views::View* view){return VisitRow(view,[](auto* row){return row->GetState()==views::Button::STATE_HOVERED||row->GetState()==views::Button::STATE_PRESSED;});}
 int RowTitleWidth(views::View* view){return VisitRow(view,[](auto* row){return row->scene_title_width();});}
+#if BUILDFLAG(IS_MAC)
 bool RowHasClose(views::View* view){return VisitRow(view,[](auto* row){return row->has_close_button();});}
 bool RowCloseVisible(views::View* view){return VisitRow(view,[](auto* row){return row->close_button_visible();});}
+#endif
 void SetRowAddress(views::View* view,std::u16string host,std::u16string path,bool blank,bool secure){VisitRow(view,[&](auto* row){row->SetAddress(std::move(host),std::move(path),blank,secure);});}
 void SetPreferenceNavigationSelected(views::View* control,bool selected){
   views::AsViewClass<ScenePreferenceButton>(control)->SetSelected(selected);
@@ -4261,6 +4321,7 @@ std::unique_ptr<views::View> CreateSidebarGrip(ResizeHandle** handle,base::Repea
 // invalidations before rasterization: Metal must update even if the compositor
 // drops an empty native paint record. No polling timer or idle redraw.
 class SidebarListView final : public views::View {
+  METADATA_HEADER(SidebarListView, views::View)
  public:
   SidebarListView(base::RepeatingClosure painted, base::RepeatingCallback<bool()> metal_visible)
       : painted_(std::move(painted)), metal_visible_(std::move(metal_visible)) {}
@@ -4285,6 +4346,24 @@ class SidebarListView final : public views::View {
   size_t native_paints_ = 0;
   size_t metal_paints_ = 0;
 };
+BEGIN_METADATA(SidebarListView)
+END_METADATA
+
+#if !BUILDFLAG(IS_MAC)
+bool SidebarRowInPaintWindow(const views::View* row) {
+  const views::View* list = row->parent();
+  while (list && !views::AsViewClass<SidebarListView>(list))
+    list = list->parent();
+  // Rows outside the sidebar list (drag images, other hosts) always paint.
+  if (!list || !list->parent())
+    return true;
+  const views::View* viewport = list->parent();
+  gfx::Rect window = viewport->GetLocalBounds();
+  window.Inset(gfx::Insets::VH(-std::max(viewport->height() / 2, 150), 0));
+  return window.Intersects(
+      views::View::ConvertRectToTarget(row, viewport, row->GetLocalBounds()));
+}
+#endif
 
 class SidebarView final : public views::View {
   METADATA_HEADER(SidebarView, views::View)
@@ -7342,7 +7421,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
   if (scroller.visible) bounds.Union(scroller.bounds);
   if (sidebar_footer_->IsDrawn()) bounds.Union(sidebar_footer_->GetBoundsInScreen());
   if (url_pill_->IsDrawn()) bounds.Union(url_pill_->parent()->GetBoundsInScreen());
-  const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
+  [[maybe_unused]] const gfx::Vector2dF list_origin(list_bounds.x() - bounds.x(), list_bounds.y() - bounds.y());
   std::vector<SidebarViewportNode> nodes;
   std::vector<views::View*> native_views;
   // Native adapters deliver parent-local mirrored geometry and visibility only.
@@ -7366,6 +7445,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
     return;
   }
   std::vector<sidebar::Item> items;
+#if BUILDFLAG(IS_MAC)
   items.reserve(projection.nodes.size());
   for (const auto& projected : projection.nodes) {
     auto* view = native_views[projected.index];
@@ -7412,6 +7492,7 @@ void WorkspaceShell::UpdateMetalSidebar() {
       items.push_back(std::move(item));
     }
   }
+#endif
   if (capture_chip_ && capture_chip_->IsDrawn()) {
     auto rect = gfx::RectF(capture_chip_->GetBoundsInScreen()); rect.Offset(-bounds.x(), -bounds.y());
     items.push_back(static_cast<RustActionView*>(capture_chip_.get())->SceneItem(rect, rect));
@@ -7483,6 +7564,12 @@ void WorkspaceShell::UpdateMetalSidebar() {
   if (dot_projection.offset!=dot_requested) {
     workspace_scroll_->ScrollTo(dot_physical(dot_projection.offset.x())); ScheduleMetalSidebar(); return;
   }
+#if !BUILDFLAG(IS_MAC)
+  // The surface never presents here (see CreateSidebarMetal): Views paints the
+  // sidebar. Only rows that scrolled into the paint window need a paint.
+  RepaintCulledSidebarRows();
+  return;
+#else
   const auto dot_origin=local_rect(dot_viewport).OffsetFromOrigin();
   for (const auto& node : dot_projection.nodes) if (node.index>0) {
     auto rect=node.bounds;rect.Offset(dot_origin);auto clip=node.clip;clip.Offset(dot_origin);
@@ -7558,6 +7645,22 @@ void WorkspaceShell::UpdateMetalSidebar() {
     sidebar_update_->SchedulePaint();
     if (drag_overlay_) drag_overlay_->SchedulePaint();
   }
+#endif
+}
+
+void WorkspaceShell::RepaintCulledSidebarRows() {
+#if !BUILDFLAG(IS_MAC)
+  if (!tab_list_) return;
+  auto visit = [](auto&& self, views::View* view) -> void {
+    if (!view->GetVisible()) return;
+    if (auto* row = views::AsViewClass<RustRowView>(view)) {
+      row->RepaintIfCulled();
+      return;
+    }
+    for (const auto& child : view->children()) self(self, child.get());
+  };
+  visit(visit, tab_list_);
+#endif
 }
 
 void WorkspaceShell::ConfigureSidebarContextMenus(views::View* view) {
@@ -10690,6 +10793,10 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
   // Prepare the new viewport before starting the clock. Otherwise its first
   // layout/raster can consume much of a short animation and skip its opening.
   sidebar_widget_->LayoutRootViewIfNecessary();
+#if BUILDFLAG(IS_MAC)
+  // Only macOS presents the sidebar and the switch preview on a GPU surface.
+  // Elsewhere the surface never shows, so capturing a preview scene and
+  // repainting the whole list were wasted work on every switch.
   if (metal_sidebar_) {
     metal_sidebar_->Hide();HideMetalSidebarGrip();
     tab_list_->SchedulePaint();  // Refresh cached native contents before animating.
@@ -10715,6 +10822,9 @@ void WorkspaceShell::AnimateWorkspaceSwitch(std::string_view previous) {
     // existing native animation below. Any late presentation is generation stale.
     StopWorkspaceAnimation();
   }
+#else
+  RepaintCulledSidebarRows();
+#endif
   auto* compositor=sidebar_widget_->GetCompositor();
   if(!compositor)return;
   tab_scroll_->view()->SetPaintToLayer();

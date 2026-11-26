@@ -32,6 +32,8 @@
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/cancelable_callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -531,6 +533,32 @@ rust::Box<adblock::Engine> BuildAdblockEngine(
                             : LoadOrBuildAdblockEngine(cache_path, lists);
 }
 
+// The engine's scriptlets as pages receive them: "host\nscript".
+std::vector<std::string> AdblockEngineScripts(const adblock::Engine& engine) {
+  std::vector<std::string> scripts;
+  for (const auto& entry : engine.page_scripts()) {
+    scripts.push_back(std::string(entry.host) + "\n" +
+                      std::string(entry.script));
+  }
+  return scripts;
+}
+
+struct BuiltAdblockEngine {
+  rust::Box<adblock::Engine> engine;
+  std::vector<std::string> scripts;
+};
+
+// Builds on the thread pool with the scripts already extracted, so the UI
+// thread only swaps them in.
+BuiltAdblockEngine BuildAdblockEngineWithScripts(
+    prototype::AdblockFilterLists::Texts texts, std::vector<bool> enabled,
+    std::vector<std::string> rules, const base::FilePath& cache_path) {
+  auto engine = BuildAdblockEngine(std::move(texts), std::move(enabled),
+                                   std::move(rules), cache_path);
+  auto scripts = AdblockEngineScripts(*engine);
+  return {std::move(engine), std::move(scripts)};
+}
+
 }  // namespace
 
 ProfileContext::AdblockPreferences::AdblockPreferences(
@@ -620,16 +648,21 @@ class ProfileContext::AdblockState {
     return changed_.Add(std::move(callback));
   }
 
-  std::vector<std::string> PageScripts() const {
-    std::vector<std::string> scripts;
+  // Every page gets the same list. Build it once per engine and settings
+  // instead of once per page: with the full filter lists a settings change
+  // rebuilt it for every open page and held the UI thread for ~0.7 s.
+  const std::vector<std::string>& PageScripts() const {
+    if (page_scripts_)
+      return *page_scripts_;
+    auto& scripts = page_scripts_.emplace();
     if (!Enabled())
       return scripts;
+    if (!engine_scripts_)
+      engine_scripts_ = AdblockEngineScripts(*engine_);
+    scripts.reserve(allowed_sites_.size() + engine_scripts_->size());
     for (const auto& site : allowed_sites_)
       scripts.push_back("!" + site + "\n");
-    for (const auto& entry : engine_->page_scripts()) {
-      scripts.push_back(std::string(entry.host) + "\n" +
-                        std::string(entry.script));
-    }
+    scripts.insert(scripts.end(), engine_scripts_->begin(), engine_scripts_->end());
     return scripts;
   }
 
@@ -719,21 +752,30 @@ class ProfileContext::AdblockState {
     const size_t generation = ++generation_;
     if (!texts_) {
       engine_ = BuildAdblockEngine({}, EnabledLists(), ReadRules(), {});
+      engine_scripts_.reset();
+      page_scripts_.reset();
       built_ = generation;
       changed_.Notify();
       if (ready)
         std::move(ready).Run();
       return;
     }
-    auto build = base::BindOnce(&BuildAdblockEngine, texts_, EnabledLists(),
-                                ReadRules(), cache_path_);
+    auto build = base::BindOnce(&BuildAdblockEngineWithScripts, texts_,
+                                EnabledLists(), ReadRules(), cache_path_);
     auto done = base::BindOnce([](base::WeakPtr<AdblockState> state, size_t generation,
-                          base::OnceClosure ready, rust::Box<adblock::Engine> engine) {
+                          base::OnceClosure ready, BuiltAdblockEngine built) {
           if (state && state->generation_ == generation) {
-            state->engine_ = std::move(engine);
+            std::swap(state->engine_, built.engine);
+            state->engine_scripts_ = std::move(built.scripts);
+            state->page_scripts_.reset();
             state->built_ = generation;
             state->changed_.Notify();
           }
+          // `built` now holds the replaced (or a stale) engine. One built
+          // from the full filter lists is large; free it off the UI thread.
+          base::ThreadPool::PostTask(
+              FROM_HERE, {base::TaskPriority::BEST_EFFORT},
+              base::DoNothingWithBoundArgs(std::move(built)));
           if (ready)
             std::move(ready).Run();
         }, weak_factory_.GetWeakPtr(), generation, std::move(ready));
@@ -748,6 +790,8 @@ class ProfileContext::AdblockState {
   }
 
   void UpdateAllowedSites() {
+    // Called on every settings change, including the on/off switch.
+    page_scripts_.reset();
     allowed_sites_.clear();
     for (const auto& site : prefs().GetList(prototype::kAdBlockingAllowedSitesPref))
       allowed_sites_.push_back(NormalizeAdblockSite(site.GetString()));
@@ -763,6 +807,9 @@ class ProfileContext::AdblockState {
   size_t generation_ = 0;
   size_t built_ = 0;
   std::vector<std::string> allowed_sites_;
+  // The engine's scriptlets, from the thread pool after a rebuild.
+  mutable std::optional<std::vector<std::string>> engine_scripts_;
+  mutable std::optional<std::vector<std::string>> page_scripts_;
   base::RepeatingClosureList changed_;
   base::WeakPtrFactory<AdblockState> weak_factory_{this};
 };
@@ -904,6 +951,15 @@ class ProfileContext::AdblockPage final
   void OnSettingsChanged() {
     ++cosmetics_generation_;
     ClearTrial();
+    // Every open page observes the settings. Update each in its own task so
+    // the UI handles input and frames between pages, not after all of them.
+    settings_update_.Reset(base::BindOnce(&AdblockPage::ApplySettings,
+                                          base::Unretained(this)));
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE, settings_update_.callback());
+  }
+
+  void ApplySettings() {
     ApplyScripts();
     GetWebContents().ForEachRenderFrameHost([this](content::RenderFrameHost* frame) {
       ReapplyCosmetics(frame);
@@ -1121,6 +1177,7 @@ class ProfileContext::AdblockPage final
   size_t cosmetics_generation_ = 0;
   base::RepeatingClosureList count_changed_;
   base::CallbackListSubscription settings_changed_;
+  base::CancelableOnceClosure settings_update_;
   base::WeakPtrFactory<AdblockPage> weak_factory_{this};
   WEB_CONTENTS_USER_DATA_KEY_DECL();
 };

@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -394,7 +395,16 @@ class WorkspaceLab final : private WorkspaceRuntime,
               std::u16string deferred_title = {}, std::string pin = {});
   void OpenPin(std::string id);
   bool IsProfileFavorite(size_t workspace, const Tab& tab) const;
-  void LoadBackgroundProfileFavorites(size_t workspace);
+#if BUILDFLAG(IS_WIN)
+  // Pinned pages of the spaces load one page at a time with a pause between
+  // them. Creating a page holds the UI thread for tens of milliseconds, so a
+  // burst of them froze the window right after startup and space switches.
+  void QueueBackgroundProfileFavorites(size_t workspace, bool first);
+  void ScheduleBackgroundPages(base::TimeDelta delay);
+  void LoadNextBackgroundPage();
+  std::deque<std::pair<std::string, uint64_t>> background_pages_;
+  base::OneShotTimer background_page_timer_;
+#endif
   bool PinTab(size_t index, std::string parent, std::string before);
   bool Unpin(std::string id, size_t before);
   bool MoveTab(size_t index, size_t before);

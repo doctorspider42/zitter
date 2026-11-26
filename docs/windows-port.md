@@ -578,6 +578,27 @@ by name in the same directory: `sidebar_scene_unittests`,
   visible panel windows; the full `PositionPanels()` layout runs 200 ms after
   the last move or when a panel is shown. Measuring every panel on each move
   held the drag loop for about 13 ms a step.
+- **UI thread during loading.** Measured with `--trace-startup` on a profile
+  with six spaces, one holding about 300 pins, and profile favorites in every
+  space:
+  - Pinned profile favorites load from a queue, one page about every 120 ms,
+    the shown space first (`LoadNextBackgroundPage`). A switch moves its space
+    to the front and waits 400 ms, past the switch animation. Before, startup
+    created the pages of every space in one task, and a switch created its
+    space's pages before the animation.
+  - The sidebar's GPU surface exists only on macOS (`sidebar_raster.cc` is a
+    stub elsewhere). On Windows a switch no longer captures a preview scene
+    or repaints the whole list, and `UpdateMetalSidebar()` no longer builds
+    a scene nobody draws after every row paint.
+  - Sidebar rows more than half a viewport from the visible list skip their
+    paint until they scroll near (`RepaintCulledSidebarRows()`).
+    `DrawSceneText()` keeps the shaped text of recent paints; shaping
+    (HarfBuzz runs and Windows font fallback) was most of a row's cost. A
+    switch to the 300-pin space painted for 40-50 ms before; now under 14 ms.
+  - When the filter lists update, the ad blocker extracted its scriptlets
+    once for every open page in one task: about 0.9 s with 30 pages. The
+    thread pool now extracts them once with the engine build, and each page
+    updates in its own task (under 1 ms each).
 - **Migration from the Chrome-based build.** When `Zitter Content` is still
   empty, the first plain launch imports the Chrome-based profile
   (`legacy_import_win.cc`, the C++ port of `tools/profile_migration_trial.py`):

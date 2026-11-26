@@ -1,6 +1,8 @@
 // Copyright 2026 Zitter contributors. SPDX-License-Identifier: Apache-2.0
 
 #include "workspace_lab.h"
+
+#include "base/trace_event/trace_event.h"
 #include "bookmark_sync.h"
 #include "lab_clients.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -4764,10 +4766,15 @@ void WorkspaceLab::StartWorkspace() {
   // Start already-pinned pages once the restored window is on screen; their
   // renderers no longer hold back the first frame.
   after_startup_reveal_ = base::BindOnce([](base::WeakPtr<WorkspaceLab> lab) {
-        if (!lab || !lab->done_ || !lab->CanEditWorkspace())
+        if (!lab || !lab->done_)
           return;
-        for (size_t workspace = 0; workspace < lab->tabs_.size(); ++workspace)
-          lab->LoadBackgroundProfileFavorites(workspace);
+        // The shown space first, then the others in order.
+        lab->QueueBackgroundProfileFavorites(lab->active_index_, false);
+        for (size_t workspace = 0; workspace < lab->tabs_.size(); ++workspace) {
+          if (workspace != lab->active_index_)
+            lab->QueueBackgroundProfileFavorites(workspace, false);
+        }
+        lab->ScheduleBackgroundPages(base::Milliseconds(150));
       }, weak_factory_.GetWeakPtr());
 #endif
   if (std::exchange(restore_window_fullscreen_, false)) {
@@ -4866,8 +4873,11 @@ bool WorkspaceLab::Activate(std::string_view workspace_id,
     sleeping_[index] = false;
     ShowTab();
 #if BUILDFLAG(IS_WIN)
-    if (ready_for_external_urls_)
-      LoadBackgroundProfileFavorites(index);
+    // After the switch animation, so the new pages don't take its frames.
+    if (ready_for_external_urls_) {
+      QueueBackgroundProfileFavorites(index, true);
+      ScheduleBackgroundPages(base::Milliseconds(400));
+    }
 #endif
     if (!smoke_) {
       downloads_->SetSource(
@@ -10607,19 +10617,67 @@ bool WorkspaceLab::IsProfileFavorite(size_t workspace, const Tab& tab) const {
          std::ranges::contains(favorites->second, tab.pin, &prototype::PinnedItem::id);
 }
 
-void WorkspaceLab::LoadBackgroundProfileFavorites(size_t workspace) {
+#if BUILDFLAG(IS_WIN)
+void WorkspaceLab::QueueBackgroundProfileFavorites(size_t workspace, bool first) {
   if (sleeping_[workspace])
     return;
-  for (auto& tab : tabs_[workspace]) {
+  const auto& id = model_.workspaces()[workspace].id;
+  std::vector<std::pair<std::string, uint64_t>> pages;
+  for (const auto& tab : tabs_[workspace]) {
     if (tab.view->web_contents() || tab.discarded_page ||
         !tab.deferred_url.SchemeIsHTTPOrHTTPS() ||
         !IsProfileFavorite(workspace, tab)) {
       continue;
     }
-    EnsureHiddenTabPage(workspace, tab, tab.deferred_url);
-    tab.view->LoadInitialURL(tab.deferred_url);
+    std::pair<std::string, uint64_t> page(id, tab.id);
+    std::erase(background_pages_, page);
+    pages.push_back(std::move(page));
   }
+  background_pages_.insert(first ? background_pages_.begin() : background_pages_.end(),
+                           std::make_move_iterator(pages.begin()),
+                           std::make_move_iterator(pages.end()));
 }
+
+void WorkspaceLab::ScheduleBackgroundPages(base::TimeDelta delay) {
+  if (background_pages_.empty()) {
+    background_page_timer_.Stop();
+    return;
+  }
+  // Restarting keeps pages out of a burst of switches.
+  background_page_timer_.Start(
+      FROM_HERE, delay,
+      base::BindOnce(&WorkspaceLab::LoadNextBackgroundPage, base::Unretained(this)));
+}
+
+void WorkspaceLab::LoadNextBackgroundPage() {
+  if (!done_)
+    return;
+  if (!CanEditWorkspace()) {
+    ScheduleBackgroundPages(base::Milliseconds(500));
+    return;
+  }
+  while (!background_pages_.empty()) {
+    const auto [id, tab_id] = std::move(background_pages_.front());
+    background_pages_.pop_front();
+    const auto workspace = WorkspaceIndex(id);
+    if (!workspace || sleeping_[*workspace])
+      continue;
+    auto& tabs = tabs_[*workspace];
+    const auto tab = std::ranges::find(tabs, tab_id, &Tab::id);
+    if (tab == tabs.end() || tab->view->web_contents() || tab->discarded_page ||
+        !tab->deferred_url.SchemeIsHTTPOrHTTPS() ||
+        !IsProfileFavorite(*workspace, *tab)) {
+      continue;
+    }
+    TRACE_EVENT0("startup", "LoadNextBackgroundPage");
+    EnsureHiddenTabPage(*workspace, *tab, tab->deferred_url);
+    tab->view->LoadInitialURL(tab->deferred_url);
+    break;
+  }
+  // About one page every few frames leaves the UI room for input.
+  ScheduleBackgroundPages(base::Milliseconds(120));
+}
+#endif
 
 bool WorkspaceLab::CanEditWorkspace() const {
   return !saving_session_ && !saving_catalogue_ && !before_unload_batch_.pending() &&

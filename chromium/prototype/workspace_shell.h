@@ -1053,6 +1053,8 @@ class WorkspaceShell final : public ui::EventHandler,
   void ApplySidebarWidth(int width,bool done);
   void FitInitialSidebarWidth();
   void HideMetalSidebarGrip();
+  // Views-painted sidebar (not macOS): paints rows that scrolled near the viewport.
+  void RepaintCulledSidebarRows();
   void ScheduleMetalSplit();
   void UpdateMetalSplit();
   void ScheduleMetalHeader();
