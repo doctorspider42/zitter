@@ -24,7 +24,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-WINDOWS_TARGET = '//zitter:zitter'
+WINDOWS_TARGET = '//zitter_content:zitter_content'
 MAGIC = {b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca'}
 
 

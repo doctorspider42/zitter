@@ -311,9 +311,14 @@ class Run:
         with open(log, "w", encoding="utf-8") as out:
             out.write("$ " + " ".join(str(c) for c in cmd) + "\n")
             out.flush()
+            # CONDA_SHLVL keeps a conda cmd.exe AutoRun hook from prepending its
+            # condabin to PATH, which breaks setup_toolchain.py's SetEnv.cmd check
+            # in the license audit's gn runs.
             rc = subprocess.run([str(c) for c in cmd], cwd=ROOT, stdout=out,
                                 stderr=subprocess.STDOUT, creationflags=NO_WINDOW,
-                                env=dict(os.environ, PYTHONUTF8="1", **(env or {}))).returncode
+                                env=dict(os.environ, PYTHONUTF8="1",
+                                         CONDA_SHLVL=os.environ.get("CONDA_SHLVL", "0"),
+                                         **(env or {}))).returncode
         entry.update(state="succeeded" if rc == 0 else "failed", finished=now(), exitCode=rc)
         self.save()
         if rc:
