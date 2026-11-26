@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Overnight release build of one commit for Windows and macOS at once.
 
-Turn on the build PC, the laptop worker and the Mac (logged in, on power), then
-on the build PC:
+Turn on the build PC, the worker PCs and the Mac (logged in, on power), then
+on the build PC (the preflight starts workers that are down):
 
   python tools/nightly/fire.py --check   preflight only (also asks the Mac's
                                          session for any permission it needs)
@@ -45,7 +45,6 @@ OUT_REL = "out/ZitterWinContent"
 OUT = SRC / OUT_REL
 RUNS = ROOT / "build" / "nightly"
 MAC = "zitter-mac"
-LAPTOP = "zitter-node"
 MAC_REPO = "~/Projects/zitter"
 MAC_WORKTREE = "~/Projects/zitter-nightly"
 MAC_RUNS = "~/zitter-nightly/runs"
@@ -117,7 +116,7 @@ class Preflight:
     def run(self):
         self.source()
         self.build_pc()
-        self.laptop()
+        self.workers()
         if not self.args.skip_mac:
             self.mac()
         return self
@@ -159,13 +158,23 @@ class Preflight:
         if free < 30:
             self.error(f"only {free} GB free on the PC")
 
-    def laptop(self):
+    def workers(self):
         if self.args.skip_windows:
             return
-        r = ssh(LAPTOP, "wsl -d Ubuntu -- pgrep -f nativelink/nativelink", timeout=30)
-        if r.returncode != 0:
-            self.warn("the laptop worker (zitter-node) does not answer: the Windows build "
-                      "runs on the PC and the Mac only, and takes longer")
+        # Starts the workers that are down (tools/remote_build/workers.py).
+        sys.path.insert(0, str(ROOT / "tools" / "remote_build"))
+        import workers
+        states = workers.ensure()
+        self.facts["workers"] = states
+        for name, state in states.items():
+            if state == "unreachable":
+                self.warn(f"the {name} worker does not answer over SSH (off or asleep): "
+                          "the Windows build runs without it and takes longer")
+            elif state == "down":
+                self.warn(f"the {name} worker did not start: the Windows build runs "
+                          "without it and takes longer")
+            elif state == "started":
+                self.warn(f"the {name} worker was down and has been started")
 
     def mac(self):
         r = ssh(MAC, f"""
@@ -174,7 +183,6 @@ echo "ac=$(pmset -g ps | head -1 | grep -q 'AC Power' && echo yes || echo no)"
 echo "free=$(df -g ~ | tail -1 | awk '{{print $4}}')"
 echo "chromium=$(git -C {MAC_REPO}/.chromium/src rev-parse HEAD)"
 echo "busy=$(pgrep -fl 'ninja|build\\.sh' | grep -v pgrep | wc -l | tr -d ' ')"
-echo "worker=$(pgrep -f nativelink/nativelink >/dev/null && echo yes || echo no)"
 echo "identity=$(security find-identity -v -p codesigning | grep -c 'Developer ID Application' || true)"
 """)
         if r.returncode != 0:
@@ -193,8 +201,6 @@ echo "identity=$(security find-identity -v -p codesigning | grep -c 'Developer I
                        "chromium/revision.json wants another revision: sync it first")
         if info.get("busy", "0") != "0":
             self.error("a build is running on the Mac")
-        if info.get("worker") != "yes":
-            self.warn("the Mac's NativeLink worker is not running")
         if not self.args.no_notarize and info.get("identity", "0") == "0":
             self.error("no Developer ID Application identity on the Mac")
 

@@ -34,7 +34,16 @@ def main():
     p.add_argument("--remote-jobs", type=int, default=48)
     p.add_argument("--strict-remote", action="store_true",
                    help="fail instead of compiling locally when remote fails")
+    p.add_argument("--no-worker-check", action="store_true",
+                   help="skip checking and starting the remote workers (workers.py)")
     args, extra = p.parse_known_args()
+
+    if not args.no_worker_check and "-n" not in extra:
+        # A worker that a reboot or sleep took down makes a long build run on
+        # fewer machines without any error; start it, or say so up front.
+        sys.path.insert(0, HERE)
+        import workers
+        print("remote workers:\n" + workers.describe(workers.ensure()), flush=True)
 
     src = os.path.abspath(args.src)
     siso = os.path.join(src, "third_party", "siso", "cipd",

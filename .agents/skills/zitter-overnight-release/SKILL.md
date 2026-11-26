@@ -32,7 +32,9 @@ Pick the path:
    "Set the version to X.Y.Z". The macOS version comes from the same header.
    The working tree must be clean: the run builds `HEAD`.
 2. **Preflight.** Ask the user to turn on the build PC (Docker Desktop with the
-   NativeLink server), the laptop and the Mac, logged in and on power. Then:
+   NativeLink server), the worker PCs and the Mac, the Mac logged in, unlocked
+   and on power (a locked Mac stops notarization and the DMG). The preflight
+   starts workers that are down (`tools/remote_build/workers.py`). Then:
    ```powershell
    python tools/nightly/fire.py --check
    ```

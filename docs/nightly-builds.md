@@ -14,8 +14,15 @@ explicit step ([local-releases.md](local-releases.md)).
 
 ## Before you fire
 
-- All three machines on: the build PC (Docker Desktop with the NativeLink
-  server), the laptop worker and the Mac ([remote-builds.md](remote-builds.md)).
+- All machines on: the build PC (Docker Desktop with the NativeLink server),
+  the worker PCs and the Mac ([remote-builds.md](remote-builds.md)). The
+  preflight and `build.py` start a worker that is down (`workers.py`) and warn
+  about one that does not answer. The worker PCs' scheduled task wakes them at
+  03:45 and keeps them awake while the worker runs, without anyone logged in.
+- The Mac unlocked, not only logged in, until notarization and the DMG are
+  done. A locked Mac hides the `zitter-notary` Keychain profile from
+  `notarytool` and its Finder does not answer the DMG layout script; on
+  2026-11-26 that held the macOS half from 06:08 until the Mac was unlocked.
 - The Mac logged in and on power. Signing, notarization and the DMG's Finder
   layout need the user's session; on battery the Mac can sleep.
 - A clean working tree on the PC. The run builds `HEAD`; the Mac gets the same

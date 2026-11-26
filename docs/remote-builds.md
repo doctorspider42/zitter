@@ -46,7 +46,8 @@ All in [`tools/remote_build/`](../tools/remote_build/):
 |---|---|
 | `package_toolchain.py` | Packages installed VS 2026 Build Tools + SDK as `<hash>.zip` (once per VS/SDK update). |
 | `setup_siso.py` | Prepares a checkout: hermetic toolchain, Linux clang, wrapper and Siso configs. Run after each fresh checkout. |
-| `build.py` | Runs Siso against the cluster with a sane `-remote_jobs`. |
+| `build.py` | Runs Siso against the cluster with a sane `-remote_jobs`, after `workers.py`. |
+| `workers.py` | Checks the remote workers over SSH and starts the ones that are down. |
 | `fresh_build.py` | New Chromium revision: fresh checkout, Content staging, setup and a full remote build, timed per step. |
 | `windows-remote.args.gn` | The two GN args that turn remote compiles on. |
 | `start_server.ps1`, `Dockerfile`, `nativelink_server.json5` | NativeLink server + local worker in Docker Desktop. |
@@ -84,15 +85,21 @@ Needs WSL2 with Ubuntu and SSH access from the build PC. From the build PC:
    `%USERPROFILE%\zitter-nl` on the worker PC and run
    `wsl -d Ubuntu -- bash /mnt/c/Users/<user>/zitter-nl/install_wsl_worker.sh`.
    Extract the binary with `docker create zitter-remote-build` and `docker cp`.
-2. Keep it running with a per-user logon task (no admin):
+2. Keep it running with a scheduled task, installed over SSH from the build PC
+   (an administrator's SSH session has the rights it needs):
    ```powershell
-   powershell -ExecutionPolicy Bypass -File install_logon_task.ps1 -SchedulerHost <build PC IP> -Slots 16
+   ssh <alias> 'powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\zitter-nl\install_logon_task.ps1 -SchedulerHost <build PC IP> -Slots 16'
    ```
-   WSL stops the worker when its last `wsl.exe` session ends, for example when
-   an RDP session disconnects. The task starts it at logon and restarts it every
-   5 minutes when it is down. It runs `run_worker_task.ps1` (copy it next to the
-   installer), which keeps the PC awake while the worker runs without changing
-   power settings.
+   The task runs as the user whether or not anyone is logged on (S4U, no stored
+   password): it starts the worker at boot and every 5 minutes when it is down.
+   WSL stops the worker when its last `wsl.exe` session ends, and an
+   interactive-only task cannot start it again until someone logs in. On
+   2026-11-25 a Windows Update restart at 00:15 left the laptop's worker down
+   for the whole overnight build that way. The task also wakes the PC from sleep
+   daily at 03:45 (`-WakeAt`, empty to turn it off), and while it runs, the PC
+   stays awake: `run_worker_task.ps1` (copy it next to the installer) asks for
+   that without changing power settings. From a non-elevated PowerShell on the
+   PC itself, `-LogonType Interactive` installs the older logon-only task.
 
 ### A Mac as a worker
 
@@ -137,6 +144,11 @@ build PC's key in `~/.ssh/authorized_keys`. From the build PC:
 The log is `~/nativelink/worker.log`; restart with
 `launchctl kickstart -k gui/$(id -u)/com.zitter.nativelink-worker`.
 
+The Mac is on Wi-Fi (802.11n). In the Chromium 159 build its worker spent its
+first minutes on "still fetching inputs, possible stall" and was evicted twice
+for not acknowledging a kill within 60 s, each time with 12 compiles that the
+build PC then redid. Use Ethernet for the Mac in long builds, or fewer slots.
+
 Checked on 2026-11-24: 12 of 48 `base` compiles ran on the Mac with
 `-re_cache_enable_read=false`, and all 48 objects were byte-identical to the
 earlier local and Linux-worker builds.
@@ -161,6 +173,12 @@ and set the PIN again.
 ```powershell
 python tools/remote_build/build.py -C out/ZitterWinContent zitter_content
 ```
+
+`build.py` first runs `workers.py`: it checks each remote worker over SSH,
+starts the ones that are down (WSL through the scheduled task, the Mac through
+its LaunchAgent) and prints which ones the build will have. A worker that does
+not answer over SSH is off or asleep. `--no-worker-check` skips it;
+`python tools/remote_build/workers.py --no-start` only reports.
 
 For a new Chromium revision, `fresh_build.py` does everything from a clean
 checkout to a full build, timing each step in `build/fresh-build/fresh_build.log`;
@@ -192,6 +210,7 @@ fails, which is useful to check the setup. The server's worker list and errors:
 
 | `zitter_content`, fresh checkout (34,423 steps) | build PC + laptop | 3 h 13 min compile, 3 h 52 min with checkout and setup | `--remote-jobs 44`, 31,000 remote compiles and 30 local fallbacks; the same build on the build PC alone took about 8 hours |
 | `zitter_content`, full rebuild after a toolchain re-download (26,764 steps) | build PC (20 slots) + laptop (asleep for part of the run) | 3 h 51 min | the laptop slept at 02:42, which led to `run_worker_task.ps1` |
+| `zitter_content`, Chromium 159 fresh checkout (45,315 steps), 2026-11-25 | build PC (12 slots) + Mac, laptop and old PC down | 4 h 56 min | 37,518 remote compiles: the PC's worker ran 37,303, the Mac 1,240 (some of them killed and rerun); 362 local fallbacks. The laptop's worker was down after a Windows Update restart and the old PC was asleep, which led to the S4U task and `workers.py` |
 
 The laptop's 16 slots roughly halve a fresh build, as long as both workers stay
 busy: the queue of ready compiles never emptied in either run.
