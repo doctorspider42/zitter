@@ -103,6 +103,10 @@ def main():
     args = p.parse_args()
 
     job = Job(args.run_id, args.version)
+    # Keeps the display on, and so the screen unlocked, for the whole job: a
+    # locked Mac hides the notarytool Keychain profile and its Finder does not
+    # answer the DMG layout script. -w ends it with this process.
+    subprocess.Popen(["/usr/bin/caffeinate", "-di", "-w", str(os.getpid())])
     try:
         busy = other_build_running()
         if busy:

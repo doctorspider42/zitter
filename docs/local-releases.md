@@ -140,6 +140,13 @@ is already configured. An App Store listing, new App ID, provisioning profile,
 or new Developer ID certificate is not needed for this workflow. Notarization
 uses the existing certificate and a separate credential for Apple's service.
 
+Keep the Mac unlocked from notarization through the DMG, and run
+`caffeinate -di` in a Terminal for the duration (it keeps the display on, so the
+screen does not lock). A locked Mac hides the `zitter-notary` Keychain profile
+from `notarytool` ("No Keychain password item found") and its Finder does not
+answer the DMG layout script (AppleEvent -1712). The overnight job
+(`tools/nightly/mac_job.py`) starts `caffeinate -di` itself.
+
 ### One-time account setup (user action)
 
 1. Open [Apple Account](https://account.apple.com/) and sign in using the same

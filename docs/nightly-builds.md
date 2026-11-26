@@ -23,6 +23,10 @@ explicit step ([local-releases.md](local-releases.md)).
   done. A locked Mac hides the `zitter-notary` Keychain profile from
   `notarytool` and its Finder does not answer the DMG layout script; on
   2026-11-26 that held the macOS half from 06:08 until the Mac was unlocked.
+  `mac_job.py` runs `caffeinate -di` for the whole job, so the display stays
+  on and the screen does not lock once the run has started. It cannot unlock
+  a Mac that is already locked: leave it unlocked when you fire. For a release
+  run by hand on the Mac, start `caffeinate -di` yourself first.
 - The Mac logged in and on power. Signing, notarization and the DMG's Finder
   layout need the user's session; on battery the Mac can sleep.
 - A clean working tree on the PC. The run builds `HEAD`; the Mac gets the same

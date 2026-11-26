@@ -33,7 +33,8 @@ Pick the path:
    The working tree must be clean: the run builds `HEAD`.
 2. **Preflight.** Ask the user to turn on the build PC (Docker Desktop with the
    NativeLink server), the worker PCs and the Mac, the Mac logged in, unlocked
-   and on power (a locked Mac stops notarization and the DMG). The preflight
+   and on power (a locked Mac stops notarization and the DMG; the Mac job keeps
+   it from locking with `caffeinate -di` once it starts). The preflight
    starts workers that are down (`tools/remote_build/workers.py`). Then:
    ```powershell
    python tools/nightly/fire.py --check
