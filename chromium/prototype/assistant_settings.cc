@@ -25,8 +25,9 @@ base::DictValue AssistantPermissions::ToValue() const {
   return base::DictValue().Set("tabs", tabs).Set("pages", pages).Set("actions", actions).Set("history", history).Set("web", web).Set("confirm_clicks", confirm_clicks);
 }
 AssistantSettings::AssistantSettings()
-    : models({{"claude", "sonnet"}, {"claude", "opus"}, {"openai", "gpt-6.1-sol"}, {"openai", "gpt-6.1-terra"}, {"openai", "gpt-6-astra"}, {"codex", "gpt-6.2-sol"}, {"codex", "gpt-6.2-astra"}, {"codex", "gpt-6.1-terra"}, {"codex", "gpt-6-luna"}}),
-      default_model("claude/sonnet") {}
+    // The CLIs pick their own current model ("latest"); other IDs are added by hand.
+    : models({{"claude", "latest"}, {"openai", "gpt-6.1-sol"}, {"openai", "gpt-6.1-terra"}, {"openai", "gpt-6-astra"}, {"codex", "latest"}}),
+      default_model("claude/latest") {}
 AssistantSettings::AssistantSettings(const AssistantSettings&) = default;
 AssistantSettings& AssistantSettings::operator=(const AssistantSettings&) = default;
 AssistantSettings::~AssistantSettings() = default;
@@ -60,7 +61,7 @@ base::DictValue AssistantSettings::ToValue() const {
     remembered.Set(key, permissions);
   return base::DictValue().Set("shortcut_access", std::move(remembered))
       .Set("enabled", enabled).Set("backends", std::move(enabled_backends)).Set("models", std::move(list))
-      .Set("catalog_version", 4).Set("codex_path", codex_path).Set("claude_path", claude_path)
+      .Set("catalog_version", 5).Set("codex_path", codex_path).Set("claude_path", claude_path)
       .Set("ollama_configured", ollama_configured)
       .Set("encrypted_api_key", encrypted_api_key).Set("default_model", default_model).Set("permissions", defaults.ToValue()).Set("background", background)
       .Set("confirm_background", confirm_background).Set("concurrency", concurrency);
@@ -125,6 +126,17 @@ AssistantSettings AssistantSettings::FromValue(const base::DictValue* value) {
         if (model.provider == "codex" && model.id == old_id) model.id = new_id;
       if (result.default_model == std::string("codex/") + old_id) result.default_model = std::string("codex/") + new_id;
     }
+  }
+  if (value->FindInt("catalog_version").value_or(0) < 5) {
+    // Each CLI's own current model ("latest") leads its models, so a new model
+    // works without a Zitter release. Saved IDs stay; the shipped default moves.
+    for (const char* provider : {"claude", "codex"}) {
+      const auto first = std::ranges::find(result.models, std::string(provider), &AssistantModel::provider);
+      if (result.models.size() < 32 &&
+          std::ranges::none_of(result.models, [&](const auto& m) { return m.provider == provider && m.id == "latest"; }))
+        result.models.insert(first, {provider, "latest"});
+    }
+    if (result.default_model == "claude/sonnet") result.default_model = "claude/latest";
   }
   if (const auto* permissions = value->FindDict("permissions")) {
     auto flag = [&](const char* key, bool fallback) { return permissions->FindBool(key).value_or(fallback); };

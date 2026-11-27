@@ -38,6 +38,7 @@
 #include "base/values.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
+#include "chromium/assistant/codex_setup.h"
 #include "chromium/prototype/assistant_host.h"
 #include "chromium/prototype/before_unload_batch.h"
 #include "components/find_in_page/find_result_observer.h"
@@ -693,6 +694,15 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void CheckAssistantProvider(size_t index, bool discover);
   void AssistantProviderChecked(size_t index, bool discover,
                                 uint64_t generation, base::DictValue result);
+  // Codex setup from the assistant settings: download the pinned Codex when
+  // none is installed, then sign it in with a ChatGPT account.
+  void DownloadCodex();
+  void CodexDownloaded(base::FilePath archive);
+  void CodexInstalled(bool ok);
+  void SignInCodex();
+  void OpenCodexSignInPage(GURL url);
+  void CodexSignInFinished(assistant::CodexSignInResult result);
+  void CancelCodexSetup();
   bool ShowAssistant(bool hover);
   // The Ask bar over the page (⌘E).
   bool ShowAssistantAsk();
@@ -1369,6 +1379,14 @@ class WorkspaceLab final : private WorkspaceRuntime,
   void ApplySecureDns();
   std::optional<prototype::AssistantSettings> assistant_settings_;
   bool claude_login_pending_ = false;
+  enum class CodexSetup { kIdle, kDownloading, kInstalling, kSigningIn };
+  CodexSetup codex_setup_ = CodexSetup::kIdle;
+  int codex_download_percent_ = 0;
+  std::unique_ptr<network::SimpleURLLoader> codex_download_;
+  scoped_refptr<assistant::CodexSignIn> codex_sign_in_;
+  // Cancels a running sign-in when it times out or the lab goes away.
+  base::OneShotTimer codex_sign_in_timeout_;
+  base::ScopedClosureRunner codex_sign_in_cancel_;
   prototype::NightShiftConfig night_shift_config_;
   prototype::AssistantSettings assistant_host_settings_;
   std::array<base::DictValue, 4> assistant_provider_status_;

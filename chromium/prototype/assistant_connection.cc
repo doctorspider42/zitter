@@ -29,7 +29,7 @@ std::u16string AssistantConnectionError(std::string_view message) {
   if (message.starts_with("Install native Claude"))
     return T(u"Zainstaluj Claude Code i zaloguj się na swoje konto.");
   if (message.starts_with("Sign in to the provider CLI"))
-    return T(u"Zaloguj się w terminalu i ponów test. Wskazówki znajdziesz w sekcji „Pomoc i konfiguracja”.");
+    return T(u"Zaloguj się w terminalu i ponów test.");
   if (message.starts_with("The provider CLI does not support"))
     return T(u"Zaktualizuj CLI dostawcy i ponów test.");
   if (message.starts_with("The service did not find this model"))

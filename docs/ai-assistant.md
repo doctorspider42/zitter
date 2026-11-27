@@ -34,12 +34,18 @@ mode; they never send it or grant browser access.
   edge, Command Center shows only “AI Assistant is turned off” (which opens this
   page), no assistant process starts and background pages close. The other values
   are kept.
-- **AI connections.** Each service has a setup status, a visibility switch and
-  **Test connection**. Detected installations remain unverified until a selected
-  model answers a short test message: green means success, red means failure.
-  The test shares no pages or browsing history and times out after 20 seconds.
-  Add, replace or remove an OpenAI API key directly here. Keys are encrypted
-  through Chromium's operating-system credential protection before being saved.
+- **AI connections.** Four tiles: Ollama, ChatGPT (via Codex), Claude (via
+  Claude Code) and OpenAI API, each with what it costs. No service is picked by
+  default; the assistant connects to nothing until the user picks a tile. Each
+  picked service gets a setup card with a stepper (for example Download → Sign
+  in → Test) and one primary action for the current step. **⋯** holds the rest:
+  the executable path, an Ollama model ID, or the OpenAI key dialog (which also
+  removes a saved key). **×** or the tile drops the service. Detected
+  installations remain unverified until a selected model answers a short test
+  message; the card then shows **Connected** and the model, or **Error** and the
+  reason. The test shares no pages or browsing history and times out after 20
+  seconds. Keys are encrypted through Chromium's operating-system credential
+  protection before being saved. Design: the AI Provider Picker canvas.
 - **Models in the panel.** Visible models make up the panel's model menu. The
   default one starts every new session. Models can be added by backend and ID,
   hidden or removed.
@@ -146,8 +152,8 @@ browser actions and permission checks remain in the browser process.
 | Backend | Setup | Model field |
 | --- | --- | --- |
 | OpenAI API | Add your key in **Settings → AI Assistant → AI connections**. `OPENAI_API_KEY` remains an optional fallback. Requests use the Responses API with `store: false`. | Defaults include `gpt-6.1-sol`, `gpt-6.1-terra`, and `gpt-6-astra`. |
-| Codex CLI | Authenticate with `codex login`. Choose **Help and setup** to set a native executable path. Zitter also checks PATH, supported Windows desktop and npm installations, and `ZITTER_CODEX_PATH`. | Current defaults include `gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-terra`, and `gpt-6-luna`. Saved settings move `gpt-6.1-sol` and `gpt-6-astra` to their 6.2 successors. Custom IDs remain supported. |
-| Claude CLI | Install native Claude Code and sign in with `/login`. Choose **Help and setup** to set the path, or use PATH or `ZITTER_CLAUDE_PATH`. | A Claude CLI alias or exact model ID. |
+| Codex CLI | Without an installed Codex, the ChatGPT card offers **Download**, then **Sign in** (see [Codex setup from Zitter](#codex-setup-from-zitter)). An existing installation works too: sign in from the card or with `codex login`. **⋯** sets a native executable path. Detection tries the copy Zitter downloaded first, then PATH, supported Windows desktop and npm installations; `ZITTER_CODEX_PATH` or a set path overrides it. | `latest` (the default) passes no `--model`, so Codex runs its own current model and a new model works without a Zitter release. Any other model ID can be added by hand. |
+| Claude CLI | Install native Claude Code and sign in with `claude /login` (the card shows the command; on macOS it has **Sign in**). **⋯** sets the path, or use PATH or `ZITTER_CLAUDE_PATH`. | `latest` (the default) passes no `--model`, so Claude Code picks its current model. A Claude CLI alias or exact model ID can be added by hand. |
 | Ollama | Start local Ollama and choose **Detect models** or **Add model**. Optional `ZITTER_OLLAMA_URL` changes the loopback HTTP endpoint. The default is `http://127.0.0.1:11434`. | A downloaded model with reliable structured output. |
 
 On Windows, first-run setup offers to enable the assistant and configure its
@@ -160,10 +166,41 @@ Homebrew binary directories. For Codex it also checks ChatGPT.app in
 `~/Applications` and `/Applications`. These locations work when Zitter starts
 from Finder with a limited PATH.
 
+### Codex setup from Zitter
+
+The ChatGPT card offers **Download** when automatic detection finds no
+Codex. Zitter downloads the Codex CLI release it is pinned to
+(`kManagedCodexVersion` in `chromium/assistant/codex_install.h`) from the
+`openai/codex` GitHub release, as the single-file `.zst` asset for the platform.
+Before it installs the executable, it checks the archive's size and SHA-256
+digest against the values pinned in the source. A mismatch discards the download.
+The executable goes to `%LOCALAPPDATA%\Zitter\Tools\codex\<version>` on Windows
+and `~/Library/Application Support/Zitter/Tools/codex/<version>` on macOS,
+outside every workspace and profile. Detection tries it before other
+installations, because a leftover npm copy is often older than the pinned
+version. Installing a new pinned version removes
+the executables of older ones. Codex is licensed under Apache-2.0.
+
+Its **Sign in** runs `codex app-server` and asks it to start a ChatGPT
+login (`account/login/start` with `type: "chatgpt"`). Zitter opens the sign-in
+URL Codex returns in a new tab, but only an `https` page on `auth.openai.com`,
+`auth.chatgpt.com` or `chatgpt.com`. Codex receives the OAuth callback on its own
+loopback port and saves the login in its home (`CODEX_HOME` or `~/.codex`),
+exactly as `codex login` does. Usage then draws on the user's ChatGPT plan, not
+an API key. If Codex already has a saved login, no page opens. The sign-in stops
+after ten minutes, on **Cancel**, or when Zitter quits. A successful sign-in runs
+the connection test.
+
+To update the pinned Codex, change the version, URLs, sizes and digests in
+`codex_install.h` together, from the asset list of the GitHub release
+(`gh api repos/openai/codex/releases/tags/rust-v<version>`), and check that the
+release still provides `codex exec` with the flags below and the app-server login
+methods.
+
 Codex must support `exec --json`, `--output-schema`, `--ephemeral`,
 `--ignore-user-config` and `--ignore-rules`. An unsupported CLI fails that backend
 without falling back to Node or another provider. If automatic detection misses
-an npm installation, select the native binary through **Help and setup**.
+an npm installation, select the native binary through **⋯** on its card.
 The same native executable requirement applies to Claude.
 Do not install npm packages into an app bundle. Chromium's own build toolchain
 and the independent network audit scripts are outside this runtime migration.

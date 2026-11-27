@@ -17,6 +17,7 @@
 #include "base/path_service.h"
 #include "base/strings/string_split.h"
 #include "build/build_config.h"
+#include "chromium/assistant/codex_install.h"
 
 namespace zitter::assistant {
 
@@ -29,6 +30,12 @@ inline base::FilePath NativeCommand(base::cstring_view setting, std::string name
   else if (auto path = env->GetVar(setting); path && !path->empty())
     candidates.push_back(base::FilePath::FromUTF8Unsafe(*path));
   else {
+    // The copy Zitter downloaded comes first among detected ones: it is the
+    // version Zitter was tested with, and a leftover npm copy is often stale.
+    if (name == "codex") {
+      if (auto managed = ManagedCodexPath(); !managed.empty())
+        candidates.push_back(std::move(managed));
+    }
 #if BUILDFLAG(IS_WIN)
     name += ".exe";
     const char separator = ';';
@@ -80,6 +87,12 @@ inline base::FilePath NativeCommand(base::cstring_view setting, std::string name
       }
     }
 #endif
+  }
+  // The downloaded copy also backs up a set path that no longer works, so a
+  // download never leaves Codex missing.
+  if (name == "codex" || name == "codex.exe") {
+    if (auto managed = ManagedCodexPath(); !managed.empty())
+      candidates.push_back(std::move(managed));
   }
   for (const auto& path : candidates) {
     if (!path.IsAbsolute())

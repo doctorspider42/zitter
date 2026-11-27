@@ -1198,7 +1198,7 @@ fn preference_catalogue(system_certificates:bool)->ffi::PreferenceCatalogue {
     clear.button=t("Wyczyść").into();rows.push(clear);
     rows.push(preference_spec(1,K::ShortcutHint,"",t("Szybciej z klawiaturą"),t("⌘ L  adres i wyszukiwanie\n⌘ K  karty, przestrzenie i historia\n⌘ T  nowa karta     ⌘ ,  preferencje"),vec![],"",A::None));
     rows.push(preference_spec(10,K::Toggle,"assistant_enabled",t("Włącz asystenta"),t("Wyłączony asystent znika z paska i z Command Center i nie uruchamia procesu. Dotyczy całej aplikacji."),vec![],"",A::None));
-    rows.push(preference_spec(10,K::AssistantBackends,"",t("Połączenia AI"),t("Połącz wybraną usługę i sprawdź, czy odpowiada. Zielony status oznacza udany test połączenia."),vec![],"",A::None));
+    rows.push(preference_spec(10,K::AssistantBackends,"",t("Połączenia AI"),"",vec![],"",A::None));
     rows.push(preference_spec(10,K::AssistantModels,"",t("Modele w panelu"),t("Widoczne modele trafiają do menu modelu w panelu. Domyślny startuje każdą nową sesję."),vec![],"",A::None));
     rows.push(preference_spec(10,K::Toggle,"assistant_tabs",t("Otwarte i przypięte karty"),t("Tytuły i adresy bez parametrów, potrzebne do podpowiedzi po @."),vec![],"",A::None));
     rows.push(preference_spec(10,K::Toggle,"assistant_pages",t("Treść i kontrolki stron"),t("Czytanie tekstu i elementów wskazanych kart; może obejmować dane osobowe."),vec![],"",A::None));
@@ -4370,7 +4370,7 @@ mod tests {
         let windows_options = usize::from(cfg!(target_os = "windows"));
         let windows_pickers = usize::from(cfg!(target_os = "windows"));
         let c=preference_catalogue(true);assert_eq!(c.categories,["Wygląd","Wyszukiwanie","Prywatność","Uprawnienia stron","Treści i czytelność","Hasła i profile","Pobieranie","Języki i pisownia","Dane przeglądania","Zaawansowane","Asystent AI","Blokowanie reklam","User-Agent"]);assert_eq!(c.descriptions.len(),13);assert_eq!(c.rows.len(),90 + windows_options + windows_pickers);
-        let mut counts=[0;13];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&!row.detail.is_empty());}assert_eq!(counts,[14 + windows_options + windows_pickers,5,9,7,12,5,5,3,1,7,12,5,5]);
+        let mut counts=[0;13];for row in &c.rows{counts[row.category]+=1;assert!(!row.title.is_empty()&&(!row.detail.is_empty()||row.kind==K::AssistantBackends));}assert_eq!(counts,[14 + windows_options + windows_pickers,5,9,7,12,5,5,3,1,7,12,5,5]);
         assert_eq!(c.rows.iter().filter(|r|r.kind==K::Toggle||r.kind==K::Pinned||r.kind==K::Animations||r.kind==K::WorkspaceNames||r.kind==K::FoldersCollapsed||r.kind==K::TimeMachine).count(),45 + windows_options);assert_eq!(c.rows.iter().filter(|r|r.kind==K::Text).count(),6);
         let no=preference_catalogue(false);assert_eq!(no.rows.len(),89 + windows_options + windows_pickers);assert!(no.rows.iter().all(|r|r.action!=A::Certificates));assert!(c.rows.iter().filter(|r|r.action!=A::Certificates).map(|r|(&r.title,&r.detail,r.category)).eq(no.rows.iter().map(|r|(&r.title,&r.detail,r.category))));
     }

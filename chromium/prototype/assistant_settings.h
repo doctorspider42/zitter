@@ -42,7 +42,8 @@ struct AssistantSettings {
   AssistantSettings& operator=(const AssistantSettings&);
   ~AssistantSettings();
   bool enabled = true;
-  std::array<bool, 4> backends{true, true, true, true};
+  // No provider is chosen until the person picks one.
+  std::array<bool, 4> backends{false, false, false, false};
   std::array<bool, 4> available{};
   std::string codex_path, claude_path;
   bool ollama_configured = false;

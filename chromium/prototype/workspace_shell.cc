@@ -11916,6 +11916,315 @@ void WorkspaceShell::BuildAdBlockingPreferences() {
   RefreshChoiceViewports(ad_blocking_list_->parent());
   if(general_widget_)general_widget_->GetContentsView()->InvalidateLayout();
 }
+namespace {
+// Settings → AI connections (design: AI Provider Picker). Tiles pick the
+// services; each picked one gets a setup card with a stepper and one action.
+constexpr std::array<const char*, 4> kAssistantTileOrder = {"ollama", "codex", "claude", "openai"};
+
+cc::PaintFlags AssistantStroke(SkColor color, float width) {
+  cc::PaintFlags flags;
+  flags.setAntiAlias(true);
+  flags.setStyle(cc::PaintFlags::kStroke_Style);
+  flags.setStrokeWidth(width);
+  flags.setStrokeCap(cc::PaintFlags::kRound_Cap);
+  flags.setStrokeJoin(cc::PaintFlags::kRound_Join);
+  flags.setColor(color);
+  return flags;
+}
+// A provider's mark, drawn in a 16-unit box at `origin`.
+void PaintAssistantMark(gfx::Canvas* canvas, std::string_view provider, gfx::PointF origin,
+                        float scale, SkColor color) {
+  const auto flags = AssistantStroke(color, 1.6f * scale);
+  auto at = [&](float x, float y) { return SkPoint::Make(origin.x() + x * scale, origin.y() + y * scale); };
+  SkPathBuilder path;
+  auto line = [&](float x1, float y1, float x2, float y2) { path.moveTo(at(x1, y1)); path.lineTo(at(x2, y2)); };
+  auto box = [&](float x, float y, float w, float h) {
+    canvas->DrawRoundRect(gfx::RectF(origin.x() + x * scale, origin.y() + y * scale, w * scale, h * scale),
+                          1.5f * scale, flags);
+  };
+  if (provider == "ollama") {
+    box(2, 3, 12, 8); line(6, 14, 10, 14); line(8, 11, 8, 14);
+  } else if (provider == "codex") {
+    box(2, 3, 12, 10); path.moveTo(at(5, 6.5f)); path.lineTo(at(7, 8)); path.lineTo(at(5, 9.5f));
+    line(8.5f, 10, 11, 10);
+  } else if (provider == "claude") {
+    line(8, 2, 8, 5); line(8, 11, 8, 14); line(2, 8, 5, 8); line(11, 8, 14, 8);
+    line(3.8f, 3.8f, 5.8f, 5.8f); line(10.2f, 10.2f, 12.2f, 12.2f);
+    line(12.2f, 3.8f, 10.2f, 5.8f); line(5.8f, 10.2f, 3.8f, 12.2f);
+  } else {
+    canvas->DrawCircle(gfx::PointF(origin.x() + 5.5f * scale, origin.y() + 10.5f * scale), 2.5f * scale, flags);
+    line(7.3f, 8.7f, 13, 3); line(11, 5, 12.5f, 6.5f);
+  }
+  canvas->DrawPath(path.detach(), flags);
+}
+// ✓ in a 16-unit box.
+void PaintAssistantCheck(gfx::Canvas* canvas, gfx::PointF origin, float scale, SkColor color, float width) {
+  SkPathBuilder path;
+  path.moveTo(origin.x() + 3.5f * scale, origin.y() + 8.5f * scale);
+  path.lineTo(origin.x() + 6.5f * scale, origin.y() + 11.5f * scale);
+  path.lineTo(origin.x() + 12.5f * scale, origin.y() + 4.5f * scale);
+  canvas->DrawPath(path.detach(), AssistantStroke(color, width));
+}
+
+// One service: its mark, name, how it connects and what it costs. Picked
+// tiles sit on `accent-soft` with an `accent` edge and a ✓.
+class AssistantTile final : public views::Button {
+  METADATA_HEADER(AssistantTile, views::Button)
+ public:
+  AssistantTile(PressedCallback callback, std::string provider, std::u16string name,
+                std::u16string via, std::u16string pay, bool selected)
+      : views::Button(std::move(callback)), provider_(std::move(provider)), name_(std::move(name)),
+        via_(std::move(via)), pay_(std::move(pay)), selected_(selected) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kToggleButton);
+    GetViewAccessibility().SetName(name_ + u", " + via_ + u", " + pay_);
+    GetViewAccessibility().SetCheckedState(selected_ ? ax::mojom::CheckedState::kTrue
+                                                     : ax::mojom::CheckedState::kFalse);
+    SetFocusBehavior(FocusBehavior::ALWAYS);
+    SetAnimateOnStateChange(false);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(200, 108); }
+  void StateChanged(ButtonState) override { SchedulePaint(); }
+  void OnFocus() override { views::Button::OnFocus(); SchedulePaint(); }
+  void OnBlur() override { views::Button::OnBlur(); SchedulePaint(); }
+  void PaintButtonContents(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const bool hot = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
+    const gfx::Rect r = GetLocalBounds();
+    const bool dim = !GetEnabled();
+    if (dim) canvas->SaveLayerAlpha(110);
+    FillRound(canvas, r, 12, selected_ ? p.accent_soft : hot ? p.bg_hover : p.bg_raised);
+    gfx::RectF edge(r);
+    if (selected_) {
+      edge.Inset(0.75f);
+      canvas->DrawRoundRect(edge, 11.25f, AssistantStroke(p.accent, 1.5f));
+    } else {
+      StrokeRound(canvas, r, 12, p.line);
+    }
+    if (HasFocus()) {
+      gfx::RectF ring(r);
+      ring.Inset(1);
+      canvas->DrawRoundRect(ring, 11, AssistantStroke(p.focus, 2));
+    }
+    const gfx::Rect icon(16, 16, 36, 36);
+    FillRound(canvas, icon, 8, selected_ ? p.accent : p.bg_hover);
+    PaintAssistantMark(canvas, provider_, gfx::PointF(icon.x() + 9, icon.y() + 9), 1.125f,
+                       selected_ ? p.on_accent : p.ink);
+    const int text_width = std::max(0, r.width() - 64 - 44);
+    canvas->DrawStringRect(name_, DesignFont(2, 15, 600, false), p.ink, gfx::Rect(64, 15, text_width, 20));
+    canvas->DrawStringRect(via_, DesignFont(2, 12, 400, false), p.ink_muted, gfx::Rect(64, 36, text_width, 16));
+    const gfx::PointF check(r.width() - 26, 26);
+    if (selected_) {
+      cc::PaintFlags fill;
+      fill.setAntiAlias(true);
+      fill.setColor(p.accent);
+      canvas->DrawCircle(check, 10, fill);
+      PaintAssistantCheck(canvas, check - gfx::Vector2dF(6, 6), 0.75f, p.on_accent, 1.8f);
+    } else {
+      canvas->DrawCircle(check, 9.25f, AssistantStroke(p.line_strong, 1.5f));
+    }
+    const auto chip_font = DesignFont(2, 11, 600, false);
+    const gfx::Rect chip(16, r.height() - 16 - 22, gfx::GetStringWidth(pay_, chip_font) + 20, 22);
+    FillRound(canvas, chip, 11, selected_ ? p.bg_base : p.bg_hover);
+    canvas->DrawStringRectWithFlags(pay_, chip_font, selected_ ? p.ink : p.ink_muted, chip,
+                                    gfx::Canvas::TEXT_ALIGN_CENTER);
+    if (dim) canvas->Restore();
+  }
+
+ private:
+  const std::string provider_;
+  const std::u16string name_, via_, pay_;
+  const bool selected_;
+};
+BEGIN_METADATA(AssistantTile)
+END_METADATA
+
+// The setup steps in a row: done in `accent` with ✓, the current one ringed.
+class AssistantSteps final : public views::View {
+  METADATA_HEADER(AssistantSteps, views::View)
+ public:
+  AssistantSteps(std::vector<std::u16string> labels, size_t current)
+      : labels_(std::move(labels)), current_(current) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+    GetViewAccessibility().SetName(current_ < labels_.size()
+        ? TF(u"Krok {} z {}: {}", {base::NumberToString16(current_ + 1),
+                                   base::NumberToString16(labels_.size()), labels_[current_]})
+        : T(u"Wszystkie kroki gotowe"));
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    return gfx::Size(static_cast<int>(labels_.size()) * kColumn, 46);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const size_t n = labels_.size();
+    if (!n) return;
+    auto column = [&](size_t i) {
+      return n == 1 ? 0 : static_cast<int>(i) * std::max(0, width() - kColumn) / static_cast<int>(n - 1);
+    };
+    for (size_t i = 1; i < n; ++i) {
+      const int from = column(i - 1) + kColumn, to = column(i);
+      if (to > from) FillRound(canvas, gfx::Rect(from, 11, to - from, 2), 1, i <= current_ ? p.accent : p.line);
+    }
+    for (size_t i = 0; i < n; ++i) {
+      const int x = column(i);
+      const gfx::PointF center(x + kColumn / 2.0f, 12);
+      const gfx::Rect node(x + kColumn / 2 - 12, 0, 24, 24);
+      const auto number = base::NumberToString16(i + 1);
+      const auto number_font = DesignFont(2, 11, 700, false);
+      if (i < current_) {
+        cc::PaintFlags fill;
+        fill.setAntiAlias(true);
+        fill.setColor(p.accent);
+        canvas->DrawCircle(center, 12, fill);
+        PaintAssistantCheck(canvas, center - gfx::Vector2dF(6, 6), 0.75f, p.on_accent, 1.8f);
+      } else if (i == current_) {
+        canvas->DrawCircle(center, 11, AssistantStroke(p.accent, 2));
+        canvas->DrawStringRectWithFlags(number, number_font, p.accent, node, gfx::Canvas::TEXT_ALIGN_CENTER);
+      } else {
+        canvas->DrawCircle(center, 11.25f, AssistantStroke(p.line_strong, 1.5f));
+        canvas->DrawStringRectWithFlags(number, number_font, p.ink_muted, node, gfx::Canvas::TEXT_ALIGN_CENTER);
+      }
+      canvas->DrawStringRectWithFlags(labels_[i], DesignFont(2, 12, i == current_ ? 600 : 400, false),
+                                      i == current_ ? p.ink : p.ink_muted, gfx::Rect(x, 30, kColumn, 16),
+                                      gfx::Canvas::TEXT_ALIGN_CENTER);
+    }
+  }
+
+ private:
+  static constexpr int kColumn = 96;
+  const std::vector<std::u16string> labels_;
+  const size_t current_;
+};
+BEGIN_METADATA(AssistantSteps)
+END_METADATA
+
+// A card's state: "2/3" in `bg-hover`, connected in `ok`, an error in `danger`.
+class AssistantPill final : public views::View {
+  METADATA_HEADER(AssistantPill, views::View)
+ public:
+  AssistantPill(std::u16string text, int tone) : text_(std::move(text)), tone_(tone) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+    GetViewAccessibility().SetName(text_);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    return gfx::Size(gfx::GetStringWidth(text_, Font()) + 20 + (tone_ ? 18 : 0), 22);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const SkColor ink = tone_ == 1 ? p.ok : tone_ == 2 ? p.danger : p.ink_muted;
+    const gfx::Rect r(0, (height() - 22) / 2, width(), 22);
+    FillRound(canvas, r, 11, tone_ ? color_utils::AlphaBlend(ink, p.bg_raised, 0.16f) : p.bg_hover);
+    int x = 10;
+    if (tone_ == 1) {
+      PaintAssistantCheck(canvas, gfx::PointF(x, r.y() + 5), 0.75f, ink, 1.6f);
+      x += 18;
+    } else if (tone_ == 2) {
+      const auto flags = AssistantStroke(ink, 1.8f);
+      canvas->DrawLine(gfx::PointF(x + 6, r.y() + 6), gfx::PointF(x + 6, r.y() + 12), flags);
+      canvas->DrawLine(gfx::PointF(x + 6, r.y() + 16), gfx::PointF(x + 6, r.y() + 16.01f), flags);
+      x += 18;
+    }
+    canvas->DrawStringRect(text_, Font(), ink, gfx::Rect(x, r.y(), width() - x - 10, 22));
+  }
+
+ private:
+  static gfx::FontList Font() { return DesignFont(2, 11, 600, false); }
+  const std::u16string text_;
+  const int tone_;
+};
+BEGIN_METADATA(AssistantPill)
+END_METADATA
+
+// Waiting on something outside Zitter: three dots, the outer two in `zing`
+// (the view's one zing), shivering in 4 steps.
+class AssistantDots final : public views::View {
+  METADATA_HEADER(AssistantDots, views::View)
+ public:
+  AssistantDots() { GetViewAccessibility().SetIsIgnored(true); }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(28, 10); }
+  void AddedToWidget() override {
+    if (gfx::Animation::ShouldRenderRichAnimation())
+      timer_.Start(FROM_HERE, base::Milliseconds(180),
+                   base::BindRepeating(&AssistantDots::Step, base::Unretained(this)));
+  }
+  void RemovedFromWidget() override { timer_.Stop(); }
+  void OnPaint(gfx::Canvas* canvas) override {
+    static constexpr std::array<std::array<int, 2>, 4> kShift = {{{0, 0}, {1, -1}, {-1, 1}, {1, 1}}};
+    const auto p = Palette(this);
+    for (int i = 0; i < 3; ++i) {
+      const auto& shift = kShift[static_cast<size_t>((frame_ + i) % 4)];
+      cc::PaintFlags fill;
+      fill.setAntiAlias(true);
+      fill.setColor(i == 1 ? p.accent : p.zing);
+      canvas->DrawCircle(gfx::PointF(4 + i * 10 + shift[0], height() / 2.0f + shift[1]), 3, fill);
+    }
+  }
+
+ private:
+  void Step() { frame_ = (frame_ + 1) % 4; SchedulePaint(); }
+  int frame_ = 0;
+  base::RepeatingTimer timer_;
+};
+BEGIN_METADATA(AssistantDots)
+END_METADATA
+
+// Nothing picked yet: a dashed `line-strong` outline around one short line.
+class AssistantEmpty final : public views::View {
+  METADATA_HEADER(AssistantEmpty, views::View)
+ public:
+  explicit AssistantEmpty(std::u16string text) : text_(std::move(text)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+    GetViewAccessibility().SetName(text_);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override { return gfx::Size(200, 52); }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    auto flags = AssistantStroke(p.line_strong, 1);
+    const SkScalar intervals[] = {4, 3};
+    flags.setPathEffect(cc::PathEffect::MakeDash(intervals, 2, 0));
+    gfx::RectF edge(GetLocalBounds());
+    edge.Inset(0.5f);
+    canvas->DrawRoundRect(edge, 12, flags);
+    const float cy = height() / 2.0f;
+    const auto icon = AssistantStroke(p.ink_muted, 1.6f);
+    canvas->DrawCircle(gfx::PointF(28, cy), 6.5f, icon);
+    canvas->DrawLine(gfx::PointF(28, cy - 3), gfx::PointF(28, cy + 0.5f), icon);
+    canvas->DrawLine(gfx::PointF(28, cy + 3), gfx::PointF(28, cy + 3.01f), icon);
+    canvas->DrawStringRect(text_, DesignFont(2, 13, 400, false), p.ink_muted,
+                           gfx::Rect(46, 0, std::max(0, width() - 66), height()));
+  }
+
+ private:
+  const std::u16string text_;
+};
+BEGIN_METADATA(AssistantEmpty)
+END_METADATA
+
+// A command to type in a terminal, in mono on `bg-base`.
+class AssistantCode final : public views::View {
+  METADATA_HEADER(AssistantCode, views::View)
+ public:
+  explicit AssistantCode(std::u16string text) : text_(std::move(text)) {
+    GetViewAccessibility().SetRole(ax::mojom::Role::kStaticText);
+    GetViewAccessibility().SetName(text_);
+  }
+  gfx::Size CalculatePreferredSize(const views::SizeBounds&) const override {
+    return gfx::Size(gfx::GetStringWidth(text_, Font()) + 20, 30);
+  }
+  void OnPaint(gfx::Canvas* canvas) override {
+    const auto p = Palette(this);
+    const gfx::Rect r(0, (height() - 30) / 2, width(), 30);
+    FillRound(canvas, r, 8, p.bg_base);
+    StrokeRound(canvas, r, 8, p.line);
+    canvas->DrawStringRectWithFlags(text_, Font(), p.ink, r, gfx::Canvas::TEXT_ALIGN_CENTER);
+  }
+
+ private:
+  static gfx::FontList Font() { return DesignFont(3, 12, 400, false); }
+  const std::u16string text_;
+};
+BEGIN_METADATA(AssistantCode)
+END_METADATA
+}  // namespace
 void WorkspaceShell::RefreshAssistantPreferences() {
   // Rows rebuild after the click that changed them has finished.
   if(assistant_refresh_pending_)return;assistant_refresh_pending_=true;
@@ -11927,13 +12236,14 @@ void WorkspaceShell::RefreshAssistantPreferences() {
   },weak_factory_.GetWeakPtr()));
 }
 void WorkspaceShell::BuildAssistantBackendCards(views::View* list, const base::DictValue& data,
-                                                std::string_view only_provider) {
+                                                std::string_view) {
   auto weak=weak_factory_.GetWeakPtr();
-  const bool onboarding = !only_provider.empty();
+  // Settings paints through the preference scene; the welcome wizard natively.
+  const bool scene = list == assistant_backends_list_.get();
   const bool enabled=data.FindBool("enabled").value_or(false);
-  auto layout_section = [onboarding](views::View* view, bool vertical, gfx::Insets insets,
-                                     int spacing, views::View* flex = nullptr) {
-    if (!onboarding) {
+  auto layout_section = [scene](views::View* view, bool vertical, gfx::Insets insets,
+                                int spacing, views::View* flex = nullptr) {
+    if (scene) {
       SetSidebarPanelLayout(view, vertical, insets, spacing, flex, flex != nullptr);
       return;
     }
@@ -11946,74 +12256,270 @@ void WorkspaceShell::BuildAssistantBackendCards(views::View* list, const base::D
   };
   auto text=[](const base::DictValue& d,const char* key){const auto* v=d.FindString(key);return v?base::UTF8ToUTF16(*v):std::u16string();};
   auto write=[](base::WeakPtr<WorkspaceShell> shell,base::DictValue command){if(shell&&shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(std::move(command));};
+  // A command for the assistant, optionally for one provider.
+  auto send = [write, weak](std::string command, std::string provider = {}) {
+    return base::BindRepeating([](decltype(write) write, base::WeakPtr<WorkspaceShell> shell,
+                                  std::string command, std::string provider, const ui::Event&) {
+      base::DictValue value;
+      value.Set("command", command);
+      if (!provider.empty()) value.Set("provider", provider);
+      write(shell, std::move(value));
+    }, write, weak, std::move(command), std::move(provider));
+  };
+  auto action = [&](views::View* parent, views::Button::PressedCallback callback, std::u16string label,
+                    bool primary) {
+    auto* button = PreferenceAction(parent, std::move(callback), std::move(label));
+    auto* scene_button = views::AsViewClass<SceneTextButton>(button);
+    if (primary) scene_button->SetPrimary(); else scene_button->SetQuiet();
+    button->SetEnabled(enabled);
+    return button;
+  };
+  auto copy = [&](views::View* parent, std::u16string value, SkColor tone, int weight, bool multiline) {
+    return AddPreferenceCopy(parent, std::move(value), tone, 0, weight, multiline);
+  };
+  auto spacer = [](views::View* parent) { return parent->AddChildView(std::make_unique<views::View>()); };
   list->RemoveAllChildViews();
   const auto* backends=data.FindList("backends");const auto* status=data.FindList("status");
-  bool showed_backend = false;
-  for(size_t i=0;backends&&i<backends->size();++i){
-    const auto& backend=(*backends)[i].GetDict();const auto provider=*backend.FindString("provider");
-    if (!only_provider.empty() && provider != only_provider) continue;
-    showed_backend = true;
-    const base::DictValue* state=status&&i<status->size()?&(*status)[i].GetDict():nullptr;
-    const int tone=state?state->FindInt("tone").value_or(0):0;
-    const bool checking=state&&state->FindBool("checking").value_or(false);
-    auto* card=list->AddChildView(std::make_unique<views::View>());
-    if (onboarding)
-      card->SetBackground(views::CreateRoundedRectBackground(Palette(list).bg_raised, 12));
-    layout_section(card, true, onboarding ? gfx::Insets(16) : gfx::Insets::TLBR(6, 0, 14, 0),
-                   onboarding ? 10 : 8);
-    auto* line=card->AddChildView(std::make_unique<views::View>());
-    auto* labels=line->AddChildView(std::make_unique<views::View>());layout_section(labels,true,gfx::Insets(),4);
-    AddPreferenceCopy(labels,text(backend,"label"),kInk,0,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
-    AddPreferenceCopy(labels,u"●  "+(state?text(*state,"state"):T(u"Sprawdzam…")),tone==1?kOk:tone==2?kError:kMuted,-1,static_cast<int>(gfx::Font::Weight::MEDIUM),false);
-    auto* toggle=PreferenceToggle(line,TF(u"Pokazuj {} w panelu",{text(backend,"label")}));
-    SetToggleOn(toggle,backend.FindBool("enabled").value_or(true));toggle->SetEnabled(enabled);
-    SetActionCallback(toggle,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string provider,views::View* toggle){
-      write(shell,base::DictValue().Set("command","backend").Set("provider",provider).Set("enabled",ToggleOn(toggle)));
-    },write,weak,provider,base::Unretained(toggle)));
-    layout_section(line,false,gfx::Insets(),16,labels);
-    if(state)AddPreferenceCopy(card,text(*state,"detail"),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-    auto* actions=card->AddChildView(std::make_unique<views::View>());
-    auto* check=PreferenceAction(actions,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,std::string provider,const ui::Event&){
-      write(shell,base::DictValue().Set("command","check").Set("provider",provider));
-    },write,weak,provider),checking?T(u"Sprawdzam…"):T(u"Sprawdź połączenie"));
-    check->GetViewAccessibility().SetName(TF(u"Sprawdź połączenie z {}",{text(backend,"label")}));check->SetEnabled(enabled&&!checking);
-    if (onboarding) views::AsViewClass<SceneTextButton>(check)->SetPrimary();
-    if(provider=="openai"){
-      const bool saved=data.FindBool("has_saved_key").value_or(false);
-      auto* key=PreferenceAction(actions,base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* card, const ui::Event&){if(shell)shell->ShowAssistantKeyDialog(card->GetWidget());},weak,base::Unretained(card)),saved?T(u"Zmień klucz API"):T(u"Dodaj klucz API"));key->SetEnabled(enabled);
-      if(saved){auto* remove=PreferenceAction(actions,base::BindRepeating([](decltype(write) write,base::WeakPtr<WorkspaceShell> shell,const ui::Event&){write(shell,base::DictValue().Set("command","remove_key"));},write,weak),T(u"Usuń klucz"));remove->SetEnabled(enabled);}
-    }
-    if (provider == "claude" && data.FindBool("claude_login_supported").value_or(false)) {
-      auto* login = PreferenceAction(actions, base::BindRepeating([](decltype(write) write,
-          base::WeakPtr<WorkspaceShell> shell, const ui::Event&) {
-        write(shell, base::DictValue().Set("command", "claude_login"));
-      }, write, weak), T(u"Zaloguj się do Claude Code"));
-      login->SetEnabled(enabled && !data.FindBool("claude_login_pending").value_or(false));
-    }
-    if (provider == "ollama") {
-      auto* discover = PreferenceAction(actions, base::BindRepeating([](decltype(write) write,
-          base::WeakPtr<WorkspaceShell> shell, const ui::Event&) {
-        write(shell, base::DictValue().Set("command", "discover").Set("provider", "ollama"));
-      }, write, weak), T(u"Wykryj modele"));
-      discover->SetEnabled(enabled && !checking);
-    }
-    if (provider == "codex" || provider == "claude" || provider == "ollama") {
-      auto* configure = PreferenceAction(actions, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,
-          views::View* card, std::string provider, std::u16string value, const ui::Event&) {
-        if (shell) shell->ShowAssistantBackendInput(card->GetWidget(), provider, value);
-      }, weak, base::Unretained(card), provider,
-         text(data, provider == "codex" ? "codex_path" : "claude_path")),
-         provider == "ollama" ? T(u"Dodaj model") : T(u"Pomoc i konfiguracja"));
-      configure->SetEnabled(enabled);
-    }
-    layout_section(actions,false,gfx::Insets(),8);
-    if (onboarding)
-      AddPreferenceCopy(card,T(u"Test wysyła krótką wiadomość do wybranego modelu. Nie udostępnia stron ani historii przeglądania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  if (!backends || backends->empty()) {
+    copy(list, T(u"Profil nie jest jeszcze gotowy"), kMuted, static_cast<int>(gfx::Font::Weight::NORMAL), true);
+    list->InvalidateLayout();
+    return;
   }
-  if (showed_backend && !onboarding)
-    AddPreferenceCopy(list,T(u"Test wysyła krótką wiadomość do wybranego modelu. Nie udostępnia stron ani historii przeglądania."),kMuted,-1,static_cast<int>(gfx::Font::Weight::NORMAL),true);
-  if (!showed_backend && onboarding)
-    AddPreferenceCopy(list,T(u"Profil nie jest jeszcze gotowy"),kMuted,0,static_cast<int>(gfx::Font::Weight::NORMAL),true);
+  auto find = [&](std::string_view provider) -> std::optional<size_t> {
+    for (size_t i = 0; i < backends->size(); ++i)
+      if (const auto* id = (*backends)[i].GetDict().FindString("provider"); id && *id == provider) return i;
+    return std::nullopt;
+  };
+  auto name_of = [](std::string_view provider) -> std::u16string {
+    return provider == "ollama" ? u"Ollama" : provider == "codex" ? u"ChatGPT"
+         : provider == "claude" ? u"Claude" : u"OpenAI API";
+  };
+
+  // Tiles, two per row; nothing is picked until the person picks it.
+  auto* grid = list->AddChildView(std::make_unique<views::View>());
+  grid->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
+  views::View* row = nullptr;
+  std::vector<std::string> chosen;
+  for (const char* provider : kAssistantTileOrder) {
+    const auto index = find(provider);
+    if (!index) continue;
+    const bool selected = (*backends)[*index].GetDict().FindBool("enabled").value_or(false);
+    if (selected) chosen.emplace_back(provider);
+    if (!row || row->children().size() == 2) {
+      row = grid->AddChildView(std::make_unique<views::View>());
+      row->SetLayoutManager(std::make_unique<views::BoxLayout>(
+          views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 12));
+    }
+    const std::string_view id = provider;
+    auto* tile = row->AddChildView(std::make_unique<AssistantTile>(
+        base::BindRepeating([](decltype(write) write, base::WeakPtr<WorkspaceShell> shell,
+                               std::string provider, bool selected, const ui::Event&) {
+          write(shell, base::DictValue().Set("command", "backend").Set("provider", provider)
+                           .Set("enabled", !selected));
+        }, write, weak, std::string(provider), selected),
+        std::string(provider), name_of(id),
+        id == "ollama" ? T(u"Lokalnie") : id == "codex" ? T(u"Przez Codex")
+            : id == "claude" ? T(u"Przez Claude Code") : T(u"Klucz API"),
+        id == "ollama" ? T(u"Za darmo") : id == "openai" ? T(u"Za użycie") : T(u"Twoja subskrypcja"),
+        selected));
+    tile->SetEnabled(enabled);
+    static_cast<views::BoxLayout*>(row->GetLayoutManager())->SetFlexForView(tile, 1);
+  }
+  if (chosen.empty()) {
+    list->AddChildView(std::make_unique<AssistantEmpty>(T(u"Wybierz co najmniej jedną usługę.")));
+    list->InvalidateLayout();
+    if (auto* owner = list->GetWidget()) owner->GetContentsView()->InvalidateLayout();
+    return;
+  }
+
+  // One setup card per picked service.
+  struct Setup {
+    std::string provider;
+    std::vector<std::u16string> steps;
+    size_t current = 0;
+    bool done = false, failed = false, checking = false;
+    std::u16string detail;
+  };
+  const auto* setup_value = data.FindString("codex_setup");
+  const std::string codex_setup = setup_value ? *setup_value : "";
+  std::vector<Setup> setups;
+  size_t ready = 0;
+  for (const auto& provider : chosen) {
+    const size_t index = *find(provider);
+    const auto& backend = (*backends)[index].GetDict();
+    const base::DictValue* state = status && index < status->size() ? &(*status)[index].GetDict() : nullptr;
+    Setup setup{.provider = provider};
+    setup.done = state && state->FindInt("tone").value_or(0) == 1;
+    setup.failed = state && state->FindBool("failed").value_or(false);
+    setup.checking = state && state->FindBool("checking").value_or(false);
+    if (state) setup.detail = text(*state, "detail");
+    const bool available = backend.FindBool("available").value_or(false);
+    if (provider == "codex") {
+      setup.steps = {T(u"Pobierz"), T(u"Zaloguj"), T(u"Test")};
+      setup.current = codex_setup == "download" || codex_setup == "install" ? 0
+          : codex_setup == "sign_in" ? 1
+          : !available && !data.FindBool("codex_available").value_or(false) ? 0
+          : setup.checking ? 2 : 1;
+    } else if (provider == "claude") {
+      setup.steps = {T(u"Zainstaluj"), T(u"Zaloguj"), T(u"Test")};
+      setup.current = !available ? 0 : setup.checking ? 2 : 1;
+    } else if (provider == "ollama") {
+      setup.steps = {T(u"Uruchom"), T(u"Test")};
+      setup.current = setup.checking ? 1 : 0;
+    } else {
+      setup.steps = {T(u"Klucz"), T(u"Test")};
+      setup.current = !data.FindBool("has_saved_key").value_or(false) ? 0 : 1;
+    }
+    if (setup.done) {
+      setup.current = setup.steps.size();
+      setup.failed = false;
+      ++ready;
+    }
+    setups.push_back(std::move(setup));
+  }
+  {
+    auto* heading = list->AddChildView(std::make_unique<views::View>());
+    auto* eyebrow = copy(heading, T(u"KONFIGURACJA"), kMuted, static_cast<int>(gfx::Font::Weight::MEDIUM), false);
+    copy(heading, base::NumberToString16(ready) + u"/" + base::NumberToString16(setups.size()), kMuted,
+         static_cast<int>(gfx::Font::Weight::NORMAL), false);
+    layout_section(heading, false, gfx::Insets::TLBR(8, 0, 0, 0), 12, eyebrow);
+  }
+  const auto* models = data.FindList("models");
+  for (const auto& setup : setups) {
+    const std::string& provider = setup.provider;
+    const auto name = name_of(provider);
+    views::View* card;
+    if (scene) {
+      card = list->AddChildView(std::make_unique<PreferenceSurface>(false,
+          base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome, weak),
+          base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+            return shell && shell->PreferenceChromeVisible();
+          }, weak)));
+    } else {
+      card = list->AddChildView(std::make_unique<PreferenceSurface>());
+    }
+    layout_section(card, true, gfx::Insets::TLBR(14, 18, 16, 18), 14);
+
+    // Name, state, and × to drop the service.
+    auto* head = card->AddChildView(std::make_unique<views::View>());
+    auto* title = copy(head, name, kInk, static_cast<int>(gfx::Font::Weight::MEDIUM), false);
+    head->AddChildView(std::make_unique<AssistantPill>(
+        setup.done ? T(u"Połączono") : setup.failed ? T(u"Błąd")
+                   : base::NumberToString16(setup.current + 1) + u"/" + base::NumberToString16(setup.steps.size()),
+        setup.done ? 1 : setup.failed ? 2 : 0));
+    auto* remove = action(head, base::BindRepeating([](decltype(write) write, base::WeakPtr<WorkspaceShell> shell,
+                                                        std::string provider, const ui::Event&) {
+      write(shell, base::DictValue().Set("command", "backend").Set("provider", provider).Set("enabled", false));
+    }, write, weak, provider), u"×", false);
+    remove->GetViewAccessibility().SetName(TF(u"Usuń {}", {name}));
+    remove->SetTooltipText(TF(u"Usuń {}", {name}));
+    layout_section(head, false, gfx::Insets(), 10, title);
+
+    card->AddChildView(std::make_unique<AssistantSteps>(setup.steps, setup.current));
+
+    // One line below: the next step's action, or what is happening now.
+    auto* line = card->AddChildView(std::make_unique<views::View>());
+    views::View* flex = nullptr;
+    auto more = [&] {
+      views::Button::PressedCallback callback;
+      if (provider == "openai") {
+        callback = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* card, const ui::Event&) {
+          if (shell) shell->ShowAssistantKeyDialog(card->GetWidget());
+        }, weak, base::Unretained(card));
+      } else {
+        callback = base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* card,
+                                          std::string provider, std::u16string value, const ui::Event&) {
+          if (shell) shell->ShowAssistantBackendInput(card->GetWidget(), provider, value);
+        }, weak, base::Unretained(card), provider,
+           text(data, provider == "codex" ? "codex_path" : "claude_path"));
+      }
+      auto* button = action(line, std::move(callback), u"⋯", false);
+      button->GetViewAccessibility().SetName(TF(u"Więcej: {}", {name}));
+      button->SetTooltipText(T(u"Więcej"));
+    };
+    auto waiting = [&](std::u16string label) {
+      line->AddChildView(std::make_unique<AssistantDots>());
+      flex = copy(line, std::move(label), kInk, static_cast<int>(gfx::Font::Weight::NORMAL), false);
+    };
+    if (provider == "codex" && codex_setup == "download") {
+      const int percent = std::clamp(data.FindInt("codex_progress").value_or(0), 0, 100);
+      const int total = data.FindInt("codex_download_mb").value_or(0);
+      auto* column = line->AddChildView(std::make_unique<views::View>());
+      auto* top = column->AddChildView(std::make_unique<views::View>());
+      auto* label = copy(top, T(u"Pobieranie…"), kInk, static_cast<int>(gfx::Font::Weight::NORMAL), false);
+      auto* amount = copy(top, base::NumberToString16(percent) + u"% · " +
+                                   base::NumberToString16(total * percent / 100) + u"/" +
+                                   base::NumberToString16(total) + u" MB",
+                          kMuted, static_cast<int>(gfx::Font::Weight::NORMAL), false);
+      if (auto* scene_copy = views::AsViewClass<PreferenceCopy>(amount)) scene_copy->SetTextStyle(8);
+      layout_section(top, false, gfx::Insets(), 12, label);
+      auto* progress = column->AddChildView(scene
+          ? std::make_unique<SceneProgress>(
+                base::BindRepeating(&WorkspaceShell::SchedulePreferenceChrome, weak),
+                base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell) {
+                  return shell && shell->PreferenceChromeVisible();
+                }, weak))
+          : std::make_unique<SceneProgress>(base::DoNothing(), base::BindRepeating([] { return false; })));
+      progress->GetViewAccessibility().SetName(T(u"Pobieranie Codex"));
+      progress->SetValue(percent / 100.0);
+      layout_section(column, true, gfx::Insets(), 8);
+      flex = column;
+      action(line, send("codex_cancel"), T(u"Anuluj"), false);
+    } else if (provider == "codex" && codex_setup == "install") {
+      waiting(T(u"Instaluję…"));
+    } else if (provider == "codex" && codex_setup == "sign_in") {
+      waiting(T(u"Dokończ w przeglądarce"));
+      action(line, send("codex_cancel"), T(u"Anuluj"), false);
+    } else if (setup.checking) {
+      waiting(T(u"Sprawdzam…"));
+    } else if (setup.done) {
+      // The model that answered, in mono.
+      std::u16string model;
+      for (size_t i = 0; models && i < models->size() && model.empty(); ++i) {
+        const auto& entry = (*models)[i].GetDict();
+        if (const auto* id = entry.FindString("provider"); id && *id == provider &&
+            entry.FindBool("visible").value_or(true))
+          model = text(entry, "id");
+      }
+      flex = copy(line, model.empty() ? setup.detail : model, kMuted, static_cast<int>(gfx::Font::Weight::NORMAL), false);
+      if (auto* scene_copy = views::AsViewClass<PreferenceCopy>(flex); scene_copy && !model.empty())
+        scene_copy->SetTextStyle(8);
+      action(line, send("check", provider), T(u"Sprawdź"), false);
+      more();
+    } else {
+      // A failed step says why; the action retries it.
+      flex = setup.failed && !setup.detail.empty()
+          ? copy(line, setup.detail, kMuted, static_cast<int>(gfx::Font::Weight::NORMAL), true)
+          : spacer(line);
+      if (provider == "codex" && setup.current == 0) {
+        if (data.FindBool("codex_download_supported").value_or(false))
+          action(line, send("codex_download"),
+                 TF(u"Pobierz · {} MB", {base::NumberToString16(data.FindInt("codex_download_mb").value_or(0))}), true);
+      } else if (provider == "codex") {
+        action(line, send("codex_sign_in"), T(u"Zaloguj się"), true);
+      } else if (provider == "claude" && setup.current == 1 &&
+                 data.FindBool("claude_login_supported").value_or(false)) {
+        action(line, send("claude_login"), T(u"Zaloguj się"), true)
+            ->SetEnabled(enabled && !data.FindBool("claude_login_pending").value_or(false));
+      } else if (provider == "claude" && setup.current == 1) {
+        line->AddChildView(std::make_unique<AssistantCode>(u"claude /login"));
+        action(line, send("check", provider), T(u"Testuj"), true);
+      } else if (provider == "claude") {
+        action(line, send("check", provider), T(u"Wykryj"), true);
+      } else if (provider == "ollama") {
+        action(line, send("discover", provider), T(u"Wykryj"), true);
+      } else if (setup.current == 0) {
+        action(line, base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell, views::View* card, const ui::Event&) {
+          if (shell) shell->ShowAssistantKeyDialog(card->GetWidget());
+        }, weak, base::Unretained(card)), T(u"Dodaj klucz"), true);
+      } else {
+        action(line, send("check", provider), T(u"Testuj"), true);
+      }
+      more();
+    }
+    layout_section(line, false, gfx::Insets(), 12, flex);
+  }
   list->InvalidateLayout();
   if (auto* owner = list->GetWidget()) owner->GetContentsView()->InvalidateLayout();
 }
@@ -12279,7 +12785,7 @@ void WorkspaceShell::ShowAssistantKeyDialog(views::Widget* owner){
   if (!owner) owner = general_widget_.get();
   if (!owner) return;
   ui::DialogModel::Builder builder;auto* model=builder.model();
-  auto dialog=builder.SetTitle(T(u"Połącz OpenAI"))
+  auto& dialog=builder.SetTitle(T(u"Połącz OpenAI"))
       .AddParagraph(ui::DialogModelLabel(T(u"Wklej klucz API ze swojego konta OpenAI. Zitter zapisze go w postaci zaszyfrowanej przy użyciu zabezpieczeń systemu.")))
       .AddPasswordField(kAssistantApiKeyField,T(u"Klucz API"),T(u"Klucz API OpenAI"),T(u"Wpisz klucz API"))
       .SetInitiallyFocusedField(kAssistantApiKeyField)
@@ -12290,8 +12796,13 @@ void WorkspaceShell::ShowAssistantKeyDialog(views::Widget* owner){
         if(shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(base::DictValue().Set("command","save_key").Set("key",key));
         return true;
       },weak_factory_.GetWeakPtr(),base::Unretained(model)),ui::DialogModel::Button::Params().SetLabel(T(u"Zapisz klucz")))
-      .AddCancelButton(base::DoNothing(),ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj"))).Build();
-  ShowAssistantDialog(owner, std::move(dialog));
+      .AddCancelButton(base::DoNothing(),ui::DialogModel::Button::Params().SetLabel(T(u"Anuluj")));
+  // A saved key can be removed from here; the setup card has no other place for it.
+  if(callbacks_.read_assistant&&callbacks_.read_assistant.Run().FindBool("has_saved_key").value_or(false))
+    dialog.AddExtraButton(base::BindRepeating([](base::WeakPtr<WorkspaceShell> shell,const ui::Event&){
+      if(shell&&shell->callbacks_.write_assistant)shell->callbacks_.write_assistant.Run(base::DictValue().Set("command","remove_key"));
+    },weak_factory_.GetWeakPtr()),ui::DialogModel::Button::Params().SetLabel(T(u"Usuń klucz")));
+  ShowAssistantDialog(owner, dialog.Build());
 }
 void WorkspaceShell::ShowAssistantBackendInput(views::Widget* owner, std::string provider,
                                               std::u16string value) {
@@ -12299,10 +12810,10 @@ void WorkspaceShell::ShowAssistantBackendInput(views::Widget* owner, std::string
   const bool ollama = provider == "ollama";
   const auto label = ollama ? T(u"ID modelu") : T(u"Ścieżka do programu");
   const auto help = ollama
-      ? T(u"Uruchom Ollama, pobierz model i wpisz jego pełną nazwę, np. qwen3:8b. Możesz też użyć przycisku „Wykryj modele”.")
+      ? T(u"Pełna nazwa pobranego modelu, np. qwen3:8b.")
       : provider == "codex"
-          ? T(u"Uruchom codex login w terminalu i sprawdź codex login status. Jeśli wykrywanie nie działa, podaj pełną ścieżkę do natywnego codex.exe (lub codex na macOS i Linuksie). Puste pole włącza wykrywanie automatyczne.")
-          : T(u"Uruchom claude w terminalu i zaloguj się poleceniem /login. Jeśli wykrywanie nie działa, podaj pełną ścieżkę do natywnego programu Claude Code. Puste pole włącza wykrywanie automatyczne.");
+          ? T(u"Własny program codex. Puste pole: wykrywanie automatyczne.")
+          : T(u"Własny program Claude Code. Puste pole: wykrywanie automatyczne.");
   ui::DialogModel::Builder builder;
   auto* model = builder.model();
   auto dialog = builder.SetTitle(AssistantProviderLabel(provider))
@@ -17462,10 +17973,14 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
         scroll->SetBackgroundColor(std::nullopt);
         scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
         scroll->SetDrawOverflowIndicator(false);
+        // An overlay bar, as on the import step; the cards keep clear of it.
+        scroll->SetVerticalScrollBar(std::make_unique<views::OverlayScrollBar>(
+            views::ScrollBar::Orientation::kVertical));
         layout->SetFlexForView(scroll, 1);
         auto* assistant_page = scroll->SetContents(std::make_unique<views::View>());
         assistant_page->SetLayoutManager(std::make_unique<views::BoxLayout>(
-            views::BoxLayout::Orientation::kVertical, gfx::Insets(), 12));
+            views::BoxLayout::Orientation::kVertical,
+            gfx::Insets::TLBR(0, 0, 0, scroll->vertical_scroll_bar()->GetThickness()), 12));
         Headline(assistant_page, T(u"Włączyć asystenta AI?"), 44);
         auto* actions = assistant_page->AddChildView(std::make_unique<views::View>());
         actions->SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -17488,25 +18003,14 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
             }, base::Unretained(this)), u"?", WelcomeButton::Look::kQuiet));
         help->GetViewAccessibility().SetName(T(u"Wymagania asystenta AI"));
         if (assistant_enabled_ && setup_.build_assistant_backends) {
-          Body(assistant_page, T(u"Wybierz dostawcę i sprawdź połączenie."), 13, true);
-          auto* providers = assistant_page->AddChildView(std::make_unique<views::View>());
-          providers->SetLayoutManager(std::make_unique<views::BoxLayout>(
-              views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 6));
-          for (const char* provider : kAssistantProviders) {
-            providers->AddChildView(std::make_unique<WelcomeButton>(
-                base::BindRepeating([](WelcomeView* view, std::string provider) {
-                  view->assistant_provider_ = std::move(provider);
-                  view->ShowStep(2);
-                }, base::Unretained(this), std::string(provider)), AssistantProviderLabel(provider),
-                assistant_provider_ == provider ? WelcomeButton::Look::kPrimary : WelcomeButton::Look::kQuiet));
-          }
+          // The same tiles and setup cards as Settings → AI connections.
           auto* cards = assistant_page->AddChildView(std::make_unique<views::View>());
           cards->SetLayoutManager(std::make_unique<views::BoxLayout>(
-              views::BoxLayout::Orientation::kVertical, gfx::Insets(), 4));
-          setup_.build_assistant_backends.Run(cards, assistant_provider_);
+              views::BoxLayout::Orientation::kVertical, gfx::Insets::TLBR(8, 0, 0, 0), 12));
+          setup_.build_assistant_backends.Run(cards, std::string());
         }
         if (assistant_help_)
-          Body(assistant_page, T(u"Claude Code lub Codex wymagają konta z dostępem do CLI. Alternatywy to klucz OpenAI API z aktywnym rozliczaniem albo lokalna Ollama z pobranym modelem. Włącz wybrany backend przełącznikiem."), 13, true);
+          Body(assistant_page, T(u"Subskrypcja ChatGPT lub Claude, klucz OpenAI API albo lokalna Ollama."), 13, true);
         break;
       }
       case 3: {
@@ -17829,7 +18333,6 @@ class WelcomeView final : public views::View, public views::WidgetObserver {
   SkColor color_;
   bool assistant_enabled_ = false;
   bool assistant_help_ = false;
-  std::string assistant_provider_ = "openai";
   std::u16string setup_name_;
   std::u16string password_status_;
   raw_ptr<views::View> nav_ = nullptr;

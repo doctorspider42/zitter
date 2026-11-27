@@ -7,6 +7,7 @@
 #include <ranges>
 #include <cmath>
 #include <cstdio>
+#include <tuple>
 
 #include "base/auto_reset.h"
 #include "base/base64.h"
@@ -28,6 +29,8 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/uuid.h"
+#include "chromium/assistant/codex_install.h"
+#include "chromium/assistant/codex_setup.h"
 #include "chromium/assistant/native_cli_path.h"
 #include "chromium/prototype/adblock.rs.h"
 #include "chromium/prototype/adblock_browser_support.h"
@@ -66,7 +69,15 @@
 #include "night_shift_site.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
+#include "content/public/browser/storage_partition.h"
+#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
+#include "net/http/http_response_headers.h"
 #include "profile_context.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/events/event_constants.h"
@@ -342,9 +353,18 @@ base::DictValue WorkspaceLab::ReadAssistantSettings() const {
     const std::string_view provider = prototype::kAssistantProviders[index];
     backends.Append(base::DictValue().Set("provider", provider)
         .Set("label", base::UTF16ToUTF8(prototype::AssistantProviderLabel(provider)))
-        .Set("enabled", !assistant_settings_ || assistant_settings_->backends[index]));
+        .Set("enabled", assistant_settings_ && assistant_settings_->backends[index])
+        .Set("available", static_cast<bool>(assistant_provider_available_[index])));
     auto status = assistant_provider_status_[index].Clone();
-    if (assistant_provider_checking_[index]) {
+    if (index == kCodex && codex_setup_ != CodexSetup::kIdle) {
+      status = base::DictValue().Set("tone", 0).Set("state", base::UTF16ToUTF8(
+          codex_setup_ == CodexSetup::kDownloading
+              ? prototype::TF(u"Pobieram Codex… {}%",
+                              {base::NumberToString16(codex_download_percent_)})
+          : codex_setup_ == CodexSetup::kInstalling
+              ? prototype::T(u"Instaluję Codex…")
+              : prototype::T(u"Czekam na logowanie w ChatGPT…")));
+    } else if (assistant_provider_checking_[index]) {
       status.Set("tone", 0);
       status.Set("checking", true);
       status.Set("state", base::UTF16ToUTF8(prototype::T(u"Sprawdzam połączenie…")));
@@ -371,6 +391,15 @@ base::DictValue WorkspaceLab::ReadAssistantSettings() const {
   return base::DictValue().Set("enabled", enabled)
       .Set("claude_login_supported", BUILDFLAG(IS_MAC))
       .Set("claude_login_pending", claude_login_pending_)
+      .Set("codex_available", assistant_provider_available_[kCodex])
+      .Set("codex_download_supported", !assistant::ManagedCodexDownload().url.empty())
+      .Set("codex_download_mb",
+           static_cast<int>(assistant::ManagedCodexDownload().size / (1024 * 1024)))
+      .Set("codex_setup", codex_setup_ == CodexSetup::kDownloading ? "download"
+                          : codex_setup_ == CodexSetup::kInstalling ? "install"
+                          : codex_setup_ == CodexSetup::kSigningIn  ? "sign_in"
+                                                                    : "")
+      .Set("codex_progress", codex_download_percent_)
       .Set("backends", std::move(backends)).Set("status", std::move(statuses))
       .Set("models", std::move(models))
       .Set("has_saved_key", assistant_settings_ && !assistant_settings_->encrypted_api_key.empty())
@@ -388,6 +417,18 @@ void WorkspaceLab::WriteAssistantSettings(base::DictValue command) {
   const auto* action = command.FindString("command");
   if (!action)
     return;
+  if (*action == "codex_download") {
+    DownloadCodex();
+    return;
+  }
+  if (*action == "codex_sign_in") {
+    SignInCodex();
+    return;
+  }
+  if (*action == "codex_cancel") {
+    CancelCodexSetup();
+    return;
+  }
 #if BUILDFLAG(IS_MAC)
   if (*action == "claude_login") {
     if (claude_login_pending_)
@@ -535,6 +576,173 @@ void WorkspaceLab::SaveAssistantApiKey(std::string key) {
       }, weak_factory_.GetWeakPtr(), ++assistant_key_write_generation_, std::move(key)));
 }
 
+void WorkspaceLab::DownloadCodex() {
+  const auto asset = assistant::ManagedCodexDownload();
+  if (codex_setup_ != CodexSetup::kIdle || asset.url.empty() || !model_.active())
+    return;
+  auto request = std::make_unique<network::ResourceRequest>();
+  request->url = GURL(asset.url);
+  request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+  request->load_flags = net::LOAD_DISABLE_CACHE;
+  constexpr auto annotation = net::DefineNetworkTrafficAnnotation("zitter_codex_download", R"(
+        semantics {
+          sender: "Zitter Assistant"
+          description: "Downloads the Codex CLI release Zitter is pinned to."
+          trigger: "The user clicks Download Codex in the assistant settings."
+          data: "None."
+          destination: OTHER
+          destination_other: "github.com release downloads"
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "The user starts each download."
+          policy_exception_justification: "Requires an explicit user action."
+        })");
+  codex_download_ = network::SimpleURLLoader::Create(std::move(request), annotation);
+  codex_download_->SetTimeoutDuration(base::Minutes(30));
+  codex_download_->SetOnDownloadProgressCallback(base::BindRepeating(
+      [](base::WeakPtr<WorkspaceLab> lab, int64_t total, uint64_t current) {
+        if (!lab || total <= 0)
+          return;
+        const int percent = static_cast<int>(
+            std::min<uint64_t>(current * 100 / static_cast<uint64_t>(total), 100));
+        if (percent == lab->codex_download_percent_)
+          return;
+        lab->codex_download_percent_ = percent;
+        lab->shell_->RefreshAssistantPreferences();
+      }, weak_factory_.GetWeakPtr(), asset.size));
+  codex_setup_ = CodexSetup::kDownloading;
+  codex_download_percent_ = 0;
+  codex_download_->DownloadToTempFile(
+      WorkspaceProfile(active_index_)->GetDefaultStoragePartition()
+          ->GetURLLoaderFactoryForBrowserProcess().get(),
+      base::BindOnce(&WorkspaceLab::CodexDownloaded, weak_factory_.GetWeakPtr()),
+      asset.size + 1);
+  shell_->RefreshAssistantPreferences();
+}
+
+void WorkspaceLab::CodexDownloaded(base::FilePath archive) {
+  const auto* response = codex_download_ ? codex_download_->ResponseInfo() : nullptr;
+  const bool ok = !archive.empty() && response && response->headers &&
+                  response->headers->response_code() == 200;
+  codex_download_.reset();
+  if (!ok) {
+    if (!archive.empty()) {
+      base::ThreadPool::PostTask(FROM_HERE, {base::MayBlock()},
+                                 base::GetDeleteFileCallback(std::move(archive)));
+    }
+    CodexInstalled(false);
+    return;
+  }
+  codex_setup_ = CodexSetup::kInstalling;
+  shell_->RefreshAssistantPreferences();
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+                  base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+      base::BindOnce([](base::FilePath archive) {
+        const bool installed = assistant::InstallManagedCodex(archive);
+        base::DeleteFile(archive);
+        return installed;
+      }, std::move(archive)),
+      base::BindOnce(&WorkspaceLab::CodexInstalled, weak_factory_.GetWeakPtr()));
+}
+
+void WorkspaceLab::CodexInstalled(bool ok) {
+  codex_setup_ = CodexSetup::kIdle;
+  codex_download_percent_ = 0;
+  shell_->RefreshAssistantPreferences();
+  if (!ok) {
+    shell_->ShowToast(
+        prototype::T(u"Nie udało się pobrać Codex. Sprawdź połączenie i spróbuj ponownie."), {},
+        {});
+    return;
+  }
+  ProbeAssistantProviders();
+  SignInCodex();
+}
+
+void WorkspaceLab::SignInCodex() {
+  if (codex_setup_ != CodexSetup::kIdle || !assistant_settings_)
+    return;
+  codex_setup_ = CodexSetup::kSigningIn;
+  codex_sign_in_ = base::MakeRefCounted<assistant::CodexSignIn>();
+  codex_sign_in_cancel_.ReplaceClosure(
+      base::BindOnce(&assistant::CodexSignIn::Cancel, codex_sign_in_));
+  codex_sign_in_timeout_.Start(FROM_HERE, base::Minutes(10),
+                               base::BindOnce(&assistant::CodexSignIn::Cancel, codex_sign_in_));
+  shell_->RefreshAssistantPreferences();
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE, {base::MayBlock(), base::WithBaseSyncPrimitives(),
+                  base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(
+          [](scoped_refptr<assistant::CodexSignIn> sign_in, std::string preferred,
+             scoped_refptr<base::SequencedTaskRunner> ui, base::WeakPtr<WorkspaceLab> lab) {
+            const auto codex = assistant::NativeCommand("ZITTER_CODEX_PATH", "codex", preferred);
+            if (codex.empty()) {
+              assistant::CodexSignInResult missing;
+              missing.error = "missing";
+              return missing;
+            }
+            return sign_in->Run(codex, base::BindOnce(
+                [](scoped_refptr<base::SequencedTaskRunner> ui, base::WeakPtr<WorkspaceLab> lab,
+                   GURL url) {
+                  ui->PostTask(FROM_HERE, base::BindOnce(&WorkspaceLab::OpenCodexSignInPage,
+                                                         lab, std::move(url)));
+                }, std::move(ui), std::move(lab)));
+          },
+          codex_sign_in_, assistant_settings_->codex_path,
+          base::SequencedTaskRunner::GetCurrentDefault(), weak_factory_.GetWeakPtr()),
+      base::BindOnce(&WorkspaceLab::CodexSignInFinished, weak_factory_.GetWeakPtr()));
+}
+
+void WorkspaceLab::OpenCodexSignInPage(GURL url) {
+  if (codex_setup_ != CodexSetup::kSigningIn || !assistant::IsCodexSignInUrl(url))
+    return;
+  if (!OpenLink(url, {}, true, false)) {
+    CancelCodexSetup();
+    shell_->ShowToast(prototype::T(u"Nie udało się otworzyć strony logowania ChatGPT."), {}, {});
+  }
+}
+
+void WorkspaceLab::CodexSignInFinished(assistant::CodexSignInResult result) {
+  codex_setup_ = CodexSetup::kIdle;
+  codex_sign_in_timeout_.Stop();
+  std::ignore = codex_sign_in_cancel_.Release();
+  codex_sign_in_.reset();
+  shell_->RefreshAssistantPreferences();
+  if (result.ok) {
+    if (!result.already_signed_in)
+      OpenPreferencesTab();
+    shell_->ShowToast(result.already_signed_in
+                          ? prototype::T(u"Codex jest już zalogowany do ChatGPT.")
+                          : prototype::T(u"Zalogowano Codex do ChatGPT."),
+                      {}, {});
+    if (assistant_settings_ && assistant_settings_->enabled)
+      CheckAssistantProvider(kCodex, false);
+    return;
+  }
+  if (result.error == "cancelled")
+    return;
+  shell_->ShowToast(
+      result.error == "missing"
+          ? prototype::T(u"Nie znaleziono Codex. Pobierz go w ustawieniach asystenta.")
+      : result.error == "unsupported"
+          ? prototype::T(u"Ta wersja Codex nie obsługuje logowania z Zittera. Zaktualizuj Codex.")
+          : prototype::T(u"Nie udało się zalogować Codex do ChatGPT."),
+      {}, {});
+}
+
+void WorkspaceLab::CancelCodexSetup() {
+  if (codex_setup_ == CodexSetup::kDownloading) {
+    codex_download_.reset();
+    codex_setup_ = CodexSetup::kIdle;
+    codex_download_percent_ = 0;
+    shell_->RefreshAssistantPreferences();
+  } else if (codex_setup_ == CodexSetup::kSigningIn && codex_sign_in_) {
+    codex_sign_in_->Cancel();
+  }
+}
+
 void WorkspaceLab::CheckAssistantProvider(size_t index, bool discover) {
   if (assistant_provider_checking_[index])
     return;
@@ -617,7 +825,8 @@ void WorkspaceLab::AssistantProviderChecked(size_t index, bool discover,
       base::DictValue().Set("tone", ok ? 1 : 2)
           .Set("state", base::UTF16ToUTF8(
               ok ? prototype::T(u"Połączono") : prototype::T(u"Nie udało się połączyć")))
-          .Set("detail", base::UTF16ToUTF8(detail));
+          .Set("detail", base::UTF16ToUTF8(detail))
+          .Set("failed", !ok);
   if (ok && index == kOllama && !settings.ollama_configured) {
     settings.ollama_configured = true;
     changed = true;

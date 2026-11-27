@@ -138,7 +138,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Zitter — tryb prywatny", "Zitter — Private browsing"),
     ("Zitter Dev — tryb prywatny", "Zitter Dev — Private browsing"),
     ("Przestrzenie oddzielają pracę od reszty życia. Każda ma swój kolor, karty i profil. Przejdź przez krótką konfigurację.", "Spaces separate work from the rest of your life. Each has its own color, tabs and profile. Walk through a quick setup."),
-    ("Claude Code lub Codex wymagają konta z dostępem do CLI. Alternatywy to klucz OpenAI API z aktywnym rozliczaniem albo lokalna Ollama z pobranym modelem. Włącz wybrany backend przełącznikiem.", "Claude Code or Codex requires an account with CLI access. You can also use a billed OpenAI API key or local Ollama with a downloaded model. Use the switch to enable the backend you want."),
+    ("Subskrypcja ChatGPT lub Claude, klucz OpenAI API albo lokalna Ollama.", "A ChatGPT or Claude subscription, an OpenAI API key, or local Ollama."),
     ("Wymagania asystenta AI", "AI assistant requirements"),
     ("Włącz asystenta AI", "Enable AI assistant"),
     ("Włączyć asystenta AI?", "Enable the AI assistant?"),

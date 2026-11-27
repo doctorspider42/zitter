@@ -45,8 +45,30 @@ template("zitter_assistant_runtime") {
   }
 
   source_set("assistant_cli_path") {
-    sources = [ "chromium/assistant/native_cli_path.h" ]
+    public_configs = [ ":assistant_includes" ]
+    sources = [
+      "chromium/assistant/codex_install.h",
+      "chromium/assistant/native_cli_path.h",
+    ]
     public_deps = [ "//base" ]
+  }
+
+  # Browser-side Codex setup: install the pinned download and sign in.
+  source_set("assistant_codex_setup") {
+    public_configs = [ ":assistant_includes" ]
+    sources = [
+      "chromium/assistant/codex_setup.cc",
+      "chromium/assistant/codex_setup.h",
+    ]
+    public_deps = [
+      ":assistant_cli_path",
+      "//base",
+    ]
+    deps = [
+      "//crypto",
+      "//third_party/zstd:decompress",
+      "//url",
+    ]
   }
 
   executable(target_name) {

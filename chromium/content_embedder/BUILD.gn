@@ -322,6 +322,7 @@ lab_deps = [
   "//zitter:adblock_browser_support",
   "//zitter:adblock_page_scripts_renderer",
   "//zitter:assistant_cli_path",
+  "//zitter:assistant_codex_setup",
   "//zitter:assistant_page_tools",
   "//zitter:content_blocking_engine",
   "//zitter:fingerprint_session",

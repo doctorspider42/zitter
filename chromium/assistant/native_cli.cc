@@ -113,8 +113,12 @@ std::string PerformCLI(std::string id, const base::DictValue& request) {
     for (const char* flag : {"--json", "--ephemeral", "--ignore-user-config",
                              "--ignore-rules", "--skip-git-repo-check"})
       command.AppendArg(flag);
-    command.AppendArg("--model");
-    command.AppendArg(*model);
+    // "latest" leaves the choice to Codex: its current default model, so a
+    // new model works the day it ships. Other IDs are the user's own.
+    if (*model != "latest") {
+      command.AppendArg("--model");
+      command.AppendArg(*model);
+    }
     command.AppendArg("--sandbox");
     command.AppendArg("read-only");
     command.AppendArg("--output-schema");
@@ -171,8 +175,11 @@ std::string PerformCLI(std::string id, const base::DictValue& request) {
           "--mcp-config", "{\"mcpServers\":{}}", "--no-session-persistence",
           "--setting-sources", "", "--disable-slash-commands"})
       command.AppendArg(arg);
-    command.AppendArg("--model");
-    command.AppendArg(*model);
+    // "latest" leaves the choice to Claude Code, as for Codex.
+    if (*model != "latest") {
+      command.AppendArg("--model");
+      command.AppendArg(*model);
+    }
     command.AppendArg("--json-schema");
     command.AppendArg(schema_text);
     command.AppendArg("--system-prompt");
