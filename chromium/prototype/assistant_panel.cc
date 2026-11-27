@@ -1077,16 +1077,6 @@ void AssistantPanel::BuildSettingsMenu(views::View* body) {
   const auto active_tasks = std::ranges::count_if(tasks_, [&](const auto& t) { return t.profile == profile && t.active; });
   if (active_tasks) tasks.badge = base::NumberToString16(active_tasks);
   body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating(&AssistantPanel::ToggleMenu, weak, Menu::kTasks)), std::move(tasks)));
-  if (host_->AssistantPageActionsAvailable()) {
-    // Page actions that change the browser, not the conversation.
-    auto page = [&](AssistantGlyph glyph, std::u16string title, int command) {
-      AssistantRow row; row.title = std::move(title); row.mark = {glyph, {}, SK_ColorTRANSPARENT};
-      body->AddChildView(CreateAssistantMenuRow(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self, int command) {
-        if (!self) return; self->CloseMenu(); self->host_->RunAssistantPageAction(command); }, weak, command)), std::move(row)));
-    };
-    page(AssistantGlyph::kShield, T(u"Zablokuj reklamy na tej stronie"), 2);
-    page(AssistantGlyph::kSearch, T(u"Dodaj wyszukiwarkę tej strony"), 1);
-  }
   body->AddChildView(CreateAssistantEyebrow(T(u"Nowe rozmowy")))->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(6, 0, 0, 0));
   // The default model of every new conversation.
   AssistantRow model; model.title = T(u"Model");
@@ -2674,6 +2664,8 @@ void AssistantPanel::RenderWelcome() {
     action(AssistantGlyph::kPage, T(u"Streść tę kartę"), 0);
     action(AssistantGlyph::kCheck, T(u"Sprawdź fakty"), 3);
     action(AssistantGlyph::kLayers, T(u"Wyciągnij dane"), 4);
+    action(AssistantGlyph::kShield, T(u"Zablokuj reklamy"), 2);
+    action(AssistantGlyph::kPlus, T(u"Dodaj wyszukiwarkę"), 1);
   }
   if (!session.research_mode && session.permissions.web)
     flow->AddChildView(CreateAssistantPill(Later(base::BindRepeating([](base::WeakPtr<AssistantPanel> self) {
