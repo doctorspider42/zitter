@@ -982,4 +982,9 @@ pub static EN: &[(&str, &str)] = &[
     ("Zawsze czysty Chrome {}, także tam, gdzie katalog mówi inaczej.", "Always plain Chrome {}, even where the catalogue says otherwise."),
     ("Usuń {}", "Remove {}"),
     ("Zapisz", "Save"),
+    ("Stronie zabrakło pamięci", "This page ran out of memory"),
+    ("Strona została zatrzymana", "This page was stopped"),
+    ("Ta strona uległa awarii", "This page crashed"),
+    ("Zamknij nieużywane karty i odśwież tę kartę.", "Close tabs you aren’t using, then reload this tab."),
+    ("Pozostałe karty działają dalej. Odśwież kartę, żeby wczytać stronę ponownie.", "Your other tabs are fine. Reload this tab to load the page again."),
 ];

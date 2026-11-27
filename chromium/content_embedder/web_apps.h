@@ -197,6 +197,7 @@ class WorkspaceWebApps final : public content::WebContentsObserver {
   void PrimaryPageChanged(content::Page& page) override;
   void DidFinishNavigation(content::NavigationHandle* navigation) override;
   void DidStopLoading() override;
+  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus status) override;
   void DidUpdateWebManifestURL(content::RenderFrameHost* frame,
                                const GURL& manifest_url) override;
   void WebContentsDestroyed() override;

@@ -374,6 +374,11 @@ void WorkspaceWebApps::DidStopLoading() {
   CheckTrackedPage();
 }
 
+// A crashed page offers no install until it reloads; DidStopLoading checks it again.
+void WorkspaceWebApps::PrimaryMainFrameRenderProcessGone(base::TerminationStatus) {
+  ResetCandidate();
+}
+
 void WorkspaceWebApps::DidUpdateWebManifestURL(content::RenderFrameHost* frame,
                                                const GURL&) {
   if (frame && frame->IsInPrimaryMainFrame() && !web_contents()->IsLoading()) {
@@ -397,7 +402,9 @@ void WorkspaceWebApps::ResetCandidate() {
 
 void WorkspaceWebApps::CheckTrackedPage() {
   auto* page = web_contents();
-  if (!page)
+  // A crashed or not yet started renderer has no manifest to ask for, and
+  // ManifestManagerHost aborts on a frame that is not live.
+  if (!page || !page->GetPrimaryMainFrame()->IsRenderFrameLive())
     return;
   const GURL url = page->GetLastCommittedURL();
   if (candidate_ && candidate_->page_url == url)

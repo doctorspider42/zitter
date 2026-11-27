@@ -93,6 +93,7 @@
 #include "build/build_config.h"
 #include "chromium/prototype/link_navigation.h"
 #include "chromium/prototype/ad_blocking_rules_panel.h"
+#include "chromium/prototype/crashed_page_view.h"
 #include "chromium/prototype/adblock.rs.h"
 #include "chromium/prototype/adblock_browser_support.h"
 #include "chromium/prototype/adblock_filter_lists.h"
@@ -1199,9 +1200,32 @@ class WorkspaceWebView final : public LabWebView {
     // A background navigation must not expose it over the selected pane.
     show_page &= GetVisible() && !ShowsInitialDocument(*web_contents());
 #endif
+    // The native page view would cover the crashed page's card.
+    show_page &= !crashed_page_;
     if (holder()->GetVisible() != show_page)
       holder()->SetVisible(show_page);
   }
+
+  void SetCrashedPagePalette(
+      base::RepeatingCallback<sidebar::DesignPalette()> palette) {
+    crashed_page_palette_ = std::move(palette);
+  }
+
+  // Called when the tab comes on screen. Like Chrome, a page whose renderer
+  // died while the tab was hidden reloads instead of greeting the user with
+  // the crashed card; a page that recovered meanwhile drops the card.
+  void UpdateCrashedPage() {
+    auto* page = web_contents();
+    if (!page)
+      return;
+    if (!page->IsCrashed()) {
+      HideCrashedPage();
+    } else if (std::exchange(crashed_while_hidden_, false)) {
+      ReloadCrashedPage();
+    }
+  }
+
+  prototype::CrashedPageView* crashed_page_for_testing() const { return crashed_page_; }
 
   // Picture-in-picture's back-to-tab control selects the page's tab.
   void SetActivatePageCallback(base::RepeatingCallback<void(content::WebContents*)> callback) {
@@ -1354,6 +1378,60 @@ class WorkspaceWebView final : public LabWebView {
                           content::INVALIDATE_TYPE_URL)) &&
         presentation_changed_)
       presentation_changed_.Run();
+  }
+
+  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus status) override {
+    LabWebView::PrimaryMainFrameRenderProcessGone(status);
+    crashed_while_hidden_ = !IsDrawn();
+    ShowCrashedPage(status);
+  }
+
+  void RenderFrameCreated(content::RenderFrameHost* frame) override {
+    LabWebView::RenderFrameCreated(frame);
+    if (frame == web_contents()->GetPrimaryMainFrame() && frame->IsRenderFrameLive())
+      HideCrashedPage();
+  }
+
+  void RenderFrameHostChanged(content::RenderFrameHost* old_host,
+                              content::RenderFrameHost* new_host) override {
+    LabWebView::RenderFrameHostChanged(old_host, new_host);
+    if (new_host == web_contents()->GetPrimaryMainFrame() && new_host->IsRenderFrameLive())
+      HideCrashedPage();
+  }
+
+  void ShowCrashedPage(base::TerminationStatus status) {
+    if (!crashed_page_palette_)
+      return;
+    using prototype::PageCrashReason;
+    PageCrashReason reason = PageCrashReason::kCrashed;
+    if (status == base::TERMINATION_STATUS_OOM)
+      reason = PageCrashReason::kOutOfMemory;
+    else if (status == base::TERMINATION_STATUS_PROCESS_WAS_KILLED)
+      reason = PageCrashReason::kKilled;
+    if (!crashed_page_) {
+      crashed_page_ = TakeCrashedOverlayView(std::make_unique<prototype::CrashedPageView>(
+          crashed_page_palette_,
+          base::BindRepeating(&WorkspaceWebView::ReloadCrashedPage, base::Unretained(this))));
+    }
+    crashed_page_->SetReason(reason);
+    crashed_page_->SetVisible(true);
+    UpdatePageHolderVisibility();
+  }
+
+  void HideCrashedPage() {
+    if (!crashed_page_)
+      return;
+    crashed_page_ = nullptr;
+    TakeCrashedOverlayView(nullptr);
+    UpdatePageHolderVisibility();
+  }
+
+  void ReloadCrashedPage() {
+    crashed_while_hidden_ = false;
+    if (auto* page = web_contents()) {
+      page->GetController().Reload(content::ReloadType::NORMAL,
+                                   /*check_for_repost=*/true);
+    }
   }
 
   void DidStartNavigation(content::NavigationHandle* navigation) override {
@@ -1637,6 +1715,9 @@ class WorkspaceWebView final : public LabWebView {
   base::RepeatingCallback<void(int, gfx::Rect)> page_zoom_feedback_;
   std::set<ui::KeyboardCode> page_zoom_keys_;
   bool suppress_page_zoom_char_ = false;
+  base::RepeatingCallback<sidebar::DesignPalette()> crashed_page_palette_;
+  raw_ptr<prototype::CrashedPageView> crashed_page_ = nullptr;
+  bool crashed_while_hidden_ = false;
 };
 
 content::JavaScriptDialogManager* WorkspaceWebView::GetJavaScriptDialogManager(
@@ -10546,6 +10627,21 @@ WorkspaceLab::Tab WorkspaceLab::MakeTab(size_t workspace, views::View* host) {
       }, weak_factory_.GetWeakPtr()));
   view->SetActivatePageCallback(
       base::BindRepeating(&WorkspaceLab::ActivatePage, weak_factory_.GetWeakPtr()));
+  // Neutral surfaces, as the network error page (the card stands in for a
+  // page), with the space's accent.
+  view->SetCrashedPagePalette(base::BindRepeating([](base::WeakPtr<WorkspaceLab> lab) {
+    const bool dark = lab && lab->widget_ &&
+        lab->widget_->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
+    auto palette = sidebar::design_palette(dark, 0);
+    if (lab) {
+      const auto space = sidebar::design_palette(dark, lab->shell_->active_workspace_color());
+      palette.accent = space.accent;
+      palette.on_accent = space.on_accent;
+      palette.accent_soft = space.accent_soft;
+      palette.accent_ink = space.accent_ink;
+    }
+    return palette;
+  }, weak_factory_.GetWeakPtr()));
   view->SetNavigationChangedCallback(base::BindRepeating(
       [](base::WeakPtr<WorkspaceLab> lab, content::WebContents*) {
         if (lab) lab->ScheduleBookmarkSync();
@@ -11596,6 +11692,7 @@ void WorkspaceLab::ShowTab() {
 #if BUILDFLAG(IS_WIN)
     view->UpdatePageHolderVisibility();
 #endif
+    view->UpdateCrashedPage();
     view->web_contents()->UpdateWebContentsVisibility(content::Visibility::VISIBLE);
   }
   Observe(page);

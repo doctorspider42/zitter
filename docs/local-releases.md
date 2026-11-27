@@ -90,7 +90,10 @@ cat .chromium/src/out/ZitterContentBundle/args.gn
 On first use the script writes the output's `args.gn` from
 `chromium/release.args.gn` as a non-component Release build with ThinLTO and PGO
 disabled. Read the actual GN arguments, not just the output directory's name.
+`chromium/release.args.gn` also sets `dcheck_always_on = false`: Chromium enables
+DCHECKs in every non-official build, and a failed one aborts the whole browser.
 Packaging requires `is_debug = false`, `is_component_build = false`,
+`dcheck_always_on = false`,
 `proprietary_codecs = true` and `ffmpeg_branding = "Chrome"`, so packaged builds
 support H.264 and AAC. `ZITTER_CONTENT_OUT` selects another output directory,
 `ZITTER_BUILD_JOBS` sets Ninja concurrency (default 6), and `ZITTER_PYTHON`

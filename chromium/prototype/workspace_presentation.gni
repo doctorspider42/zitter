@@ -27,6 +27,8 @@ workspace_presentation_sources = [
   "chromium/prototype/browser_tools.h",
   "chromium/prototype/clean_url.cc",
   "chromium/prototype/clean_url.h",
+  "chromium/prototype/crashed_page_view.cc",
+  "chromium/prototype/crashed_page_view.h",
   "chromium/prototype/download_panel.cc",
   "chromium/prototype/download_panel.h",
   "chromium/prototype/editor_control.h",

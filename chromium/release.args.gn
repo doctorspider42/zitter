@@ -1,6 +1,9 @@
 # Keep Debug in out/Zitter; compare with this component Release first.
 # Non-component linking and LTO/PGO are separate later experiments.
 is_debug = false
+# A failed DCHECK aborts the whole browser; Chromium turns them on in every
+# non-official build unless this says otherwise.
+dcheck_always_on = false
 is_component_build = true
 symbol_level = 0
 blink_symbol_level = 0

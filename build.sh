@@ -62,7 +62,8 @@ if not path.exists():
 args = path.read_text()
 required_false = ["use_remoteexec", "use_siso"]
 if package:
-    required_false.extend(("is_debug", "is_component_build"))
+    # A failed DCHECK aborts the browser or the page's renderer.
+    required_false.extend(("is_debug", "is_component_build", "dcheck_always_on"))
 for key in required_false:
     if not re.search(rf"^{key}\s*=\s*false\s*$", args, re.M):
         raise SystemExit(f"The local Content build requires {key} = false")
