@@ -689,6 +689,40 @@ def verify_first_imports(executable):
           "workspace appearance, and titles and favicons on dormant tabs.")
 
 
+def verify_pinned_tab_names(executable):
+    """An open pin's name, kept on its tab by sessions before 0.26.4, syncs."""
+    session_name = "ContentWorkspaceSession.json"
+    with (temporary_workspace() as a,
+          temporary_workspace() as b,
+          tempfile.TemporaryDirectory() as shared):
+        first, second, folder = map(lambda p: Path(p).resolve(), (a, b, shared))
+        prepare(first, folder, "named")
+        prepare(second, folder, "other")
+        path = first / session_name
+        session = read_json(path)
+        session["work"]["tabs"] = [{"title": "", "url": pin("named")["url"], "pin": "named",
+                                    "custom_title": "Legacy name"}]
+        write_json(path, session)
+
+        def first_pin(root, identifier):
+            pins = read_json(root / session_name)["work"].get("pins", [])
+            return next((item for item in pins if item["id"] == identifier), {})
+
+        with running(executable, first):
+            def published():
+                record = read_partition(device_index(first, folder), "space/work")[
+                    "space/work"].get("named", {})
+                return record.get("pin", {}).get("custom_title") == "Legacy name"
+            assert wait(published, 45), "The open pin's name did not reach the sync folder"
+            assert wait(lambda: first_pin(first, "named").get("custom_title") == "Legacy name", 15)
+            tab = read_json(path)["work"]["tabs"][0]
+            assert tab.get("pin") == "named" and "custom_title" not in tab, tab
+        with running(executable, second):
+            assert wait(lambda: first_pin(second, "named").get("custom_title") == "Legacy name",
+                        45), "The second device did not receive the pin's name"
+    print("Bookmark sync moved an open pin's legacy tab name to its pin and synced it.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path, nargs="?", default=ROOT / "build/ZitterContentLab.app")
@@ -701,6 +735,7 @@ def main():
           temporary_workspace() as b,
           tempfile.TemporaryDirectory() as shared):
         first, second, folder = map(lambda p: Path(p).resolve(), (a, b, shared))
+        verify_pinned_tab_names(executable)
         extra = "space-" + str(uuid.uuid4())
         prepare(first, folder, "first", extra)
         prepare(second, folder, "second")

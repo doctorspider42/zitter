@@ -2578,7 +2578,14 @@ WorkspaceLab::WorkspaceLab(const base::FilePath& settings_path,
           auto& tabs = lab->tabs_[lab->active_index_];
           if (!index || *index >= tabs.size())
             return false;
-          tabs[*index].custom_title = std::move(title);
+          auto& tab = tabs[*index];
+          // An open pin is named by its pin, which syncs to other computers.
+          if (auto* pin = lab->SyncedPinOfTab(lab->active_index_, tab.pin)) {
+            pin->custom_title = base::UTF16ToUTF8(title);
+            tab.custom_title.clear();
+          } else {
+            tab.custom_title = std::move(title);
+          }
         }
         lab->RefreshShell();
         lab->PersistWorkspaceChanges();
@@ -10799,6 +10806,36 @@ std::vector<prototype::PinnedItem>& WorkspaceLab::PinStorage(
   return profile_favorites_[model_.workspaces()[workspace].profile_id];
 }
 
+prototype::PinnedItem* WorkspaceLab::SyncedPinOfTab(size_t workspace,
+                                                   std::string_view id) {
+  if (id.empty())
+    return nullptr;
+  auto& pins = PinStorage(workspace, id);
+  const auto pin = std::ranges::find(pins, id, &prototype::PinnedItem::id);
+  if (pin == pins.end() || pin->folder || pin->live_folder ||
+      IsGitHubFolder(pins, pin->parent_id))
+    return nullptr;
+  return &*pin;
+}
+
+bool WorkspaceLab::AdoptPinnedTabNames() {
+  bool changed = false;
+  for (size_t workspace = 0; workspace < tabs_.size(); ++workspace) {
+    for (auto& tab : tabs_[workspace]) {
+      if (tab.custom_title.empty())
+        continue;
+      auto* pin = SyncedPinOfTab(workspace, tab.pin);
+      if (!pin)
+        continue;
+      if (pin->custom_title.empty())
+        pin->custom_title = base::UTF16ToUTF8(tab.custom_title);
+      tab.custom_title.clear();
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 bool WorkspaceLab::PlacePin(std::vector<prototype::PinnedItem>& pins,
                             prototype::PinnedItem pin, std::string parent,
                             std::string before) {
@@ -11272,6 +11309,7 @@ bool WorkspaceLab::PinTab(size_t index, std::string parent, std::string before) 
     return false;
   }
   tab.pin = id;
+  tab.custom_title.clear();
   RefreshShell();
   if (profile_favorite)
     shell_->RevealProfileFavorite(id);
@@ -11292,8 +11330,12 @@ bool WorkspaceLab::Unpin(std::string id, size_t before) {
     if (tabs.size() >= prototype::kMaxWorkspaceSessionTabs)
       return false;
     AddTab(active_index_, pin->url, base::UTF8ToUTF16(pin->title));
+    if (!pin->custom_title.empty())
+      tabs.back().custom_title = base::UTF8ToUTF16(pin->custom_title);
   } else {
     opened->pin.clear();
+    if (!pin->custom_title.empty())
+      opened->custom_title = base::UTF8ToUTF16(pin->custom_title);
   }
   if (pin->profile_pin) {
     const auto& profile_id = model_.active()->profile_id;
@@ -11301,8 +11343,11 @@ bool WorkspaceLab::Unpin(std::string id, size_t before) {
       if (model_.workspaces()[workspace].profile_id != profile_id)
         continue;
       for (auto& tab : tabs_[workspace]) {
-        if (tab.pin == id)
-          tab.pin.clear();
+        if (tab.pin != id)
+          continue;
+        tab.pin.clear();
+        if (!pin->custom_title.empty())
+          tab.custom_title = base::UTF8ToUTF16(pin->custom_title);
       }
     }
     if (removed_workspace_ && removed_workspace_->workspace.profile_id == profile_id) {
@@ -13253,11 +13298,14 @@ void WorkspaceLab::PopulateSidebarState(size_t workspace,
   }
   std::set<GURL> cached_icon_urls;
   std::map<std::string_view, const GURL*> pinned_urls;
+  std::map<std::string_view, const std::string*> pin_names;
   std::set<std::string_view> profile_favorites;
   for (const auto& pin : state.pins) {
     if (pin.folder)
       continue;
     pinned_urls.emplace(pin.id, &pin.url);
+    if (!pin.custom_title.empty())
+      pin_names.emplace(pin.id, &pin.custom_title);
     if (pin.profile_pin)
       profile_favorites.insert(pin.id);
     if (pin.url.SchemeIsHTTPOrHTTPS())
@@ -13286,15 +13334,20 @@ void WorkspaceLab::PopulateSidebarState(size_t workspace,
     }
     if (url.SchemeIsHTTPOrHTTPS() && !state.favicons.contains(url.spec()))
       cached_icon_urls.insert(url);
-    if (!tabs[index].custom_title.empty())
-      title = tabs[index].custom_title;
+    // An open pin shows its pin's name. Sessions before 0.26.4 kept that name
+    // on the tab until AdoptPinnedTabNames() moves it to the pin.
+    const auto pin_name = pin_names.find(tabs[index].pin);
+    const std::u16string custom_title = pin_name != pin_names.end()
+        ? base::UTF8ToUTF16(*pin_name->second) : tabs[index].custom_title;
+    if (!custom_title.empty())
+      title = custom_title;
     const bool untitled = title.empty();
     if (untitled && url.SchemeIsHTTPOrHTTPS())
       title = base::UTF8ToUTF16(url.host());
     prototype::ShellTab row{title.empty() ? u"New tab" : std::move(title),
                             url, index, tabs[index].pin, {tabs[index].id, 1},
                             page && page->IsCurrentlyAudible(), 0,
-                            !tabs[index].custom_title.empty(), refresh_icons && TabMuted(index)};
+                            !custom_title.empty(), refresh_icons && TabMuted(index)};
     // An open profile favorite is shown by its tile, as in the Chrome-backed
     // shell; only a split lists it as a tab row.
     if (profile_favorites.contains(row.pin_id) &&

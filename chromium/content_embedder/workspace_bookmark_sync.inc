@@ -317,6 +317,9 @@ void WorkspaceLab::StartBookmarkSync(std::string method) {
 }
 
 base::DictValue WorkspaceLab::CaptureBookmarks() {
+  // Older sessions named an open pin on its tab, which never synced.
+  if (AdoptPinnedTabNames())
+    PersistWorkspaceChanges();
   base::DictValue result;
   for (size_t i = 0; i < pins_.size(); ++i) {
     const auto& workspace = model_.workspaces()[i];

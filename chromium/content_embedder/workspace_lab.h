@@ -431,6 +431,11 @@ class WorkspaceLab final : private WorkspaceRuntime,
   std::vector<prototype::PinnedItem> WorkspacePins(size_t workspace) const;
   std::vector<prototype::PinnedItem>& PinStorage(size_t workspace,
                                                  std::string_view id);
+  // The synced pin an open tab shows, or null for an ordinary tab or a pin
+  // that doesn't sync (folders, live folders and their items).
+  prototype::PinnedItem* SyncedPinOfTab(size_t workspace, std::string_view id);
+  // Moves names kept on open pins' tabs to their pins. Returns whether any moved.
+  bool AdoptPinnedTabNames();
   bool PlacePin(std::vector<prototype::PinnedItem>& pins, prototype::PinnedItem pin,
                 std::string parent, std::string before);
   void ShowTab();
