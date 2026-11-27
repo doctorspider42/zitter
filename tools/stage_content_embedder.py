@@ -12,6 +12,7 @@ import sys
 
 import content_blocking_patch as content_blocking
 from dnr_cache_patch import patch_rules_monitor
+from extension_worker_recovery_patch import patch_task_queue as patch_worker_recovery
 import download_publish_patch as download_publish
 import editor_service_patch as editor_services
 import existing_keychain_patch as existing_keychain
@@ -223,6 +224,13 @@ def main():
         original = dnr_monitor.read_bytes()
         plan[dnr_monitor] = (
             original, patch_rules_monitor(original.decode("utf-8")).encode("utf-8"),
+        )
+        worker_queue = checkout / "extensions/browser/service_worker/service_worker_task_queue.cc"
+        if worker_queue.is_symlink() or not worker_queue.resolve().is_relative_to(checkout):
+            raise ValueError("Extension worker task queue path escapes the checkout")
+        original = worker_queue.read_bytes()
+        plan[worker_queue] = (
+            original, patch_worker_recovery(original.decode("utf-8")).encode("utf-8"),
         )
         runtime_api = checkout / "extensions/browser/api/runtime/runtime_api.cc"
         if runtime_api.is_symlink() or not runtime_api.resolve().is_relative_to(checkout):

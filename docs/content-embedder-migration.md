@@ -6881,6 +6881,19 @@ The full probe passed both macOS launches with checks for renderer fatal
 errors. The standalone manifest and ordinary Workspace with DevTools
 also passed on the same build.
 
+#### Missing worker registrations
+
+Chromium verifies a worker registration only when it activates an
+extension. On Windows, LastPass's registration once disappeared in a
+session that had run for a day. Every later start failed with
+`kErrorNotFound`, the log filled with `DidStartWorkerFail` lines, and the
+popup spun until the browser restarted. `tools/extension_worker_recovery_patch.py`
+patches `service_worker_task_queue.cc`: once the start retries for an
+enabled extension end in `kErrorNotFound`, the queue resets the worker
+state, registers the worker again and keeps the queued tasks for the new
+registration. It recovers at most once a minute per activation. The patch
+changes only that `.cc` file, so a build recompiles one object and links.
+
 ### Chromium extension renderer dependency
 
 The Content target builds Chromium's extension renderer and packages its
