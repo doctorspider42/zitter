@@ -23,6 +23,16 @@
   automation probe also keeps windows off the working desktop. Ask the user
   before running a batch on their working desktop, and give the expected duration.
 
+## UI style
+
+- Keep text in the UI to a minimum: short labels, no long sentences. Add an explanation
+  only when the user truly can't proceed without it.
+- The UI should be clear enough to need no explaining. When something needs a
+  paragraph, rework the layout instead.
+- Use symbols and icons instead of words where they read clearly.
+- Never build "admin panel" UI: no walls of form fields, rows of equal outlined
+  buttons, or settings tables. Prefer one primary action per step and hide the rest.
+
 ## Checking UI changes
 
 Finish every UI change with the `verify-ui` skill (`.claude/skills/verify-ui/`): run
