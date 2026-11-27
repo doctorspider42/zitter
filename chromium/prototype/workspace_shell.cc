@@ -3147,7 +3147,9 @@ class RustRowView final : public views::View {
         return_to_pin_->SetBounds(std::max(0, width() - 22), 0, 20, 20);
       return;
     }
-    int right = close_ ? r.x : width() - 6;
+    // Every tab row keeps the close slot, so the actions line up whether or
+    // not the row has a close button (an unloaded pinned tab has none).
+    int right = r.x;
     for (auto* action : {more_.get(), return_to_pin_.get()}) {
       if (!action || !action->GetVisible()) continue;
       constexpr int size = 24;
@@ -3248,8 +3250,12 @@ class RustRowView final : public views::View {
   void SyncSidebarAX(){const auto title=state_->sidebar_title();const std::u16string text(title.begin(),title.end());SetTooltipText(text);GetViewAccessibility().SetName(text);}
   int SidebarActionInset() const {
     if (spec_.favorite) return 0;
-    return 26 * ((more_ && more_->GetVisible() ? 1 : 0) +
-                 (return_to_pin_ && return_to_pin_->GetVisible() ? 1 : 0));
+    const int actions = (more_ && more_->GetVisible() ? 1 : 0) +
+                        (return_to_pin_ && return_to_pin_->GetVisible() ? 1 : 0);
+    if (!actions) return 0;
+    // Layout() keeps the close slot (32 px) even without a close button,
+    // while row_layout() then reserves only 10 px.
+    return 26 * actions + (close_ ? 0 : 22);
   }
   sidebar::RowLayout Geometry() const{if(spec_.stacked){auto g=sidebar::row_layout(width(),height(),0,false,false,close_!=nullptr);const int lead=50,half=height()/2;const int w=std::max(0,g.title.width+g.title.x-lead);g.title={lead,2,w,half-2};g.detail={lead,half,w,half-4};return g;}if(spec_.address)return sidebar::address_layout(width(),height(),scene_title_width());auto geometry=sidebar::row_layout(width(),height(),scene_title_width(),!spec_.detail.empty(),spec_.chip,close_!=nullptr);geometry.title.width=std::max(0,geometry.title.width-SidebarActionInset());return geometry;}
   bool Interactive() const{return SceneIsVisible(this)&&!GetVisibleBounds().IsEmpty();}
